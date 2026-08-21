@@ -1,0 +1,28 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Node / Next.js (frontend/)
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Python (backend/)
+__pycache__/
+*.py[cod]
+.venv/
+.uv-cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Vercel
+.vercel/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log

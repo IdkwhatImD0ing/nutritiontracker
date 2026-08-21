@@ -1,0 +1,30 @@
+{
+  "services": {
+    "web": {
+      "root": "frontend"
+    },
+    "api": {
+      "root": "backend",
+      "entrypoint": "main:app",
+      "functions": {
+        "main.py": {
+          "maxDuration": 120
+        }
+      }
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "api"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "web"
+      }
+    }
+  ]
+}

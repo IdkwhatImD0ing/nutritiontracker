@@ -1,0 +1,22 @@
+{
+  "name": "usual-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typegen": "bash ../scripts/typegen.sh",
+    "typegen:check": "pnpm run typegen && git diff --exit-code -- lib/api-types.ts openapi.json"
+  },
+  "dependencies": {
+    "next": "^16.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "typescript": "^7.0.2"
+  }
+}
