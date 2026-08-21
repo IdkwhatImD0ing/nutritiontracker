@@ -55,7 +55,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/logs/{log_id}/commit": {
+    "/api/resolve/tier3": {
         parameters: {
             query?: never;
             header?: never;
@@ -64,8 +64,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Commit Log */
-        post: operations["commit_log_api_logs__log_id__commit_post"];
+        /** Kick Tier3 */
+        post: operations["kick_tier3_api_resolve_tier3_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -89,7 +89,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/resolve/tier3": {
+    "/api/resolve/answer": {
         parameters: {
             query?: never;
             header?: never;
@@ -98,8 +98,42 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Kick Tier3 */
-        post: operations["kick_tier3_api_resolve_tier3_post"];
+        /** Answer Question */
+        post: operations["answer_question_api_resolve_answer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/{log_id}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit Log */
+        post: operations["commit_log_api_logs__log_id__commit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/{log_id}/commit-item": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit Item */
+        post: operations["commit_item_api_logs__log_id__commit_item_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -140,6 +174,43 @@ export interface components {
             /** Usual */
             usual?: boolean | null;
         };
+        /**
+         * Answer
+         * @description A tapped id-bearing option (source + source_id, or a cached food_id,
+         *     plus label) or free text.
+         */
+        Answer: {
+            /** Label */
+            label?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Source Id */
+            source_id?: string | null;
+            /** Food Id */
+            food_id?: string | null;
+            /** Text */
+            text?: string | null;
+        };
+        /** AnswerRequest */
+        AnswerRequest: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            /** Item Index */
+            item_index: number;
+            answer: components["schemas"]["Answer"];
+        };
+        /**
+         * CommitItemRequest
+         * @description §5: {item_index, StagedItem} — the late-straggler append.
+         */
+        CommitItemRequest: {
+            /** Item Index */
+            item_index: number;
+            item: components["schemas"]["StagedItem"];
+        };
         /** CommitRequest */
         CommitRequest: {
             /** Items */
@@ -159,6 +230,41 @@ export interface components {
             /** Fat G */
             fat_g: number;
             targets: components["schemas"]["MacroTargets"];
+        };
+        /**
+         * DiaryEntry
+         * @description Response-only shape (route-local; the wire contracts live in models.py).
+         */
+        DiaryEntry: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            meal: components["schemas"]["Meal"];
+            food: components["schemas"]["FoodRef"];
+            serving: components["schemas"]["ServingRef"];
+            /** Qty */
+            qty: number;
+            macros: components["schemas"]["Macros"];
+            /**
+             * Logged At
+             * Format: date-time
+             */
+            logged_at: string;
+        };
+        /** DiaryResponse */
+        DiaryResponse: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Meals */
+            meals: {
+                [key: string]: components["schemas"]["DiaryEntry"][];
+            };
+            totals: components["schemas"]["DayTotals"];
         };
         /** FoodRef */
         FoodRef: {
@@ -427,18 +533,16 @@ export interface operations {
             };
         };
     };
-    commit_log_api_logs__log_id__commit_post: {
+    kick_tier3_api_resolve_tier3_post: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                log_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CommitRequest"];
+                "application/json": components["schemas"]["Tier3KickRequest"];
             };
         };
         responses: {
@@ -448,7 +552,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DayTotals"];
+                    "application/json": components["schemas"]["StagedItem"];
                 };
             };
             /** @description Validation Error */
@@ -495,7 +599,7 @@ export interface operations {
             };
         };
     };
-    kick_tier3_api_resolve_tier3_post: {
+    answer_question_api_resolve_answer_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -504,7 +608,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Tier3KickRequest"];
+                "application/json": components["schemas"]["AnswerRequest"];
             };
         };
         responses: {
@@ -515,6 +619,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StagedItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    commit_log_api_logs__log_id__commit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                log_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayTotals"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    commit_item_api_logs__log_id__commit_item_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                log_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommitItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayTotals"];
                 };
             };
             /** @description Validation Error */
@@ -545,7 +719,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DayTotals"];
+                    "application/json": components["schemas"]["DiaryResponse"];
                 };
             };
             /** @description Validation Error */

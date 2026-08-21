@@ -10,6 +10,7 @@
     "typegen:check": "pnpm run typegen && git diff --exit-code -- lib/api-types.ts openapi.json"
   },
   "dependencies": {
+    "@neondatabase/auth": "0.5.0-beta",
     "next": "^16.3.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
