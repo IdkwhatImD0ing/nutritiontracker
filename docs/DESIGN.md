@@ -364,7 +364,7 @@ CREATE TABLE logs (
   capture_error   text,                       -- client-reported error, or 'silent_blob' / 'empty_transcript'
   short_circuit   boolean NOT NULL DEFAULT false,   -- whole-utterance tier-0/1 hit, decompose skipped
   meal_inferred   text,
-  status          text NOT NULL DEFAULT 'staged',  -- 'staged' | 'committed' | 'discarded'
+  status          text NOT NULL DEFAULT 'staged',  -- 'staged' | 'committed' | 'discarded' | 'capture_failure' (voice: silent/empty audio, §8.1d)
   committed_at    timestamptz,                -- first commit (late items tracked per-item)
   transcribe_ms   integer,
   decompose_ms    integer,
@@ -636,27 +636,26 @@ Net effect vs the brief's original FatSecret plan: same coverage class for his a
 
 **Two scope rulings (Bill, 2026-08-20):** (1) **Barcodes must be proven, not assumed** — M0's exit criteria include a live spike of the `gtinUpc` normalization ladder against ~10 real pantry barcodes, with OFF as the miss-fallback. (2) **Restaurants means famous chains only** — the ones FDA menu labeling obliges to publish (20+ locations). Independent restaurants are out of scope: manual entry, and never estimation from text or voice.
 
-### 8.3 Tier-2 matching: embeddings vs fuzzy
+### 8.3 Why tier-2 matching exists
 
-**Neither a vector store nor an embeddings pipeline. Trigram + decompose-time index matching (§3.3 above).** For a personal corpus of 50–200 aliases: pg_trgm handles lexical variance deterministically with one GIN index; the semantic cases ride the decomposition call that's already running, at zero marginal latency, by inlining the personal index. An embedding pipeline (provider dependency, backfill job, thresholds, pgvector ops) would serve the gap between those two — and at this corpus size that gap is approximately empty. If the corpus ever outgrows the prompt (~1k foods), pgvector is confirmed available on Neon's free plan and the schema needs no migration to adopt it.
+Because you won't say a food's name the same way twice. "Core Power" is logged 50 times; one day you say "protein shake." Without tier 2 that phrase goes to the network cold-start (3–8s) — and worse, the agent might pick a *different* database entry than your history uses, silently splitting your protein trend across two identities. Tier 2 says: *this is probably a food you already have — reuse it.* It costs almost nothing: one trigram index (catches typos, plurals, word order) plus a hint from the decompose call that's already running (catches meaning). No vector store at ~100 foods; pgvector is on Neon free if the corpus ever outgrows the prompt. Drop tier 2 and the app still works — just slower and dirtier exactly where it's supposed to be getting faster.
 
-### 8.4 Meal macro data model
+### 8.4 Saved meals ("my usual breakfast"), plainly
 
-As in §4 above: `name + trigger_phrases[] (post-norm) + items[{food_id, serving_id, qty}]`, expanded verbatim at tier 0. **Editing mutates in place; no version history.** Versioning would only matter if past entries depended on macro definitions — they don't, because commit snapshots everything into `entries`. Creation paths: spoken (`save_intent`), *Save as meal* on any committed meal group, or the edit page. Deactivation (`is_active = false`) rather than deletion. Tier-0 expansions don't write aliases (§3.1), so deactivating a macro cleanly returns its trigger phrase to "unknown" — with the §3.1 meal-ref guard catching it rather than a food search.
+A saved meal is: **a name + trigger phrases + a fixed list of (food, serving, quantity)**. Saying a trigger phrase drops those items into staging exactly as stored — no search, no AI.
+
+- **Create:** say "save this as my usual breakfast" after logging; or tap *Save as meal* on any meal group; or build one in Library.
+- **Edit:** change the item list in Library. Future uses follow the new version.
+- **Why no version history:** committed diary entries store their own numbers at commit time, so editing a meal never changes the past. There's nothing to version.
+- **Delete = deactivate**, so old diary rows keep their context.
 
 ### 8.5 Portions: you set them; defaults just save taps
 
 Every staged row has the controls MFP/Cronometer users expect (Bill's spec, 2026-08-20): a **quantity stepper and a serving picker** listing every serving the database defines for that food — "1 bottle (414 ml)", "100 g", "1 scoop" — one tap away (§7.1). What this app adds is pre-filling: a spoken quantity ("two scoops") always wins; otherwise the row pre-fills your usual portion for that food (most common of your last 10 logs, so one odd day doesn't move it); a per-food pin in Library forces it. The portion is always yours to set — the default just means you usually don't have to. Mechanics in §7.3.
 
-### 8.6 Offline behavior
+### 8.6 Offline: none — by decision
 
-**Offline capture: yes. Offline resolution: no.** The capture queue (IndexedDB) accepts text and audio blobs with `captured_at` stamped locally and a **client-generated log UUID per item** — the idempotency key that makes the drain safe. Drain triggers (`visibilitychange`, `pageshow`, launch) can fire in quick succession on iOS, so queue items are marked in-flight when a POST starts and deleted only on a confirmed response; the server upserts by id, so even a double-fire cannot create two logs, and a lost response followed by a retry cannot double-commit (§3.5 CAS). Drained logs appear as staged lists awaiting confirm; `logged_at` uses the original capture time so the diary stays truthful, and `drained_from_queue`/`drained_at` keep the metrics honest (§9).
-
-The iOS facts (verified against WebKit's published storage policy and caniuse, Aug 2026) shape three specifics:
-
-- **Background Sync does not exist on iOS** — unsupported through Safari/iOS 26 with no implementation signal. Foreground drain is not a compromise; it's the only mechanism. No sync promises in the UI, just a "2 pending logs" badge on open.
-- **`navigator.storage.persist()` is granted to home-screen-installed apps** per WebKit's stated heuristics — call it on first run. Installed apps are also exempt from the 7-day ITP storage cap, so a queued log surviving a week offline is realistic. The one real loss mode: deleting the home-screen icon deletes the data — worth a one-line warning in settings.
-- Because eviction is possible under storage pressure, the queue is a **buffer, not a vault**: drain eagerly, confirm promptly, keep IndexedDB dwell minutes-to-hours.
+Bill's call (2026-08-20): **the app requires connectivity.** With no network, capture is disabled with a clear message instead of queueing. This deleted the IndexedDB queue, the drain logic, the `drained_*` columns, and the first-run `storage.persist()` step — real complexity removed for a scenario he chose not to serve. The client-generated log UUID stays (it makes ordinary network retries idempotent regardless). For the record if this ever reverses: the verified iOS facts stand — Background Sync doesn't exist on iOS, so any future queue would drain in the foreground.
 
 ### 8.7 Persistence
 
