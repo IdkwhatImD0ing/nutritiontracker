@@ -355,6 +355,49 @@ def _agent_input(
 
 
 # ---------------------------------------------------------------------------
+# 404 tolerance (§3.4 adapter rules): fdc.get_food returns None on an fdcId
+# that search just returned — observed live (stale index entries). EVERY
+# caller must retry the next candidate or degrade cleanly, never crash.
+# ---------------------------------------------------------------------------
+
+_STALE_ID_ERROR = json.dumps({
+    "error": "not_found",
+    "message": "That source_id no longer exists (stale search-index entry). "
+               "Pick a different candidate or refine the search.",
+})
+
+
+async def _get_food_cached(
+    source: str, source_id: str, counter: dict, food_cache: dict
+) -> dict | None:
+    """fdc.get_food through the run cache; None on 404, never cached as None."""
+    key = (source, str(source_id))
+    food = food_cache.get(key)
+    if food is None:
+        counter["network_calls"] += 1
+        food = await fdc.get_food(source, str(source_id))
+        if food is not None:
+            food_cache[key] = food
+    return food
+
+
+async def _first_live_food(
+    candidates: list[tuple], counter: dict, food_cache: dict
+) -> tuple[tuple | None, dict | None]:
+    """First candidate whose id still fetches.
+
+    candidates: (source, source_id, display_name, serving_id, confidence)
+    tuples — the agent's chosen food first, then its alternates in order.
+    Returns (candidate, food), or (None, None) when every id 404ed.
+    """
+    for cand in candidates:
+        food = await _get_food_cached(cand[0], cand[1], counter, food_cache)
+        if food is not None:
+            return cand, food
+    return None, None
+
+
+# ---------------------------------------------------------------------------
 # Agent construction — per run, so tool closures carry run-local state
 # (network-call counter, get_food cache, persisted ids).
 # ---------------------------------------------------------------------------
@@ -390,9 +433,9 @@ def _build_agent(
     @function_tool(failure_error_function=_tool_error)
     async def get_food(source: Source, source_id: str) -> str:
         """Full detail for one entry: servings (ids + descriptions + grams), per-100g macros, state."""
-        counter["network_calls"] += 1
-        food = await fdc.get_food(source, str(source_id))
-        food_cache[(source, str(source_id))] = food
+        food = await _get_food_cached(source, str(source_id), counter, food_cache)
+        if food is None:  # stale index id (404) — tell the agent, don't crash
+            return _STALE_ID_ERROR
         view = {
             "source": source,
             "source_id": str(source_id),
@@ -449,11 +492,9 @@ def _build_agent(
 
         Call exactly once, for the final chosen food, before answering.
         """
-        food = food_cache.get((source, str(source_id)))
-        if food is None:
-            counter["network_calls"] += 1
-            food = await fdc.get_food(source, str(source_id))
-            food_cache[(source, str(source_id))] = food
+        food = await _get_food_cached(source, str(source_id), counter, food_cache)
+        if food is None:  # stale index id (404) — tell the agent, don't crash
+            return _STALE_ID_ERROR
         food = dict(food)
         food.setdefault("source", source)
         food.setdefault("source_id", str(source_id))
@@ -522,6 +563,7 @@ def _staged_from_food(
         state_question=True if _needs_state_question(food, phrase) else None,
         question=question,
         confidence=confidence,  # type: ignore[arg-type]
+        servings=cascade._serving_options(food.get("servings") or []) or None,
     )
 
 
@@ -538,6 +580,7 @@ async def _write_item_row(
     disambiguated: bool = False,
     spoken_qty: float | None = None,
     spoken_unit: str | None = None,
+    state_answer: str | None = None,
     tier: int = 3,
 ) -> None:
     staged_payload = item.model_dump(mode="json", exclude_none=True)
@@ -545,6 +588,10 @@ async def _write_item_row(
         # keep the spoken qty/unit alive across needs_input → answer chains
         staged_payload["spoken_qty"] = spoken_qty
         staged_payload["spoken_unit"] = spoken_unit
+    if state_answer:
+        # §3.4a: the user's cooked/raw/dry intent — commit persists it to
+        # aliases.state_answer so the question is asked at most once per phrase
+        staged_payload["state_answer"] = state_answer
     await db.execute(
         """
         UPDATE item_resolutions
@@ -612,7 +659,30 @@ async def resolve_item_from_source(
     phrase, staged_prev = await _load_item(log_id, item_index)
     meal = staged_prev.get("meal") or "snack"
     spoken_qty, spoken_unit = _spoken(staged_prev)
-    food = dict(await fdc.get_food(source, str(source_id)))
+    food = await fdc.get_food(source, str(source_id))
+    if food is None:
+        # The tapped option's id 404ed (stale index entry, §3.4). Clean
+        # needs_input restoring the question so another option can be tapped —
+        # not_found (manual search) when no question survives. Never a crash.
+        prev_q = staged_prev.get("question")
+        item = StagedItem(
+            item_index=item_index,
+            phrase=phrase,
+            status="needs_input" if prev_q else "not_found",
+            tier=3,
+            meal=meal,  # type: ignore[arg-type]
+            question=Question.model_validate(prev_q) if prev_q else None,
+            confidence="low",
+        )
+        await _write_item_row(
+            log_id, item_index, item,
+            network_calls=1,
+            resolve_ms=int((time.perf_counter() - t0) * 1000),
+            spoken_qty=spoken_qty,
+            spoken_unit=spoken_unit,
+        )
+        return item
+    food = dict(food)
     food.setdefault("source", source)
     food.setdefault("source_id", str(source_id))
     if display_name:
@@ -703,6 +773,10 @@ async def run_tier3(
     phrase, staged_prev = await _load_item(log_id, item_index)
     meal = staged_prev.get("meal") or "snack"
     spoken_qty, spoken_unit = _spoken(staged_prev)
+    # §3.4a: the user's cooked/raw/dry intent, when the refinement or phrase
+    # carries it — persisted into the staged payload for commit → alias.
+    answered_state = phrase_state(refinement) if refinement else None
+    state_intent = answered_state or phrase_state(phrase)
 
     candidates = await _local_candidates(phrase)
     agent_input = _agent_input(phrase, spoken_qty, spoken_unit, candidates, refinement)
@@ -763,30 +837,53 @@ async def run_tier3(
     if status == "resolved" and not (out.source and out.source_id):
         status = "not_found"  # malformed resolution — never render a food-less resolve
 
+    chosen: tuple | None = None
+    food: dict | None = None
     if status == "resolved":
-        key = (out.source, str(out.source_id))
-        food = food_cache.get(key)
+        # The chosen id can 404 (stale index entry, §3.4 adapter rules) —
+        # retry the agent's alternates in order before giving up. A promoted
+        # alternate keeps its label as display name, drops the dead serving
+        # choice, and demotes confidence to low.
+        chosen, food = await _first_live_food(
+            [(out.source, str(out.source_id), out.display_name, out.serving_id,
+              out.confidence)]
+            + [(a.source, str(a.source_id), a.label, None, "low")
+               for a in out.alternates],
+            counter, food_cache,
+        )
         if food is None:
-            counter["network_calls"] += 1
-            food = await fdc.get_food(out.source, str(out.source_id))
+            status = "not_found"  # every candidate 404ed — manual search box
+
+    if status == "resolved":
+        src, sid, display_name, chosen_serving_id, confidence = chosen
         food = dict(food)
-        food.setdefault("source", out.source)
-        food.setdefault("source_id", str(out.source_id))
-        if out.display_name:
-            food["display_name"] = out.display_name
+        food.setdefault("source", src)
+        food.setdefault("source_id", sid)
+        if display_name:
+            food["display_name"] = display_name
         elif not food.get("display_name"):
             food["display_name"] = food.get("name", "")
-        food_row_id = persisted.get(key) or await foods_repo.persist_food(food)
+        food_row_id = persisted.get((src, sid)) or await foods_repo.persist_food(food)
         # §7.3 rule 1: the spoken quantity always wins over the agent's serving
         serving_id, qty, verify = await _apply_portion(
-            food, out.serving_id, spoken_qty, spoken_unit
+            food, chosen_serving_id, spoken_qty, spoken_unit
         )
+        shown_alternates = [
+            Alternate(source=a.source, source_id=str(a.source_id), label=a.label)
+            for a in out.alternates[:3]
+            if (a.source, str(a.source_id)) != (src, sid)
+        ] or None
         item = _staged_from_food(
             item_index, phrase, meal, qty, food, str(food_row_id),
             serving_id=serving_id,
-            confidence="low" if verify else out.confidence,
-            alternates=alternates, question=None,
+            confidence="low" if verify else confidence,
+            alternates=shown_alternates, question=None,
         )
+        # §3.4a: a free-text refinement can BE the cooked/raw answer (the
+        # toggle sends "cooked"/"raw" as text) — don't re-ask what was just
+        # answered; the intent persists to the alias at commit.
+        if answered_state and item.state_question:
+            item = item.model_copy(update={"state_question": None})
         proposed_food_id: str | None = str(food_row_id)
     else:
         item = StagedItem(
@@ -810,5 +907,6 @@ async def run_tier3(
         agent_transcript=transcript,
         spoken_qty=spoken_qty,
         spoken_unit=spoken_unit,
+        state_answer=state_intent if item.status == "resolved" else None,
     )
     return item

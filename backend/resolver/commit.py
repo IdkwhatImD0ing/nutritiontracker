@@ -1,10 +1,12 @@
 """Commit — the learning writes (DESIGN.md §3.5), idempotent by construction.
 
-One interactive transaction: CAS on logs.status → entries insert (macros
-snapshotted from the foods cache; UNIQUE(log_id, item_index) tolerated
-idempotently) → alias upsert with explicit-choice semantics + rejected_count →
-portion-default recompute (mode of last 10) → per-item committed_at +
-edited_items. Trace scores (tracing.score_commit) post after the transaction.
+One interactive transaction: CAS on logs.status → core-macros guard (partial
+macros refuse the item as needs_input, never a partial snapshot) → entries
+insert (macros snapshotted from the foods cache; UNIQUE(log_id, item_index)
+tolerated idempotently) → alias upsert with explicit-choice semantics +
+rejected_count → portion-default recompute (mode of last 10) → per-item
+committed_at + edited_items. Trace scores post after the transaction, batched
+into one Langfuse flush per commit (§11).
 
 M0 seams: step 4 (meal-macro save_intent) is M3; tier-0 skip rules are wired
 (tier == 0 never writes aliases or portion defaults) but no tier-0 rows exist
@@ -31,6 +33,24 @@ class LogNotCommittable(Exception):
     """Log exists but is in a state the operation can't act on."""
 
 
+class ItemRefused(Exception):
+    """One item failed the core-macros guard — refused, never partially written."""
+
+    def __init__(self, item_index: int, reason: str):
+        super().__init__(reason)
+        self.item_index = item_index
+
+
+_CORE_MACROS = ("kcal", "protein_g", "carb_g", "fat_g")
+
+
+def _missing_core_macros(serving: dict) -> list[str]:
+    """Core-macros guard (§4 snapshot invariant): entries.macros must never be
+    a partial snapshot. Returns the missing/non-numeric core keys."""
+    macros = serving.get("macros") or {}
+    return [k for k in _CORE_MACROS if not isinstance(macros.get(k), (int, float))]
+
+
 def _scale_macros(macros: dict, qty: float) -> dict:
     return {
         k: round(float(v) * qty, 2)
@@ -50,8 +70,11 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
     """§3.5. Returns {"log": row, "replayed": bool, "scores": [...]}.
 
     Raises LogNotFound / LogNotCommittable (routes map to 404 / 409).
+    "errors" carries per-item refusals (core-macros guard): the item stays
+    uncommitted as needs_input (client shows verify-me), the rest commit.
     """
     scores: list[dict] = []
+    errors: list[dict] = []
     async with db.tx() as conn:
         # 0. compare-and-set — a retried commit must never double-insert
         cur = await conn.execute(
@@ -66,7 +89,7 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
             raise LogNotFound(str(log_id))
         if cur.rowcount == 0:
             if log["status"] == "committed":
-                return {"log": log, "replayed": True, "scores": []}
+                return {"log": log, "replayed": True, "scores": [], "errors": []}
             raise LogNotCommittable(f"log is {log['status']}")
 
         res_rows = {
@@ -82,7 +105,15 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
         for item in items:
             if item.status != "resolved" or item.food is None:
                 continue  # searching/needs_input/not_found stay uncommitted (§3.5)
-            outcome = await _commit_one(conn, log, item, res_rows.get(item.item_index))
+            res = res_rows.get(item.item_index)
+            try:
+                outcome = await _commit_one(conn, log, item, res)
+            except ItemRefused as e:
+                # core-macros guard: refuse THIS item, never block the rest;
+                # the row stays uncommitted so the §3.5 late path stays open.
+                await _refuse_item(conn, log, item, res, str(e))
+                errors.append({"item_index": e.item_index, "error": str(e)})
+                continue
             edited_count += 1 if outcome["was_edited"] else 0
             scores.append(outcome)
 
@@ -108,7 +139,7 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
         log = dict(log, status="committed", edited_items=edited_count)
 
     _post_scores(log, scores)
-    return {"log": log, "replayed": False, "scores": scores}
+    return {"log": log, "replayed": False, "scores": scores, "errors": errors}
 
 
 async def commit_item(log_id: UUID, item: StagedItem) -> dict:
@@ -133,12 +164,21 @@ async def commit_item(log_id: UUID, item: StagedItem) -> dict:
             )
         ).fetchone()
         if res is not None and res["committed_at"] is not None:
-            return {"log": log, "replayed": True, "scores": []}
-        outcome = await _commit_one(conn, log, item, res)
-        scores.append(outcome)
+            return {"log": log, "replayed": True, "scores": [], "errors": []}
+        refused: str | None = None
+        try:
+            outcome = await _commit_one(conn, log, item, res)
+            scores.append(outcome)
+        except ItemRefused as e:
+            # mark the row inside the tx so the verify-me state persists,
+            # then surface the per-item error (route maps to 409)
+            await _refuse_item(conn, log, item, res, str(e))
+            refused = str(e)
+    if refused is not None:
+        raise LogNotCommittable(refused)
 
     _post_scores(log, scores)
-    return {"log": log, "replayed": False, "scores": scores}
+    return {"log": log, "replayed": False, "scores": scores, "errors": []}
 
 
 async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> dict:
@@ -157,6 +197,16 @@ async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> di
             raise LogNotCommittable(f"food {item.food.id} has no usable serving")
     serving_id = serving["serving_id"]
 
+    # core-macros guard (BACKLOG 7): NEVER silently snapshot partial macros —
+    # runs before any write so a refusal leaves the item wholly uncommitted.
+    missing = _missing_core_macros(serving)
+    if missing:
+        raise ItemRefused(
+            item.item_index,
+            f"serving '{serving_id}' of '{food['display_name']}' is missing core "
+            f"macros ({', '.join(missing)}) — verify the food before committing",
+        )
+
     # 1. entry — macros snapshotted from the foods cache (per-serving × qty)
     macros = _scale_macros(serving["macros"], qty)
     grams = (
@@ -173,14 +223,24 @@ async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> di
     switched = proposed_food_id is not None and str(proposed_food_id) != item.food.id
     disambiguated = bool(res["was_disambiguated"]) if res is not None else False
     explicit = switched or disambiguated
-    was_edited = switched or (
+    # was_edited — the honest §9 edit signal (BACKLOG 4): any food/serving/qty
+    # delta proposed-vs-final, OR an explicit edit already recorded on the row
+    # (/api/resolve sets was_edited=TRUE; an edit that resolves back to the
+    # original proposal must not read as untouched). The qty delta counts even
+    # when no serving was proposed. was_disambiguated is never written here, so
+    # a truthy value recorded by the answer flow survives commit untouched.
+    serving_delta = (
         res is not None
         and res["proposed_serving_id"] is not None
-        and (
-            res["proposed_serving_id"] != serving_id
-            or (res["proposed_qty"] is not None and float(res["proposed_qty"]) != qty)
-        )
+        and res["proposed_serving_id"] != serving_id
     )
+    qty_delta = (
+        res is not None
+        and res["proposed_qty"] is not None
+        and float(res["proposed_qty"]) != qty
+    )
+    prior_edit = bool(res["was_edited"]) if res is not None else False
+    was_edited = switched or serving_delta or qty_delta or prior_edit
 
     # 2. alias — for each item except tier-0 expansions and removed rows.
     # Learned for the ORIGINAL spoken phrase (res["phrase"]); rejected_count
@@ -198,6 +258,18 @@ async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> di
             proposed_food_id=proposed_food_id if switched else None,
             tier=tier,
         )
+        # §3.4a: a known cooked/raw/dry intent (staged jsonb `state_answer`,
+        # written by the resolver) persists to the alias — the state question
+        # is asked at most once per phrase.
+        staged_prev = res["staged"] if res is not None else None
+        state_answer = (
+            staged_prev.get("state_answer") if isinstance(staged_prev, dict) else None
+        )
+        if state_answer in ("cooked", "raw", "dry"):
+            await conn.execute(
+                "UPDATE aliases SET state_answer = %s WHERE id = %s",
+                (state_answer, alias_id),
+            )
 
     await conn.execute(
         """
@@ -277,6 +349,32 @@ async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> di
     }
 
 
+async def _refuse_item(conn, log: dict, item: StagedItem, res: dict | None, reason: str) -> None:
+    """Core-macros refusal: flip the row to needs_input (client shows
+    verify-me via GET /api/logs/:id), keep it uncommitted, write nothing to
+    entries/aliases. The refusal reason rides in the staged jsonb
+    (`commit_error` — same extra-key precedent as spoken_qty)."""
+    refused = item.model_copy(update={"status": "needs_input", "confidence": "low"})
+    staged_payload = refused.model_dump(mode="json", exclude_none=True)
+    staged_payload["commit_error"] = reason
+    if res is None:
+        # added rows must not be telemetry ghosts (§5)
+        await conn.execute(
+            """
+            INSERT INTO item_resolutions (log_id, item_index, phrase, phrase_norm,
+                                          status, staged)
+            VALUES (%s, %s, %s, %s, 'needs_input', %s)
+            ON CONFLICT (log_id, item_index) DO NOTHING
+            """,
+            (log["id"], item.item_index, item.phrase, norm(item.phrase), Json(staged_payload)),
+        )
+    else:
+        await conn.execute(
+            "UPDATE item_resolutions SET status='needs_input', staged=%s WHERE id = %s",
+            (Json(staged_payload), res["id"]),
+        )
+
+
 async def _learn_alias(
     conn,
     *,
@@ -347,12 +445,16 @@ async def _recompute_alias_default(conn, alias_id: str) -> None:
 
 def _post_scores(log: dict, scores: list[dict]) -> None:
     """§3.5 step 5 / §10: post outcome scores onto the stored trace ids.
-    Best-effort — tracing failure must never fail a commit."""
+    Best-effort — tracing failure must never fail a commit.
+
+    BACKLOG 16: batched — tracing.score_commit is queue-only; exactly ONE
+    blocking flush per commit (§11 budget), not one per score."""
     if not scores:
         return
     try:
         import tracing
 
+        posted = False
         for s in scores:
             for trace_id in {log.get("trace_id"), s.get("trace_id")} - {None}:
                 tracing.score_commit(
@@ -371,6 +473,8 @@ def _post_scores(log: dict, scores: list[dict]) -> None:
                     tracing.score_commit(
                         trace_id, "tier", int(s["tier"]), comment=f"item {s['item_index']}"
                     )
-        tracing.flush()
+                posted = True
+        if posted:
+            tracing.flush()  # the one blocking flush per commit (§10 serverless rule)
     except Exception:
         pass

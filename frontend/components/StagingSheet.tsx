@@ -6,59 +6,156 @@ import {
   commitLog,
   getLog,
   kickTier3,
+  removeStagedItem,
+  resolveItem,
+  selectFood,
   type DayTotals,
+  type FoodSearchResult,
   type LogResponse,
   type Meal,
   type StagedItem,
 } from "@/lib/api";
+import ManualSearchSheet from "./ManualSearchSheet";
+import PortionSheet, { type PortionChoice } from "./PortionSheet";
 import StagedRow, { type PickOption } from "./StagedRow";
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const POLL_FIRST_MS = 1_000;
 const POLL_NEXT_MS = 2_000;
 const POLL_STOP_MS = 90_000; // hard stop (§5: 1s → 2s backoff, ~90s)
+const STALE_MS = 60_000; // §3.4: searching past 60s is stale → re-kick once
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const CORE = ["kcal", "protein_g", "carb_g", "fat_g"] as const;
+
+type MacrosT = NonNullable<StagedItem["macros"]>;
+
+function scaleMacros(
+  m: Record<string, number | null | undefined>,
+  f: number,
+): MacrosT {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(m)) {
+    if (typeof v === "number") out[k] = Math.round(v * f * 100) / 100;
+  }
+  return out as MacrosT;
+}
+
+/** Everything needed to restore the sheet unchanged after an undone discard
+ *  (BACKLOG 11) — local edits included. */
+export type StagingSnapshot = {
+  items: StagedItem[];
+  meal: Meal;
+  removed: number[];
+  logMealOverride: Meal | null;
+  itemMealOverrides: Record<number, Meal>;
+};
 
 type Props = {
   log: LogResponse;
-  onCommitted: (totals: DayTotals) => void;
-  onClose: () => void;
+  /** undo-restore state; when set, initial state comes from here, not `log` */
+  restore?: StagingSnapshot | null;
+  /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
+  onRendered?: () => void;
+  /** `pending` = rows still searching at commit time (§3.5 late stragglers) */
+  onCommitted: (totals: DayTotals, pending: StagedItem[]) => void;
+  onClose: (snapshot: StagingSnapshot) => void;
 };
 
-export default function StagingSheet({ log, onCommitted, onClose }: Props) {
-  const [items, setItems] = useState<StagedItem[]>(log.items);
-  const [meal, setMeal] = useState<Meal>(log.meal);
+export default function StagingSheet({
+  log,
+  restore,
+  onRendered,
+  onCommitted,
+  onClose,
+}: Props) {
+  const [items, setItems] = useState<StagedItem[]>(restore?.items ?? log.items);
+  const [meal, setMeal] = useState<Meal>(restore?.meal ?? log.meal);
   const [mealPickerOpen, setMealPickerOpen] = useState(false);
-  const [removed, setRemoved] = useState<ReadonlySet<number>>(new Set());
+  const [removed, setRemoved] = useState<ReadonlySet<number>>(
+    new Set(restore?.removed ?? []),
+  );
   const [expanded, setExpanded] = useState<number | null>(null);
   const [busyRows, setBusyRows] = useState<ReadonlySet<number>>(new Set());
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [portionFor, setPortionFor] = useState<number | null>(null);
+  const [manualFor, setManualFor] = useState<number | null>(null);
+  const [manualBusy, setManualBusy] = useState(false);
+  const [addText, setAddText] = useState("");
 
   const itemsRef = useRef(items);
   itemsRef.current = items;
-  const kickedRef = useRef<Set<number>>(new Set());
+  const mealRef = useRef(meal);
+  mealRef.current = meal;
+  const removedRef = useRef(removed);
+  removedRef.current = removed;
+  // BACKLOG 8: local meal overrides are merged over every server payload
+  // (kick, poll, answer) instead of being clobbered by it. Refs, not state —
+  // items already carry the applied meal; these only replay it on merges.
+  const mealOverridesRef = useRef<{ log: Meal | null; items: Record<number, Meal> }>({
+    log: restore?.logMealOverride ?? null,
+    items: { ...(restore?.itemMealOverrides ?? {}) },
+  });
+  // Kick accounting per item (§3.4 lifecycle: kick once on arrival, re-kick a
+  // stale row once, then not_found). Also guards StrictMode double-mount.
+  const kickCountRef = useRef<Map<number, number>>(new Map());
+  const lastKickRef = useRef<Map<number, number>>(new Map());
+  const renderedRef = useRef(false);
 
-  const mergeItem = (updated: StagedItem) =>
+  const withOverrides = (server: StagedItem): StagedItem => {
+    const o = mealOverridesRef.current;
+    return {
+      ...server,
+      meal: o.items[server.item_index] ?? o.log ?? server.meal,
+    };
+  };
+
+  const mergeItem = (updated: StagedItem) => {
+    const applied = withOverrides(updated);
     setItems((prev) =>
-      prev.map((i) => (i.item_index === updated.item_index ? updated : i)),
+      prev.map((i) => (i.item_index === applied.item_index ? applied : i)),
     );
+  };
 
   const kick = (itemIndex: number) => {
+    kickCountRef.current.set(
+      itemIndex,
+      (kickCountRef.current.get(itemIndex) ?? 0) + 1,
+    );
+    lastKickRef.current.set(itemIndex, Date.now());
     kickTier3({ log_id: log.log_id, item_index: itemIndex })
-      .then(mergeItem)
+      .then((item) => {
+        // Merge only if the row is still searching — a kick response landing
+        // after the poll already resolved the row must not clobber edits the
+        // user made in the meantime.
+        const local = itemsRef.current.find(
+          (i) => i.item_index === item.item_index,
+        );
+        if (local?.status === "searching") mergeItem(item);
+      })
       .catch(() => {
-        /* the poll + 90s watchdog covers a failed kick */
+        /* the poll + watchdog covers a failed kick */
       });
   };
 
-  // Kick tier 3 once for every row that arrived `searching` (§3.4: the
-  // client-side kick). kickedRef guards StrictMode double-mount.
+  // BACKLOG 2: signal first paint exactly once (StrictMode double-mount safe).
   useEffect(() => {
-    for (const item of log.items) {
-      if (item.status === "searching" && !kickedRef.current.has(item.item_index)) {
-        kickedRef.current.add(item.item_index);
+    if (renderedRef.current) return;
+    renderedRef.current = true;
+    onRendered?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Kick tier 3 once for every row currently `searching` (§3.4: the
+  // client-side kick). On an undo-restore or reopened log this re-kicks the
+  // stale rows — exactly the §3.4 "log reopened later" behavior.
+  useEffect(() => {
+    for (const item of itemsRef.current) {
+      if (
+        item.status === "searching" &&
+        (kickCountRef.current.get(item.item_index) ?? 0) === 0
+      ) {
         kick(item.item_index);
       }
     }
@@ -66,13 +163,22 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
   }, [log.log_id]);
 
   // Poll GET /api/logs/:id while anything is searching: 1s then 2s backoff,
-  // hard stop at ~90s, after which still-searching rows flip to not_found.
+  // hard stop at ~90s. The server's watchdog flags stale rows (§5); the
+  // client re-kicks a stale row once, then renders not_found. A local 60s
+  // since-last-kick timer covers the same lifecycle until the server-side
+  // stale flag lands (W3 seam).
   const hasSearching = items.some((i) => i.status === "searching");
   useEffect(() => {
     if (!hasSearching) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const start = Date.now();
+
+    const isStale = (server: StagedItem) => {
+      if (server.stale === true) return true;
+      const last = lastKickRef.current.get(server.item_index);
+      return last != null && Date.now() - last > STALE_MS;
+    };
 
     const tick = (delay: number) => {
       timer = setTimeout(async () => {
@@ -91,15 +197,41 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
         try {
           const fresh = await getLog(log.log_id);
           if (cancelled) return;
+          // Decide re-kicks OUTSIDE the state updater (updaters must stay
+          // pure; StrictMode may run them twice).
+          const rekicks = itemsRef.current
+            .filter((i) => i.status === "searching")
+            .map((i) =>
+              fresh.items.find((f) => f.item_index === i.item_index),
+            )
+            .filter(
+              (s): s is StagedItem =>
+                s != null &&
+                s.status === "searching" &&
+                isStale(s) &&
+                (kickCountRef.current.get(s.item_index) ?? 0) < 2,
+            )
+            .map((s) => s.item_index);
           setItems((prev) =>
             prev.map((i) => {
               if (i.status !== "searching") return i; // keep local edits
               const server = fresh.items.find(
                 (f) => f.item_index === i.item_index,
               );
-              return server ?? i;
+              if (!server) return i;
+              const merged = withOverrides(server);
+              if (
+                server.status === "searching" &&
+                isStale(server) &&
+                (kickCountRef.current.get(i.item_index) ?? 0) >= 2
+              ) {
+                // Re-kicked once already — §3.4: flips to not_found.
+                return { ...merged, status: "not_found" as const, stale: null };
+              }
+              return merged;
             }),
           );
+          rekicks.forEach(kick);
         } catch {
           /* transient poll failure — keep going until the stop */
         }
@@ -112,6 +244,7 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
       cancelled = true;
       clearTimeout(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSearching, log.log_id]);
 
   const setRowBusy = (itemIndex: number, busy: boolean) =>
@@ -122,9 +255,11 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
       return next;
     });
 
-  // Question options and alternate chips go through /api/resolve/answer:
-  // id-bearing picks resolve locally — one lookup, no second agent run
-  // (§3.4/§7.1); an id-less label re-enters tier 3 once as a free-text answer.
+  // Question options, alternate chips, and the cooked/raw toggle go through
+  // /api/resolve/answer: id-bearing picks resolve locally — one lookup, no
+  // second agent run (§3.4/§7.1); a cooked/raw toggle on a resolved row also
+  // resolves locally server-side (at most one targeted counterpart search,
+  // §3.4a); other id-less labels re-enter tier 3 once as free-text answers.
   const pick = async (item: StagedItem, opt: PickOption) => {
     setRowBusy(item.item_index, true);
     setError(null);
@@ -152,11 +287,127 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
   };
 
   const pickMeal = (m: Meal) => {
-    // Log-level chip propagates to all rows (§7.1).
+    // Log-level chip propagates to ALL rows — searching ones included — and
+    // survives kick/poll refreshes via the override merge (§7.1, BACKLOG 8).
     setMeal(m);
     setMealPickerOpen(false);
+    mealOverridesRef.current = { log: m, items: {} };
     setItems((prev) => prev.map((i) => ({ ...i, meal: m })));
   };
+
+  const pickItemMeal = (itemIndex: number, m: Meal) => {
+    mealOverridesRef.current.items[itemIndex] = m;
+    setItems((prev) =>
+      prev.map((i) => (i.item_index === itemIndex ? { ...i, meal: m } : i)),
+    );
+  };
+
+  const remove = (itemIndex: number) => {
+    setRemoved((prev) => new Set(prev).add(itemIndex));
+    // §7.1: removal writes item_resolutions.status='removed' server-side so
+    // the decompose error stays visible in telemetry. Commit-time absence is
+    // the backstop, so a failure here (route not deployed yet) is swallowed.
+    removeStagedItem(log.log_id, itemIndex).catch(() => {});
+  };
+
+  // §7.1 "+ add item": goes through POST /api/resolve with the log context so
+  // added items get resolution telemetry like everything else.
+  const addItem = () => {
+    const phrase = addText.trim();
+    if (!phrase) return;
+    const idx =
+      itemsRef.current.reduce((max, i) => Math.max(max, i.item_index), -1) + 1;
+    const m = mealRef.current;
+    mealOverridesRef.current.items[idx] = m; // added rows keep the sheet's meal
+    setItems((prev) => [
+      ...prev,
+      { item_index: idx, phrase, status: "searching" as const, meal: m },
+    ]);
+    setAddText("");
+    resolveItem({ log_id: log.log_id, item_index: idx, phrase })
+      .then((item) => {
+        // Same guard as kick(): don't clobber edits made after the poll
+        // already surfaced this row's resolution.
+        const local = itemsRef.current.find(
+          (i) => i.item_index === item.item_index,
+        );
+        if (local == null || local.status === "searching") mergeItem(item);
+      })
+      .catch(() =>
+        setItems((prev) =>
+          prev.map((i) =>
+            i.item_index === idx
+              ? { ...i, status: "not_found" as const }
+              : i,
+          ),
+        ),
+      );
+  };
+
+  // §7.1 portion sheet apply: optimistic client-side; display macros rescale
+  // when derivable, otherwise render "—" (the commit snapshot always
+  // re-derives from the foods cache server-side, so display can't corrupt).
+  const applyPortion = (
+    itemIndex: number,
+    serving: PortionChoice,
+    qty: number,
+  ) => {
+    setItems((prev) =>
+      prev.map((i) => {
+        if (i.item_index !== itemIndex) return i;
+        let macros: StagedItem["macros"] = null;
+        if (CORE.every((k) => typeof serving.macros?.[k] === "number")) {
+          macros = scaleMacros(serving.macros as Record<string, number>, qty);
+        } else if (
+          i.serving?.id === serving.id &&
+          i.macros != null &&
+          i.qty != null &&
+          i.qty > 0
+        ) {
+          macros = scaleMacros(i.macros, qty / i.qty);
+        }
+        return {
+          ...i,
+          serving: { id: serving.id, description: serving.description },
+          qty,
+          macros,
+        };
+      }),
+    );
+    setPortionFor(null);
+  };
+
+  // BACKLOG 3: manual-search selection round-trips through the server
+  // (POST /api/foods/select, or /api/resolve/answer for cached foods) so
+  // item_resolutions records the resolution like any other path.
+  const manualSelect = async (r: FoodSearchResult) => {
+    if (manualFor == null) return;
+    setManualBusy(true);
+    setError(null);
+    try {
+      const updated = await selectFood({
+        log_id: log.log_id,
+        item_index: manualFor,
+        hit: r,
+      });
+      mergeItem(updated);
+      setManualFor(null);
+    } catch {
+      setError("Couldn't select that food.");
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const snapshot = (): StagingSnapshot => ({
+    items: itemsRef.current,
+    meal: mealRef.current,
+    removed: [...removedRef.current],
+    logMealOverride: mealOverridesRef.current.log,
+    itemMealOverrides: { ...mealOverridesRef.current.items },
+  });
+
+  const close = () => onClose(snapshot());
 
   const visible = items.filter((i) => !removed.has(i.item_index));
   const totalKcal = visible.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
@@ -165,17 +416,46 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
     setCommitting(true);
     setError(null);
     try {
-      const totals = await commitLog(log.log_id, visible);
-      onCommitted(totals);
+      // Every non-removed row goes in the payload whatever its status —
+      // commit treats absent rows as removed and keeps `searching` rows
+      // uncommitted for the §3.5 commit-item late path.
+      const payload = visible;
+      const totals = await commitLog(log.log_id, payload);
+      // §3.5: a 200 with per-item errors is a PARTIAL commit — the server
+      // flipped those rows to needs_input and kept them uncommitted. Hand
+      // them to PendingItems as needs-attention alongside the searching
+      // stragglers instead of silently closing over them.
+      const refused = new Set((totals.errors ?? []).map((e) => e.item_index));
+      onCommitted(
+        totals,
+        payload
+          .filter(
+            (i) => i.status === "searching" || refused.has(i.item_index),
+          )
+          .map((i) =>
+            refused.has(i.item_index)
+              ? { ...i, status: "needs_input" as const }
+              : i,
+          ),
+      );
     } catch {
       setError("Commit failed — nothing was saved. Try again.");
       setCommitting(false);
     }
   };
 
+  const portionItem =
+    portionFor != null
+      ? items.find((i) => i.item_index === portionFor)
+      : undefined;
+  const manualItem =
+    manualFor != null
+      ? items.find((i) => i.item_index === manualFor)
+      : undefined;
+
   return (
     <>
-      <div className="sheet-backdrop" onClick={onClose} />
+      <div className="sheet-backdrop" onClick={close} />
       <div className="sheet" role="dialog" aria-label="Staged items">
         <div className="sheet-head">
           <div className="grabber" />
@@ -192,7 +472,7 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
               type="button"
               className="sheet-close"
               aria-label="Close"
-              onClick={onClose}
+              onClick={close}
             >
               ✕
             </button>
@@ -225,10 +505,11 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
                   cur === item.item_index ? null : item.item_index,
                 )
               }
-              onRemove={() =>
-                setRemoved((prev) => new Set(prev).add(item.item_index))
-              }
+              onRemove={() => remove(item.item_index)}
               onPick={(opt) => pick(item, opt)}
+              onPortion={() => setPortionFor(item.item_index)}
+              onManualSearch={() => setManualFor(item.item_index)}
+              onMeal={(m) => pickItemMeal(item.item_index, m)}
             />
           ))}
           {visible.length === 0 ? (
@@ -236,6 +517,25 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
               Nothing left to commit.
             </p>
           ) : null}
+
+          <form
+            className="add-item"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addItem();
+            }}
+          >
+            <input
+              value={addText}
+              onChange={(e) => setAddText(e.target.value)}
+              placeholder="+ add item"
+              aria-label="Add item"
+              autoComplete="off"
+            />
+            <button type="submit" disabled={!addText.trim()} aria-label="Add">
+              ↑
+            </button>
+          </form>
         </div>
 
         <div className="sheet-foot">
@@ -254,6 +554,25 @@ export default function StagingSheet({ log, onCommitted, onClose }: Props) {
           </button>
         </div>
       </div>
+
+      {portionItem ? (
+        <PortionSheet
+          item={portionItem}
+          onApply={(serving, qty) =>
+            applyPortion(portionItem.item_index, serving, qty)
+          }
+          onClose={() => setPortionFor(null)}
+        />
+      ) : null}
+
+      {manualItem ? (
+        <ManualSearchSheet
+          phrase={manualItem.phrase}
+          busy={manualBusy}
+          onSelect={manualSelect}
+          onClose={() => setManualFor(null)}
+        />
+      ) : null}
     </>
   );
 }

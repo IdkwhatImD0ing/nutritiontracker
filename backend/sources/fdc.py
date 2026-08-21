@@ -24,6 +24,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -393,11 +394,31 @@ async def search_generic(query: str) -> list[dict]:
     return hits
 
 
+_QUERY_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _brand_overlap(query_tokens: set[str], hit: dict) -> int:
+    """§3.4 rule 2: query tokens found in the hit's brand fields.
+
+    brandOwner is the corporate name ("Quest Nutrition, LLC"); brandName the
+    consumer-facing one ("fairlife" under brandOwner "Coca-Cola") — both count,
+    or either a "quest bar" or a "fairlife" query would miss its own brand.
+    """
+    brand_tokens: set[str] = set()
+    for field in (hit.get("brand_owner"), hit.get("brand_name")):
+        if field:
+            brand_tokens.update(_QUERY_TOKEN_RE.findall(str(field).lower()))
+    return len(query_tokens & brand_tokens)
+
+
 async def search_branded(query: str) -> list[dict]:
-    """FDC Branded search; brand_owner included for ranking (§3.4 rule 2)."""
+    """FDC Branded search, ranked by brand match against the query tokens
+    (§3.4 rule 2): plain name search is fuzzy-noisy — a "Quest" query returns
+    123k hits with competitors ranked first, verified live. The sort is stable,
+    so FDC's own relevance order is preserved within equal brand scores."""
     r = await _get("/foods/search", query=query, dataType="Branded", pageSize=25)
     r.raise_for_status()
-    return [{
+    hits = [{
         "fdc_id": f["fdcId"],
         "description": f.get("description", ""),
         "brand_owner": f.get("brandOwner"),
@@ -407,6 +428,9 @@ async def search_branded(query: str) -> list[dict]:
         "published_date": f.get("publishedDate"),
         "gtin_upc": f.get("gtinUpc"),
     } for f in r.json().get("foods", [])]
+    query_tokens = set(_QUERY_TOKEN_RE.findall(query.lower()))
+    hits.sort(key=lambda h: -_brand_overlap(query_tokens, h))
+    return hits
 
 
 async def lookup_barcode(code: str) -> dict | None:
@@ -444,7 +468,8 @@ async def get_food(source: str, source_id: str) -> dict | None:
     """Fetch + normalize one FDC record. Returns None on 404 (stale index ids)."""
     if source != "fdc":
         raise ValueError(f"fdc adapter got source={source!r}")
-    r = await _get(f"/food/{source_id}")
+    # URL-encode: source_id is model/client-supplied text — never raw in a path.
+    r = await _get(f"/food/{quote(str(source_id), safe='')}")
     if r.status_code == 404:
         return None
     r.raise_for_status()

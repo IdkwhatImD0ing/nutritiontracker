@@ -26,8 +26,24 @@ class CommitItemRequest(BaseModel):
     item: StagedItem
 
 
-@router.post("/api/logs/{log_id}/commit", response_model=DayTotals)
-async def commit_log(log_id: UUID, body: CommitRequest) -> DayTotals:
+class CommitItemError(BaseModel):
+    """One core-macros refusal (§3.5): the item stayed uncommitted as
+    needs_input; the rest of the log committed."""
+
+    item_index: int
+    error: str
+
+
+class CommitResponse(DayTotals):
+    """DayTotals + per-item refusals. A 200 with non-empty errors is a PARTIAL
+    commit — the client must keep refused rows visible (verify-me / pending),
+    never close over them (§3.5; the silent-protein-hole failure class)."""
+
+    errors: list[CommitItemError] = []
+
+
+@router.post("/api/logs/{log_id}/commit", response_model=CommitResponse)
+async def commit_log(log_id: UUID, body: CommitRequest) -> CommitResponse:
     try:
         result = await commit_tx.commit_log(log_id, body.items)
     except commit_tx.LogNotFound:
@@ -35,7 +51,11 @@ async def commit_log(log_id: UUID, body: CommitRequest) -> DayTotals:
     except commit_tx.LogNotCommittable as e:
         raise HTTPException(409, str(e))
     day = await local_date(result["log"]["captured_at"])
-    return await compute_day_totals(day)
+    totals = await compute_day_totals(day)
+    return CommitResponse(
+        **totals.model_dump(),
+        errors=[CommitItemError(**e) for e in result.get("errors", [])],
+    )
 
 
 @router.post("/api/logs/{log_id}/commit-item", response_model=DayTotals)

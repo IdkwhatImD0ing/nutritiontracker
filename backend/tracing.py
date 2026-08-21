@@ -73,9 +73,8 @@ def score_commit(
     value: Union[float, str],
     comment: Optional[str] = None,
 ) -> None:
-    """Post a score onto a stored trace id (works pre-ingestion). Flushes so a
-    frozen serverless function can't drop the commit-time score."""
+    """Post a score onto a stored trace id (works pre-ingestion). Does NOT
+    flush — the route layer batches scores and calls flush() once before
+    returning (§10 serverless rule, §11 commit budget)."""
     init_tracing()
-    client = get_client()
-    client.create_score(trace_id=trace_id, name=name, value=value, comment=comment)
-    client.flush()
+    get_client().create_score(trace_id=trace_id, name=name, value=value, comment=comment)

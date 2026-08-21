@@ -1,10 +1,11 @@
 "use client";
 
-import type { StagedItem } from "@/lib/api";
+import type { Meal, StagedItem } from "@/lib/api";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 
+const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
 const UNITS = new Set(["g", "mg", "mcg", "ug", "iu", "kcal"]);
 
@@ -34,6 +35,12 @@ type Props = {
   onToggle: () => void;
   onRemove: () => void;
   onPick: (opt: PickOption) => void;
+  /** tap the portion → §7.1 portion sheet */
+  onPortion: () => void;
+  /** not_found rows → BACKLOG 3 manual-search sheet */
+  onManualSearch: () => void;
+  /** per-item meal override (§7.1 — the header chip propagates; this wins) */
+  onMeal: (m: Meal) => void;
 };
 
 export default function StagedRow({
@@ -43,6 +50,9 @@ export default function StagedRow({
   onToggle,
   onRemove,
   onPick,
+  onPortion,
+  onManualSearch,
+  onMeal,
 }: Props) {
   const searching = busy || item.status === "searching";
   const notFound = item.status === "not_found";
@@ -67,9 +77,9 @@ export default function StagedRow({
     >
       <div
         className="row-main"
-        onClick={onToggle}
+        onClick={notFound ? onManualSearch : onToggle}
         role="button"
-        aria-expanded={expanded}
+        aria-expanded={notFound ? undefined : expanded}
       >
         <div className="row-info">
           <div className="row-name">
@@ -86,14 +96,22 @@ export default function StagedRow({
           <div className="row-sub">
             {item.food?.brand ? `${item.food.brand} · ` : ""}
             {portion ? (
-              <span className={verify ? "verify" : undefined}>
+              <button
+                type="button"
+                className={`portion-btn${verify ? " verify" : ""}`}
+                aria-label={`Change portion for ${name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPortion();
+                }}
+              >
                 {portion}
                 {verify ? " · verify" : ""}
-              </span>
+              </button>
             ) : searching ? (
               "resolving…"
             ) : notFound ? (
-              "couldn't resolve — remove or retry later"
+              <span className="manual-hint">tap to search manually</span>
             ) : (
               item.phrase
             )}
@@ -137,6 +155,26 @@ export default function StagedRow({
         </>
       ) : null}
 
+      {/* §7.1 cooked/raw toggle: one tap; the answer flows through
+          /api/resolve/answer and persists to the alias — asked at most once
+          per phrase. */}
+      {item.status === "resolved" && item.state_question ? (
+        <div className="chips">
+          <span className="state-q">Cooked or raw?</span>
+          {(["cooked", "raw"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className="chip"
+              disabled={busy}
+              onClick={() => onPick({ label: s })}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {item.status === "resolved" && item.alternates?.length ? (
         <div className="chips">
           {item.alternates.map((alt) => (
@@ -154,22 +192,24 @@ export default function StagedRow({
         </div>
       ) : null}
 
-      {expanded && macros != null ? (
+      {expanded && !notFound ? (
         <div className="row-detail">
-          <div className="macro-grid num">
-            <div className="macro-cell protein">
-              <div className="v">{fmt1.format(macros.protein_g)}g</div>
-              <div className="k">Protein</div>
+          {macros != null ? (
+            <div className="macro-grid num">
+              <div className="macro-cell protein">
+                <div className="v">{fmt1.format(macros.protein_g)}g</div>
+                <div className="k">Protein</div>
+              </div>
+              <div className="macro-cell">
+                <div className="v">{fmt1.format(macros.carb_g)}g</div>
+                <div className="k">Carbs</div>
+              </div>
+              <div className="macro-cell">
+                <div className="v">{fmt1.format(macros.fat_g)}g</div>
+                <div className="k">Fat</div>
+              </div>
             </div>
-            <div className="macro-cell">
-              <div className="v">{fmt1.format(macros.carb_g)}g</div>
-              <div className="k">Carbs</div>
-            </div>
-            <div className="macro-cell">
-              <div className="v">{fmt1.format(macros.fat_g)}g</div>
-              <div className="k">Fat</div>
-            </div>
-          </div>
+          ) : null}
           {microEntries.length ? (
             <div className="micro-list num">
               {microEntries.map(([k, v]) => (
@@ -180,6 +220,23 @@ export default function StagedRow({
               ))}
             </div>
           ) : null}
+          {/* per-item meal chip: overrides the header for mixed logs (§7.1);
+              a 4-option picker, never blind-cycle */}
+          <div className="detail-meal">
+            <span className="k">Meal</span>
+            <div className="chips">
+              {MEALS.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`chip${item.meal === m ? " active" : ""}`}
+                  onClick={() => onMeal(m)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
           {portion ? (
             <div className="detail-serving">
               Portion: {portion}

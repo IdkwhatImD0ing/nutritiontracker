@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 import tracing
-from routes import commit, diary, logs, resolve
+from routes import commit, diary, entries, foods, logs, resolve
 
 
 @asynccontextmanager
@@ -36,3 +36,5 @@ app.include_router(logs.router)
 app.include_router(resolve.router)
 app.include_router(commit.router)
 app.include_router(diary.router)
+app.include_router(entries.router)
+app.include_router(foods.router)

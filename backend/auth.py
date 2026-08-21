@@ -8,6 +8,7 @@ works naturally in tests.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -50,10 +51,20 @@ def _env(name: str, default: str | None = None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# JWKS cache: in-process, refetch on kid miss (covers cold start + rotation)
+# JWKS cache: in-process, refetch on kid miss (covers cold start + rotation).
+# Cool-down (BACKLOG 14): a refetch that still misses its kid starts a
+# per-process cool-down during which every unknown kid 401s without fetching —
+# a flood of garbage kids can't amplify into JWKS requests. This is also the
+# negative kid cache, held collectively: any kid absent from the last fetched
+# document stays a no-fetch 401 for the window (a per-kid structure would be
+# redundant — no per-kid entry can outlive this timer). A genuine rotation
+# outside an attack window still refetches immediately (no prior failed
+# fetch), so legit users never see the cool-down.
 # ---------------------------------------------------------------------------
 
 _keys: dict[str, jwt.PyJWK] = {}  # kid -> key
+_last_failed_fetch: float = float("-inf")  # monotonic time of last kid-missing fetch
+_REFETCH_COOLDOWN_S = 60.0
 
 
 def _auth_base_url() -> str:
@@ -73,21 +84,30 @@ async def _fetch_jwks() -> dict:
 
 
 async def _signing_key(kid: str) -> jwt.PyJWK:
+    global _last_failed_fetch
+    key = _keys.get(kid)
+    if key is not None:
+        return key
+    now = time.monotonic()
+    if now - _last_failed_fetch < _REFETCH_COOLDOWN_S:
+        # Negative cache / cool-down: the last refetch didn't resolve its kid,
+        # so don't fetch again yet — this kid is either known-missing or part
+        # of the same unknown-kid flood.
+        raise HTTPException(status_code=401, detail="unknown signing key")
+    data = await _fetch_jwks()
+    fresh: dict[str, jwt.PyJWK] = {}
+    for k in data.get("keys", []):
+        if not k.get("kid"):
+            continue
+        try:
+            fresh[k["kid"]] = jwt.PyJWK(k)
+        except jwt.exceptions.PyJWKError:
+            continue
+    _keys.clear()
+    _keys.update(fresh)
     key = _keys.get(kid)
     if key is None:
-        data = await _fetch_jwks()
-        fresh: dict[str, jwt.PyJWK] = {}
-        for k in data.get("keys", []):
-            if not k.get("kid"):
-                continue
-            try:
-                fresh[k["kid"]] = jwt.PyJWK(k)
-            except jwt.exceptions.PyJWKError:
-                continue
-        _keys.clear()
-        _keys.update(fresh)
-        key = _keys.get(kid)
-    if key is None:
+        _last_failed_fetch = now
         raise HTTPException(status_code=401, detail="unknown signing key")
     return key
 
@@ -110,13 +130,36 @@ def _bearer_token(request: Request) -> str:
     return token.strip()
 
 
+def _allowed_origins() -> frozenset[str]:
+    """Origins allowed on state-changing requests. Explicit APP_ORIGIN wins;
+    when unset, default from Vercel's env (BACKLOG 14) so deployed
+    environments are fail-closed without per-project config. Empty = nothing
+    configured (bare local dev)."""
+    explicit = _env("APP_ORIGIN")
+    if explicit:
+        return frozenset({explicit.rstrip("/")})
+    derived: set[str] = set()
+    for name in ("VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
+        host = (_env(name) or "").strip().rstrip("/")
+        if host:
+            derived.add(host if "://" in host else f"https://{host}")
+    return frozenset(derived)
+
+
 def _check_origin(request: Request) -> None:
-    app_origin = _env("APP_ORIGIN")
-    if not app_origin or request.method.upper() not in _STATE_CHANGING:
+    if request.method.upper() not in _STATE_CHANGING:
         return
     origin = request.headers.get("origin")
-    if origin is not None and origin.rstrip("/") != app_origin.rstrip("/"):
-        raise HTTPException(status_code=403, detail="origin mismatch")
+    if origin is None:
+        return  # non-browser client; the bearer token is still required
+    allowed = _allowed_origins()
+    if not allowed:
+        return  # nothing configured: bare local dev stays fail-open
+    if origin.rstrip("/") in allowed:
+        return
+    if urlsplit(origin).hostname in ("localhost", "127.0.0.1", "::1"):
+        return  # dev allowance: local frontend against a deployed backend
+    raise HTTPException(status_code=403, detail="origin mismatch")
 
 
 async def require_user(request: Request) -> dict:

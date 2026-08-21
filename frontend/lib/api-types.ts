@@ -49,7 +49,56 @@ export interface paths {
         get: operations["get_log_api_logs__log_id__get"];
         put?: never;
         post?: never;
+        /**
+         * Discard Log
+         * @description §5: discard a staged log — status 'discarded' is adherence-relevant
+         *     data (§9), so sheet close must land here, not just drop client state.
+         */
+        delete: operations["discard_log_api_logs__log_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/{log_id}/timings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Timings
+         * @description §9: staged_ms has exactly one write path — this one — and it writes
+         *     only while NULL, so the first render's timing can never be overwritten.
+         */
+        patch: operations["patch_timings_api_logs__log_id__timings_patch"];
+        trace?: never;
+    };
+    "/api/logs/{log_id}/items/{item_index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Staged Item
+         * @description §7.1: removing a staged row writes item_resolutions.status='removed'
+         *     immediately, so the decompose error stays visible in telemetry without
+         *     waiting for commit (commit-time absence remains the backstop). A removed
+         *     row never writes an alias and never reaches entries.
+         */
+        delete: operations["remove_staged_item_api_logs__log_id__items__item_index__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -157,6 +206,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/entries/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Entry */
+        delete: operations["delete_entry_api_entries__entry_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Entry */
+        patch: operations["patch_entry_api_entries__entry_id__patch"];
+        trace?: never;
+    };
+    "/api/foods/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Foods */
+        get: operations["search_foods_api_foods_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/foods/select": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Select Food */
+        post: operations["select_food_api_foods_select_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -203,6 +304,17 @@ export interface components {
             answer: components["schemas"]["Answer"];
         };
         /**
+         * CommitItemError
+         * @description One core-macros refusal (§3.5): the item stayed uncommitted as
+         *     needs_input; the rest of the log committed.
+         */
+        CommitItemError: {
+            /** Item Index */
+            item_index: number;
+            /** Error */
+            error: string;
+        };
+        /**
          * CommitItemRequest
          * @description §5: {item_index, StagedItem} — the late-straggler append.
          */
@@ -215,6 +327,28 @@ export interface components {
         CommitRequest: {
             /** Items */
             items: components["schemas"]["StagedItem"][];
+        };
+        /**
+         * CommitResponse
+         * @description DayTotals + per-item refusals. A 200 with non-empty errors is a PARTIAL
+         *     commit — the client must keep refused rows visible (verify-me / pending),
+         *     never close over them (§3.5; the silent-protein-hole failure class).
+         */
+        CommitResponse: {
+            /** Kcal */
+            kcal: number;
+            /** Protein G */
+            protein_g: number;
+            /** Carb G */
+            carb_g: number;
+            /** Fat G */
+            fat_g: number;
+            targets: components["schemas"]["MacroTargets"];
+            /**
+             * Errors
+             * @default []
+             */
+            errors: components["schemas"]["CommitItemError"][];
         };
         /**
          * DayTotals
@@ -266,6 +400,57 @@ export interface components {
             };
             totals: components["schemas"]["DayTotals"];
         };
+        /** DiscardResponse */
+        DiscardResponse: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            /**
+             * Status
+             * @default discarded
+             * @constant
+             */
+            status: "discarded";
+        };
+        /**
+         * EntryPatch
+         * @description Any subset: qty scales; serving_id re-derives; food_id corrects + learns.
+         */
+        EntryPatch: {
+            /** Qty */
+            qty?: number | null;
+            /** Serving Id */
+            serving_id?: string | null;
+            /** Food Id */
+            food_id?: string | null;
+        };
+        /** EntryPatchResponse */
+        EntryPatchResponse: {
+            entry: components["schemas"]["DiaryEntry"];
+            totals: components["schemas"]["DayTotals"];
+        };
+        /**
+         * FoodHit
+         * @description One condensed search hit — enough to render a row and to select it.
+         */
+        FoodHit: {
+            /** Source */
+            source: string;
+            /** Source Id */
+            source_id: string;
+            /** Label */
+            label: string;
+            /** Brand */
+            brand?: string | null;
+            /** Food Id */
+            food_id?: string | null;
+            /** Data Type */
+            data_type?: string | null;
+            /** Protein Per 100G */
+            protein_per_100g?: number | null;
+        };
         /** FoodRef */
         FoodRef: {
             /** Id */
@@ -274,6 +459,19 @@ export interface components {
             name: string;
             /** Brand */
             brand?: string | null;
+        };
+        /** FoodSearchResponse */
+        FoodSearchResponse: {
+            /** Query */
+            query: string;
+            /** Local */
+            local: components["schemas"]["FoodHit"][];
+            /** Generic */
+            generic: components["schemas"]["FoodHit"][];
+            /** Branded */
+            branded: components["schemas"]["FoodHit"][];
+            /** Fdc Error */
+            fdc_error?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -303,6 +501,20 @@ export interface components {
             capture_fallback: boolean;
             /** Capture Error */
             capture_error?: string | null;
+        };
+        /**
+         * LogPollResponse
+         * @description LogResponse whose items can carry the watchdog's stale flag.
+         */
+        LogPollResponse: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            meal: components["schemas"]["Meal"];
+            /** Items */
+            items: components["schemas"]["StagedItemOut"][];
         };
         /** LogResponse */
         LogResponse: {
@@ -365,6 +577,22 @@ export interface components {
             /** Source Id */
             source_id?: string | null;
         };
+        /** RemoveItemResponse */
+        RemoveItemResponse: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            /** Item Index */
+            item_index: number;
+            /**
+             * Status
+             * @default removed
+             * @constant
+             */
+            status: "removed";
+        };
         /** ResolveRequest */
         ResolveRequest: {
             /**
@@ -380,6 +608,43 @@ export interface components {
             qty?: number | null;
             /** Unit */
             unit?: string | null;
+        };
+        /** SelectRequest */
+        SelectRequest: {
+            /** Source */
+            source: string;
+            /** Source Id */
+            source_id: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Log Id */
+            log_id?: string | null;
+            /** Item Index */
+            item_index?: number | null;
+        };
+        /** SelectResponse */
+        SelectResponse: {
+            /** Food Id */
+            food_id?: string | null;
+            item?: components["schemas"]["StagedItem"] | null;
+        };
+        /**
+         * ServingOption
+         * @description One row of foods.servings, surfaced on staged rows so the §7.1 portion
+         *     sheet can list every serving the database defines — with per-single-serving
+         *     macros for the live preview.
+         */
+        ServingOption: {
+            /** Serving Id */
+            serving_id: string;
+            /** Description */
+            description: string;
+            /** Grams */
+            grams?: number | null;
+            /** Macros */
+            macros?: {
+                [key: string]: number;
+            } | null;
         };
         /** ServingRef */
         ServingRef: {
@@ -414,6 +679,51 @@ export interface components {
             question?: components["schemas"]["Question"] | null;
             /** Confidence */
             confidence?: ("high" | "medium" | "low") | null;
+            /** Servings */
+            servings?: components["schemas"]["ServingOption"][] | null;
+            /** Search Instead */
+            search_instead?: boolean | null;
+        };
+        /**
+         * StagedItemOut
+         * @description A StagedItem as returned by GET /api/logs/{id}, plus the watchdog flag.
+         *
+         *     stale=true marks a status="searching" item whose tier-3 run started (or
+         *     was staged) more than 60s ago with tier3_attempts < 2: the client should
+         *     re-kick it once via POST /api/resolve/tier3 (§3.4 failure lifecycle).
+         *     Computed at poll time, never persisted; null/absent everywhere else.
+         */
+        StagedItemOut: {
+            /** Item Index */
+            item_index: number;
+            /** Phrase */
+            phrase: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "resolved" | "searching" | "needs_input" | "not_found";
+            /** Tier */
+            tier?: (0 | 1 | 2 | 3) | null;
+            food?: components["schemas"]["FoodRef"] | null;
+            serving?: components["schemas"]["ServingRef"] | null;
+            /** Qty */
+            qty?: number | null;
+            macros?: components["schemas"]["Macros"] | null;
+            meal: components["schemas"]["Meal"];
+            /** Alternates */
+            alternates?: components["schemas"]["Alternate"][] | null;
+            /** State Question */
+            state_question?: boolean | null;
+            question?: components["schemas"]["Question"] | null;
+            /** Confidence */
+            confidence?: ("high" | "medium" | "low") | null;
+            /** Servings */
+            servings?: components["schemas"]["ServingOption"][] | null;
+            /** Search Instead */
+            search_instead?: boolean | null;
+            /** Stale */
+            stale?: boolean | null;
         };
         /** Tier3KickRequest */
         Tier3KickRequest: {
@@ -424,6 +734,24 @@ export interface components {
             log_id: string;
             /** Item Index */
             item_index: number;
+        };
+        /**
+         * TimingsPatch
+         * @description §9: client-observed capture-start → list-rendered, in milliseconds.
+         */
+        TimingsPatch: {
+            /** Staged Ms */
+            staged_ms: number;
+        };
+        /** TimingsResponse */
+        TimingsResponse: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            /** Staged Ms */
+            staged_ms: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -519,7 +847,105 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LogResponse"];
+                    "application/json": components["schemas"]["LogPollResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_log_api_logs__log_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                log_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscardResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_timings_api_logs__log_id__timings_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                log_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TimingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_staged_item_api_logs__log_id__items__item_index__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                log_id: string;
+                item_index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveItemResponse"];
                 };
             };
             /** @description Validation Error */
@@ -653,7 +1079,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DayTotals"];
+                    "application/json": components["schemas"]["CommitResponse"];
                 };
             };
             /** @description Validation Error */
@@ -720,6 +1146,137 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DiaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_entry_api_entries__entry_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayTotals"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_entry_api_entries__entry_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntryPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryPatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_foods_api_foods_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                source?: "all" | "local" | "fdc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FoodSearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    select_food_api_foods_select_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectResponse"];
                 };
             };
             /** @description Validation Error */

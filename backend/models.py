@@ -48,6 +48,17 @@ class ServingRef(BaseModel):
     description: str
 
 
+class ServingOption(BaseModel):
+    """One row of foods.servings, surfaced on staged rows so the §7.1 portion
+    sheet can list every serving the database defines — with per-single-serving
+    macros for the live preview."""
+
+    serving_id: str
+    description: str
+    grams: float | None = None
+    macros: dict[str, float] | None = None
+
+
 class Alternate(BaseModel):
     source: str | None = None
     source_id: str | None = None
@@ -81,6 +92,8 @@ class StagedItem(BaseModel):
     state_question: bool | None = None  # one-time cooked/raw toggle (§3.4a)
     question: Question | None = None
     confidence: Literal["high", "medium", "low"] | None = None
+    servings: list[ServingOption] | None = None  # the food's serving list (§7.1 portion sheet)
+    search_instead: bool | None = None  # §3.3 rule 3 "search instead" affordance
 
 
 # ---------------------------------------------------------------------------

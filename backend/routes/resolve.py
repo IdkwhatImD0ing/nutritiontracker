@@ -1,16 +1,16 @@
 """/api/resolve routes — tier-3 kick, edited-phrase re-resolution, question answers.
 
 DESIGN.md §5, §3.4. Exposes an APIRouter; the integrator wires it into main.py.
-M0 scope for POST /api/resolve: re-run tier 1 (exact alias match) or tier 3 for an
-edited phrase — the single-item decompose micro-call (tier 2b parity) is a later pass.
+POST /api/resolve runs the SAME cascade as staging (resolver.cascade: tier-1
+pick(), tier-2 trigram, §7.3 portion resolution incl. spoken qty+unit) — the
+single-item decompose micro-call (tier 2b parity, §5) is a later pass; edited
+phrases get tiers 1/2a locally, else tier 3.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import time
-import unicodedata
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,15 +19,16 @@ from pydantic import BaseModel
 import db
 from auth import require_user
 from models import (
-    Alternate,
-    FoodRef,
-    Macros,
+    Meal,
+    ParsedItem,
     ResolveRequest,
-    ServingRef,
     StagedItem,
     Tier3KickRequest,
 )
+from resolver import cascade
+from resolver.norm import norm
 from services import tier3
+from sources import fdc
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -52,22 +53,6 @@ class AnswerRequest(BaseModel):
     log_id: UUID
     item_index: int
     answer: Answer
-
-
-# ---------------------------------------------------------------------------
-# norm() — §3.0 (local copy; the resolver workstream owns the canonical one)
-# ---------------------------------------------------------------------------
-
-_ARTICLES = {"a", "an", "the", "my", "some"}
-
-
-def _norm(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s).lower()
-    s = re.sub(r"[^\w\s]", " ", s)
-    words = s.split()
-    while words and words[0] in _ARTICLES:
-        words.pop(0)
-    return " ".join(words)
 
 
 def _col(row, idx: int, key: str):
@@ -112,18 +97,21 @@ async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/resolve — re-resolve an edited phrase (M0: tier 1 or tier 3),
-# writing the item row per §5 so edited rows are never telemetry ghosts.
+# POST /api/resolve — re-resolve an edited/added phrase through the SAME
+# cascade as staging (tiers 1–2, §3.2/§3.3/§7.3), else tier 3; writing the
+# item row per §5 so edited rows are never telemetry ghosts.
 # ---------------------------------------------------------------------------
 
 
 @router.post("/api/resolve", response_model=StagedItem)
 async def resolve_item(body: ResolveRequest) -> StagedItem:
     t0 = time.perf_counter()
-    key = _norm(body.phrase)
     prev = await _item_row(body.log_id, body.item_index)
     prev_staged = _staged_dict(prev) if prev is not None else {}
-    meal = prev_staged.get("meal") or "snack"
+    try:
+        meal = Meal(prev_staged.get("meal") or "snack")
+    except ValueError:
+        meal = Meal.snack
     # spoken qty/unit: the request's, else whatever the original utterance carried
     spoken_qty = body.qty if body.qty is not None else prev_staged.get("spoken_qty")
     spoken_unit = body.unit if body.unit is not None else prev_staged.get("spoken_unit")
@@ -133,7 +121,7 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
         phrase=body.phrase,
         status="searching",
         qty=spoken_qty,
-        meal=meal,  # type: ignore[arg-type]
+        meal=meal,
     )
     staged_payload = searching.model_dump(mode="json", exclude_none=True)
     staged_payload["spoken_qty"] = spoken_qty
@@ -156,98 +144,47 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
             str(body.log_id),
             body.item_index,
             body.phrase,
-            key,
+            norm(body.phrase),
             json.dumps(staged_payload),
         ),
     )
 
-    item = await _try_tier1(body, key, meal, spoken_qty, t0)
-    if item is not None:
-        return item
-    return await tier3.run_tier3(str(body.log_id), body.item_index)
-
-
-async def _try_tier1(
-    body: ResolveRequest, key: str, meal: str, spoken_qty: float | None, t0: float
-) -> StagedItem | None:
-    """Exact alias match (§3.2). M0 pick(): pinned → recent explicit choice →
-    use_count/recency (the mode-of-last-10 refinement is the resolver workstream's)."""
-    rows = await db.fetchall(
-        """
-        SELECT a.id, a.food_id, a.default_serving_id, a.default_qty,
-               f.display_name, f.brand, f.servings, f.default_serving_id
-        FROM aliases a JOIN foods f ON f.id = a.food_id
-        WHERE a.alias_norm = %s
-        ORDER BY a.pinned DESC,
-                 (a.last_explicit_at IS NOT NULL
-                  AND a.last_explicit_at > now() - interval '90 days') DESC,
-                 a.last_explicit_at DESC NULLS LAST,
-                 a.use_count DESC, a.last_used_at DESC
-        """,
-        (key,),
-    )
-    if not rows:
-        return None
-
-    top = rows[0]
-    alias_id = str(_col(top, 0, "id"))
-    food_id = str(_col(top, 1, "food_id"))
-    servings_raw = _col(top, 6, "servings")
-    servings = servings_raw if isinstance(servings_raw, list) else json.loads(servings_raw)
-    serving_id = _col(top, 2, "default_serving_id") or _col(top, 7, "default_serving_id")
-    serving = next((s for s in servings if s.get("serving_id") == serving_id), None)
-    if serving is None:  # dangling id never renders (§4 invariant)
-        serving = next(
-            (s for s in servings if s.get("serving_id") == _col(top, 7, "default_serving_id")),
-            servings[0] if servings else None,
-        )
-    if serving is None:
-        return None
-    # §7.3: spoken quantity wins, else the alias default, else 1
-    if spoken_qty is not None:
-        final_qty = float(spoken_qty)
-    else:
-        final_qty = float(_col(top, 3, "default_qty") or 1)
-    raw_macros = serving.get("macros") or {}
-    macros = (
-        Macros(**{k: round(float(v) * final_qty, 2) for k, v in raw_macros.items()})
-        if {"kcal", "protein_g", "carb_g", "fat_g"} <= set(raw_macros)
-        else None
-    )
-    alternates = [
-        Alternate(
-            food_id=str(_col(r, 1, "food_id")),
-            label=(_col(r, 4, "display_name") or "")
-            + (f" ({_col(r, 5, 'brand')})" if _col(r, 5, "brand") else ""),
-        )
-        for r in rows[1:4]
-    ] or None
-
-    item = StagedItem(
-        item_index=body.item_index,
+    # BACKLOG 6: the one cascade — same pick(), same §7.3 portion resolution
+    # (spoken qty AND unit, incl. the count-without-unit rule) as staging.
+    # library_match is None: no decompose micro-call on this path yet (§5 seam).
+    parsed = ParsedItem(
         phrase=body.phrase,
-        status="resolved",
-        tier=1,
-        food=FoodRef(
-            id=food_id,
-            name=_col(top, 4, "display_name") or "",
-            brand=_col(top, 5, "brand"),
-        ),
-        serving=ServingRef(
-            id=serving.get("serving_id", ""), description=serving.get("description", "")
-        ),
-        qty=final_qty,
-        macros=macros,
-        meal=meal,  # type: ignore[arg-type]
-        alternates=alternates,
+        phrase_kind="food",
+        qty=float(spoken_qty) if spoken_qty is not None else None,
+        unit=spoken_unit,
+        state=None,
+        brand=None,
+        library_match=None,
+        meal_ref=None,
     )
+    res = await cascade.resolve_item(parsed, body.item_index, meal)
+    if res.staged.status != "resolved":
+        return await tier3.run_tier3(str(body.log_id), body.item_index)
+
+    item = res.staged
+    resolved_payload = item.model_dump(mode="json", exclude_none=True)
+    if spoken_qty is not None or spoken_unit is not None:
+        # keep the spoken qty/unit alive for later edits (§7.3 rule 1)
+        resolved_payload["spoken_qty"] = spoken_qty
+        resolved_payload["spoken_unit"] = spoken_unit
+    if res.state_answer:
+        # §3.4a seam: commit persists this to aliases.state_answer (W2)
+        resolved_payload["state_answer"] = res.state_answer
+    if res.search_instead:
+        # §3.3 rule 3 affordance (StagedItem wire field is an integrator seam)
+        resolved_payload["search_instead"] = True
     # proposed_* keep the FIRST proposal (COALESCE): a re-resolution after an
     # edit must not erase the baseline that commit's explicit-choice and
     # rejected_count semantics compare against (§3.5).
     await db.execute(
         """
         UPDATE item_resolutions
-        SET status = 'resolved', staged = %s::jsonb, tier = 1,
+        SET status = 'resolved', staged = %s::jsonb, tier = %s,
             resolve_ms = %s,
             proposed_food_id = coalesce(proposed_food_id, %s),
             proposed_serving_id = coalesce(proposed_serving_id, %s),
@@ -256,17 +193,101 @@ async def _try_tier1(
         WHERE log_id = %s AND item_index = %s
         """,
         (
-            json.dumps(item.model_dump(mode="json", exclude_none=True)),
+            json.dumps(resolved_payload),
+            item.tier,
             int((time.perf_counter() - t0) * 1000),
-            food_id,
-            serving.get("serving_id"),
-            final_qty,
-            alias_id,
+            item.food.id if item.food else None,
+            item.serving.id if item.serving else None,
+            item.qty,
+            res.alias_id,
             str(body.log_id),
             body.item_index,
         ),
     )
     return item
+
+
+# ---------------------------------------------------------------------------
+# §3.4a cooked/raw toggle — resolved locally, NEVER through a tier-3 re-run
+# ---------------------------------------------------------------------------
+
+_STATE_WORDS = ("cooked", "raw", "dry")
+
+
+async def _find_counterpart(phrase: str, state: str) -> str | None:
+    """§3.4a: ONE targeted search_generic for the counterpart entry. Returns
+    the first hit whose adapter-parsed state matches the answer, else None.
+    Uses fdc._parse_state — the same parser that stamps foods.state at cache
+    time, so the match criterion cannot drift from what gets cached."""
+    try:
+        hits = await fdc.search_generic(f"{phrase} {state}")
+    except Exception:
+        return None  # search outage degrades to keeping the current food
+    for h in hits:
+        if fdc._parse_state(h.get("description", "")) == state:
+            return str(h["fdc_id"])
+    return None
+
+
+async def _answer_state_toggle(
+    log_id: UUID, item_index: int, staged: dict, state: str
+) -> StagedItem | None:
+    """Handle a cooked/raw/dry toggle answer on an already-RESOLVED row (§3.4a,
+    §7.1): if the chosen food's state already matches (or no counterpart can be
+    found), persist the answer into the staged jsonb — zero network; otherwise
+    fire one targeted search_generic for the counterpart entry and resolve it
+    with a single get_food. Never a run_tier3 re-entry, never a status flip to
+    'searching', never a tier3_attempts bump. The swap is recorded as a
+    NON-switch (proposed_food_id follows the counterpart) so commit's
+    switched-detection doesn't land rejected_count on the user's own alias for
+    a one-tap clarification (§3.2/§3.5).
+
+    Returns None when the row isn't a resolved food — a free-text answer to a
+    tier-3 question falls through to the normal re-kick path.
+    """
+    if staged.get("status") != "resolved" or not (staged.get("food") or {}).get("id"):
+        return None
+    food_row = await db.fetchone(
+        "SELECT state FROM foods WHERE id = %s", (staged["food"]["id"],)
+    )
+    food_state = _col(food_row, 0, "state") if food_row is not None else None
+
+    if food_state != state:
+        counterpart = await _find_counterpart(staged.get("phrase") or "", state)
+        if counterpart is not None:
+            item = await tier3.resolve_item_from_source(
+                str(log_id), item_index, "fdc", counterpart
+            )
+            if item.status == "resolved" and item.food is not None:
+                item = item.model_copy(update={"state_question": None})
+                await db.execute(
+                    """
+                    UPDATE item_resolutions
+                    SET staged = (staged - 'state_question')
+                                 || jsonb_build_object('state_answer', %s::text),
+                        proposed_food_id = %s
+                    WHERE log_id = %s AND item_index = %s
+                    """,
+                    (state, item.food.id, str(log_id), item_index),
+                )
+                return item
+            # counterpart id 404ed mid-flight (stale index, §3.4) — fall
+            # through and restore the original resolved row with the answer
+
+    # matching state, no counterpart found, or counterpart fetch failed:
+    # keep the current food, persist the answer, clear the question.
+    staged = dict(staged)
+    staged["state_answer"] = state
+    staged.pop("state_question", None)
+    await db.execute(
+        """
+        UPDATE item_resolutions
+        SET status = 'resolved', staged = %s::jsonb
+        WHERE log_id = %s AND item_index = %s
+        """,
+        (json.dumps(staged), str(log_id), item_index),
+    )
+    return StagedItem.model_validate(staged)
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +323,14 @@ async def answer_question(body: AnswerRequest) -> StagedItem:
     text = (body.answer.text or body.answer.label or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="answer needs ids or text")
+    # §3.4a: a cooked/raw/dry toggle on a resolved row resolves locally (at
+    # most one targeted search_generic) — never a full tier-3 re-run.
+    if text.lower() in _STATE_WORDS:
+        toggled = await _answer_state_toggle(
+            body.log_id, body.item_index, _staged_dict(row), text.lower()
+        )
+        if toggled is not None:
+            return toggled
     # Free text: one re-kick — a second agent run carrying the refinement.
     await db.execute(
         """

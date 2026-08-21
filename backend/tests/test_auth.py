@@ -7,7 +7,6 @@ One live test fetches the real JWKS from NEON_AUTH_BASE_URL in .env.
 from __future__ import annotations
 
 import base64
-import sys
 import time
 from pathlib import Path
 
@@ -19,9 +18,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import auth  # noqa: E402
+import auth  # backend/ is on sys.path via tests/conftest.py
 
 BASE = "https://auth.example.test"
 ALLOWED = auth.DEFAULT_ALLOWED_EMAIL
@@ -60,6 +57,10 @@ def app_client(monkeypatch):
     monkeypatch.setenv("NEON_AUTH_BASE_URL", BASE)
     monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
     monkeypatch.delenv("APP_ORIGIN", raising=False)
+    monkeypatch.delenv("VERCEL_PROJECT_PRODUCTION_URL", raising=False)
+    monkeypatch.delenv("VERCEL_URL", raising=False)
+    monkeypatch.setattr(auth, "_dotenv_loaded", True)  # keep .env out of _env()
+    monkeypatch.setattr(auth, "_last_failed_fetch", float("-inf"))
     auth._keys.clear()
 
     state = {"jwks": {"keys": []}, "fetches": 0}
@@ -168,6 +169,121 @@ def test_kid_miss_triggers_refetch(app_client):
     assert state["fetches"] == 3
 
 
+def test_refetch_cooldown_two_misses_one_fetch(app_client):
+    """BACKLOG 14: after a refetch that still misses its kid, further unknown
+    kids within the cool-down 401 without fetching (no amplification)."""
+    client, state = app_client
+    priv_a, jwk_a = _keypair("kid-a")
+    state["jwks"] = {"keys": [jwk_a]}
+
+    # Warm the cache.
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {_token(priv_a, 'kid-a')}"})
+    assert r.status_code == 200
+    assert state["fetches"] == 1
+
+    # First unknown kid: one refetch, still missing -> 401, cool-down starts.
+    priv_x, _ = _keypair("kid-x")
+    tok_x = _token(priv_x, "kid-x")
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {tok_x}"})
+    assert r.status_code == 401
+    assert state["fetches"] == 2
+
+    # Same unknown kid again within a second: negative-cached, no fetch.
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {tok_x}"})
+    assert r.status_code == 401
+    assert state["fetches"] == 2
+
+    # A different unknown kid within the cool-down: still no fetch.
+    priv_y, _ = _keypair("kid-y")
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {_token(priv_y, 'kid-y')}"})
+    assert r.status_code == 401
+    assert state["fetches"] == 2
+
+    # Cached kid keeps verifying during the cool-down.
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {_token(priv_a, 'kid-a')}"})
+    assert r.status_code == 200
+    assert state["fetches"] == 2
+
+
+def test_refetch_allowed_after_cooldown(app_client, monkeypatch):
+    """Once the cool-down elapses, a kid miss refetches again (rotation heals)."""
+    client, state = app_client
+    priv_b, jwk_b = _keypair("kid-b")
+    state["jwks"] = {"keys": []}
+    tok = _token(priv_b, "kid-b")
+
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 401
+    assert state["fetches"] == 1
+
+    # Within the cool-down: no fetch.
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 401
+    assert state["fetches"] == 1
+
+    # Simulate the cool-down elapsing; the rotated key is now upstream.
+    monkeypatch.setattr(
+        auth, "_last_failed_fetch", time.monotonic() - auth._REFETCH_COOLDOWN_S - 1
+    )
+    state["jwks"] = {"keys": [jwk_b]}
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert state["fetches"] == 2
+
+
+def test_origin_default_from_vercel_env(app_client, monkeypatch):
+    """BACKLOG 14: with APP_ORIGIN unset, the Origin allowlist defaults from
+    Vercel's env, so deployed environments are fail-closed by default."""
+    client, state = app_client
+    monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", "usual.example.app")
+    monkeypatch.setenv("VERCEL_URL", "usual-abc123.vercel.example")
+    priv, jwk = _keypair("kid-a")
+    state["jwks"] = {"keys": [jwk]}
+    hdr = {"Authorization": f"Bearer {_token(priv, 'kid-a')}"}
+
+    # Cross-site Origin on POST -> 403 (fail-closed without APP_ORIGIN).
+    r = client.post("/write", headers={**hdr, "Origin": "https://evil.example.com"})
+    assert r.status_code == 403
+
+    # Both derived origins pass: production domain and deployment URL.
+    r = client.post("/write", headers={**hdr, "Origin": "https://usual.example.app"})
+    assert r.status_code == 200
+    r = client.post("/write", headers={**hdr, "Origin": "https://usual-abc123.vercel.example"})
+    assert r.status_code == 200
+
+    # Absent Origin header -> allowed (non-browser clients), as before.
+    r = client.post("/write", headers=hdr)
+    assert r.status_code == 200
+
+    # Explicit APP_ORIGIN overrides the derived default entirely.
+    monkeypatch.setenv("APP_ORIGIN", "https://app.example.net")
+    r = client.post("/write", headers={**hdr, "Origin": "https://usual.example.app"})
+    assert r.status_code == 403
+    r = client.post("/write", headers={**hdr, "Origin": "https://app.example.net"})
+    assert r.status_code == 200
+
+
+def test_origin_localhost_allowance_and_bare_dev(app_client, monkeypatch):
+    client, state = app_client
+    priv, jwk = _keypair("kid-a")
+    state["jwks"] = {"keys": [jwk]}
+    hdr = {"Authorization": f"Bearer {_token(priv, 'kid-a')}"}
+
+    # Nothing configured (bare local dev): fail-open, any Origin passes.
+    r = client.post("/write", headers={**hdr, "Origin": "https://evil.example.com"})
+    assert r.status_code == 200
+
+    # Deployed (Vercel env set): localhost frontend still allowed for dev...
+    monkeypatch.setenv("VERCEL_URL", "usual-abc123.vercel.example")
+    r = client.post("/write", headers={**hdr, "Origin": "http://localhost:3000"})
+    assert r.status_code == 200
+    r = client.post("/write", headers={**hdr, "Origin": "http://127.0.0.1:3000"})
+    assert r.status_code == 200
+    # ...but other origins are rejected.
+    r = client.post("/write", headers={**hdr, "Origin": "https://evil.example.com"})
+    assert r.status_code == 403
+
+
 def test_missing_token_401(app_client):
     client, _ = app_client
     assert client.get("/whoami").status_code == 401
@@ -220,6 +336,7 @@ def test_dependency_override_hook():
     assert r.json() == {"email": "t@t", "user_id": "u1"}
 
 
+@pytest.mark.live
 def test_live_jwks_has_ed25519_key():
     """LIVE: real JWKS at NEON_AUTH_BASE_URL from .env contains an Ed25519 key."""
     env_path = Path(__file__).resolve().parents[2] / ".env"

@@ -20,3 +20,8 @@ dependencies = [
 dev = [
     "uvicorn",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: hits real external services (network, DB, LLM APIs); deselect with -m 'not live'",
+]
