@@ -37,10 +37,14 @@ type Props = {
   onPick: (opt: PickOption) => void;
   /** tap the portion → §7.1 portion sheet */
   onPortion: () => void;
-  /** not_found rows → BACKLOG 3 manual-search sheet */
+  /** not_found rows + the §3.3 rule-3 "search instead" chip → BACKLOG 3
+   *  manual-search sheet */
   onManualSearch: () => void;
   /** per-item meal override (§7.1 — the header chip propagates; this wins) */
   onMeal: (m: Meal) => void;
+  /** §7.1 food bullet (BACKLOG 23): tap the name → edit sheet (aliases,
+   *  re-resolving text field, manual search) */
+  onEditFood: () => void;
 };
 
 export default function StagedRow({
@@ -53,9 +57,11 @@ export default function StagedRow({
   onPortion,
   onManualSearch,
   onMeal,
+  onEditFood,
 }: Props) {
   const searching = busy || item.status === "searching";
   const notFound = item.status === "not_found";
+  const editable = !searching && !notFound; // §7.1: resolved/needs_input rows
   const name = item.food?.name ?? item.phrase;
   const macros = item.macros;
 
@@ -84,13 +90,30 @@ export default function StagedRow({
         <div className="row-info">
           <div className="row-name">
             {searching ? <span className="spinner" /> : null}
-            {name}
+            {editable ? (
+              <button
+                type="button"
+                className="name-btn"
+                aria-label={`Edit food for ${name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditFood();
+                }}
+              >
+                {name}
+              </button>
+            ) : (
+              name
+            )}
             {searching ? (
               <span className="badge searching">searching</span>
             ) : null}
             {notFound ? <span className="badge not-found">not found</span> : null}
             {item.status === "needs_input" ? (
               <span className="badge needs-input">needs input</span>
+            ) : null}
+            {item.web_source ? (
+              <span className="badge web">web</span>
             ) : null}
           </div>
           <div className="row-sub">
@@ -136,6 +159,23 @@ export default function StagedRow({
         </button>
       </div>
 
+      {/* §3.4a: web-transcribed foods render visually distinct with the
+          citation as a visible, clickable link — an OpenAI usage-terms
+          requirement for web-search content, shown collapsed or expanded. */}
+      {item.web_source ? (
+        <p className="web-cite">
+          Source:{" "}
+          <a
+            href={item.web_source.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {item.web_source.title}
+          </a>
+        </p>
+      ) : null}
+
       {item.status === "needs_input" && item.question ? (
         <>
           <p className="question-text">{item.question.text}</p>
@@ -175,9 +215,10 @@ export default function StagedRow({
         </div>
       ) : null}
 
-      {item.status === "resolved" && item.alternates?.length ? (
+      {item.status === "resolved" &&
+      (item.alternates?.length || item.search_instead) ? (
         <div className="chips">
-          {item.alternates.map((alt) => (
+          {(item.alternates ?? []).map((alt) => (
             <button
               key={alt.label}
               type="button"
@@ -189,6 +230,19 @@ export default function StagedRow({
               {alt.label}
             </button>
           ))}
+          {/* §3.3 rule 3 (BACKLOG 32): a weak-trigram-only match resolves the
+              top hit but offers the escape hatch inline — one tap to the
+              manual-search sheet instead of committing a guess. */}
+          {item.search_instead ? (
+            <button
+              type="button"
+              className="chip search-instead"
+              disabled={busy}
+              onClick={onManualSearch}
+            >
+              search instead
+            </button>
+          ) : null}
         </div>
       ) : null}
 

@@ -9,6 +9,7 @@
  * exactly once on 401 with a freshly fetched token.
  */
 
+import type { VoiceClip } from "@/components/useVoiceCapture";
 import type { components, operations } from "@/lib/api-types";
 import { authClient } from "@/lib/auth/client";
 
@@ -234,4 +235,84 @@ export async function selectFood(args: {
     throw new ApiError(502, "select returned no staged item");
   }
   return res.item;
+}
+
+// ---------------------------------------------------------------------------
+// M2 — voice path + the §7.1 edit sheet's alias list.
+// ---------------------------------------------------------------------------
+
+/** Same Bearer scheme + single 401 retry as request(), minus the JSON
+ *  content-type: the browser sets multipart/form-data with its boundary. */
+async function multipart(path: string, form: FormData): Promise<Response> {
+  const attempt = async (forceToken: boolean) => {
+    const token = await getToken(forceToken);
+    const headers = new Headers();
+    if (token) headers.set("authorization", `Bearer ${token}`);
+    return fetch(path, { method: "POST", body: form, headers });
+  };
+  let res = await attempt(false);
+  if (res.status === 401) res = await attempt(true);
+  return res;
+}
+
+export type AudioLogResult =
+  | { kind: "staged"; log: LogResponse }
+  /** §5/§13: the transcript came back empty — a capture failure, not an empty
+   *  meal; the server has already recorded it on the audio log's row. */
+  | { kind: "capture_failure" };
+
+type CaptureFailure = components["schemas"]["CaptureFailureResponse"];
+
+/** §5: POST /api/logs as multipart — the audio blob under `audio` plus the
+ *  same fields as the JSON body minus `text` (the transcript supplies it). */
+export async function createLogAudio(args: {
+  id: string;
+  clip: VoiceClip;
+  tz: string;
+  /** a client-detected failure from an earlier attempt that this clip is
+   *  retrying — lands in logs.capture_error so the §9 counter still sees it
+   *  (capture_fallback stays false: voice succeeded, nothing fell back) */
+  capture_error?: string | null;
+}): Promise<AudioLogResult> {
+  const { blob, mimeType, capturedAt } = args.clip;
+  const ext = mimeType.includes("mp4") ? "m4a" : "webm";
+  const form = new FormData();
+  form.set("id", args.id);
+  form.set("captured_at", capturedAt);
+  form.set("tz", args.tz);
+  if (args.capture_error) form.set("capture_error", args.capture_error);
+  form.set("audio", new File([blob], `clip.${ext}`, { type: mimeType }));
+  const res = await multipart("/api/logs", form);
+  if (!res.ok) {
+    throw new ApiError(res.status, await res.text().catch(() => ""));
+  }
+  const body = (await res.json()) as LogResponse | CaptureFailure;
+  if ("status" in body && body.status === "capture_failure") {
+    return { kind: "capture_failure" };
+  }
+  return { kind: "staged", log: body as LogResponse };
+}
+
+/** One row of the user's aliases for a phrase (§4 aliases ⋈ foods) — the
+ *  minimal shape the §7.1 edit sheet renders. */
+export type AliasRow = {
+  id: string;
+  food_id: string;
+  food_name: string;
+  brand?: string | null;
+  /** absent when the row was derived from the staged payload's alternates
+   *  rather than read from the aliases table */
+  use_count?: number | null;
+  pinned?: boolean | null;
+};
+
+/** §5 GET /api/aliases?phrase= — the route is M3 Library scope and does not
+ *  exist yet (404); FoodEditSheet treats any failure as "no aliases" and
+ *  falls back to the staged row's own food_id-bearing alternates. */
+export async function getAliasesForPhrase(phrase: string): Promise<AliasRow[]> {
+  const qs = new URLSearchParams({ phrase });
+  const body = await request<{ aliases?: AliasRow[] }>(
+    `/api/aliases?${qs.toString()}`,
+  );
+  return Array.isArray(body?.aliases) ? body.aliases : [];
 }

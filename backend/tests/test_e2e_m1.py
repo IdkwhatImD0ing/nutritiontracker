@@ -265,6 +265,13 @@ def test_m1_full_story(client: TestClient):
         )
         assert r.status_code == 200, r.text
         edited = r.json()
+        if edited["status"] != "resolved":
+            # A never-committed phrase has no alias yet, so tiers 1–2 can't
+            # fire and /api/resolve re-enters tier 3 (§5) — where the agent may
+            # ask "which chicken?" again (observed live, Phase 3). Answer it
+            # through the same client contract as step 1; the spoken qty rides
+            # the staged payload into the answer (§7.3 rule 1).
+            edited = _resolve_all(client, l1, [edited])[idx0]
         assert edited["status"] == "resolved", edited
         assert edited["qty"] == EDIT_QTY
         items1[idx0] = edited

@@ -9,6 +9,7 @@ import {
   type StagedItem,
 } from "@/lib/api";
 
+const POLL_FIRST_MS = 250; // reopen feels immediate (BACKLOG 31 retry-on-open)
 const POLL_MS = 2_000;
 const STOP_MS = 90_000; // same ~90s ceiling as the staging poll (§5)
 
@@ -29,11 +30,13 @@ type Props = {
  *  §3.5 — they arrive here as needs_input) surface immediately as failed
  *  pills: the same silent-hole class, so never dropped without a signal. */
 export default function PendingItems({ logId, items, onTotals, onDone }: Props) {
+  // `resolved` rows arrive on a reopen (persisted stragglers whose commit-item
+  // failed last session) — they retry on mount, not surface as failed.
   const [waiting, setWaiting] = useState<StagedItem[]>(
-    items.filter((i) => i.status === "searching"),
+    items.filter((i) => i.status === "searching" || i.status === "resolved"),
   );
   const [failed, setFailed] = useState<StagedItem[]>(
-    items.filter((i) => i.status !== "searching"),
+    items.filter((i) => i.status !== "searching" && i.status !== "resolved"),
   );
   const waitingRef = useRef(waiting);
   waitingRef.current = waiting;
@@ -62,16 +65,28 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
       committingRef.current.add(item.item_index);
       try {
         const totals = await commitItem(logId, item);
+        // Clear the in-flight marker even when this run was cancelled
+        // (StrictMode double-mount): commit-item is idempotent, so the next
+        // run's retry just gets the stored result — a stale marker would
+        // instead block it forever.
+        committingRef.current.delete(item.item_index);
         if (cancelled) return;
         onTotals(totals);
         drop(item.item_index);
       } catch {
         committingRef.current.delete(item.item_index);
-        if (!cancelled) fail(item); // commit-item is idempotent; next open retries
+        if (!cancelled) fail(item); // commit-item is idempotent; retried on next mount
       }
     };
 
-    const tick = () => {
+    // BACKLOG 31 — 真 retry-on-open: anything already resolved (a commit-item
+    // that failed before this mount, restored via the persisted pending state)
+    // retries immediately. Its `meal` already carries the sheet's override.
+    for (const w of [...waitingRef.current]) {
+      if (w.status === "resolved") void land(w);
+    }
+
+    const tick = (delay: number) => {
       timer = setTimeout(async () => {
         if (cancelled || waitingRef.current.length === 0) return;
         const timedOut = Date.now() - start > STOP_MS;
@@ -85,7 +100,10 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
             if (!server) {
               fail(w);
             } else if (server.status === "resolved") {
-              void land(server);
+              // BACKLOG 31: the sheet's meal override rides w.meal — the
+              // server payload only knows the inferred meal, and commit-item
+              // writes entries.meal from the item it's sent.
+              void land({ ...server, meal: w.meal });
             } else if (
               server.status === "not_found" ||
               server.status === "needs_input"
@@ -101,7 +119,8 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
               kickTier3({ log_id: logId, item_index: w.item_index })
                 .then((item) => {
                   if (cancelled) return;
-                  if (item.status === "resolved") void land(item);
+                  if (item.status === "resolved")
+                    void land({ ...item, meal: w.meal });
                 })
                 .catch(() => {});
             } else if (server.stale) {
@@ -112,11 +131,12 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
         } catch {
           /* transient poll failure */
         }
-        if (!cancelled && waitingRef.current.length > 0 && !timedOut) tick();
-      }, POLL_MS);
+        if (!cancelled && waitingRef.current.length > 0 && !timedOut)
+          tick(POLL_MS);
+      }, delay);
     };
 
-    tick();
+    tick(POLL_FIRST_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);

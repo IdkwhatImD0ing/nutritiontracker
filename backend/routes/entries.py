@@ -1,11 +1,13 @@
 """PATCH/DELETE /api/entries/:id — post-commit corrections (DESIGN.md §3.5, §5).
 
-Qty-only edits SCALE the stored snapshot proportionally (macros × new/old) —
-deterministic and cache-independent, so provider refreshes can never rewrite
-history. Only a serving change re-derives from the foods cache. Food
-corrections feed alias learning with the same explicit-choice semantics as
-staging edits (reusing resolver/commit.py's helpers). Auth-guarded; the
-integrator wires this router into main.py.
+Qty-only edits SCALE from a stored full-precision base frozen in the macros
+jsonb sidecar (BACKLOG 28) — deterministic, cache-independent, and round-trip
+exact under repeated edits, so provider refreshes can never rewrite history
+and 2dp rounding never compounds. Only a serving change re-derives from the
+foods cache (and resets the base). Food corrections feed alias learning with
+the same explicit-choice semantics as staging edits (reusing
+resolver/commit.py's helpers). Auth-guarded; the integrator wires this router
+into main.py.
 """
 
 from __future__ import annotations
@@ -23,6 +25,25 @@ from resolver import commit as commit_tx
 from routes.diary import DiaryEntry, compute_day_totals, local_date
 
 router = APIRouter(dependencies=[Depends(require_user)])
+
+# BACKLOG 28: qty edits scale from a frozen full-precision base kept as flat
+# float keys inside the macros jsonb ("base_qty", "base_grams", "base_kcal",
+# ...). Flat floats, not a nested dict, because diary.py renders
+# Macros(**macros) whose extra fields are float-typed — a nested value would
+# 500 the diary. The base freezes the first time a scale would actually round
+# (until then the stored snapshot is itself an exact multiple of the commit
+# snapshot), so repeated qty edits scale from the base and are round-trip
+# exact instead of compounding 2dp roundings. Rendered macros stay 2dp.
+_BASE_PREFIX = "base_"
+_BASE_QTY = "base_qty"
+_BASE_GRAMS = "base_grams"
+
+
+def _split_base(stored: dict) -> tuple[dict, dict]:
+    """Split the stored macros jsonb into (display macros, base sidecar)."""
+    display = {k: v for k, v in stored.items() if not k.startswith(_BASE_PREFIX)}
+    base = {k: v for k, v in stored.items() if k.startswith(_BASE_PREFIX)}
+    return display, base
 
 
 class EntryPatch(BaseModel):
@@ -54,6 +75,7 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
 
         old_qty = float(entry["qty"])
         qty = float(body.qty) if body.qty is not None else old_qty
+        base: dict = {}  # BACKLOG 28 sidecar; empty on serving/food changes
         old_food_id = str(entry["food_id"])
         food_changed = body.food_id is not None and body.food_id != old_food_id
         serving_changed = (
@@ -93,17 +115,45 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
             if old_qty == 0:
                 raise HTTPException(422, "cannot scale an entry with qty 0")
             food_id, serving_id, food = old_food_id, entry["serving_id"], None
-            ratio = qty / old_qty
-            macros = {
-                k: round(float(v) * ratio, 2)
-                for k, v in entry["macros"].items()
-                if isinstance(v, (int, float))
-            }
-            grams = (
-                round(float(entry["grams"]) * ratio, 2)
-                if entry["grams"] is not None
-                else None
-            )
+            display, base = _split_base(entry["macros"])
+            if _BASE_QTY not in base:
+                # No base yet: the stored snapshot is still exact (nothing has
+                # rounded it). Scale it directly while nothing rounds; the
+                # moment a scale would round, freeze the pre-edit snapshot as
+                # the base so later edits scale from HERE, never from a
+                # rounded result (BACKLOG 28).
+                ratio = qty / old_qty
+                exact = {
+                    k: float(v) * ratio
+                    for k, v in display.items()
+                    if isinstance(v, (int, float))
+                }
+                g = float(entry["grams"]) * ratio if entry["grams"] is not None else None
+                if all(round(x, 2) == x for x in exact.values()) and (
+                    g is None or round(g, 2) == g
+                ):
+                    macros, grams = exact, g  # lossless — still exact, no base
+                else:
+                    base = {
+                        f"{_BASE_PREFIX}{k}": float(v)
+                        for k, v in display.items()
+                        if isinstance(v, (int, float))
+                    }
+                    base[_BASE_QTY] = old_qty
+                    if entry["grams"] is not None:
+                        base[_BASE_GRAMS] = float(entry["grams"])
+            if base:
+                ratio = qty / float(base[_BASE_QTY])
+                macros = {
+                    k[len(_BASE_PREFIX):]: round(float(v) * ratio, 2)
+                    for k, v in base.items()
+                    if k not in (_BASE_QTY, _BASE_GRAMS)
+                }
+                grams = (
+                    round(float(base[_BASE_GRAMS]) * ratio, 2)
+                    if _BASE_GRAMS in base
+                    else None
+                )
 
         # telemetry + alias learning need the committed item row, if any
         res = None
@@ -136,7 +186,7 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
         await conn.execute(
             "UPDATE entries SET food_id=%s, serving_id=%s, qty=%s, grams=%s, "
             "macros=%s, alias_id=%s WHERE id = %s",
-            (food_id, serving_id, qty, grams, Json(macros), alias_id, entry_id),
+            (food_id, serving_id, qty, grams, Json({**macros, **base}), alias_id, entry_id),
         )
         if res is not None:
             # keep finals honest (§9 edit-rate, §7.3 mode-of-last-10 inputs);

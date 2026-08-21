@@ -78,6 +78,14 @@ class Question(BaseModel):
     options: list[QuestionOption]
 
 
+class WebSource(BaseModel):
+    """§3.4a: the citation for a web-transcribed (chain) food — the UI must
+    render it as a visible, clickable link (OpenAI usage-terms requirement)."""
+
+    url: str
+    title: str
+
+
 class StagedItem(BaseModel):
     item_index: int
     phrase: str  # as spoken; for tier-0 expansions: the food display name
@@ -94,6 +102,7 @@ class StagedItem(BaseModel):
     confidence: Literal["high", "medium", "low"] | None = None
     servings: list[ServingOption] | None = None  # the food's serving list (§7.1 portion sheet)
     search_instead: bool | None = None  # §3.3 rule 3 "search instead" affordance
+    web_source: WebSource | None = None  # §3.4a citation link (web-transcribed foods)
 
 
 # ---------------------------------------------------------------------------

@@ -230,6 +230,84 @@ input {
   margin: 6px 2px 0;
 }
 
+/* voice capture (M2 §8.1d / §13) — the mic lives on the capture bar */
+
+/* scoped under .capture so these outrank the generic `.capture button` rule
+   above — the mic is the quiet button, the send arrow is the loud one */
+.capture .mic-btn {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  width: 52px;
+  flex-shrink: 0;
+  color: var(--sage);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 150ms;
+}
+
+.capture .mic-btn.rec {
+  background: var(--red);
+  border-color: var(--red);
+  color: var(--text);
+}
+
+.capture .mic-btn:disabled {
+  background: var(--surface-3);
+  border-color: var(--line);
+  color: var(--faint);
+  cursor: default;
+}
+
+.rec-status {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 1rem;
+  min-width: 0;
+}
+
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--red);
+  flex-shrink: 0;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.rec-hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* voice→text fallback notice (§13: degrade to typing, never block) */
+.capture-notice {
+  color: var(--amber);
+  font-size: 0.82rem;
+  margin: 6px 2px 0;
+}
+
 /* ---------- staging sheet ---------- */
 
 .sheet-backdrop {
@@ -475,6 +553,28 @@ input {
   color: var(--amber);
 }
 
+/* §3.4a web-transcribed food: distinct badge + the citation as a visible,
+   clickable link (OpenAI usage-terms requirement, not taste) */
+.badge.web {
+  background: #1f2a3d;
+  color: #8fb4e3;
+}
+
+.web-cite {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-cite a {
+  color: #8fb4e3;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .spinner {
   display: inline-block;
   width: 12px;
@@ -533,6 +633,12 @@ input {
   color: var(--text);
 }
 
+/* §3.3 rule 3 "search instead" affordance (BACKLOG 32) */
+.chip.search-instead {
+  border-style: dashed;
+  color: var(--sage);
+}
+
 .question-text {
   font-size: 0.85rem;
   color: var(--amber);
@@ -566,6 +672,21 @@ input {
 .manual-hint {
   color: var(--sage);
   text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+
+/* tappable food name → §7.1 edit sheet (BACKLOG 23) */
+
+.name-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
   text-decoration-color: var(--faint);
   text-underline-offset: 3px;
 }
@@ -784,6 +905,41 @@ input {
   border-color: var(--spruce-soft);
   color: var(--text);
   background: var(--spruce-deep);
+}
+
+/* food edit sheet (§7.1 food bullet, BACKLOG 23) */
+
+.edit-label {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 2px;
+}
+
+.alias-count {
+  color: var(--faint);
+  margin-left: 4px;
+}
+
+.chip.active .alias-count {
+  color: var(--sage);
+}
+
+.edit-manual-btn {
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 0.9rem;
+  color: var(--sage);
+  cursor: pointer;
+}
+
+.edit-manual-btn:disabled {
+  color: var(--faint);
+  cursor: default;
 }
 
 /* manual search results (BACKLOG 3 — deliberately boring) */

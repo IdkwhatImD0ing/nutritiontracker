@@ -9,12 +9,14 @@ import {
   removeStagedItem,
   resolveItem,
   selectFood,
+  type AliasRow,
   type DayTotals,
   type FoodSearchResult,
   type LogResponse,
   type Meal,
   type StagedItem,
 } from "@/lib/api";
+import FoodEditSheet from "./FoodEditSheet";
 import ManualSearchSheet from "./ManualSearchSheet";
 import PortionSheet, { type PortionChoice } from "./PortionSheet";
 import StagedRow, { type PickOption } from "./StagedRow";
@@ -82,6 +84,7 @@ export default function StagingSheet({
   const [portionFor, setPortionFor] = useState<number | null>(null);
   const [manualFor, setManualFor] = useState<number | null>(null);
   const [manualBusy, setManualBusy] = useState(false);
+  const [editFor, setEditFor] = useState<number | null>(null); // BACKLOG 23
   const [addText, setAddText] = useState("");
 
   const itemsRef = useRef(items);
@@ -101,6 +104,11 @@ export default function StagingSheet({
   // stale row once, then not_found). Also guards StrictMode double-mount.
   const kickCountRef = useRef<Map<number, number>>(new Map());
   const lastKickRef = useRef<Map<number, number>>(new Map());
+  // Rows an inline POST /api/resolve currently owns (add-item / edit-sheet
+  // rephrase). The poll and stray kick responses must not touch them: the
+  // resolve route runs tier 3 itself when needed, and a stale poll payload
+  // for the same index could otherwise resurrect the pre-edit food.
+  const resolvingRef = useRef<Set<number>>(new Set());
   const renderedRef = useRef(false);
 
   const withOverrides = (server: StagedItem): StagedItem => {
@@ -128,7 +136,8 @@ export default function StagingSheet({
       .then((item) => {
         // Merge only if the row is still searching — a kick response landing
         // after the poll already resolved the row must not clobber edits the
-        // user made in the meantime.
+        // user made in the meantime (and never a row an inline resolve owns).
+        if (resolvingRef.current.has(item.item_index)) return;
         const local = itemsRef.current.find(
           (i) => i.item_index === item.item_index,
         );
@@ -136,6 +145,33 @@ export default function StagingSheet({
       })
       .catch(() => {
         /* the poll + watchdog covers a failed kick */
+      });
+  };
+
+  /** POST /api/resolve for one row (add-item and the §7.1 edit-sheet text
+   *  field). The route runs tiers 1–2 and, when needed, tier 3 inline — the
+   *  response is final, no client-side kick. */
+  const resolveInto = (itemIndex: number, phrase: string) => {
+    resolvingRef.current.add(itemIndex);
+    resolveItem({ log_id: log.log_id, item_index: itemIndex, phrase })
+      .then((item) => {
+        resolvingRef.current.delete(itemIndex);
+        // Same guard as kick(): don't clobber edits made after the poll
+        // already surfaced this row's resolution.
+        const local = itemsRef.current.find(
+          (i) => i.item_index === item.item_index,
+        );
+        if (local == null || local.status === "searching") mergeItem(item);
+      })
+      .catch(() => {
+        resolvingRef.current.delete(itemIndex);
+        setItems((prev) =>
+          prev.map((i) =>
+            i.item_index === itemIndex
+              ? { ...i, status: "not_found" as const }
+              : i,
+          ),
+        );
       });
   };
 
@@ -200,7 +236,11 @@ export default function StagingSheet({
           // Decide re-kicks OUTSIDE the state updater (updaters must stay
           // pure; StrictMode may run them twice).
           const rekicks = itemsRef.current
-            .filter((i) => i.status === "searching")
+            .filter(
+              (i) =>
+                i.status === "searching" &&
+                !resolvingRef.current.has(i.item_index),
+            )
             .map((i) =>
               fresh.items.find((f) => f.item_index === i.item_index),
             )
@@ -215,6 +255,7 @@ export default function StagingSheet({
           setItems((prev) =>
             prev.map((i) => {
               if (i.status !== "searching") return i; // keep local edits
+              if (resolvingRef.current.has(i.item_index)) return i; // in-flight /api/resolve owns it
               const server = fresh.items.find(
                 (f) => f.item_index === i.item_index,
               );
@@ -324,24 +365,40 @@ export default function StagingSheet({
       { item_index: idx, phrase, status: "searching" as const, meal: m },
     ]);
     setAddText("");
-    resolveItem({ log_id: log.log_id, item_index: idx, phrase })
-      .then((item) => {
-        // Same guard as kick(): don't clobber edits made after the poll
-        // already surfaced this row's resolution.
-        const local = itemsRef.current.find(
-          (i) => i.item_index === item.item_index,
-        );
-        if (local == null || local.status === "searching") mergeItem(item);
-      })
-      .catch(() =>
-        setItems((prev) =>
-          prev.map((i) =>
-            i.item_index === idx
-              ? { ...i, status: "not_found" as const }
-              : i,
-          ),
-        ),
-      );
+    resolveInto(idx, phrase);
+  };
+
+  // §7.1 food bullet (BACKLOG 23) — the three edit-sheet exits.
+  const editPickAlias = (a: AliasRow) => {
+    if (editFor == null) return;
+    const item = itemsRef.current.find((i) => i.item_index === editFor);
+    setEditFor(null);
+    // Rides /api/resolve/answer with food_id: resolves locally from the cache
+    // and records the explicit choice (§3.2 rule 2 — flips the next default).
+    if (item) void pick(item, { label: a.food_name, food_id: a.food_id });
+  };
+
+  const editRephrase = (text: string) => {
+    if (editFor == null) return;
+    const idx = editFor;
+    setEditFor(null);
+    // Full row reset: the new phrase replaces the old resolution wholesale
+    // (server-side too — /api/resolve rewrites the staged payload).
+    setItems((prev) =>
+      prev.map((i) =>
+        i.item_index === idx
+          ? { item_index: idx, phrase: text, status: "searching" as const, meal: i.meal }
+          : i,
+      ),
+    );
+    resolveInto(idx, text);
+  };
+
+  const editManualSearch = () => {
+    if (editFor == null) return;
+    const idx = editFor;
+    setEditFor(null);
+    setManualFor(idx);
   };
 
   // §7.1 portion sheet apply: optimistic client-side; display macros rescale
@@ -452,6 +509,8 @@ export default function StagingSheet({
     manualFor != null
       ? items.find((i) => i.item_index === manualFor)
       : undefined;
+  const editItem =
+    editFor != null ? items.find((i) => i.item_index === editFor) : undefined;
 
   return (
     <>
@@ -510,6 +569,7 @@ export default function StagingSheet({
               onPortion={() => setPortionFor(item.item_index)}
               onManualSearch={() => setManualFor(item.item_index)}
               onMeal={(m) => pickItemMeal(item.item_index, m)}
+              onEditFood={() => setEditFor(item.item_index)}
             />
           ))}
           {visible.length === 0 ? (
@@ -571,6 +631,17 @@ export default function StagingSheet({
           busy={manualBusy}
           onSelect={manualSelect}
           onClose={() => setManualFor(null)}
+        />
+      ) : null}
+
+      {editItem ? (
+        <FoodEditSheet
+          item={editItem}
+          busy={busyRows.has(editItem.item_index)}
+          onPickAlias={editPickAlias}
+          onRephrase={editRephrase}
+          onManualSearch={editManualSearch}
+          onClose={() => setEditFor(null)}
         />
       ) : null}
     </>

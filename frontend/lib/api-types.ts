@@ -30,8 +30,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Log */
-        post: operations["create_log_api_logs_post"];
+        /**
+         * Create Log Endpoint
+         * @description §5: JSON body (text path) — or multipart with an audio blob + the same
+         *     fields (voice path, create_log_voice above), which is the only way to get
+         *     the capture_failure response.
+         */
+        post: operations["create_log_endpoint_api_logs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -302,6 +307,30 @@ export interface components {
             /** Item Index */
             item_index: number;
             answer: components["schemas"]["Answer"];
+        };
+        /**
+         * CaptureFailureResponse
+         * @description §5: an audio log whose transcript came back empty/near-empty. The
+         *     client prompts retype; the logs row records the failure so the §9
+         *     telemetry counter increments. NEVER returned as an empty staged log.
+         */
+        CaptureFailureResponse: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            /**
+             * Status
+             * @default capture_failure
+             * @constant
+             */
+            status: "capture_failure";
+            /**
+             * Capture Error
+             * @default empty_transcript
+             */
+            capture_error: string;
         };
         /**
          * CommitItemError
@@ -683,6 +712,7 @@ export interface components {
             servings?: components["schemas"]["ServingOption"][] | null;
             /** Search Instead */
             search_instead?: boolean | null;
+            web_source?: components["schemas"]["WebSource"] | null;
         };
         /**
          * StagedItemOut
@@ -722,6 +752,7 @@ export interface components {
             servings?: components["schemas"]["ServingOption"][] | null;
             /** Search Instead */
             search_instead?: boolean | null;
+            web_source?: components["schemas"]["WebSource"] | null;
             /** Stale */
             stale?: boolean | null;
         };
@@ -766,6 +797,17 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * WebSource
+         * @description §3.4a: the citation for a web-transcribed (chain) food — the UI must
+         *     render it as a visible, clickable link (OpenAI usage-terms requirement).
+         */
+        WebSource: {
+            /** Url */
+            url: string;
+            /** Title */
+            title: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -797,7 +839,7 @@ export interface operations {
             };
         };
     };
-    create_log_api_logs_post: {
+    create_log_endpoint_api_logs_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -807,6 +849,18 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["LogCreate"];
+                "multipart/form-data": {
+                    /** Format: binary */
+                    audio: string;
+                    /** Format: uuid */
+                    id: string;
+                    /** Format: date-time */
+                    captured_at: string;
+                    tz: string;
+                    /** @default false */
+                    capture_fallback?: boolean;
+                    capture_error?: string;
+                };
             };
         };
         responses: {
@@ -816,7 +870,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LogResponse"];
+                    "application/json": components["schemas"]["LogResponse"] | components["schemas"]["CaptureFailureResponse"];
                 };
             };
             /** @description Validation Error */

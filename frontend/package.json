@@ -16,8 +16,11 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@serwist/turbopack": "9.5.12",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
+    "esbuild": "0.28.2",
+    "serwist": "9.5.12",
     "typescript": "^7.0.2"
   }
 }

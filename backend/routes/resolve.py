@@ -2,9 +2,11 @@
 
 DESIGN.md §5, §3.4. Exposes an APIRouter; the integrator wires it into main.py.
 POST /api/resolve runs the SAME cascade as staging (resolver.cascade: tier-1
-pick(), tier-2 trigram, §7.3 portion resolution incl. spoken qty+unit) — the
-single-item decompose micro-call (tier 2b parity, §5) is a later pass; edited
-phrases get tiers 1/2a locally, else tier 3.
+pick(), tier-2 trigram, §7.3 portion resolution incl. spoken qty+unit), now
+preceded by the single-item decompose micro-call (BACKLOG 24) so tier 2b works
+for edited text too. The micro-call is skipped when the phrase already
+exact-matches an alias (tier 1 resolves it locally; the model would be pure
+latency), and any decompose failure degrades to tiers 1/2a, else tier 3.
 """
 
 from __future__ import annotations
@@ -98,9 +100,40 @@ async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
 
 # ---------------------------------------------------------------------------
 # POST /api/resolve — re-resolve an edited/added phrase through the SAME
-# cascade as staging (tiers 1–2, §3.2/§3.3/§7.3), else tier 3; writing the
-# item row per §5 so edited rows are never telemetry ghosts.
+# cascade as staging (micro-decompose for tier 2b, then tiers 1–2,
+# §3.2/§3.3/§7.3), else tier 3; writing the item row per §5 so edited rows are
+# never telemetry ghosts.
 # ---------------------------------------------------------------------------
+
+_EXACT_ALIAS_SQL = "SELECT 1 AS hit FROM aliases WHERE alias_norm = %s LIMIT 1"
+
+
+async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
+    """§5 / BACKLOG 24: the single-item decompose micro-call, so tier 2b works
+    for edited/added text exactly as it does at staging. Same context assembly,
+    prompt, and cache key as logs.py's call — hence the same cached prefix
+    (§6.1) — with the edited phrase as the whole utterance. Any failure (LLM
+    outage, empty parse) degrades to tiers 1/2a: /api/resolve keeps working
+    without the model. Returns (parsed item, inlined index ids) or None."""
+    try:
+        import tracing
+        from services.context import build_agent_context
+        from services.decompose import decompose
+
+        tracing.init_tracing()
+        ctx = await build_agent_context()
+        async with tracing.generation("decompose") as gen:
+            parsed = await decompose(phrase, ctx)
+            gen.update(input=phrase, output=parsed.model_dump(mode="json"))
+        try:
+            tracing.flush()  # serverless flush rule (§10)
+        except Exception:
+            pass
+        if not parsed.items:
+            return None
+        return parsed.items[0], {index_id for index_id, _, _ in ctx.food_index}
+    except Exception:
+        return None
 
 
 @router.post("/api/resolve", response_model=StagedItem)
@@ -116,9 +149,47 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
     spoken_qty = body.qty if body.qty is not None else prev_staged.get("spoken_qty")
     spoken_unit = body.unit if body.unit is not None else prev_staged.get("spoken_unit")
 
+    # §5 (BACKLOG 24): the single-item decompose micro-call gives edited text
+    # the same tier-2b library matching as staging. Skipped when the phrase
+    # already exact-matches an alias — tier 1 resolves that locally.
+    micro = None
+    key = norm(body.phrase)
+    if not key or await db.fetchone(_EXACT_ALIAS_SQL, (key,)) is None:
+        micro = await _micro_decompose(body.phrase)
+
+    index_ids: set[str] | None = None
+    phrase = body.phrase
+    if micro is not None:
+        item0, index_ids = micro
+        phrase = (item0.phrase or "").strip() or body.phrase
+        # The edited text's own quantity words beat stale spoken values from
+        # the pre-edit utterance; an explicit request qty/unit beats both.
+        if body.qty is None and item0.qty is not None:
+            spoken_qty = item0.qty
+        if body.unit is None and item0.unit is not None:
+            spoken_unit = item0.unit
+        parsed = item0.model_copy(
+            update={
+                "phrase": phrase,
+                "qty": float(spoken_qty) if spoken_qty is not None else None,
+                "unit": spoken_unit,
+            }
+        )
+    else:
+        parsed = ParsedItem(
+            phrase=phrase,
+            phrase_kind="food",
+            qty=float(spoken_qty) if spoken_qty is not None else None,
+            unit=spoken_unit,
+            state=None,
+            brand=None,
+            library_match=None,
+            meal_ref=None,
+        )
+
     searching = StagedItem(
         item_index=body.item_index,
-        phrase=body.phrase,
+        phrase=phrase,
         status="searching",
         qty=spoken_qty,
         meal=meal,
@@ -143,28 +214,35 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
         (
             str(body.log_id),
             body.item_index,
-            body.phrase,
-            norm(body.phrase),
+            phrase,
+            norm(phrase),
             json.dumps(staged_payload),
         ),
     )
 
     # BACKLOG 6: the one cascade — same pick(), same §7.3 portion resolution
-    # (spoken qty AND unit, incl. the count-without-unit rule) as staging.
-    # library_match is None: no decompose micro-call on this path yet (§5 seam).
-    parsed = ParsedItem(
-        phrase=body.phrase,
-        phrase_kind="food",
-        qty=float(spoken_qty) if spoken_qty is not None else None,
-        unit=spoken_unit,
-        state=None,
-        brand=None,
-        library_match=None,
-        meal_ref=None,
-    )
-    res = await cascade.resolve_item(parsed, body.item_index, meal)
-    if res.staged.status != "resolved":
+    # (spoken qty AND unit, incl. the count-without-unit rule) as staging;
+    # BACKLOG 24: `parsed` now carries the micro-call's library_match/state/
+    # brand, validated against the inlined index ids (§3.3 2b).
+    res = await cascade.resolve_item(parsed, body.item_index, meal, index_ids)
+    if res.staged.status == "searching":
         return await tier3.run_tier3(str(body.log_id), body.item_index)
+    if res.staged.status != "resolved":
+        # §3.1 guard surfaced by the micro-call (meal_ref → needs_input): a
+        # meal-shaped phrase never enters food search — persist and return.
+        await db.execute(
+            """
+            UPDATE item_resolutions SET status = %s, staged = %s::jsonb
+            WHERE log_id = %s AND item_index = %s
+            """,
+            (
+                res.staged.status,
+                json.dumps(res.staged.model_dump(mode="json", exclude_none=True)),
+                str(body.log_id),
+                body.item_index,
+            ),
+        )
+        return res.staged
 
     item = res.staged
     resolved_payload = item.model_dump(mode="json", exclude_none=True)

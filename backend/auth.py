@@ -157,8 +157,15 @@ def _check_origin(request: Request) -> None:
         return  # nothing configured: bare local dev stays fail-open
     if origin.rstrip("/") in allowed:
         return
-    if urlsplit(origin).hostname in ("localhost", "127.0.0.1", "::1"):
-        return  # dev allowance: local frontend against a deployed backend
+    if _env("VERCEL_ENV") != "production" and urlsplit(origin).hostname in (
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    ):
+        # dev allowance: local frontend against a deployed preview/dev backend.
+        # BACKLOG 30: never in production — a localhost Origin there is another
+        # site on the user's machine, not our frontend.
+        return
     raise HTTPException(status_code=403, detail="origin mismatch")
 
 
