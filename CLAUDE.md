@@ -36,9 +36,27 @@ Invoke the `fact-checker` subagent (`.claude/agents/fact-checker.md`) before com
 
 ## Project context
 
-<!-- TODO: fill in once code lands — what this is, stack, non-obvious commands, architecture facts not visible in any single file. -->
+**Usual** — single-user voice-first nutrition logger. Next.js PWA + Python FastAPI deployed as
+two Vercel Services on one origin; Neon Postgres; OpenAI Agents SDK; Deepgram STT; Langfuse traces.
+
+**New here? Read [docs/ONBOARDING.md](docs/ONBOARDING.md) first** — setup, commands, layout, current state.
+[docs/DESIGN.md](docs/DESIGN.md) is the authoritative spec (§3 resolver, §4 schema, §7 UI, §8 decisions
+with the *why*). [docs/BACKLOG.md](docs/BACKLOG.md) is the findings ledger.
+
+Non-obvious facts, each of which has already caused a bug:
+
+- API types are defined **once** in pydantic and generated to TS. Change a model → re-run
+  `cd frontend && pnpm run typegen`. Never hand-edit `frontend/lib/api-types.ts`.
+- Pin full model ids (`gpt-5.6-luna`, `gpt-5.6-terra`) — never bare `gpt-5.6`.
+- DB tests hit the **production** Neon database inside force-rollback transactions (no dev
+  branch yet, BACKLOG 18). Keep that pattern; leave no rows behind. `-m live` spends real money.
+- Tier-0 (saved-meal) rows never learn aliases or portion defaults — the saved meal is the memory.
+- Every rewrite of `item_resolutions.staged` must append `KEEP_LOG_KEYS_SQL`, or the diary-date
+  shift is silently lost (BACKLOG 57).
+- Estimation is gated off outside the photo lane; offline is a deliberate non-feature.
 
 ## Guardrails
 
-- Never commit secrets, `.env` files, or credentials.
+- Never commit secrets, `.env` files, or credentials. Never print a secret value — names only.
 - Don't commit or push unless asked.
+- Deploy previews only (`vercel deploy --yes`). Promoting to production is a human decision.
