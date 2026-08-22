@@ -167,10 +167,14 @@ if norm(phrase) exactly matches any meal_macros.trigger_phrases entry (macro act
 
 Pure expansion. No search, no LLM, no portion inference — the macro stores exact portions. `trigger_phrases` are stored as `norm()` output and the meals API applies `norm()` on write — e.g. `{'usual breakfast', 'usual'}`, **not** `'my usual breakfast'`/`'the usual'`, which post-norm inputs could never equal.
 
-Two rules that prevent quiet corruption:
+A macro's **name** is matched too, but only after every trigger has failed. §6.1 shows decompose the saved-meal *names*, so a `meal_ref` can come back as a name the triggers no longer carry — the Library can edit a trigger away from `norm(name)`. Trigger matches always win; among equals, the most recently updated macro does.
+
+Four rules that prevent quiet corruption:
 
 - **Tier-0 expansions never write aliases or portion defaults** (§3.5). The macro itself is the memory. Without this rule, committing a 4-item breakfast would upsert four conflicting aliases for "usual breakfast", which would lie dormant until the macro is deactivated and then resolve his whole breakfast to a single egg.
 - **A meal-shaped phrase with no matching macro never enters food search.** Decomposition tags meal references (`meal_ref` / `phrase_kind`); if no macro matches, the row becomes `needs_input`: *"No saved meal called 'usual lunch' — log the items, then tap Save as meal."* Sending "usual lunch" to a food-database search would return junk and make the headline feature's first use a dead end.
+- **A spoken quantity means he is talking about a food, not a meal.** A macro is a meal reference and stores its own portions, so tier 0 stands aside when decompose tagged the phrase `food` *and* heard a qty — "two eggs" resolves through tiers 1–3 at the qty he said, even if a macro happens to be triggered by "eggs". A `meal_ref`-tagged phrase still expands; the qty is simply not a thing a macro can honour.
+- **A macro that cannot expand in full expands not at all.** Foods are cache-forever, so a stored item pointing at a missing `foods` row means the macro is broken, not that the item is optional. Expansion counts what it could not find and the row becomes `needs_input`: *"Saved meal 'Usual breakfast' is missing 1 of its 3 foods — fix it in Library, then log it again."* The two failure modes this replaces are both silent lies: logging the surviving items would under-count a meal he believes he logged whole, and reporting the all-missing case through the previous bullet's guard would claim a saved meal he can see in Library does not exist.
 
 ### 3.2 Tier 1 — exact alias match
 
@@ -572,7 +576,11 @@ Every row supports, concretely:
 
 ### 7.2 Meal & time inference
 
-Client sends `captured_at` + timezone. Meal = configurable clock windows (defaults: breakfast 04–11, lunch 11–15:30, dinner 15:30–21:30, snack otherwise) stored in `settings`, overridden by a spoken `meal_hint`/`when_hint` ("this morning I had…" → breakfast, `logged_at` shifted to that morning). No model involved.
+Client sends `captured_at` + timezone. Meal = configurable clock windows (defaults: breakfast 04–11, lunch 11–15:30, dinner 15:30–21:30, snack otherwise) stored in `settings`, overridden by a spoken `meal_hint`/`when_hint` ("this morning I had…" → breakfast, `logged_at` shifted to that morning). An explicit spoken `meal_hint` outranks the meal the `when_hint` implies; the date shift applies either way. Unrecognized hints are ignored with a note rather than guessed at. No model involved.
+
+**The two clocks are separate columns, and the shift only ever moves one of them.** `logs.captured_at` is when he spoke — immutable, and the anchor every §9 number is computed against. The shifted diary time rides each staged item's jsonb as `logged_at` and lands on `entries.logged_at` at commit. Writing the shift back onto `captured_at` would be the tempting one-line version and it silently corrupts the instrumentation: "yesterday at lunch" would book a ~30-hour commit latency and file the log in last week's bucket.
+
+**The invariant that carrying it costs: every rewrite of `item_resolutions.staged` must preserve the log-level keys.** Those keys — `logged_at`, decompose's `save_intent`, the ignored-hint `when_hint_note` — are set once at staging time and belong to the *log*, but they live on a per-item payload that half a dozen code paths overwrite (tier-3 result, `/api/resolve` re-resolution, a question answer, a refusal, and the commit's own row rewrite). Each of those writes a fresh `StagedItem` dump, which by construction cannot contain them, so the plain assignment drops them. `resolver/commit.KEEP_LOG_KEYS_SQL` is the one mechanism: a `jsonb_strip_nulls(jsonb_build_object(…))` merge appended to every `staged = <new>::jsonb` assignment, re-reading the three keys off the row being replaced (absent keys stay absent — nothing is invented). Miss one site and the loss is invisible until something reads a key *after* that rewrite: the commit rewrite was missed in Phase 4, and because the first commit reads `logged_at` before rewriting, only the §8.6 idempotent retry and the §3.5 late commit-item exposed it — both silently billing a back-dated meal to today.
 
 ### 7.3 Portion defaults
 
@@ -675,7 +683,9 @@ First-class tables (`logs`, `item_resolutions`), not log lines — plus LLM trac
 | **Alias hit rate** | `count(tier ≤ 2 OR short_circuit) / count(*)` over items in committed logs — plus a companion series over committed **+ discarded** logs, because failures are likeliest to be discarded and a committed-only denominator would flatter the curve | `item_resolutions` |
 | **Adherence** | distinct local dates with ≥ 1 entry, per week, plotted against `cronometer_baseline_days_per_week` from settings | `entries` |
 
-Both latency numbers matter: `staged_ms` is the system's speed claim; commit latency includes dwell time and is the honest end-to-end number the hypothesis is about.
+Both latency numbers matter: `staged_ms` is the system's speed claim; commit latency includes dwell time and is the honest end-to-end number the hypothesis is about. Commit latency spans two clocks — `captured_at` is the phone's, `committed_at` is the database's — so a phone running ahead can produce a negative sample; the series floors each one at zero rather than letting an unsynced clock drag the median below it. Both series bucket by **capture** week; only Adherence buckets by `entries.logged_at`, the shifted diary date (§7.2).
+
+**The capture-failure counter is one row per incident, not per report.** A server-detected failure (silent blob, empty transcript) already owns its own `capture_failure` log row, and the client then re-reports that same incident as `capture_fallback` on the next text log — counting both would double every server-side failure and overstate the verdict on voice. That echo is dropped. Every client-only class — `upload_failed`, plus `permission_denied` / `recorder_error` / `too_short` / `silent_blob` caught before any upload — has no server row and counts once.
 
 Secondary series (write paths now exist for all of them): edit rate (`was_edited` = any food/serving/**qty** delta, proposed vs final both persisted — a portion-only correction pattern is friction #3's quality signal and must not read as zero), disambiguation rate, tier-3 resolutions/week (→ 0), short-circuit share (↑), discarded-log count, **voice-capture failure count** (client-detected blob failures + server-detected empty transcripts, both landing in `capture_fallback`/`capture_error` — given §13, this counter is effectively the verdict on installed-PWA voice viability), duplicate-suspect food pairs (§4 invariant).
 

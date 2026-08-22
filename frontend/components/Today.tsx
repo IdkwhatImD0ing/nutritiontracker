@@ -8,10 +8,13 @@ import {
   getDiary,
   patchTimings,
   type DayTotals,
+  type LogCreateResponse,
   type LogResponse,
   type StagedItem,
 } from "@/lib/api";
 import CaptureBar from "./CaptureBar";
+import type { DiaryMeals } from "./DiaryApi";
+import DiaryList from "./DiaryList";
 import PendingItems from "./PendingItems";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
@@ -32,6 +35,8 @@ function localDateISO(): string {
 
 export default function Today() {
   const [totals, setTotals] = useState<DayTotals | null>(null);
+  // §7.4 Today: the diary grouped by meal renders under the tracker.
+  const [meals, setMeals] = useState<DiaryMeals | null>(null);
   const [staging, setStaging] = useState<{
     log: LogResponse;
     restore: StagingSnapshot | null;
@@ -49,9 +54,17 @@ export default function Today() {
   const discardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  // §8.4: "save this as my usual breakfast" said after logging resolves to
+  // zero items — the server saved (or explained) it, so confirm that instead
+  // of opening an empty staging sheet.
+  const [savedNote, setSavedNote] = useState<string | null>(null);
   // One client uuid per log (§5 idempotent upsert): a retry of the same text
   // reuses the id so a double-submit can't create two logs.
   const pendingRef = useRef<{ id: string; text: string } | null>(null);
+  // Voice twin of pendingRef: one uuid per capture attempt, keyed by the
+  // clip's capture start, so a retried upload of the same clip reuses the
+  // id (§5 idempotent upsert) instead of minting a fresh one per attempt.
+  const audioRef = useRef<{ id: string; capturedAt: string } | null>(null);
   // §8.1d/§13: a failed voice capture is reported on the NEXT text log as
   // capture_fallback + capture_error — the §9 voice-viability counter.
   const voiceFailRef = useRef<string | null>(null);
@@ -65,8 +78,10 @@ export default function Today() {
     getDiary(localDateISO())
       .then((d) => {
         // GET /api/diary returns {date, meals, totals} (§5) — the tracker
-        // consumes the totals block.
-        if (!cancelled) setTotals(d.totals);
+        // consumes the totals block, the diary list the meals.
+        if (cancelled) return;
+        setTotals(d.totals);
+        setMeals(d.meals);
       })
       .catch(() => {
         /* zero-state renders gracefully without the diary */
@@ -96,6 +111,19 @@ export default function Today() {
     };
   }, []);
 
+  // After a commit / late commit-item the diary has new rows — re-read it
+  // (the commit response carries totals only).
+  const reloadDiary = () => {
+    getDiary(localDateISO())
+      .then((d) => {
+        setTotals(d.totals);
+        setMeals(d.meals);
+      })
+      .catch(() => {
+        /* totals from the commit response already rendered */
+      });
+  };
+
   const updatePending = (p: PendingState | null) => {
     setPending(p);
     try {
@@ -116,6 +144,21 @@ export default function Today() {
       discardLog(d.log.log_id).catch(() => {});
       setDiscard(null);
     }
+  };
+
+  // §8.4: a log that staged nothing but carried a save outcome is a
+  // "save as my usual …" utterance, not a meal — confirm it and stage nothing.
+  const enterStaging = (log: LogCreateResponse): void => {
+    if (log.items.length === 0 && (log.saved_meal || log.note)) {
+      setSavedNote(
+        log.saved_meal
+          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} items`
+          : (log.note as string),
+      );
+      return;
+    }
+    setSavedNote(null);
+    setStaging({ log, restore: null });
   };
 
   const submit = async (text: string): Promise<boolean> => {
@@ -141,7 +184,7 @@ export default function Today() {
       });
       pendingRef.current = null;
       voiceFailRef.current = null; // reported once, on the fallback log
-      setStaging({ log, restore: null });
+      enterStaging(log);
       return true;
     } catch {
       t0Ref.current = null;
@@ -164,13 +207,21 @@ export default function Today() {
     // worked) so it is counted once, here — not stamped as a "fallback" on
     // some unrelated text log an hour later.
     const priorFailure = voiceFailRef.current;
+    const attempt =
+      audioRef.current?.capturedAt === clip.capturedAt
+        ? audioRef.current
+        : { id: crypto.randomUUID(), capturedAt: clip.capturedAt };
+    audioRef.current = attempt;
     try {
       const res = await createLogAudio({
-        id: crypto.randomUUID(),
+        id: attempt.id,
         clip,
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         capture_error: priorFailure,
       });
+      // The server answered (staged or capture_failure) — the attempt is
+      // spent; only a failed upload keeps the id for a retry.
+      audioRef.current = null;
       if (res.kind === "capture_failure") {
         // Server-side half of §13's silent-blob class: audio uploaded fine
         // but transcribed to nothing. The server recorded it on the audio
@@ -180,7 +231,7 @@ export default function Today() {
         return false;
       }
       if (voiceFailRef.current === priorFailure) voiceFailRef.current = null;
-      setStaging({ log: res.log, restore: null });
+      enterStaging(res.log);
       return true;
     } catch {
       t0Ref.current = null;
@@ -258,8 +309,39 @@ export default function Today() {
           key={pending.logId}
           logId={pending.logId}
           items={pending.items}
-          onTotals={setTotals}
+          onTotals={(t) => {
+            setTotals(t);
+            reloadDiary(); // the straggler is a new diary row
+          }}
           onDone={() => updatePending(null)}
+        />
+      ) : null}
+
+      {meals ? (
+        <DiaryList
+          meals={meals}
+          onPatched={(entry, t) => {
+            setTotals(t);
+            setMeals((cur) => {
+              if (!cur) return cur;
+              const next: DiaryMeals = {};
+              for (const [meal, list] of Object.entries(cur)) {
+                next[meal] = list.map((e) => (e.id === entry.id ? entry : e));
+              }
+              return next;
+            });
+          }}
+          onDeleted={(id, t) => {
+            setTotals(t);
+            setMeals((cur) => {
+              if (!cur) return cur;
+              const next: DiaryMeals = {};
+              for (const [meal, list] of Object.entries(cur)) {
+                next[meal] = list.filter((e) => e.id !== id);
+              }
+              return next;
+            });
+          }}
         />
       ) : null}
 
@@ -270,6 +352,7 @@ export default function Today() {
           onRendered={() => stagedRendered(staging.log.log_id)}
           onCommitted={(t, stragglers) => {
             setTotals(t);
+            reloadDiary();
             setStaging(null);
             if (stragglers.length > 0) {
               updatePending({ logId: staging.log.log_id, items: stragglers });
@@ -284,6 +367,15 @@ export default function Today() {
           <span>Log discarded</span>
           <button type="button" onClick={undoDiscard}>
             Undo
+          </button>
+        </div>
+      ) : null}
+
+      {savedNote ? (
+        <div className="toast" role="status">
+          <span>{savedNote}</span>
+          <button type="button" onClick={() => setSavedNote(null)}>
+            OK
           </button>
         </div>
       ) : null}

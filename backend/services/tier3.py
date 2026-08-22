@@ -42,6 +42,7 @@ from models import (
     WebSource,
 )
 from resolver import cascade, foods_repo
+from resolver.commit import KEEP_LOG_KEYS_SQL
 from resolver.norm import norm
 from sources import fdc, web
 
@@ -1019,6 +1020,12 @@ async def _write_item_row(
     write: BACKLOG 27 — a tier-3 run that finishes after the user removed the
     row (status='removed') or after the item committed (committed_at set) must
     never resurrect/clobber it, so the UPDATE is conditional on live statuses.
+
+    §3.1 invariant: a row that started as a tier-0 expansion keeps tier 0 in
+    the column whatever re-resolves it (its phrase column is a food display
+    name — commit must never learn an alias for it). The log-level extras on
+    the staged jsonb (logged_at, save_intent, when_hint_note) survive the
+    rewrite via resolver.commit.KEEP_LOG_KEYS_SQL.
     """
     staged_payload = item.model_dump(mode="json", exclude_none=True)
     if spoken_qty is not None or spoken_unit is not None:
@@ -1035,11 +1042,11 @@ async def _write_item_row(
         # surfaces it on the wire and renders it as a visible link).
         staged_payload["web_source"] = web_source
     updated = await db.execute(
-        """
+        f"""
         UPDATE item_resolutions
         SET status = %s,
-            staged = %s::jsonb,
-            tier = %s,
+            staged = %s::jsonb{KEEP_LOG_KEYS_SQL},
+            tier = CASE WHEN item_resolutions.tier = 0 THEN 0 ELSE %s END,
             network_calls = network_calls + %s,
             resolve_ms = %s,
             proposed_food_id = coalesce(proposed_food_id, %s),
@@ -1190,10 +1197,13 @@ async def resolve_item_from_source(
         food, None, spoken_qty, spoken_unit,
         food_row_id=str(food_row_id), phrase=phrase,
     )
+    # §3.1: a manual pick on a tier-0 expansion row stays tier 0 (the macro
+    # is the memory; no alias is learned for the display-name phrase)
+    tier = 0 if staged_prev.get("tier") == 0 else 3
     item = _staged_from_food(
         item_index, phrase, meal, qty, food, str(food_row_id),
         serving_id=serving_id, confidence="low" if verify else "high",
-        alternates=None, question=None,
+        alternates=None, question=None, tier=tier,
     )
     await _write_item_row(
         log_id, item_index, item,
@@ -1203,6 +1213,7 @@ async def resolve_item_from_source(
         disambiguated=True,
         spoken_qty=spoken_qty,
         spoken_unit=spoken_unit,
+        tier=tier,
         web_source=_web_source(food),
     )
     return item
@@ -1230,7 +1241,11 @@ async def resolve_item_from_food(
         food, None, spoken_qty, spoken_unit,
         food_row_id=str(food_id), phrase=phrase,
     )
-    tier = staged_prev.get("tier") or 3
+    # §3.1: the prior tier is kept as-is — `or 3` re-stamped a tier-0
+    # expansion as tier 3 the moment the user tapped an alternates chip
+    tier = staged_prev.get("tier")
+    if tier is None:
+        tier = 3
     item = _staged_from_food(
         item_index, phrase, meal, qty, food, str(food_id),
         serving_id=serving_id, confidence="low" if verify else "high",

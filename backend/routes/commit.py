@@ -12,11 +12,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth import require_user
-from models import CommitRequest, DayTotals, StagedItem
+from models import CommitRequest, DayTotals, SaveIntent, StagedItem
 from resolver import commit as commit_tx
 from routes.diary import compute_day_totals, local_date
 
 router = APIRouter(dependencies=[Depends(require_user)])
+
+
+class CommitRequestIn(CommitRequest):
+    """CommitRequest + the §3.5 step-4 / §8.4 "Save as meal" tap: the staging
+    sheet names the meal and the commit creates/updates the macro from the
+    items it writes (route-local, additive over models.py)."""
+
+    save_intent: SaveIntent | None = None
 
 
 class CommitItemRequest(BaseModel):
@@ -34,27 +42,51 @@ class CommitItemError(BaseModel):
     error: str
 
 
+class SavedMealNote(BaseModel):
+    """A macro this request created/updated (§8.4) — enough for the client to
+    confirm it ("Saved as 'usual breakfast' · 3 items")."""
+
+    meal_id: UUID
+    name: str
+    item_count: int
+
+
 class CommitResponse(DayTotals):
     """DayTotals + per-item refusals. A 200 with non-empty errors is a PARTIAL
     commit — the client must keep refused rows visible (verify-me / pending),
-    never close over them (§3.5; the silent-protein-hole failure class)."""
+    never close over them (§3.5; the silent-protein-hole failure class).
+    The totals are for the day the entries landed on (§7.2 when-shift aware)."""
 
     errors: list[CommitItemError] = []
+    saved_meal: SavedMealNote | None = None
+
+
+def _saved_meal(row: dict | None) -> SavedMealNote | None:
+    if row is None:
+        return None
+    return SavedMealNote(
+        meal_id=row["id"], name=row["name"], item_count=len(row["items"] or [])
+    )
 
 
 @router.post("/api/logs/{log_id}/commit", response_model=CommitResponse)
-async def commit_log(log_id: UUID, body: CommitRequest) -> CommitResponse:
+async def commit_log(log_id: UUID, body: CommitRequestIn) -> CommitResponse:
+    # getattr: tests and in-process callers still hand in a bare CommitRequest
+    save_intent = getattr(body, "save_intent", None)
     try:
-        result = await commit_tx.commit_log(log_id, body.items)
+        result = await commit_tx.commit_log(log_id, body.items, save_intent=save_intent)
     except commit_tx.LogNotFound:
         raise HTTPException(404, "log not found")
     except commit_tx.LogNotCommittable as e:
         raise HTTPException(409, str(e))
-    day = await local_date(result["log"]["captured_at"])
+    except commit_tx.MealInvalid as e:
+        raise HTTPException(422, str(e))
+    day = await local_date(result["logged_at"])
     totals = await compute_day_totals(day)
     return CommitResponse(
         **totals.model_dump(),
         errors=[CommitItemError(**e) for e in result.get("errors", [])],
+        saved_meal=_saved_meal(result.get("meal")),
     )
 
 
@@ -69,5 +101,5 @@ async def commit_item(log_id: UUID, body: CommitItemRequest) -> DayTotals:
         raise HTTPException(404, "log not found")
     except commit_tx.LogNotCommittable as e:
         raise HTTPException(409, str(e))
-    day = await local_date(result["log"]["captured_at"])
+    day = await local_date(result["logged_at"])
     return await compute_day_totals(day)

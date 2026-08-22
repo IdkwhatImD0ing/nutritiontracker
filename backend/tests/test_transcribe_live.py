@@ -227,7 +227,7 @@ def test_is_near_empty_table():
         (".", True),
         ("  …  ", True),
         ("a", True),  # one alphanumeric char is not an utterance
-        ("uh", False),
+        ("uh", True),  # §8.1d: no alphabetic token of >= 3 letters → capture failure
         ("two eggs", False),
         ("egg", False),
     ]:

@@ -1,0 +1,176 @@
+/* Hand-rolled SVG charts (History §7.4, Experiment §9) — X5b. Tokens only:
+   no hardcoded chart colors, so the charts follow whatever theme globals.css
+   defines (dark-first today). */
+
+.chart {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chart-title {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-grid line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.chart-axis text,
+.chart-xlabel,
+.chart-value {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.chart-value {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+.chart-empty {
+  fill: var(--faint);
+  font-size: 11px;
+}
+
+.chart-target line {
+  stroke: var(--amber);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+
+.chart-target text {
+  fill: var(--amber);
+  font-size: 10px;
+}
+
+.chart-bar.tap,
+.chart-strip-cell.tap {
+  cursor: pointer;
+}
+
+.chart-bar.tap:hover rect:not([fill="transparent"]),
+.chart-bar.tap:focus-visible rect:not([fill="transparent"]) {
+  filter: brightness(1.2);
+}
+
+.chart-bar:focus-visible,
+.chart-strip-cell:focus-visible {
+  outline: none;
+}
+
+.chart-bar.muted rect:not([fill="transparent"]) {
+  opacity: 0.35;
+}
+
+.chart-bar.active rect:not([fill="transparent"]) {
+  stroke: var(--text);
+  stroke-width: 1;
+}
+
+.chart-bar-empty {
+  stroke: var(--surface-3);
+  stroke-width: 2;
+}
+
+.chart-strip-bg {
+  fill: var(--surface-3);
+}
+
+.chart-strip-cell.muted rect {
+  opacity: 0.3;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.chart-legend-swatch.dashed {
+  background: repeating-linear-gradient(
+    90deg,
+    currentColor 0 4px,
+    transparent 4px 7px
+  ) !important;
+  color: var(--amber);
+}
+
+/* small multiples (§9 secondaries) */
+
+.chart-small-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chart-small {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chart-small-title {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+}
+
+.chart-small-goal {
+  color: var(--faint);
+  letter-spacing: 0;
+}
+
+.chart-small-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.chart-small-svg {
+  width: 100%;
+  height: 30px;
+  display: block;
+  overflow: visible;
+}

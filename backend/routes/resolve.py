@@ -28,6 +28,7 @@ from models import (
     Tier3KickRequest,
 )
 from resolver import cascade
+from resolver.commit import KEEP_LOG_KEYS_SQL
 from resolver.norm import norm
 from services import tier3
 from sources import fdc
@@ -65,9 +66,30 @@ def _col(row, idx: int, key: str):
 
 async def _item_row(log_id: UUID, item_index: int):
     return await db.fetchone(
-        "SELECT phrase, staged FROM item_resolutions WHERE log_id = %s AND item_index = %s",
+        "SELECT phrase, staged, status, committed_at FROM item_resolutions "
+        "WHERE log_id = %s AND item_index = %s",
         (str(log_id), item_index),
     )
+
+
+# State guard — the same one as tier3._write_item_row (BACKLOG 27): every
+# write in this module is conditional on the row still being live, so a late
+# /api/resolve, kick, or answer can never resurrect a removed row or clobber
+# a committed one. Used inline in SQL and up front via _require_live (a 409
+# before any model/network spend). Item rows never carry a 'committed'
+# status — commit marks them with committed_at — hence the second clause.
+_LIVE_STATUSES = ("searching", "needs_input", "not_found", "resolved")
+_LIVE_SQL = (
+    "status IN ('searching', 'needs_input', 'not_found', 'resolved') "
+    "AND committed_at IS NULL"
+)
+
+
+def _require_live(row) -> None:
+    if _col(row, 3, "committed_at") is not None:
+        raise HTTPException(status_code=409, detail="item already committed")
+    if _col(row, 2, "status") not in _LIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="item already removed")
 
 
 def _staged_dict(row) -> dict:
@@ -87,14 +109,17 @@ async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
     row = await _item_row(body.log_id, body.item_index)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown log item")
-    await db.execute(
-        """
+    _require_live(row)
+    claimed = await db.execute(
+        f"""
         UPDATE item_resolutions
         SET tier3_attempts = tier3_attempts + 1, tier3_started_at = now()
-        WHERE log_id = %s AND item_index = %s
+        WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
         """,
         (str(body.log_id), body.item_index),
     )
+    if not claimed:  # removed/committed between the read and the write
+        raise HTTPException(status_code=409, detail="item no longer live")
     return await tier3.run_tier3(str(body.log_id), body.item_index)
 
 
@@ -140,6 +165,8 @@ async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
 async def resolve_item(body: ResolveRequest) -> StagedItem:
     t0 = time.perf_counter()
     prev = await _item_row(body.log_id, body.item_index)
+    if prev is not None:
+        _require_live(prev)  # a removed/committed row is never re-resolved
     prev_staged = _staged_dict(prev) if prev is not None else {}
     try:
         meal = Meal(prev_staged.get("meal") or "snack")
@@ -201,15 +228,24 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
     # original proposed_* are preserved — commit learns the alias for what was
     # actually spoken, and `explicit` compares the final food against what the
     # system first proposed. The new text lives in the staged payload.
-    await db.execute(
-        """
+    # The conflict branch carries the live guard (_LIVE_SQL, table-qualified
+    # because EXCLUDED shares the column names): a row removed or committed
+    # since the pre-check above refuses the update (rowcount 0) — never a
+    # resurrection via 'searching'.
+    # §3.1 invariant: a row that was a tier-0 expansion stays tier 0 in the
+    # column through every edit — its phrase column is a food display name,
+    # not something spoken, so commit must never learn an alias for it.
+    written = await db.execute(
+        f"""
         INSERT INTO item_resolutions (log_id, item_index, phrase, phrase_norm, status, staged)
         VALUES (%s, %s, %s, %s, 'searching', %s::jsonb)
         ON CONFLICT (log_id, item_index) DO UPDATE
         SET status = 'searching',
-            staged = EXCLUDED.staged,
-            tier = NULL,
+            staged = EXCLUDED.staged{KEEP_LOG_KEYS_SQL},
+            tier = CASE WHEN item_resolutions.tier = 0 THEN 0 ELSE NULL END,
             was_edited = TRUE
+        WHERE item_resolutions.status IN ('searching', 'needs_input', 'not_found', 'resolved')
+          AND item_resolutions.committed_at IS NULL
         """,
         (
             str(body.log_id),
@@ -219,6 +255,8 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
             json.dumps(staged_payload),
         ),
     )
+    if not written:
+        raise HTTPException(status_code=409, detail="item no longer live")
 
     # BACKLOG 6: the one cascade — same pick(), same §7.3 portion resolution
     # (spoken qty AND unit, incl. the count-without-unit rule) as staging;
@@ -231,9 +269,9 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
         # §3.1 guard surfaced by the micro-call (meal_ref → needs_input): a
         # meal-shaped phrase never enters food search — persist and return.
         await db.execute(
-            """
-            UPDATE item_resolutions SET status = %s, staged = %s::jsonb
-            WHERE log_id = %s AND item_index = %s
+            f"""
+            UPDATE item_resolutions SET status = %s, staged = %s::jsonb{KEEP_LOG_KEYS_SQL}
+            WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
             """,
             (
                 res.staged.status,
@@ -260,15 +298,16 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
     # edit must not erase the baseline that commit's explicit-choice and
     # rejected_count semantics compare against (§3.5).
     await db.execute(
-        """
+        f"""
         UPDATE item_resolutions
-        SET status = 'resolved', staged = %s::jsonb, tier = %s,
+        SET status = 'resolved', staged = %s::jsonb{KEEP_LOG_KEYS_SQL},
+            tier = CASE WHEN item_resolutions.tier = 0 THEN 0 ELSE %s END,
             resolve_ms = %s,
             proposed_food_id = coalesce(proposed_food_id, %s),
             proposed_serving_id = coalesce(proposed_serving_id, %s),
             proposed_qty = coalesce(proposed_qty, %s),
             alias_id = %s
-        WHERE log_id = %s AND item_index = %s
+        WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
         """,
         (
             json.dumps(resolved_payload),
@@ -339,12 +378,12 @@ async def _answer_state_toggle(
             if item.status == "resolved" and item.food is not None:
                 item = item.model_copy(update={"state_question": None})
                 await db.execute(
-                    """
+                    f"""
                     UPDATE item_resolutions
                     SET staged = (staged - 'state_question')
                                  || jsonb_build_object('state_answer', %s::text),
                         proposed_food_id = %s
-                    WHERE log_id = %s AND item_index = %s
+                    WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
                     """,
                     (state, item.food.id, str(log_id), item_index),
                 )
@@ -358,10 +397,10 @@ async def _answer_state_toggle(
     staged["state_answer"] = state
     staged.pop("state_question", None)
     await db.execute(
-        """
+        f"""
         UPDATE item_resolutions
-        SET status = 'resolved', staged = %s::jsonb
-        WHERE log_id = %s AND item_index = %s
+        SET status = 'resolved', staged = %s::jsonb{KEEP_LOG_KEYS_SQL}
+        WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
         """,
         (json.dumps(staged), str(log_id), item_index),
     )
@@ -378,6 +417,7 @@ async def answer_question(body: AnswerRequest) -> StagedItem:
     row = await _item_row(body.log_id, body.item_index)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown log item")
+    _require_live(row)
 
     if body.answer.food_id:
         # Already-cached food (alternates chip): one local read, no network.
@@ -410,13 +450,15 @@ async def answer_question(body: AnswerRequest) -> StagedItem:
         if toggled is not None:
             return toggled
     # Free text: one re-kick — a second agent run carrying the refinement.
-    await db.execute(
-        """
+    claimed = await db.execute(
+        f"""
         UPDATE item_resolutions
         SET tier3_attempts = tier3_attempts + 1, tier3_started_at = now(),
             status = 'searching'
-        WHERE log_id = %s AND item_index = %s
+        WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
         """,
         (str(body.log_id), body.item_index),
     )
+    if not claimed:  # removed/committed between the read and the write
+        raise HTTPException(status_code=409, detail="item no longer live")
     return await tier3.run_tier3(str(body.log_id), body.item_index, refinement=text)

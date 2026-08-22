@@ -11,7 +11,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 import tracing
-from routes import commit, diary, entries, foods, logs, resolve
+from routes import (
+    aliases,
+    commit,
+    diary,
+    entries,
+    foods,
+    history,
+    logs,
+    meals,
+    metrics,
+    resolve,
+    settings,
+)
 
 
 @asynccontextmanager
@@ -38,3 +50,10 @@ app.include_router(commit.router)
 app.include_router(diary.router)
 app.include_router(entries.router)
 app.include_router(foods.router)
+# M3 (§12): saved meals, the alias sheet / Library list, History, Settings +
+# the goal wizard, and the §9 /experiment series.
+app.include_router(meals.router)
+app.include_router(aliases.router)
+app.include_router(history.router)
+app.include_router(settings.router)
+app.include_router(metrics.router)

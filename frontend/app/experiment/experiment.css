@@ -1,0 +1,73 @@
+/* /experiment (§9 charts) — X5b. Chart primitives are in history/charts.css. */
+
+.exp-intro {
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin: -8px 0 0;
+  line-height: 1.45;
+}
+
+.exp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exp-h2 {
+  margin: 0;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+
+.exp-notice {
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.exp-notice code {
+  color: var(--sage);
+  font-size: 0.8rem;
+}
+
+/* §4 duplicate-suspect pairs (snapshot list) */
+
+.exp-dupes {
+  list-style: none;
+  margin: 0;
+  padding: 4px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+}
+
+.exp-dupes li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.exp-dupes li:last-child {
+  border-bottom: none;
+}
+
+.exp-dupes .badge {
+  margin: 0 6px 0 0;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.exp-dupes .sep {
+  color: var(--amber);
+  margin: 0 4px;
+}
+
+.exp-dupes .more {
+  color: var(--faint);
+}

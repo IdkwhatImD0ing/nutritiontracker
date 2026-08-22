@@ -1,0 +1,121 @@
+/* Diary list (Today + History day view) — X5b. Reuses globals.css's .row /
+   .row-detail / .stepper vocabulary; only the diary-specific bits live here.
+   The integrator may fold this into globals.css. */
+
+.diary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.diary-empty {
+  font-size: 0.85rem;
+  color: var(--faint);
+  text-align: center;
+  margin: 4px 0;
+}
+
+.diary-meal {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px 14px;
+}
+
+.diary-meal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.diary-meal-name {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.diary-meal-kcal {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.diary-row.web .row-name {
+  color: #a8c6ee; /* §3.4a: web-transcribed rows are visually distinct */
+}
+
+.diary-edit {
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diary-edit > .k {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.diary-stepper button {
+  width: 44px;
+  padding: 6px 0;
+  font-size: 1.1rem;
+}
+
+.diary-stepper input {
+  font-size: 1rem;
+  padding: 6px 0;
+}
+
+.diary-stepper button:disabled,
+.diary-stepper input:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.diary-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.diary-actions button {
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.diary-actions button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.diary-actions .diary-save:not(:disabled) {
+  background: var(--spruce);
+  border-color: var(--spruce);
+  color: var(--text);
+}
+
+.diary-actions .diary-delete {
+  margin-left: auto;
+}
+
+.diary-actions .diary-delete:not(:disabled) {
+  color: var(--red);
+}
+
+.diary-actions .diary-delete.confirm:not(:disabled) {
+  background: var(--red);
+  border-color: var(--red);
+  color: var(--text);
+}

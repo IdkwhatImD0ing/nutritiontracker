@@ -1,16 +1,19 @@
-"""The resolver cascade — M1 scope (DESIGN.md §3).
+"""The resolver cascade (DESIGN.md §3).
 
-Implemented here: whole-utterance short-circuit (aliases only, §3.0), tier-1
-exact alias match with §3.2's pick() and alternates, tier 2 (§3.3: 2a trigram
-against alias_norm with an explicit similarity() threshold, 2b decompose-time
-library_match, combination rules 1–5), portion resolution per §7.3 (spoken
-qty > alias mode-of-10 > food mode > provider default, with the
+Implemented here: whole-utterance short-circuit (§3.0: meal macro first, then
+aliases — short_circuit_all), tier 0 meal-macro expansion (§3.1: one
+StagedItem per macro item, stored portions, no search/LLM/portion inference),
+tier-1 exact alias match with §3.2's pick() and alternates, tier 2 (§3.3: 2a
+trigram against alias_norm with an explicit similarity() threshold, 2b
+decompose-time library_match, combination rules 1–5), portion resolution per
+§7.3 (spoken qty > alias mode-of-10 > food mode > provider default, with the
 count-without-unit "verify me" rule), the §3.4a state-question rule on the
 tier-1/tier-2 paths, and the §3.1 meal-ref guard.
 
-Clean seams, later phases:
-  - tier 0 (meal-macro expansion) slots into short_circuit() before the alias
-    check and into resolve_item() for meal_ref phrases (M3).
+Entry points: short_circuit_all() + resolve_items() are the list-returning
+per-log paths (a tier-0 expansion occupies one item_index per macro item);
+short_circuit() (aliases only) and resolve_item() (one Resolution) remain for
+single-row callers such as /api/resolve.
 
 Unresolved items come back as status="searching" — the client kicks tier 3
 (services.tier3.run_tier3) per §3.4.
@@ -568,15 +571,198 @@ async def _stage_tier2(
 
 
 # ---------------------------------------------------------------------------
+# tier 0 — meal macro expansion (§3.1)
+# ---------------------------------------------------------------------------
+
+# trigger_phrases are stored post-norm() (the meals API applies norm() on
+# write), so the match is plain equality against norm()'d keys. §6.1 shows the
+# decompose context saved-meal NAMES, so a meal_ref can arrive as a name the
+# triggers no longer carry (the Library can edit triggers away from
+# norm(name)) — norm(name) is matched too, but only after every trigger match.
+# Two active macros matching the same way: the most recently saved one wins.
+# The scan is the whole active-macro set (single-user: a handful of rows) so
+# both matches cost the one round-trip §3.0 budgets.
+_MACRO_SQL = """
+SELECT id, name, items, trigger_phrases FROM meal_macros
+WHERE is_active
+ORDER BY updated_at DESC
+"""
+
+_MACRO_FOODS_SQL = """
+SELECT id AS food_id, display_name, brand, servings,
+       default_serving_id AS food_default_serving_id
+FROM foods
+WHERE id = ANY(%s::uuid[])
+"""
+
+MEAL_REF_GUARD = "No saved meal called '{phrase}' — log the items, then tap Save as meal."
+
+# §3.1: the saved meal matched, but stored items point at foods rows that are
+# gone. Never silently log the remainder, and never claim the meal is missing.
+MEAL_BROKEN_GUARD = (
+    "Saved meal '{name}' is missing {missing} of its {total} foods — "
+    "fix it in Library, then log it again."
+)
+
+
+async def find_macro(keys: list[str]) -> dict | None:
+    """The active macro whose trigger_phrases — failing that, whose norm()'d
+    name — contain any of `keys` (already norm()'d), else None."""
+    keyset = {k for k in keys if k}
+    if not keyset:
+        return None
+    by_name: dict | None = None
+    for row in await db.fetchall(_MACRO_SQL):  # updated_at DESC
+        if keyset & set(row["trigger_phrases"] or ()):
+            return row
+        if by_name is None and norm(row["name"]) in keyset:
+            by_name = row
+    return by_name
+
+
+def _macro_keys(parsed: ParsedItem) -> list[str]:
+    # norm(phrase) for every item (a trigger said verbatim needs no meal_ref
+    # tag); decompose's meal_ref (the saved meal's name) as a second key.
+    # A macro is a meal reference, not a food (§3.1): a spoken quantity on a
+    # food-tagged phrase ("two eggs") is about the food, and the macro stores
+    # its own portions, so tier 0 stands aside and tiers 1–3 take the item.
+    if parsed.phrase_kind == "food" and parsed.qty is not None:
+        return []
+    keys = [norm(parsed.phrase)]
+    if parsed.meal_ref:
+        keys.append(norm(parsed.meal_ref))
+    return keys
+
+
+def _stage_tier0_item(
+    food: dict, item: dict, item_index: int, meal: Meal, t0: float
+) -> Resolution:
+    """One expanded macro item as a resolved StagedItem: the stored
+    {serving_id, qty} verbatim — no portion inference — with the §4
+    dangling-serving and partial-core-macros guards (verify-me, never a
+    zero-macro row). phrase = the food's display name (§5)."""
+    servings: list[dict] = food["servings"]
+    serving_id = item.get("serving_id")
+    qty = float(item.get("qty") or 1)
+    verify = False
+    serving = _serving_by_id(servings, serving_id)
+    if serving is None:  # dangling id never renders (§4)
+        serving = _serving_by_id(servings, food["food_default_serving_id"])
+        if serving is None and servings:
+            serving = servings[0]
+        verify = True
+    if serving is not None:
+        serving_id = serving["serving_id"]
+    macros = None
+    if serving is not None:
+        scaled = _scale_macros(serving.get("macros") or {}, qty)
+        if all(k in scaled for k in _CORE_MACROS):
+            macros = Macros(**scaled)
+        else:
+            verify = True
+    staged = StagedItem(
+        item_index=item_index,
+        phrase=food["display_name"],
+        status="resolved",
+        tier=0,
+        food=FoodRef(id=str(food["food_id"]), name=food["display_name"], brand=food["brand"]),
+        serving=ServingRef(
+            id=serving_id or food["food_default_serving_id"],
+            description=serving["description"] if serving else (serving_id or ""),
+        ),
+        qty=qty,
+        macros=macros,
+        meal=meal,
+        confidence="low" if verify else "high",
+        servings=_serving_options(servings) or None,
+    )
+    return Resolution(
+        staged=staged, alias_id=None, resolve_ms=int((time.monotonic() - t0) * 1000)
+    )
+
+
+async def expand_macro(
+    macro: dict, meal: Meal, start_index: int, t0: float | None = None
+) -> tuple[list[Resolution], int]:
+    """§3.1: one Resolution per macro item, item_index = start_index.. —
+    each expanded item gets its own index so per-item remove, commit, and
+    telemetry work on it like any other row.
+
+    Returns (rows, missing): `missing` counts the stored items whose foods row
+    is gone. Callers must surface it — a partial expansion would silently log
+    half a saved meal, and an empty one is not the same as "no such meal"."""
+    t0 = time.monotonic() if t0 is None else t0
+    items: list[dict] = macro["items"] or []
+    food_ids = sorted({str(i["food_id"]) for i in items if i.get("food_id")})
+    foods = (
+        {str(r["food_id"]): r for r in await db.fetchall(_MACRO_FOODS_SQL, (food_ids,))}
+        if food_ids
+        else {}
+    )
+    out: list[Resolution] = []
+    missing = 0
+    for item in items:
+        food = foods.get(str(item.get("food_id")))
+        if food is None:  # foods are cache-forever, so this is a broken macro
+            missing += 1
+            continue
+        out.append(_stage_tier0_item(food, item, start_index + len(out), meal, t0))
+    return out, missing
+
+
+def _meal_ref_guard(phrase: str, item_index: int, meal: Meal, t0: float, text: str) -> Resolution:
+    return Resolution(
+        staged=StagedItem(
+            item_index=item_index,
+            phrase=phrase,
+            status="needs_input",
+            meal=meal,
+            question=Question(text=text, options=[]),
+        ),
+        alias_id=None,
+        resolve_ms=int((time.monotonic() - t0) * 1000),
+    )
+
+
+def _macro_broken_guard(
+    macro: dict, expanded: int, missing: int, phrase: str, item_index: int,
+    meal: Meal, t0: float,
+) -> Resolution:
+    """A matched macro that cannot expand in full stops here (§3.1)."""
+    return _meal_ref_guard(
+        phrase, item_index, meal, t0,
+        MEAL_BROKEN_GUARD.format(
+            name=macro["name"], missing=missing, total=expanded + missing
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # entry points
 # ---------------------------------------------------------------------------
 
 
-async def short_circuit(raw_input: str, meal: Meal) -> Resolution | None:
-    """§3.0 whole-utterance short-circuit. M0: aliases only (tier 1).
+async def short_circuit_all(raw_input: str, meal: Meal) -> list[Resolution] | None:
+    """§3.0 whole-utterance short-circuit, in the spec's order: meal macro
+    (tier 0, N rows) before alias (tier 1, one row). None → decompose."""
+    t0 = time.monotonic()
+    key = norm(raw_input)
+    if not key:
+        return None
+    macro = await find_macro([key])
+    if macro is not None:
+        rows, missing = await expand_macro(macro, meal, 0, t0)
+        if missing:
+            return [_macro_broken_guard(macro, len(rows), missing, raw_input, 0, meal, t0)]
+        if rows:
+            return rows
+    sc = await short_circuit(raw_input, meal)
+    return [sc] if sc is not None else None
 
-    Seam: the tier-0 meal_macros.trigger_phrases check lands here first (M3).
-    """
+
+async def short_circuit(raw_input: str, meal: Meal) -> Resolution | None:
+    """§3.0 whole-utterance short-circuit, aliases only (tier 1). Callers that
+    stage a whole log want short_circuit_all (macro before alias)."""
     t0 = time.monotonic()
     key = norm(raw_input)
     if not key:
@@ -587,38 +773,80 @@ async def short_circuit(raw_input: str, meal: Meal) -> Resolution | None:
     return await _stage_tier1(rows, raw_input, 0, meal, None, None, None, t0)
 
 
+async def resolve_items(
+    parsed_items: list[ParsedItem],
+    meal: Meal,
+    index_ids: set[str] | None = None,
+) -> list[Resolution]:
+    """Per-log cascade over the decomposed items with item_index allocation:
+    a tier-0 expansion occupies one index per macro item (§3.1), so the items
+    after it shift ("usual breakfast and a coffee" → N macro rows, then
+    coffee at index N)."""
+    out: list[Resolution] = []
+    for parsed in parsed_items:
+        t0 = time.monotonic()
+        macro = await find_macro(_macro_keys(parsed))
+        if macro is not None:
+            rows, missing = await expand_macro(macro, meal, len(out), t0)
+            if missing:
+                out.append(
+                    _macro_broken_guard(
+                        macro, len(rows), missing, parsed.phrase, len(out), meal, t0
+                    )
+                )
+                continue
+            if rows:
+                out.extend(rows)
+                continue
+        out.append(await resolve_item(parsed, len(out), meal, index_ids, skip_tier0=True))
+    return out
+
+
 async def resolve_item(
     parsed: ParsedItem,
     item_index: int,
     meal: Meal,
     index_ids: set[str] | None = None,
+    *,
+    skip_tier0: bool = False,
 ) -> Resolution:
-    """Per-item cascade after decomposition: tier 1 → tier 2 → tier-3 handoff.
+    """Per-item cascade after decomposition: tier 0 → tier 1 → tier 2 →
+    tier-3 handoff, as ONE Resolution (single-row callers: /api/resolve).
 
     `index_ids` is the set of foods.id strings inlined into the decompose
     prompt (§3.3 2b) — library_match is validated against it when supplied;
     when None (current logs.py wiring), validation falls back to the food
-    existing in the cache.
+    existing in the cache. `skip_tier0` is resolve_items' flag: it already
+    ran the macro check.
     """
     t0 = time.monotonic()
 
+    # tier 0 (§3.1): a one-item macro fits a single row; a multi-item macro
+    # cannot expand into one row — say so rather than fall into the
+    # "no saved meal" guard, which would be false. A macro missing foods is
+    # never truncated into that single row either.
+    if not skip_tier0:
+        macro = await find_macro(_macro_keys(parsed))
+        if macro is not None:
+            rows, missing = await expand_macro(macro, meal, item_index, t0)
+            if missing:
+                return _macro_broken_guard(
+                    macro, len(rows), missing, parsed.phrase, item_index, meal, t0
+                )
+            if len(rows) == 1:
+                return rows[0]
+            if rows:
+                return _meal_ref_guard(
+                    parsed.phrase, item_index, meal, t0,
+                    f"'{parsed.phrase}' is the saved meal '{macro['name']}' "
+                    f"({len(rows)} items) — log it on its own to expand it.",
+                )
+
     # §3.1 guard: a meal-shaped phrase with no matching macro never enters food
-    # search. M0 has no macros at all, so every meal_ref becomes needs_input.
+    # search.
     if parsed.phrase_kind == "meal_ref":
-        return Resolution(
-            staged=StagedItem(
-                item_index=item_index,
-                phrase=parsed.phrase,
-                status="needs_input",
-                meal=meal,
-                question=Question(
-                    text=f"No saved meal called '{parsed.phrase}' — log the items, "
-                    "then tap Save as meal.",
-                    options=[],
-                ),
-            ),
-            alias_id=None,
-            resolve_ms=int((time.monotonic() - t0) * 1000),
+        return _meal_ref_guard(
+            parsed.phrase, item_index, meal, t0, MEAL_REF_GUARD.format(phrase=parsed.phrase)
         )
 
     key = norm(parsed.phrase)

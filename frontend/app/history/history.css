@@ -1,0 +1,220 @@
+/* History page (§7.4: 3D · W · M · Y) and the day view — X5b. Builds on
+   globals.css's tokens + .shell/.brand/.kcal-bar; the tab bar and its .shell
+   padding come from app/library/m3.css via components/TabBar. */
+
+.back-link {
+  color: var(--muted);
+  text-decoration: none;
+  margin-right: 8px;
+  font-weight: 400;
+}
+
+/* streak chip */
+
+.streak-chip {
+  font-size: 0.78rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.streak-chip.live {
+  color: var(--mint);
+  border-color: var(--spruce);
+  background: var(--spruce-deep);
+}
+
+/* segmented range control */
+
+.segmented {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.segmented button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--spruce);
+  color: var(--text);
+}
+
+.range-label {
+  margin: -10px 0 0;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.hist-error {
+  color: var(--amber);
+  font-size: 0.82rem;
+  margin: 0;
+  text-align: center;
+}
+
+.hist-stale {
+  opacity: 0.6;
+  transition: opacity 150ms;
+}
+
+.hhint {
+  font-size: 0.78rem;
+  color: var(--faint);
+  text-align: center;
+  margin: 0;
+}
+
+.hcharts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 3-day macro cards */
+
+.hcards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hcard {
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.hcard:hover,
+.hcard:focus-visible {
+  border-color: var(--spruce-soft);
+  outline: none;
+}
+
+.hcard.empty {
+  opacity: 0.7;
+}
+
+.hcard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.hcard-day {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.hcard-date {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.hcard-entries {
+  font-size: 0.76rem;
+  color: var(--faint);
+}
+
+.hcard-kcal strong {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.hcard-kcal .of {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hcard-macros {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.hcard-macro-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 0.72rem;
+  margin-bottom: 4px;
+}
+
+.hcard-macro-row .k {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.64rem;
+}
+
+.hcard-macro-row .v {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hcard-macro-row .of {
+  color: var(--faint);
+  font-weight: 400;
+}
+
+.hcard-macro.loud .hcard-macro-row .v {
+  color: var(--mint);
+}
+
+.hcard-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.hcard-bar .fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 300ms ease;
+}
+
+/* per-meal kcal subtotals (3d detail) */
+
+.hcard-meals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 0.74rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.hcard-meals .k {
+  color: var(--faint);
+  text-transform: uppercase;
+  font-size: 0.64rem;
+  letter-spacing: 0.05em;
+}

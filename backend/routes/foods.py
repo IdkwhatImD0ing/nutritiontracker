@@ -200,3 +200,196 @@ async def select_food(body: SelectRequest) -> SelectResponse:
         food["display_name"] = body.display_name
     food_id = await foods_repo.persist_food(food)
     return SelectResponse(food_id=str(food_id))
+
+
+# ---------------------------------------------------------------------------
+# GET /api/foods/{food_id} — food detail (§7.1 "everything the database
+# returned" rule, §7.4 drill-in). The full cached payload normalized for
+# display: every nutrient the source returned (absent = not measured, never
+# zero), the serving definitions, the source badge (date/quality flags), the
+# citation + provenance for web foods, and the aliases pointing at the food.
+# ---------------------------------------------------------------------------
+
+from datetime import datetime as _datetime  # noqa: E402
+
+from models import ServingOption, WebSource  # noqa: E402
+from routes.aliases import AliasRow, aliases_for_food  # noqa: E402
+from routes.diary import web_source_of  # noqa: E402
+
+_STALE_YEARS = 3
+_SOURCE_LABELS = {"fdc": "USDA FoodData Central", "off": "Open Food Facts", "web": "Web"}
+
+
+class NutrientRow(BaseModel):
+    """One nutrient as the source reported it. ``basis`` is the denominator:
+    per 100 g / 100 ml for FDC foodNutrients, per serving for branded label
+    panels and web-transcribed values."""
+
+    name: str
+    amount: float
+    unit: str | None = None
+    basis: str
+
+
+class SourceBadge(BaseModel):
+    source: str
+    label: str
+    data_type: str | None = None  # FDC: "SR Legacy" | "Foundation" | "Branded"
+    data_source: str | None = None  # FDC Branded: "GDSN" | "LI"
+    published_date: str | None = None
+    modified_date: str | None = None
+    quality_flags: list[str]
+
+
+class FoodDetail(BaseModel):
+    id: str
+    source: str
+    source_id: str
+    source_url: str | None = None
+    name: str
+    display_name: str
+    brand: str | None = None
+    food_type: str
+    state: str | None = None
+    state_sensitive: bool
+    default_serving_id: str
+    servings: list[ServingOption]
+    per_100g: dict[str, float] | None = None
+    nutrients: list[NutrientRow]
+    badge: SourceBadge
+    citation: WebSource | None = None  # §3.4a: render as a visible, clickable link
+    provenance: dict | None = None
+    payload: dict | None = None  # the provider response verbatim (§7.1 "everything")
+    aliases: list[AliasRow]
+    refreshed_at: _datetime
+    created_at: _datetime
+
+
+def _parse_date(s: str | None) -> _datetime | None:
+    if not s:
+        return None
+    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return _datetime.strptime(s[:19] if "T" in s else s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _nutrients(row: dict) -> list[NutrientRow]:
+    payload = row["payload"] or {}
+    out: list[NutrientRow] = []
+    if row["source"] == "fdc":
+        basis = "per 100 ml" if any(
+            s.get("serving_id") == "100ml" for s in row["servings"] or []
+        ) else "per 100 g"
+        for n in payload.get("foodNutrients") or []:
+            amount = n.get("amount")
+            if amount is None:  # category-header rows (§3.4 adapter rule)
+                continue
+            meta = n.get("nutrient") or {}
+            name = meta.get("name") or n.get("name")
+            if not name:
+                continue
+            out.append(
+                NutrientRow(
+                    name=name, amount=float(amount), unit=meta.get("unitName"), basis=basis
+                )
+            )
+        for key, val in (payload.get("labelNutrients") or {}).items():
+            if isinstance(val, dict) and val.get("value") is not None:
+                out.append(
+                    NutrientRow(
+                        name=key, amount=float(val["value"]), basis="per serving (label)"
+                    )
+                )
+    elif row["source"] == "web":
+        values = ((row["provenance"] or {}).get("values_as_read")) or {}
+        for key, val in values.items():
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                out.append(NutrientRow(name=key, amount=float(val), basis="per serving"))
+    elif row["source"] == "off":
+        for key, val in (payload.get("nutriments") or {}).items():
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                out.append(NutrientRow(name=key, amount=float(val), basis="as reported"))
+    return out
+
+
+def _badge(row: dict) -> SourceBadge:
+    payload = row["payload"] or {}
+    source = row["source"]
+    flags: list[str] = []
+    published = modified = data_type = data_source = None
+    if source == "fdc":
+        data_type = payload.get("dataType")
+        data_source = payload.get("dataSource")
+        published = payload.get("publishedDate")
+        modified = payload.get("modifiedDate")
+        when = _parse_date(modified) or _parse_date(published)
+        if when is not None and (_datetime.now() - when).days > 365 * _STALE_YEARS:
+            flags.append(f"old record (published {published or modified})")
+    elif source == "off":
+        published = str(payload.get("last_modified_t") or "") or None
+        completeness = payload.get("completeness")
+        if completeness is not None:
+            flags.append(f"completeness {completeness}")
+        flags.extend(str(t) for t in payload.get("data_quality_warnings_tags") or [])
+    elif source == "web":
+        published = (row["provenance"] or {}).get("transcribed_at")
+        flags.append("transcribed from the official page — verify against the link")
+    return SourceBadge(
+        source=source,
+        label=_SOURCE_LABELS.get(source, source),
+        data_type=data_type,
+        data_source=data_source,
+        published_date=published,
+        modified_date=modified,
+        quality_flags=flags,
+    )
+
+
+@router.get("/api/foods/{food_id}", response_model=FoodDetail)
+async def get_food_detail(food_id: UUID) -> FoodDetail:
+    row = await db.fetchone("SELECT * FROM foods WHERE id = %s", (food_id,))
+    if row is None:
+        raise HTTPException(status_code=404, detail="food not found")
+    servings = [
+        ServingOption(
+            serving_id=s["serving_id"],
+            description=s.get("description") or s["serving_id"],
+            grams=float(s["grams"]) if isinstance(s.get("grams"), (int, float)) else None,
+            macros={
+                k: float(v)
+                for k, v in (s.get("macros") or {}).items()
+                if isinstance(v, (int, float))
+            }
+            or None,
+        )
+        for s in row["servings"] or []
+        if s.get("serving_id")
+    ]
+    return FoodDetail(
+        id=str(row["id"]),
+        source=row["source"],
+        source_id=row["source_id"],
+        source_url=row["source_url"],
+        name=row["name"],
+        display_name=row["display_name"],
+        brand=row["brand"],
+        food_type=row["food_type"],
+        state=row["state"],
+        state_sensitive=bool(row["state_sensitive"]),
+        default_serving_id=row["default_serving_id"],
+        servings=servings,
+        per_100g=row["per_100g"],
+        nutrients=_nutrients(row),
+        badge=_badge(row),
+        citation=web_source_of(
+            row["source"], row["source_url"], row["provenance"], row["display_name"]
+        ),
+        provenance=row["provenance"],
+        payload=row["payload"] if isinstance(row["payload"], dict) else None,
+        aliases=await aliases_for_food(str(row["id"])),
+        refreshed_at=row["refreshed_at"],
+        created_at=row["created_at"],
+    )

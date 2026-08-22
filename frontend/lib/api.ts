@@ -22,6 +22,11 @@ export type StagedServing = components["schemas"]["ServingOption"];
 export type StagedItem = components["schemas"]["StagedItemOut"];
 export type LogCreate = components["schemas"]["LogCreate"];
 export type LogResponse = components["schemas"]["LogPollResponse"];
+/** §8.4: POST /api/logs answers LogCreateResponse — a LogResponse plus the
+ *  itemless "save this as my usual breakfast" outcome (`saved_meal`, or
+ *  `note` saying why nothing was saved). Both are absent on an ordinary log. */
+export type LogCreateResponse = LogResponse &
+  Pick<components["schemas"]["LogCreateResponse"], "saved_meal" | "note">;
 export type DayTotals = components["schemas"]["DayTotals"];
 export type Macros = components["schemas"]["Macros"];
 export type Meal = components["schemas"]["Meal"];
@@ -84,7 +89,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-export function createLog(body: LogCreate): Promise<LogResponse> {
+export function createLog(body: LogCreate): Promise<LogCreateResponse> {
   return request("/api/logs", { method: "POST", body: JSON.stringify(body) });
 }
 
@@ -256,7 +261,7 @@ async function multipart(path: string, form: FormData): Promise<Response> {
 }
 
 export type AudioLogResult =
-  | { kind: "staged"; log: LogResponse }
+  | { kind: "staged"; log: LogCreateResponse }
   /** §5/§13: the transcript came back empty — a capture failure, not an empty
    *  meal; the server has already recorded it on the audio log's row. */
   | { kind: "capture_failure" };
@@ -286,11 +291,11 @@ export async function createLogAudio(args: {
   if (!res.ok) {
     throw new ApiError(res.status, await res.text().catch(() => ""));
   }
-  const body = (await res.json()) as LogResponse | CaptureFailure;
+  const body = (await res.json()) as LogCreateResponse | CaptureFailure;
   if ("status" in body && body.status === "capture_failure") {
     return { kind: "capture_failure" };
   }
-  return { kind: "staged", log: body as LogResponse };
+  return { kind: "staged", log: body as LogCreateResponse };
 }
 
 /** One row of the user's aliases for a phrase (§4 aliases ⋈ foods) — the
@@ -306,8 +311,8 @@ export type AliasRow = {
   pinned?: boolean | null;
 };
 
-/** §5 GET /api/aliases?phrase= — the route is M3 Library scope and does not
- *  exist yet (404); FoodEditSheet treats any failure as "no aliases" and
+/** §5 GET /api/aliases?phrase= (routes/aliases.py, M3): his alias rows for
+ *  norm(phrase). FoodEditSheet still treats any failure as "no aliases" and
  *  falls back to the staged row's own food_id-bearing alternates. */
 export async function getAliasesForPhrase(phrase: string): Promise<AliasRow[]> {
   const qs = new URLSearchParams({ phrase });

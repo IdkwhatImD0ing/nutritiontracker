@@ -70,8 +70,10 @@ async def _db_fetchone(sql, params=()):
 
 
 async def _db_execute(sql, params=()):
+    # returns rowcount like db.execute — routes/resolve.py's live guard reads it
     async with await psycopg.AsyncConnection.connect(_DB_URL) as conn:
-        await conn.execute(sql, params)
+        cur = await conn.execute(sql, params)
+        return cur.rowcount
 
 
 @asynccontextmanager

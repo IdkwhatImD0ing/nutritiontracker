@@ -263,10 +263,277 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/foods/{food_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Food Detail */
+        get: operations["get_food_detail_api_foods__food_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Meals
+         * @description Active macros; include_inactive=1 adds the deactivated ones (the
+         *     Library lists them under "inactive" with a reactivate action, §8.4).
+         */
+        get: operations["list_meals_api_meals_get"];
+        put?: never;
+        /** Create Meal */
+        post: operations["create_meal_api_meals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/meals/{meal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Meal
+         * @description §8.4: delete = deactivate. Idempotent; the row stays.
+         */
+        delete: operations["delete_meal_api_meals__meal_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Meal */
+        patch: operations["patch_meal_api_meals__meal_id__patch"];
+        trace?: never;
+    };
+    "/api/meals/from-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Meal From Log
+         * @description "Save as meal": the macro's items are the log's committed entries
+         *     (food, serving, qty as committed). Create-or-update by name, so saying
+         *     "save this as my usual breakfast" twice updates the one macro.
+         */
+        post: operations["meal_from_log_api_meals_from_log_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/aliases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Aliases */
+        get: operations["list_aliases_api_aliases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/aliases/{alias_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Alias */
+        delete: operations["delete_alias_api_aliases__alias_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Alias */
+        patch: operations["patch_alias_api_aliases__alias_id__patch"];
+        trace?: never;
+    };
+    "/api/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get History */
+        get: operations["get_history_api_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_api_settings_get"];
+        /** Put Settings */
+        put: operations["put_settings_api_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/goals/compute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compute Goals */
+        post: operations["compute_goals_api_settings_goals_compute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Metrics */
+        get: operations["get_metrics_api_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdherencePoint */
+        AdherencePoint: {
+            /**
+             * Week
+             * Format: date
+             */
+            week: string;
+            /** Days Logged */
+            days_logged: number;
+        };
+        /** AliasDeleteResponse */
+        AliasDeleteResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Deleted
+             * @default true
+             */
+            deleted: boolean;
+        };
+        /** AliasListResponse */
+        AliasListResponse: {
+            /** Phrase */
+            phrase?: string | null;
+            /** Phrase Norm */
+            phrase_norm?: string | null;
+            /** Aliases */
+            aliases: components["schemas"]["AliasRow"][];
+        };
+        /** AliasPatch */
+        AliasPatch: {
+            /** Pinned */
+            pinned?: boolean | null;
+            /** Default Serving Id */
+            default_serving_id?: string | null;
+            /** Default Qty */
+            default_qty?: number | null;
+        };
+        /**
+         * AliasRow
+         * @description One aliases row ⋈ its food (route-local response shape).
+         */
+        AliasRow: {
+            /** Id */
+            id: string;
+            /** Alias Norm */
+            alias_norm: string;
+            /** Food Id */
+            food_id: string;
+            /** Food Name */
+            food_name: string;
+            /** Brand */
+            brand?: string | null;
+            /** Source */
+            source: string;
+            /** Use Count */
+            use_count: number;
+            /** Pinned */
+            pinned: boolean;
+            /** Usual */
+            usual?: boolean | null;
+            /** Default Serving Id */
+            default_serving_id?: string | null;
+            /** Default Serving */
+            default_serving?: string | null;
+            /** Default Qty */
+            default_qty?: number | null;
+            /** State Answer */
+            state_answer?: string | null;
+            /**
+             * Last Used At
+             * Format: date-time
+             */
+            last_used_at: string;
+            /** Last Explicit At */
+            last_explicit_at?: string | null;
+            /** Rejected Count */
+            rejected_count: number;
+            /** Origin */
+            origin: string;
+        };
         /** Alternate */
         Alternate: {
             /** Source */
@@ -309,6 +576,29 @@ export interface components {
             answer: components["schemas"]["Answer"];
         };
         /**
+         * BodyProfile
+         * @description settings.body — every field optional so a partially filled wizard can be
+         *     saved; the compute endpoint requires the full set (GoalInputs).
+         */
+        BodyProfile: {
+            /** Height Cm */
+            height_cm?: number | null;
+            /** Weight Kg */
+            weight_kg?: number | null;
+            /** Age */
+            age?: number | null;
+            /** Sex */
+            sex?: ("male" | "female") | null;
+            /** Activity Level */
+            activity_level?: ("sedentary" | "light" | "moderate" | "active" | "very_active") | null;
+            /** Goal Weight Kg */
+            goal_weight_kg?: number | null;
+            /** Weekly Rate Kg */
+            weekly_rate_kg?: number | null;
+            /** Units */
+            units?: ("metric" | "imperial") | null;
+        };
+        /**
          * CaptureFailureResponse
          * @description §5: an audio log whose transcript came back empty/near-empty. The
          *     client prompts retype; the logs row records the failure so the §9
@@ -331,6 +621,8 @@ export interface components {
              * @default empty_transcript
              */
             capture_error: string;
+            /** Client Capture Error */
+            client_capture_error?: string | null;
         };
         /**
          * CommitItemError
@@ -352,16 +644,23 @@ export interface components {
             item_index: number;
             item: components["schemas"]["StagedItem"];
         };
-        /** CommitRequest */
-        CommitRequest: {
+        /**
+         * CommitRequestIn
+         * @description CommitRequest + the §3.5 step-4 / §8.4 "Save as meal" tap: the staging
+         *     sheet names the meal and the commit creates/updates the macro from the
+         *     items it writes (route-local, additive over models.py).
+         */
+        CommitRequestIn: {
             /** Items */
             items: components["schemas"]["StagedItem"][];
+            save_intent?: components["schemas"]["SaveIntent"] | null;
         };
         /**
          * CommitResponse
          * @description DayTotals + per-item refusals. A 200 with non-empty errors is a PARTIAL
          *     commit — the client must keep refused rows visible (verify-me / pending),
          *     never close over them (§3.5; the silent-protein-hole failure class).
+         *     The totals are for the day the entries landed on (§7.2 when-shift aware).
          */
         CommitResponse: {
             /** Kcal */
@@ -378,6 +677,33 @@ export interface components {
              * @default []
              */
             errors: components["schemas"]["CommitItemError"][];
+            saved_meal?: components["schemas"]["SavedMealNote"] | null;
+        };
+        /** DayStat */
+        DayStat: {
+            /** Kcal */
+            kcal: number;
+            /** Protein G */
+            protein_g: number;
+            /** Carb G */
+            carb_g: number;
+            /** Fat G */
+            fat_g: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Entries */
+            entries: number;
+            /** Logged */
+            logged: boolean;
+            /** Fiber G */
+            fiber_g?: number | null;
+            /** Meals */
+            meals?: {
+                [key: string]: components["schemas"]["MacroSums"];
+            } | null;
         };
         /**
          * DayTotals
@@ -397,6 +723,8 @@ export interface components {
         /**
          * DiaryEntry
          * @description Response-only shape (route-local; the wire contracts live in models.py).
+         *     The display fields default to None because routes/entries.py builds this
+         *     model too (it has no source/web_source at hand).
          */
         DiaryEntry: {
             /**
@@ -415,6 +743,11 @@ export interface components {
              * Format: date-time
              */
             logged_at: string;
+            /** Grams */
+            grams?: number | null;
+            /** Source */
+            source?: string | null;
+            web_source?: components["schemas"]["WebSource"] | null;
         };
         /** DiaryResponse */
         DiaryResponse: {
@@ -443,6 +776,19 @@ export interface components {
              */
             status: "discarded";
         };
+        /** DuplicatePair */
+        DuplicatePair: {
+            /** Source */
+            source: string;
+            /** Food A */
+            food_a: string;
+            /** Name A */
+            name_a: string;
+            /** Food B */
+            food_b: string;
+            /** Name B */
+            name_b: string;
+        };
         /**
          * EntryPatch
          * @description Any subset: qty scales; serving_id re-derives; food_id corrects + learns.
@@ -459,6 +805,61 @@ export interface components {
         EntryPatchResponse: {
             entry: components["schemas"]["DiaryEntry"];
             totals: components["schemas"]["DayTotals"];
+        };
+        /** FoodDetail */
+        FoodDetail: {
+            /** Id */
+            id: string;
+            /** Source */
+            source: string;
+            /** Source Id */
+            source_id: string;
+            /** Source Url */
+            source_url?: string | null;
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /** Brand */
+            brand?: string | null;
+            /** Food Type */
+            food_type: string;
+            /** State */
+            state?: string | null;
+            /** State Sensitive */
+            state_sensitive: boolean;
+            /** Default Serving Id */
+            default_serving_id: string;
+            /** Servings */
+            servings: components["schemas"]["ServingOption"][];
+            /** Per 100G */
+            per_100g?: {
+                [key: string]: number;
+            } | null;
+            /** Nutrients */
+            nutrients: components["schemas"]["NutrientRow"][];
+            badge: components["schemas"]["SourceBadge"];
+            citation?: components["schemas"]["WebSource"] | null;
+            /** Provenance */
+            provenance?: {
+                [key: string]: unknown;
+            } | null;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            } | null;
+            /** Aliases */
+            aliases: components["schemas"]["AliasRow"][];
+            /**
+             * Refreshed At
+             * Format: date-time
+             */
+            refreshed_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /**
          * FoodHit
@@ -502,10 +903,120 @@ export interface components {
             /** Fdc Error */
             fdc_error?: string | null;
         };
+        /** GoalInputs */
+        GoalInputs: {
+            /** Height Cm */
+            height_cm: number;
+            /** Weight Kg */
+            weight_kg: number;
+            /** Age */
+            age: number;
+            /**
+             * Sex
+             * @enum {string}
+             */
+            sex: "male" | "female";
+            /**
+             * Activity Level
+             * @enum {string}
+             */
+            activity_level: "sedentary" | "light" | "moderate" | "active" | "very_active";
+            /** Goal Weight Kg */
+            goal_weight_kg?: number | null;
+            /** Weekly Rate Kg */
+            weekly_rate_kg?: number | null;
+            /** Protein G Per Kg */
+            protein_g_per_kg?: number | null;
+            /** Fat G Per Kg */
+            fat_g_per_kg?: number | null;
+        };
+        /** GoalProposal */
+        GoalProposal: {
+            /** Bmr */
+            bmr: number;
+            /** Tdee */
+            tdee: number;
+            /** Daily Delta Kcal */
+            daily_delta_kcal: number;
+            targets: components["schemas"]["MacroTargets"];
+            /** Protein G Per Kg */
+            protein_g_per_kg: number;
+            /** Fat G Per Kg */
+            fat_g_per_kg: number;
+            /** Notes */
+            notes: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HistoryResponse */
+        HistoryResponse: {
+            /**
+             * Range
+             * @enum {string}
+             */
+            range: "3d" | "w" | "m" | "y";
+            /** Timezone */
+            timezone: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            targets: components["schemas"]["MacroTargets"];
+            /** Streak */
+            streak: number;
+            /** Baseline Days Per Week */
+            baseline_days_per_week: number;
+            /** Days */
+            days: components["schemas"]["DayStat"][];
+            /** Weeks */
+            weeks: components["schemas"]["WeekStat"][];
+        };
+        /** HitRatePoint */
+        HitRatePoint: {
+            /**
+             * Week
+             * Format: date
+             */
+            week: string;
+            /** Items */
+            items: number;
+            /** Hits */
+            hits: number;
+            /** Rate */
+            rate: number | null;
+            /** Items Incl Discarded */
+            items_incl_discarded: number;
+            /** Hits Incl Discarded */
+            hits_incl_discarded: number;
+            /** Rate Incl Discarded */
+            rate_incl_discarded: number | null;
+        };
+        /** LatencyPoint */
+        LatencyPoint: {
+            /**
+             * Week
+             * Format: date
+             */
+            week: string;
+            /** Committed Logs */
+            committed_logs: number;
+            /** Commit Ms P50 */
+            commit_ms_p50: number | null;
+            /** Commit Ms P90 */
+            commit_ms_p90: number | null;
+            /** Staged Ms P50 */
+            staged_ms_p50: number | null;
+            /** Staged Ms P90 */
+            staged_ms_p90: number | null;
         };
         /** LogCreate */
         LogCreate: {
@@ -532,6 +1043,27 @@ export interface components {
             capture_error?: string | null;
         };
         /**
+         * LogCreateResponse
+         * @description POST /api/logs: LogResponse + the §8.4 itemless save path. "Save this
+         *     as my usual breakfast" decomposes to zero items and a save_intent; the
+         *     macro is built server-side from the most recent committed log and
+         *     reported here (`saved_meal`), or `note` says why nothing was saved —
+         *     never a silently empty staging list.
+         */
+        LogCreateResponse: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            meal: components["schemas"]["Meal"];
+            /** Items */
+            items: components["schemas"]["StagedItem"][];
+            saved_meal?: components["schemas"]["SavedMealNote"] | null;
+            /** Note */
+            note?: string | null;
+        };
+        /**
          * LogPollResponse
          * @description LogResponse whose items can carry the watchdog's stale flag.
          */
@@ -545,16 +1077,16 @@ export interface components {
             /** Items */
             items: components["schemas"]["StagedItemOut"][];
         };
-        /** LogResponse */
-        LogResponse: {
-            /**
-             * Log Id
-             * Format: uuid
-             */
-            log_id: string;
-            meal: components["schemas"]["Meal"];
-            /** Items */
-            items: components["schemas"]["StagedItem"][];
+        /** MacroSums */
+        MacroSums: {
+            /** Kcal */
+            kcal: number;
+            /** Protein G */
+            protein_g: number;
+            /** Carb G */
+            carb_g: number;
+            /** Fat G */
+            fat_g: number;
         };
         /** MacroTargets */
         MacroTargets: {
@@ -590,6 +1122,175 @@ export interface components {
          * @enum {string}
          */
         Meal: "breakfast" | "lunch" | "dinner" | "snack";
+        /** MealCreate */
+        MealCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Trigger Phrases
+             * @default []
+             */
+            trigger_phrases: string[];
+            /** Items */
+            items: components["schemas"]["MealItemIn"][];
+        };
+        /** MealDeleteResponse */
+        MealDeleteResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Is Active
+             * @default false
+             */
+            is_active: boolean;
+        };
+        /** MealFromLog */
+        MealFromLog: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Trigger Phrases
+             * @default []
+             */
+            trigger_phrases: string[];
+        };
+        /** MealItemIn */
+        MealItemIn: {
+            /** Food Id */
+            food_id: string;
+            /** Serving Id */
+            serving_id: string;
+            /**
+             * Qty
+             * @default 1
+             */
+            qty: number;
+        };
+        /**
+         * MealItemOut
+         * @description Stored item + display fields from the foods cache (Library rendering).
+         */
+        MealItemOut: {
+            /** Food Id */
+            food_id: string;
+            /** Serving Id */
+            serving_id: string;
+            /**
+             * Qty
+             * @default 1
+             */
+            qty: number;
+            /** Food Name */
+            food_name?: string | null;
+            /** Brand */
+            brand?: string | null;
+            /** Serving Description */
+            serving_description?: string | null;
+        };
+        /** MealOut */
+        MealOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Trigger Phrases */
+            trigger_phrases: string[];
+            /** Items */
+            items: components["schemas"]["MealItemOut"][];
+            /** Is Active */
+            is_active: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * MealPatch
+         * @description Any subset. trigger_phrases/items REPLACE the stored lists.
+         */
+        MealPatch: {
+            /** Name */
+            name?: string | null;
+            /** Trigger Phrases */
+            trigger_phrases?: string[] | null;
+            /** Items */
+            items?: components["schemas"]["MealItemIn"][] | null;
+            /** Is Active */
+            is_active?: boolean | null;
+        };
+        /** MealWindow */
+        MealWindow: {
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+        };
+        /** MealWindows */
+        MealWindows: {
+            breakfast: components["schemas"]["MealWindow"];
+            lunch: components["schemas"]["MealWindow"];
+            dinner: components["schemas"]["MealWindow"];
+            /**
+             * Default
+             * @default snack
+             * @enum {string}
+             */
+            default: "breakfast" | "lunch" | "dinner" | "snack";
+        };
+        /** MetricsResponse */
+        MetricsResponse: {
+            /** Range */
+            range: string;
+            /** Timezone */
+            timezone: string;
+            /** Weeks */
+            weeks: string[];
+            /** Baseline Days Per Week */
+            baseline_days_per_week: number;
+            /** Latency */
+            latency: components["schemas"]["LatencyPoint"][];
+            /** Hit Rate */
+            hit_rate: components["schemas"]["HitRatePoint"][];
+            /** Adherence */
+            adherence: components["schemas"]["AdherencePoint"][];
+            /** Secondary */
+            secondary: components["schemas"]["SecondaryPoint"][];
+            /** Duplicate Suspects */
+            duplicate_suspects: components["schemas"]["DuplicatePair"][];
+        };
+        /**
+         * NutrientRow
+         * @description One nutrient as the source reported it. ``basis`` is the denominator:
+         *     per 100 g / 100 ml for FDC foodNutrients, per serving for branded label
+         *     panels and web-transcribed values.
+         */
+        NutrientRow: {
+            /** Name */
+            name: string;
+            /** Amount */
+            amount: number;
+            /** Unit */
+            unit?: string | null;
+            /** Basis */
+            basis: string;
+        };
         /** Question */
         Question: {
             /** Text */
@@ -638,6 +1339,57 @@ export interface components {
             /** Unit */
             unit?: string | null;
         };
+        /** SaveIntent */
+        SaveIntent: {
+            /** Name */
+            name: string;
+        };
+        /**
+         * SavedMealNote
+         * @description A macro this request created/updated (§8.4) — enough for the client to
+         *     confirm it ("Saved as 'usual breakfast' · 3 items").
+         */
+        SavedMealNote: {
+            /**
+             * Meal Id
+             * Format: uuid
+             */
+            meal_id: string;
+            /** Name */
+            name: string;
+            /** Item Count */
+            item_count: number;
+        };
+        /** SecondaryPoint */
+        SecondaryPoint: {
+            /**
+             * Week
+             * Format: date
+             */
+            week: string;
+            /** Committed Logs */
+            committed_logs: number;
+            /** Items */
+            items: number;
+            /** Edited */
+            edited: number;
+            /** Edit Rate */
+            edit_rate: number | null;
+            /** Disambiguated */
+            disambiguated: number;
+            /** Disambiguation Rate */
+            disambiguation_rate: number | null;
+            /** Tier3 */
+            tier3: number;
+            /** Short Circuit Logs */
+            short_circuit_logs: number;
+            /** Short Circuit Share */
+            short_circuit_share: number | null;
+            /** Discarded Logs */
+            discarded_logs: number;
+            /** Capture Failures */
+            capture_failures: number;
+        };
         /** SelectRequest */
         SelectRequest: {
             /** Source */
@@ -681,6 +1433,50 @@ export interface components {
             id: string;
             /** Description */
             description: string;
+        };
+        /** SettingsResponse */
+        SettingsResponse: {
+            body: components["schemas"]["BodyProfile"];
+            targets: components["schemas"]["MacroTargets"] | null;
+            meal_windows: components["schemas"]["MealWindows"];
+            /** Profile Notes */
+            profile_notes: string;
+            /** Timezone */
+            timezone: string;
+            /** Cronometer Baseline Days Per Week */
+            cronometer_baseline_days_per_week: number;
+        };
+        /**
+         * SettingsUpdate
+         * @description PUT body: every field optional; only fields present are written.
+         */
+        SettingsUpdate: {
+            body?: components["schemas"]["BodyProfile"] | null;
+            targets?: components["schemas"]["TargetsIn"] | null;
+            meal_windows?: components["schemas"]["MealWindows"] | null;
+            /** Profile Notes */
+            profile_notes?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Cronometer Baseline Days Per Week */
+            cronometer_baseline_days_per_week?: number | null;
+        };
+        /** SourceBadge */
+        SourceBadge: {
+            /** Source */
+            source: string;
+            /** Label */
+            label: string;
+            /** Data Type */
+            data_type?: string | null;
+            /** Data Source */
+            data_source?: string | null;
+            /** Published Date */
+            published_date?: string | null;
+            /** Modified Date */
+            modified_date?: string | null;
+            /** Quality Flags */
+            quality_flags: string[];
         };
         /** StagedItem */
         StagedItem: {
@@ -756,6 +1552,17 @@ export interface components {
             /** Stale */
             stale?: boolean | null;
         };
+        /** TargetsIn */
+        TargetsIn: {
+            /** Kcal */
+            kcal: number;
+            /** Protein G */
+            protein_g: number;
+            /** Carb G */
+            carb_g: number;
+            /** Fat G */
+            fat_g: number;
+        };
         /** Tier3KickRequest */
         Tier3KickRequest: {
             /**
@@ -807,6 +1614,19 @@ export interface components {
             url: string;
             /** Title */
             title: string;
+        };
+        /** WeekStat */
+        WeekStat: {
+            /**
+             * Week Start
+             * Format: date
+             */
+            week_start: string;
+            /** Days Logged */
+            days_logged: number;
+            /** Adherence */
+            adherence: number;
+            avg?: components["schemas"]["MacroSums"] | null;
         };
     };
     responses: never;
@@ -870,7 +1690,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LogResponse"] | components["schemas"]["CaptureFailureResponse"];
+                    "application/json": components["schemas"]["LogCreateResponse"] | components["schemas"]["CaptureFailureResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1123,7 +1943,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CommitRequest"];
+                "application/json": components["schemas"]["CommitRequestIn"];
             };
         };
         responses: {
@@ -1331,6 +2151,445 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SelectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_food_detail_api_foods__food_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                food_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FoodDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_meals_api_meals_get: {
+        parameters: {
+            query?: {
+                include_inactive?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_meal_api_meals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MealCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_meal_api_meals__meal_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_meal_api_meals__meal_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MealPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    meal_from_log_api_meals_from_log_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MealFromLog"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_aliases_api_aliases_get: {
+        parameters: {
+            query?: {
+                phrase?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AliasListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_alias_api_aliases__alias_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alias_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AliasDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_alias_api_aliases__alias_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alias_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AliasPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AliasRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_history_api_history_get: {
+        parameters: {
+            query?: {
+                range?: "3d" | "w" | "m" | "y";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_api_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+        };
+    };
+    put_settings_api_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compute_goals_api_settings_goals_compute_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalInputs"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_metrics_api_metrics_get: {
+        parameters: {
+            query?: {
+                range?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsResponse"];
                 };
             };
             /** @description Validation Error */

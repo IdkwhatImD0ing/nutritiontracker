@@ -26,7 +26,9 @@ import db
 from auth import require_user
 from models import LogCreate, LogResponse, Meal, StagedItem
 from resolver import cascade
+from resolver import commit as commit_tx
 from resolver.norm import norm
+from routes.commit import SavedMealNote
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -51,6 +53,13 @@ _MAX_TIER3_ATTEMPTS = 2
 # retry never claims a pipeline the client is still willing to wait on.
 # (Voice adds nothing here: STT completes before the log row is inserted.)
 _RERUN_GRACE_SECONDS = 90
+
+# Multipart upload bounds (Phase-3 panel): a ~10s MediaRecorder clip is tens
+# of KB; 15 MB is a few minutes of any container the client produces. Parts
+# outside the allowlist (base type, parameters such as ;codecs=opus ignored)
+# are refused before a byte is read or an STT dollar is spent.
+MAX_AUDIO_BYTES = 15 * 1024 * 1024
+AUDIO_MIME_ALLOWLIST = frozenset({"audio/mp4", "audio/webm", "audio/wav", "audio/mpeg"})
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +86,17 @@ class LogPollResponse(LogResponse):
     items: list[StagedItemOut]  # type: ignore[assignment]
 
 
+class LogCreateResponse(LogResponse):
+    """POST /api/logs: LogResponse + the §8.4 itemless save path. "Save this
+    as my usual breakfast" decomposes to zero items and a save_intent; the
+    macro is built server-side from the most recent committed log and
+    reported here (`saved_meal`), or `note` says why nothing was saved —
+    never a silently empty staging list."""
+
+    saved_meal: SavedMealNote | None = None
+    note: str | None = None
+
+
 class TimingsPatch(BaseModel):
     """§9: client-observed capture-start → list-rendered, in milliseconds."""
 
@@ -95,7 +115,10 @@ class CaptureFailureResponse(BaseModel):
 
     log_id: UUID
     status: Literal["capture_failure"] = "capture_failure"
-    capture_error: str = "empty_transcript"
+    capture_error: str = "empty_transcript"  # the server-detected reason
+    # the client's own prior-attempt failure (form field capture_error), kept
+    # alongside the server reason instead of being overwritten by it
+    client_capture_error: str | None = None
 
 
 class DiscardResponse(BaseModel):
@@ -136,7 +159,9 @@ _YESTERDAY_RE = re.compile(
 
 @dataclass
 class WhenShift:
-    logged_at: datetime | None = None  # tz-aware; replaces logs.captured_at
+    # tz-aware diary time for entries.logged_at — NEVER written to
+    # logs.captured_at, the §9 instrumentation anchor (Phase-4 fix)
+    logged_at: datetime | None = None
     meal: Meal | None = None  # yields to an explicit spoken meal_hint
     note: str | None = None  # set when the hint was unrecognized (ignored)
 
@@ -232,34 +257,46 @@ async def create_log_voice(
     tz: Annotated[str, Form()],
     capture_fallback: Annotated[bool, Form()] = False,
     capture_error: Annotated[str | None, Form()] = None,
-) -> LogResponse | CaptureFailureResponse:
+) -> LogCreateResponse | CaptureFailureResponse:
     """Audio → transcribe (§8.1) → the identical pipeline. input_mode='voice',
     transcribe_ms stored; empty/near-empty transcript → capture_failure (§5).
     The LogCreate fields ride as form fields minus `text` — the transcript
     supplies it."""
-    audio_bytes = await audio.read()
     mime = audio.content_type or "application/octet-stream"
+    if mime.split(";")[0].strip().lower() not in AUDIO_MIME_ALLOWLIST:
+        raise HTTPException(
+            415,
+            f"unsupported audio type {mime!r}; expected one of "
+            + ", ".join(sorted(AUDIO_MIME_ALLOWLIST)),
+        )
+    # read one byte past the bound: a full read of an oversized part is the
+    # only way to know, and the extra byte is what proves it
+    audio_bytes = await audio.read(MAX_AUDIO_BYTES + 1)
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise HTTPException(413, f"audio exceeds {MAX_AUDIO_BYTES} bytes")
 
     # §13's silent-blob failure, caught server-side: a zero-byte blob is a
     # capture failure before any STT spend.
     if not audio_bytes:
         return await _capture_failure(
-            log_id, captured_at, capture_fallback, "silent_blob", None, ""
+            log_id, captured_at, capture_fallback, "silent_blob", None, "",
+            client_error=capture_error,
         )
 
     from services import transcribe as stt  # lazy: stubbed in route tests
 
     try:
         result = await stt.transcribe(audio_bytes, mime)
-    except stt.TranscriptionError:
-        # both providers down (§8.1) — the client's degrade path is typing,
-        # not a fake empty meal; 503 tells it to retry or fall back to text
-        raise HTTPException(503, "transcription unavailable — retry or type it")
+    except stt.TranscriptionError as e:
+        # every provider declined (§8.1: down, or its key is not configured)
+        # — the client's degrade path is typing, not a fake empty meal; 503
+        # tells it to retry or fall back to text, and the detail says why
+        raise HTTPException(503, f"transcription unavailable — retry or type it ({e})")
 
     if stt.is_near_empty(result.text):
         return await _capture_failure(
             log_id, captured_at, capture_fallback, "empty_transcript",
-            result.transcribe_ms, result.text,
+            result.transcribe_ms, result.text, client_error=capture_error,
         )
 
     body = LogCreate(
@@ -282,7 +319,7 @@ router.add_api_route(
     create_log_voice,
     methods=["POST"],
     route_class_override=_MultipartRoute,
-    response_model=LogResponse | CaptureFailureResponse,
+    response_model=LogCreateResponse | CaptureFailureResponse,
     include_in_schema=False,  # documented on the JSON operation below
 )
 
@@ -310,10 +347,10 @@ _MULTIPART_OPENAPI = {
 
 @router.post(
     "/api/logs",
-    response_model=LogResponse | CaptureFailureResponse,
+    response_model=LogCreateResponse | CaptureFailureResponse,
     openapi_extra=_MULTIPART_OPENAPI,
 )
-async def create_log_endpoint(body: LogCreate) -> LogResponse:
+async def create_log_endpoint(body: LogCreate) -> LogCreateResponse:
     """§5: JSON body (text path) — or multipart with an audio blob + the same
     fields (voice path, create_log_voice above), which is the only way to get
     the capture_failure response."""
@@ -327,12 +364,21 @@ async def _capture_failure(
     error: str,
     transcribe_ms: int | None,
     transcript: str,
+    *,
+    client_error: str | None = None,
 ) -> CaptureFailureResponse:
     """§5/§8.1d: record the failure (the §9 counter reads capture_error) and
     return capture_failure — never an empty staged log. status
     'capture_failure' keeps the row out of every staged-log lifecycle:
     commit/discard CAS on 'staged', and the orphan-claim above never re-runs
-    a pipeline for it. Idempotent by client id like the happy path."""
+    a pipeline for it. Idempotent by client id like the happy path.
+
+    client_error is the client's own prior-attempt failure (the capture_error
+    form field). §9 counts both classes, so neither may overwrite the other:
+    logs has one text column, so both ride it as
+    '<server reason>;client=<client reason>' (split_part(.., ';', 1) is the
+    server reason; a row without a client reason stores the bare value)."""
+    stored = f"{error};client={client_error}" if client_error else error
     await db.execute(
         """
         INSERT INTO logs (id, input_mode, raw_input, captured_at, capture_fallback,
@@ -340,9 +386,11 @@ async def _capture_failure(
         VALUES (%s, 'voice', %s, %s, %s, %s, %s, 'capture_failure')
         ON CONFLICT (id) DO NOTHING
         """,
-        (log_id, transcript, captured_at, capture_fallback, error, transcribe_ms),
+        (log_id, transcript, captured_at, capture_fallback, stored, transcribe_ms),
     )
-    return CaptureFailureResponse(log_id=log_id, capture_error=error)
+    return CaptureFailureResponse(
+        log_id=log_id, capture_error=error, client_capture_error=client_error
+    )
 
 
 async def create_log(
@@ -350,7 +398,7 @@ async def create_log(
     *,
     input_mode: str = "text",
     transcribe_ms: int | None = None,
-) -> LogResponse:
+) -> LogCreateResponse:
     # Idempotent upsert by client id (§5, §8.6): a concurrent double-drain or
     # retry cannot create two logs — and only the request that actually
     # inserted the row (or claimed an orphan, below) runs the pipeline.
@@ -372,11 +420,13 @@ async def create_log(
 
     meal = await infer_meal(body.captured_at, body.tz)
 
-    # §3.0 whole-utterance short-circuit — the LLM leaves the hot path entirely
-    sc = await cascade.short_circuit(body.text, meal)
+    # §3.0 whole-utterance short-circuit — the LLM leaves the hot path entirely.
+    # Meal macro first (tier 0, N rows — "my usual breakfast"), then alias
+    # (tier 1, one row); None → decompose.
+    sc = await cascade.short_circuit_all(body.text, meal)
     if sc is not None:
-        await _persist(body.id, [sc], meal, short_circuit=True)
-        return LogResponse(log_id=body.id, meal=meal, items=[sc.staged])
+        await _persist(body.id, sc, meal, short_circuit=True)
+        return LogCreateResponse(log_id=body.id, meal=meal, items=[r.staged for r in sc])
 
     # decompose (gpt-5.6-luna) wrapped in a tracing generation (§10)
     import tracing
@@ -406,15 +456,61 @@ async def create_log(
     elif when.meal is not None:
         meal = when.meal
 
-    resolutions = [
-        await cascade.resolve_item(p, i, meal) for i, p in enumerate(parsed.items)
-    ]
+    # §8.4 "say 'save this as my usual breakfast' AFTER logging": zero items +
+    # a save_intent means "this" is the most recent committed log.
+    saved_meal = note = None
+    if not parsed.items and parsed.save_intent is not None:
+        saved_meal, note = await _save_intent_without_items(parsed.save_intent.name)
+
+    # Per-log cascade (§3.1): a tier-0 expansion occupies one item_index per
+    # macro item, so "usual breakfast and a coffee" → N macro rows, then coffee.
+    resolutions = await cascade.resolve_items(parsed.items, meal)
     await _persist(
         body.id, resolutions, meal,
         short_circuit=False, decompose_ms=decompose_ms, trace_id=trace_id,
         logged_at=when.logged_at, when_hint_note=when.note,
+        save_intent=parsed.save_intent.name if parsed.save_intent else None,
     )
-    return LogResponse(log_id=body.id, meal=meal, items=[r.staged for r in resolutions])
+    return LogCreateResponse(
+        log_id=body.id, meal=meal, items=[r.staged for r in resolutions],
+        saved_meal=saved_meal, note=note,
+    )
+
+
+async def _save_intent_without_items(name: str) -> tuple[SavedMealNote | None, str | None]:
+    """§8.4 create path (a): the macro's items are the most recent committed
+    log's entries (food, serving, qty as committed) — create-or-update by
+    name, triggers defaulting to norm(name), same as the "Save as meal" tap.
+    Nothing committed yet → (None, note); the log row stays an itemless
+    staged log that nothing counts (§9 reads committed/discarded only)."""
+    last = await db.fetchone(
+        "SELECT l.id FROM logs l WHERE l.status = 'committed' "
+        "AND EXISTS (SELECT 1 FROM entries e WHERE e.log_id = l.id) "
+        "ORDER BY l.committed_at DESC LIMIT 1"
+    )
+    if last is None:
+        return None, f"Nothing to save as '{name}' yet — log the items first."
+    entries = await db.fetchall(
+        "SELECT food_id, serving_id, qty FROM entries WHERE log_id = %s ORDER BY item_index",
+        (last["id"],),
+    )
+    try:
+        async with db.tx() as conn:
+            row = await commit_tx.save_meal_macro(
+                conn,
+                name=name,
+                trigger_phrases=None,
+                items=[
+                    {"food_id": str(e["food_id"]), "serving_id": e["serving_id"], "qty": float(e["qty"])}
+                    for e in entries
+                ],
+            )
+    except commit_tx.MealInvalid as e:
+        return None, f"Couldn't save '{name}': {e}"
+    return (
+        SavedMealNote(meal_id=row["id"], name=row["name"], item_count=len(row["items"] or [])),
+        None,
+    )
 
 
 async def _duplicate_post_response(log_id: UUID) -> LogResponse | None:
@@ -465,22 +561,27 @@ async def _persist(
     trace_id: str | None = None,
     logged_at: datetime | None = None,
     when_hint_note: str | None = None,
+    save_intent: str | None = None,
 ) -> None:
     """All staged state is persisted server-side (§3): the client is a renderer.
 
-    logged_at, when set, replaces logs.captured_at — entries.logged_at
-    snapshots logs.captured_at at commit (resolver/commit.py), so the §7.2
-    when-hint shift lands here or nowhere. when_hint_note (an ignored hint)
-    rides every item's staged jsonb, same extra-key mechanism as spoken_qty.
+    logs.captured_at is never touched here — it is the §9 latency/bucketing
+    anchor. logged_at (the §7.2 when-hint shift) rides every item's staged
+    jsonb as `logged_at` (ISO); resolver/commit.py reads it back for
+    entries.logged_at and every per-item rewrite preserves it
+    (commit.KEEP_LOG_KEYS_SQL). when_hint_note (an ignored hint) rides the
+    same extra-key mechanism as spoken_qty. save_intent (decompose's "save
+    this as my usual breakfast", §3.5 step 4) rides the same channel —
+    commit reads it back from the stored rows.
     """
     async with db.tx() as conn:
         await conn.execute(
             """
             UPDATE logs SET short_circuit = %s, meal_inferred = %s, decompose_ms = %s,
-                            trace_id = %s, captured_at = coalesce(%s, captured_at)
+                            trace_id = %s
             WHERE id = %s
             """,
-            (short_circuit, meal.value, decompose_ms, trace_id, logged_at, log_id),
+            (short_circuit, meal.value, decompose_ms, trace_id, log_id),
         )
         for r in resolutions:
             item = r.staged
@@ -494,10 +595,17 @@ async def _persist(
                 # §3.4a: known cooked/raw intent rides the staged jsonb —
                 # commit persists it to aliases.state_answer (asked once, ever)
                 staged_payload["state_answer"] = r.state_answer
+            if logged_at is not None:
+                # §7.2: the diary time for this log's entries (never captured_at)
+                staged_payload["logged_at"] = logged_at.isoformat()
             if when_hint_note:
                 # BACKLOG 26: an unrecognized when_hint is ignored, with the
                 # note kept visible in staged for telemetry/debugging
                 staged_payload["when_hint_note"] = when_hint_note
+            if save_intent:
+                # §3.5 step 4: resolver/commit.py creates/updates the macro
+                # from the committed items when a stored row carries this
+                staged_payload["save_intent"] = {"name": save_intent}
             await conn.execute(
                 """
                 INSERT INTO item_resolutions (log_id, item_index, phrase, phrase_norm,

@@ -13,7 +13,9 @@ Fallback: **OpenAI gpt-transcribe** via POST /v1/audio/transcriptions
 STT_PROVIDER picks the primary ("deepgram" default — the §11 swap is one env
 var); a 5xx/timeout/connection failure fails over to the other provider
 automatically. Any 4xx is a hard TranscriptionError (a bad request will not
-get better on a different vendor).
+get better on a different vendor). A provider whose API key is not configured
+is "unavailable" the same way (fail over, never crash); when no provider is
+left the error names every reason, so the route's 503 says why.
 """
 
 from __future__ import annotations
@@ -80,13 +82,15 @@ def _env(name: str, default: str | None = None) -> str | None:
 # transcript validation (§8.1d): empty/near-empty transcript = capture failure
 # ---------------------------------------------------------------------------
 
-_ALNUM_RE = re.compile(r"[^\W_]", flags=re.UNICODE)  # letters + digits
+_ALPHA_TOKEN_RE = re.compile(r"[^\W\d_]{3,}", flags=re.UNICODE)  # >=3 letters in a row
 
 
 def is_near_empty(text: str | None) -> bool:
-    """True when a transcript carries no plausible utterance — fewer than two
-    alphanumeric characters (a silent blob typically yields "" or ".")."""
-    return len(_ALNUM_RE.findall(text or "")) < 2
+    """True when a transcript carries no plausible utterance: no alphabetic
+    token of three or more letters anywhere. A silent blob yields "", ".", a
+    digit, or a filler like "uh"/"um" — none of which is food. "egg", "two
+    eggs" and "fairlife" all pass: a one-word log is a real log (§3.2)."""
+    return _ALPHA_TOKEN_RE.search(text or "") is None
 
 
 # ---------------------------------------------------------------------------
@@ -211,10 +215,18 @@ _EXT_BY_MIME = {
 async def _transcribe_openai(
     audio_bytes: bytes, mime: str, keyterms: list[str]
 ) -> str:
+    api_key = _env("OPENAI_API_KEY")
+    if not api_key:
+        # Without the key the SDK raises a bare OpenAIError from the client
+        # constructor — which is neither of the classes below and would
+        # crash the route. A missing key is the provider being unavailable.
+        raise ProviderUnavailable(
+            "openai: OPENAI_API_KEY is not set — OpenAI transcription unavailable"
+        )
     import openai
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=_env("OPENAI_API_KEY"))
+    client = AsyncOpenAI(api_key=api_key)
     base_mime = (mime or "").split(";")[0].strip().lower()
     ext = _EXT_BY_MIME.get(base_mime, "webm")
     prompt = (
@@ -261,17 +273,19 @@ async def transcribe(audio_bytes: bytes, mime: str) -> Transcription:
 
     keyterms = await build_keyterms()  # fetched once, shared across failover
     t0 = time.monotonic()
-    last_err: TranscriptionError | None = None
+    failures: list[str] = []
     for name in order:
         try:
             text = await _run_provider(name, audio_bytes, mime, keyterms)
         except ProviderUnavailable as e:
-            last_err = e
+            failures.append(str(e))
             continue
         return Transcription(
             text=text,
             transcribe_ms=int((time.monotonic() - t0) * 1000),
             provider=name,
         )
-    assert last_err is not None
-    raise last_err
+    # every provider declined — say why for each, in the order they were tried
+    raise TranscriptionError(
+        "no transcription provider available: " + "; ".join(failures)
+    )

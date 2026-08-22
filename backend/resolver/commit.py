@@ -8,21 +8,45 @@ rejected_count → portion-default recompute (mode of last 10) → per-item
 committed_at + edited_items. Trace scores post after the transaction, batched
 into one Langfuse flush per commit (§11).
 
-M0 seams: step 4 (meal-macro save_intent) is M3; tier-0 skip rules are wired
-(tier == 0 never writes aliases or portion defaults) but no tier-0 rows exist
-yet.
+Tier-0 expansions (§3.1) never write aliases or portion defaults — the macro
+is the memory. Step 4 (meal-macro save_intent): decompose's save_intent rides
+the staged jsonb (`save_intent`, same extra-key channel as spoken_qty) or the
+caller passes one explicitly; the macro is created/updated from the items
+this commit wrote, trigger phrases stored post-norm(). save_meal_macro() is
+shared with routes/meals.py (the "Save as meal" tap).
+
+§7.2 / §9 (Phase-4 fix): logs.captured_at is the immutable instrumentation
+anchor. A when-hint's shifted diary time rides every item's staged jsonb as
+`logged_at` (written by routes/logs.py _persist) and is read back here for
+entries.logged_at — metrics keep reading captured_at untouched.
 """
 
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
 from uuid import UUID
 
 from psycopg.types.json import Json
 
 import db
-from models import StagedItem
+from models import SaveIntent, StagedItem
 from resolver.norm import norm
+
+# Log-level extras that ride every item's staged jsonb (routes/logs.py
+# _persist): the when-hint's shifted `logged_at`, decompose's `save_intent`,
+# and the ignored-hint `when_hint_note`. Every per-item rewrite of the payload
+# (tier-3 result, /api/resolve re-resolution, answer, refusal, and the commit
+# itself — a retry and the late commit-item re-read `logged_at` afterwards)
+# must carry them forward — append this to a `staged = <new>::jsonb`
+# assignment. NULL-valued keys (absent on the old row) are stripped, so
+# nothing is invented.
+KEEP_LOG_KEYS_SQL = (
+    " || jsonb_strip_nulls(jsonb_build_object("
+    "'logged_at', item_resolutions.staged->'logged_at', "
+    "'save_intent', item_resolutions.staged->'save_intent', "
+    "'when_hint_note', item_resolutions.staged->'when_hint_note'))"
+)
 
 
 class LogNotFound(Exception):
@@ -66,15 +90,22 @@ def _find_serving(servings: list[dict], serving_id: str | None) -> dict | None:
     return None
 
 
-async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
-    """§3.5. Returns {"log": row, "replayed": bool, "scores": [...]}.
+async def commit_log(
+    log_id: UUID, items: list[StagedItem], save_intent: SaveIntent | None = None
+) -> dict:
+    """§3.5. Returns {"log": row, "replayed": bool, "scores": [...], "meal": ...,
+    "logged_at": datetime}.
 
     Raises LogNotFound / LogNotCommittable (routes map to 404 / 409).
     "errors" carries per-item refusals (core-macros guard): the item stays
     uncommitted as needs_input (client shows verify-me), the rest commit.
+    "meal" is the macro step 4 created/updated (explicit `save_intent`, else
+    decompose's, read from the staged jsonb), or None. "logged_at" is the
+    diary time the entries landed on (§7.2 when-shift, else captured_at).
     """
     scores: list[dict] = []
     errors: list[dict] = []
+    meal: dict | None = None
     async with db.tx() as conn:
         # 0. compare-and-set — a retried commit must never double-insert
         cur = await conn.execute(
@@ -87,9 +118,13 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
         ).fetchone()
         if log is None:
             raise LogNotFound(str(log_id))
+        logged_at = await _log_logged_at(conn, log)
         if cur.rowcount == 0:
             if log["status"] == "committed":
-                return {"log": log, "replayed": True, "scores": [], "errors": []}
+                return {
+                    "log": log, "replayed": True, "scores": [], "errors": [],
+                    "logged_at": logged_at,
+                }
             raise LogNotCommittable(f"log is {log['status']}")
 
         res_rows = {
@@ -102,12 +137,13 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
         }
 
         edited_count = 0
+        committed: list[dict] = []  # {food_id, serving_id, qty} — step 4's input
         for item in items:
             if item.status != "resolved" or item.food is None:
                 continue  # searching/needs_input/not_found stay uncommitted (§3.5)
             res = res_rows.get(item.item_index)
             try:
-                outcome = await _commit_one(conn, log, item, res)
+                outcome = await _commit_one(conn, log, item, res, logged_at)
             except ItemRefused as e:
                 # core-macros guard: refuse THIS item, never block the rest;
                 # the row stays uncommitted so the §3.5 late path stays open.
@@ -116,6 +152,9 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
                 continue
             edited_count += 1 if outcome["was_edited"] else 0
             scores.append(outcome)
+            committed.append(
+                {k: outcome[k] for k in ("food_id", "serving_id", "qty")}
+            )
 
         # Rows the user removed in staging are ABSENT FROM THE PAYLOAD entirely —
         # the client submits every non-removed row whatever its status. A row
@@ -133,13 +172,23 @@ async def commit_log(log_id: UUID, items: list[StagedItem]) -> dict:
                     (r["id"],),
                 )
 
+        # 4. meal macro intent: create/update the macro from the committed items
+        intent = save_intent or _staged_save_intent(res_rows)
+        if intent is not None and committed:
+            meal = await save_meal_macro(
+                conn, name=intent.name, trigger_phrases=None, items=committed
+            )
+
         await conn.execute(
             "UPDATE logs SET edited_items = %s WHERE id = %s", (edited_count, log_id)
         )
         log = dict(log, status="committed", edited_items=edited_count)
 
     _post_scores(log, scores)
-    return {"log": log, "replayed": False, "scores": scores, "errors": errors}
+    return {
+        "log": log, "replayed": False, "scores": scores, "errors": errors, "meal": meal,
+        "logged_at": logged_at,
+    }
 
 
 async def commit_item(log_id: UUID, item: StagedItem) -> dict:
@@ -163,11 +212,15 @@ async def commit_item(log_id: UUID, item: StagedItem) -> dict:
                 (log_id, item.item_index),
             )
         ).fetchone()
+        logged_at = await _log_logged_at(conn, log)
         if res is not None and res["committed_at"] is not None:
-            return {"log": log, "replayed": True, "scores": [], "errors": []}
+            return {
+                "log": log, "replayed": True, "scores": [], "errors": [],
+                "logged_at": logged_at,
+            }
         refused: str | None = None
         try:
-            outcome = await _commit_one(conn, log, item, res)
+            outcome = await _commit_one(conn, log, item, res, logged_at)
             scores.append(outcome)
         except ItemRefused as e:
             # mark the row inside the tx so the verify-me state persists,
@@ -178,10 +231,35 @@ async def commit_item(log_id: UUID, item: StagedItem) -> dict:
         raise LogNotCommittable(refused)
 
     _post_scores(log, scores)
-    return {"log": log, "replayed": False, "scores": scores, "errors": []}
+    return {
+        "log": log, "replayed": False, "scores": scores, "errors": [],
+        "logged_at": logged_at,
+    }
 
 
-async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> dict:
+async def _log_logged_at(conn, log: dict) -> datetime:
+    """§7.2: the diary time for this log's entries — the when-hint's shifted
+    `logged_at` carried on any of the log's item rows (routes/logs.py
+    _persist; KEEP_LOG_KEYS_SQL keeps it through rewrites), else the
+    immutable capture time. One indexed read per commit."""
+    row = await (
+        await conn.execute(
+            "SELECT staged->>'logged_at' AS logged_at FROM item_resolutions "
+            "WHERE log_id = %s AND staged ? 'logged_at' LIMIT 1",
+            (log["id"],),
+        )
+    ).fetchone()
+    if row is not None and row["logged_at"]:
+        try:
+            return datetime.fromisoformat(row["logged_at"])
+        except ValueError:
+            pass
+    return log["captured_at"]
+
+
+async def _commit_one(
+    conn, log: dict, item: StagedItem, res: dict | None, logged_at: datetime
+) -> dict:
     """Steps 1–3 + 5 of §3.5 for one item, inside the open transaction."""
     food = await (
         await conn.execute("SELECT * FROM foods WHERE id = %s", (item.food.id,))
@@ -279,7 +357,7 @@ async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> di
         ON CONFLICT (log_id, item_index) DO NOTHING
         """,
         (
-            log["captured_at"],
+            logged_at,
             item.meal.value,
             item.food.id,
             serving_id,
@@ -319,9 +397,10 @@ async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> di
         )
     else:
         await conn.execute(
-            """
+            f"""
             UPDATE item_resolutions
-            SET status='resolved', staged=%s, final_food_id=%s, final_serving_id=%s,
+            SET status='resolved', staged=%s::jsonb{KEEP_LOG_KEYS_SQL},
+                final_food_id=%s, final_serving_id=%s,
                 final_qty=%s, alias_id=%s, was_edited=%s, committed_at=now()
             WHERE id = %s
             """,
@@ -346,6 +425,9 @@ async def _commit_one(conn, log: dict, item: StagedItem, res: dict | None) -> di
         "was_disambiguated": disambiguated,
         "tier": tier,
         "trace_id": res["trace_id"] if res is not None else None,
+        "food_id": item.food.id,
+        "serving_id": serving_id,
+        "qty": qty,
     }
 
 
@@ -370,7 +452,8 @@ async def _refuse_item(conn, log: dict, item: StagedItem, res: dict | None, reas
         )
     else:
         await conn.execute(
-            "UPDATE item_resolutions SET status='needs_input', staged=%s WHERE id = %s",
+            "UPDATE item_resolutions SET status='needs_input', "
+            f"staged = %s::jsonb{KEEP_LOG_KEYS_SQL} WHERE id = %s",
             (Json(staged_payload), res["id"]),
         )
 
@@ -441,6 +524,117 @@ async def _recompute_alias_default(conn, alias_id: str) -> None:
                 (p[0], p[1], alias_id),
             )
             return
+
+
+# ---------------------------------------------------------------------------
+# §3.5 step 4 — meal macros (shared with routes/meals.py)
+# ---------------------------------------------------------------------------
+
+
+class MealInvalid(Exception):
+    """A macro write that cannot be stored as given (routes map to 422)."""
+
+
+def _staged_save_intent(res_rows: dict) -> SaveIntent | None:
+    """decompose's save_intent, persisted on the staged jsonb by logs.py
+    (extra key `save_intent: {name}`) — first row that carries one."""
+    for r in res_rows.values():
+        staged = r["staged"]
+        intent = staged.get("save_intent") if isinstance(staged, dict) else None
+        if isinstance(intent, dict) and (intent.get("name") or "").strip():
+            return SaveIntent(name=intent["name"].strip())
+    return None
+
+
+def norm_triggers(phrases: list[str] | None, name: str) -> list[str]:
+    """§3.1: trigger phrases are stored as norm() output, deduped, empties
+    dropped; none given → the meal's own name ("usual breakfast")."""
+    out: list[str] = []
+    for p in phrases or []:
+        k = norm(p)
+        if k and k not in out:
+            out.append(k)
+    if not out and norm(name):
+        out.append(norm(name))
+    if not out:
+        raise MealInvalid("a saved meal needs at least one trigger phrase")
+    return out
+
+
+async def validate_meal_items(conn, items: list[dict]) -> list[dict]:
+    """[{food_id, serving_id, qty}] — food cached, serving on that food,
+    qty > 0. Returns the canonical list (str ids, float qty)."""
+    if not items:
+        raise MealInvalid("a saved meal needs at least one item")
+    ids = sorted({str(i.get("food_id")) for i in items})
+    try:
+        [UUID(i) for i in ids]
+    except ValueError:
+        raise MealInvalid("food_id must be a uuid")
+    foods = {
+        str(f["id"]): f
+        for f in await (
+            await conn.execute(
+                "SELECT id, servings FROM foods WHERE id = ANY(%s::uuid[])", (ids,)
+            )
+        ).fetchall()
+    }
+    out: list[dict] = []
+    for i in items:
+        food = foods.get(str(i.get("food_id")))
+        if food is None:
+            raise MealInvalid(f"unknown food {i.get('food_id')}")
+        serving_id = i.get("serving_id")
+        if _find_serving(food["servings"], serving_id) is None:
+            raise MealInvalid(f"food {i['food_id']} has no serving '{serving_id}'")
+        qty = float(i.get("qty") if i.get("qty") is not None else 1)
+        if qty <= 0:
+            raise MealInvalid("qty must be positive")
+        out.append({"food_id": str(i["food_id"]), "serving_id": serving_id, "qty": qty})
+    return out
+
+
+async def save_meal_macro(
+    conn, *, name: str, trigger_phrases: list[str] | None, items: list[dict]
+) -> dict:
+    """Create-or-update the active macro named `name` (case-insensitive):
+    items are replaced; trigger_phrases replace the stored ones when given,
+    else an update keeps them / a create defaults to norm(name). Returns the
+    meal_macros row."""
+    name = name.strip()
+    if not name:
+        raise MealInvalid("a saved meal needs a name")
+    items = await validate_meal_items(conn, items)
+    existing = await (
+        await conn.execute(
+            "SELECT id, trigger_phrases FROM meal_macros "
+            "WHERE is_active AND lower(name) = lower(%s) "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (name,),
+        )
+    ).fetchone()
+    if existing is not None:
+        triggers = (
+            norm_triggers(trigger_phrases, name)
+            if trigger_phrases
+            else existing["trigger_phrases"]
+        )
+        row = await (
+            await conn.execute(
+                "UPDATE meal_macros SET trigger_phrases = %s, items = %s, "
+                "updated_at = now() WHERE id = %s RETURNING *",
+                (triggers, Json(items), existing["id"]),
+            )
+        ).fetchone()
+    else:
+        row = await (
+            await conn.execute(
+                "INSERT INTO meal_macros (name, trigger_phrases, items) "
+                "VALUES (%s, %s, %s) RETURNING *",
+                (name, norm_triggers(trigger_phrases, name), Json(items)),
+            )
+        ).fetchone()
+    return row
 
 
 def _post_scores(log: dict, scores: list[dict]) -> None:

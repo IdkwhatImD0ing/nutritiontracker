@@ -564,7 +564,7 @@ def test_when_hint_interpreter_table():
 # ---------------------------------------------------------------------------
 
 
-def test_when_hint_shifts_captured_at_and_meal_through_route():
+def test_when_hint_shifts_logged_at_and_meal_through_route():
     async def run():
         async with isolated_db() as conn:
             phrase = f"novel{uuid4().hex[:8]}"
@@ -587,10 +587,16 @@ def test_when_hint_shifts_captured_at_and_meal_through_route():
                 "SELECT captured_at, meal_inferred FROM logs WHERE id = %s", (body.id,)
             )
             assert row["meal_inferred"] == "lunch"
-            # entries.logged_at snapshots logs.captured_at at commit, so the
-            # §7.2 shift must land on captured_at (same instant comparison)
-            assert row["captured_at"] == expected
-            assert row["captured_at"] < body.captured_at  # actually moved back
+            assert expected < body.captured_at  # the hint actually moved the day back
+            # §7.2 (Phase-4 fix): the shift rides every item's staged jsonb as
+            # `logged_at` — logs.captured_at stays the §9 instrumentation anchor
+            assert row["captured_at"] == body.captured_at
+            staged = await db.fetchall(
+                "SELECT staged FROM item_resolutions WHERE log_id = %s", (body.id,)
+            )
+            assert staged and all(
+                datetime.fromisoformat(s["staged"]["logged_at"]) == expected for s in staged
+            )
 
     asyncio.run(run())
 
@@ -617,7 +623,14 @@ def test_spoken_meal_hint_outranks_when_hint_meal():
             expected = interpret_when_hint(
                 "yesterday lunch", body.captured_at, body.tz
             ).logged_at
-            assert row["captured_at"] == expected  # …the date shift still applies
+            assert row["captured_at"] == body.captured_at  # the anchor never moves
+            staged = await db.fetchall(
+                "SELECT staged FROM item_resolutions WHERE log_id = %s", (body.id,)
+            )
+            # …the date shift still applies, on staged.logged_at (§7.2)
+            assert staged and all(
+                datetime.fromisoformat(s["staged"]["logged_at"]) == expected for s in staged
+            )
 
     asyncio.run(run())
 
@@ -900,7 +913,8 @@ def test_json_and_multipart_share_post_api_logs_and_one_openapi_operation():
     ]
     ok = spec["paths"]["/api/logs"]["post"]["responses"]["200"]["content"]
     refs = {s["$ref"] for s in ok["application/json"]["schema"]["anyOf"]}
+    # §8.4: the success arm is LogCreateResponse (LogResponse + saved_meal/note)
     assert refs == {
-        "#/components/schemas/LogResponse",
+        "#/components/schemas/LogCreateResponse",
         "#/components/schemas/CaptureFailureResponse",
     }
