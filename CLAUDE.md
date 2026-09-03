@@ -58,5 +58,8 @@ Non-obvious facts, each of which has already caused a bug:
 ## Guardrails
 
 - Never commit secrets, `.env` files, or credentials. Never print a secret value — names only.
-- Don't commit or push unless asked.
-- Deploy previews only (`vercel deploy --yes`). Promoting to production is a human decision.
+- Don't commit or push unless asked. **Pushing `main` deploys production** — the Vercel
+  project auto-deploys from GitHub (`vercel project inspect` doesn't show it; the deployment
+  metadata does). So "push" means "ship"; confirm that is what was asked.
+- Agents deploy previews only (`vercel deploy --yes`). Production changes only via a push
+  the human asked for.

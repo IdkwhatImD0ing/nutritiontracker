@@ -158,8 +158,10 @@ regression even when tests pass.
 6. **Never fail silently.** A saved meal missing a food says so; a voice clip with no audio
    says so and offers the text box. Half-correct numbers the user believes are whole are the
    worst outcome in this app.
-7. **Agents deploy previews only** (`vercel deploy --yes`). Production promotion is a human
-   decision.
+7. **Pushing `main` deploys production.** The Vercel project is connected to the GitHub repo
+   and auto-deploys every push to `main` (`vercel project inspect` does not print the git
+   link — the deployment metadata's `source: "git"` does). Agents deploy previews only
+   (`vercel deploy --yes`); production changes only through a push the owner asked for.
 
 ---
 
