@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { DiaryEntry } from "./DiaryApi";
+import "@/app/photo.css"; // .badge.estimate
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
@@ -35,8 +36,9 @@ type Props = {
 /** One committed diary row (§7.1 row display rule applied to the diary):
  *  the headline number is calories; tapping expands to protein/carbs/fat,
  *  then every micro the snapshot carries; web-sourced rows show the
- *  citation as a visible, clickable link (§3.4a); qty is editable and the
- *  row is deletable (§5 `/api/entries/:id`). */
+ *  citation as a visible, clickable link (§3.4a); photo-portion rows carry
+ *  an "estimate" badge (M4); qty is editable and the row is deletable (§5
+ *  `/api/entries/:id`). */
 export default function DiaryEntryRow({
   entry,
   expanded,
@@ -89,6 +91,11 @@ export default function DiaryEntryRow({
               {entry.food.name}
             </Link>
             {entry.web_source ? <span className="badge web">web</span> : null}
+            {/* M4: the portion was read off a photo (and confirmed before
+                commit) — flagged the way the staged row was. */}
+            {entry.estimated === "portion" ? (
+              <span className="badge estimate">estimate</span>
+            ) : null}
           </div>
           <div className="row-sub">
             {entry.food.brand ? `${entry.food.brand} · ` : ""}

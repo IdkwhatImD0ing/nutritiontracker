@@ -30,10 +30,30 @@ from models import (
 from resolver import cascade
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from resolver.norm import norm
+from routes import photo
 from services import tier3
 from sources import fdc
 
 router = APIRouter(dependencies=[Depends(require_user)])
+
+
+async def _run_tier3(
+    log_id: str, item_index: int, refinement: str | None = None
+) -> StagedItem:
+    """tier3.run_tier3, plus the §3.4b seam: a photo row (staged carries
+    `vision`) that tier 3 could not resolve becomes the numberless
+    source='estimate' row that routes the user to search; any other
+    not_found stays the manual search box."""
+    item = (
+        await tier3.run_tier3(log_id, item_index)
+        if refinement is None
+        else await tier3.run_tier3(log_id, item_index, refinement=refinement)
+    )
+    if item.status == "not_found":
+        estimate = await photo.stage_estimate_food(log_id, item_index)
+        if estimate is not None:
+            return estimate
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +119,18 @@ def _staged_dict(row) -> dict:
     return json.loads(raw) if raw else {}
 
 
+def _as_written(row, item: StagedItem) -> StagedItem:
+    """§3.4b: the response is the row as stored — KEEP_LOG_KEYS_SQL carries a
+    photo row's `estimated`/`estimate_note` over the fresh payload, and the
+    sheet renders what comes back. `row` is a one-column `RETURNING staged`
+    row (column 0, unlike _item_row's shape); a refused write returns the
+    payload."""
+    raw = _col(row, 0, "staged") if row is not None else None
+    if isinstance(raw, (str, bytes)):
+        raw = json.loads(raw)
+    return StagedItem.model_validate(raw) if raw else item
+
+
 # ---------------------------------------------------------------------------
 # POST /api/resolve/tier3 — the client-side tier-3 kick (§3.4)
 # ---------------------------------------------------------------------------
@@ -120,7 +152,7 @@ async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
     )
     if not claimed:  # removed/committed between the read and the write
         raise HTTPException(status_code=409, detail="item no longer live")
-    return await tier3.run_tier3(str(body.log_id), body.item_index)
+    return await _run_tier3(str(body.log_id), body.item_index)
 
 
 # ---------------------------------------------------------------------------
@@ -264,14 +296,15 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
     # brand, validated against the inlined index ids (§3.3 2b).
     res = await cascade.resolve_item(parsed, body.item_index, meal, index_ids)
     if res.staged.status == "searching":
-        return await tier3.run_tier3(str(body.log_id), body.item_index)
+        return await _run_tier3(str(body.log_id), body.item_index)
     if res.staged.status != "resolved":
         # §3.1 guard surfaced by the micro-call (meal_ref → needs_input): a
         # meal-shaped phrase never enters food search — persist and return.
-        await db.execute(
+        stored = await db.fetchone(
             f"""
             UPDATE item_resolutions SET status = %s, staged = %s::jsonb{KEEP_LOG_KEYS_SQL}
             WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
+            RETURNING staged
             """,
             (
                 res.staged.status,
@@ -280,7 +313,7 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
                 body.item_index,
             ),
         )
-        return res.staged
+        return _as_written(stored, res.staged)
 
     item = res.staged
     resolved_payload = item.model_dump(mode="json", exclude_none=True)
@@ -297,7 +330,7 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
     # proposed_* keep the FIRST proposal (COALESCE): a re-resolution after an
     # edit must not erase the baseline that commit's explicit-choice and
     # rejected_count semantics compare against (§3.5).
-    await db.execute(
+    stored = await db.fetchone(
         f"""
         UPDATE item_resolutions
         SET status = 'resolved', staged = %s::jsonb{KEEP_LOG_KEYS_SQL},
@@ -308,6 +341,7 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
             proposed_qty = coalesce(proposed_qty, %s),
             alias_id = %s
         WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
+        RETURNING staged
         """,
         (
             json.dumps(resolved_payload),
@@ -321,7 +355,7 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
             body.item_index,
         ),
     )
-    return item
+    return _as_written(stored, item)
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +455,12 @@ async def answer_question(body: AnswerRequest) -> StagedItem:
 
     if body.answer.food_id:
         # Already-cached food (alternates chip): one local read, no network.
+        # R1: never the photo lane's numberless placeholder (source='estimate').
+        src = await db.fetchone(
+            "SELECT source FROM foods WHERE id = %s", (body.answer.food_id,)
+        )
+        if src is not None and _col(src, 0, "source") == "estimate":
+            raise HTTPException(status_code=422, detail=photo.ESTIMATE_PICK_REFUSAL)
         try:
             return await tier3.resolve_item_from_food(
                 str(body.log_id), body.item_index, body.answer.food_id
@@ -461,4 +501,4 @@ async def answer_question(body: AnswerRequest) -> StagedItem:
     )
     if not claimed:  # removed/committed between the read and the write
         raise HTTPException(status_code=409, detail="item no longer live")
-    return await tier3.run_tier3(str(body.log_id), body.item_index, refinement=text)
+    return await _run_tier3(str(body.log_id), body.item_index, refinement=text)

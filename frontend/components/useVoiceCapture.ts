@@ -61,6 +61,11 @@ export default function useVoiceCapture() {
   const startedRef = useRef(0);
   const capturedAtRef = useRef("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Bumped by every start(), by cancel() and on unmount. The mic prompt can
+  // outlive all three, and cleanup() finds streamRef empty while start() is
+  // still awaiting getUserMedia — so start() re-checks the epoch after the
+  // await and, if the world moved on, stops the fresh stream itself.
+  const epochRef = useRef(0);
 
   useEffect(() => {
     setSupported(
@@ -82,10 +87,21 @@ export default function useVoiceCapture() {
   };
 
   // Unmount while recording: stop tracks so the mic indicator doesn't linger.
-  useEffect(() => cleanup, []);
+  // A start() still at the mic prompt is invalidated too (epochRef).
+  useEffect(
+    () => () => {
+      epochRef.current++;
+      cleanup();
+    },
+    [],
+  );
 
-  const start = async (): Promise<true | VoiceFailure> => {
+  /** true: recording (or already was). A VoiceFailure: report it. null: the
+   *  prompt resolved into a closed sheet, a cancel() or a later start() — the
+   *  stream was released and there is nothing to report. */
+  const start = async (): Promise<true | VoiceFailure | null> => {
     if (recRef.current) return true; // already recording
+    const epoch = ++epochRef.current;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -94,6 +110,10 @@ export default function useVoiceCapture() {
         (e.name === "NotAllowedError" || e.name === "SecurityError")
         ? "permission_denied"
         : "recorder_error";
+    }
+    if (epoch !== epochRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return null;
     }
     let rec: MediaRecorder;
     const mime = MIME_CANDIDATES.find((m) => MediaRecorder.isTypeSupported(m));
@@ -159,5 +179,21 @@ export default function useVoiceCapture() {
     };
   };
 
-  return { supported, recording, elapsedMs, start, stop };
+  /** Drop the recording without producing a clip (§8.1d type-it-instead):
+   *  stop the recorder and the tracks, discard the chunks, nothing uploads. */
+  const cancel = () => {
+    epochRef.current++; // a start() still at the mic prompt drops its stream
+    const rec = recRef.current;
+    if (!rec) return;
+    rec.ondataavailable = null;
+    try {
+      if (rec.state !== "inactive") rec.stop();
+    } catch {
+      /* already dead — the tracks stop below regardless */
+    }
+    chunksRef.current = [];
+    cleanup();
+  };
+
+  return { supported, recording, elapsedMs, start, stop, cancel };
 }

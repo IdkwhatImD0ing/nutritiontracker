@@ -1,0 +1,129 @@
+/* Tally — M4 photo lane: the capture sheet + the §3.4a estimate flag on
+   staged rows (and the diary's estimate badge). Imported by PhotoCapture,
+   StagedRow, StagingSheet and DiaryEntryRow so the styles ride along wherever
+   they mount; globals.css stays the base layer (.subsheet, .chip, .badge,
+   .row, .spinner, .sheet-error are reused). */
+
+/* ---------- capture sheet ---------- */
+
+.photo-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.photo-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 0.95rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.photo-option svg {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--sage);
+}
+
+.photo-option:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.photo-preview {
+  display: block;
+  width: 100%;
+  max-height: 40dvh;
+  object-fit: contain;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.photo-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.photo-status .spinner {
+  margin-right: 0;
+}
+
+.photo-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.photo-actions button {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 0.9rem;
+  color: var(--sage);
+  cursor: pointer;
+}
+
+.photo-actions button.primary {
+  background: var(--spruce);
+  border-color: var(--spruce);
+  color: var(--text);
+}
+
+/* ---------- §3.4a estimated rows (photo lane only) ---------- */
+
+/* same amber family as needs-input/verify: attention, not error */
+.badge.estimate {
+  background: #3d3320;
+  color: var(--amber);
+}
+
+.badge.estimate.confirmed {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+/* numbers are a guess until confirmed — muted, never the bold headline */
+.row.estimated .row-kcal .n {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.row.estimated.confirmed .row-kcal .n {
+  color: var(--text);
+}
+
+.estimate-note {
+  font-size: 0.78rem;
+  color: var(--amber);
+  margin: 4px 0 0;
+}
+
+.row.estimated.confirmed .estimate-note {
+  color: var(--muted);
+}
+
+.chip.confirm-estimate {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+/* the one-line reason the Commit button is disabled */
+.sheet-reason {
+  color: var(--amber);
+  font-size: 0.82rem;
+  margin: 0 0 8px;
+  text-align: center;
+}

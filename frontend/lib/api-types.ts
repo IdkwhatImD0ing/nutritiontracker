@@ -229,6 +229,84 @@ export interface paths {
         patch: operations["patch_entry_api_entries__entry_id__patch"];
         trace?: never;
     };
+    "/api/foods/barcode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lookup Barcode */
+        get: operations["lookup_barcode_api_foods_barcode_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/from-food": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Log From Food */
+        post: operations["create_log_from_food_api_logs_from_food_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs/photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Log Photo
+         * @description Photo → vision → the identical cascade + staging; input_mode='photo'.
+         *     Idempotent by client id like POST /api/logs (§8.6). `tz` is optional —
+         *     without it the meal is inferred in the settings timezone.
+         */
+        post: operations["create_log_photo_api_logs_photo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/resolve/confirm-estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Estimate
+         * @description Set staged.estimate_confirmed on one live estimated row. Editing the
+         *     portion never confirms; only this does. A row without numbers (an
+         *     estimate food) has nothing to confirm — search first.
+         */
+        post: operations["confirm_estimate_api_resolve_confirm_estimate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/foods/search": {
         parameters: {
             query?: never;
@@ -576,6 +654,33 @@ export interface components {
             answer: components["schemas"]["Answer"];
         };
         /**
+         * BarcodeFood
+         * @description The cached food a barcode resolved to — enough to render the pick and
+         *     to call /api/logs/from-food with its id.
+         */
+        BarcodeFood: {
+            /** Id */
+            id: string;
+            /** Display Name */
+            display_name: string;
+            /** Brand */
+            brand?: string | null;
+            /** Source */
+            source: string;
+            /** Servings */
+            servings: components["schemas"]["ServingOption"][];
+            /** Macros Per 100G */
+            macros_per_100g?: {
+                [key: string]: number;
+            } | null;
+        };
+        /** BarcodeResponse */
+        BarcodeResponse: {
+            /** Found */
+            found: boolean;
+            food?: components["schemas"]["BarcodeFood"] | null;
+        };
+        /**
          * BodyProfile
          * @description settings.body — every field optional so a partially filled wizard can be
          *     saved; the compute endpoint requires the full set (GoalInputs).
@@ -597,6 +702,24 @@ export interface components {
             weekly_rate_kg?: number | null;
             /** Units */
             units?: ("metric" | "imperial") | null;
+        };
+        /** Body_create_log_photo_api_logs_photo_post */
+        Body_create_log_photo_api_logs_photo_post: {
+            /** Image */
+            image: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            meal_hint?: components["schemas"]["Meal"] | null;
+            /** Tz */
+            tz?: string | null;
         };
         /**
          * CaptureFailureResponse
@@ -679,6 +802,16 @@ export interface components {
             errors: components["schemas"]["CommitItemError"][];
             saved_meal?: components["schemas"]["SavedMealNote"] | null;
         };
+        /** ConfirmEstimateRequest */
+        ConfirmEstimateRequest: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            /** Item Index */
+            item_index: number;
+        };
         /** DayStat */
         DayStat: {
             /** Kcal */
@@ -748,6 +881,12 @@ export interface components {
             /** Source */
             source?: string | null;
             web_source?: components["schemas"]["WebSource"] | null;
+            /**
+             * Estimated
+             * @default none
+             * @enum {string}
+             */
+            estimated: "none" | "portion";
         };
         /** DiaryResponse */
         DiaryResponse: {
@@ -902,6 +1041,34 @@ export interface components {
             branded: components["schemas"]["FoodHit"][];
             /** Fdc Error */
             fdc_error?: string | null;
+        };
+        /** FromFoodRequest */
+        FromFoodRequest: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Food Id
+             * Format: uuid
+             */
+            food_id: string;
+            /** Serving Id */
+            serving_id?: string | null;
+            /** Qty */
+            qty?: number | null;
+            meal_hint?: components["schemas"]["Meal"] | null;
+            /**
+             * Input Mode
+             * @enum {string}
+             */
+            input_mode: "barcode" | "search";
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
         };
         /** GoalInputs */
         GoalInputs: {
@@ -1076,6 +1243,17 @@ export interface components {
             meal: components["schemas"]["Meal"];
             /** Items */
             items: components["schemas"]["StagedItemOut"][];
+        };
+        /** LogResponse */
+        LogResponse: {
+            /**
+             * Log Id
+             * Format: uuid
+             */
+            log_id: string;
+            meal: components["schemas"]["Meal"];
+            /** Items */
+            items: components["schemas"]["StagedItem"][];
         };
         /** MacroSums */
         MacroSums: {
@@ -1509,6 +1687,16 @@ export interface components {
             /** Search Instead */
             search_instead?: boolean | null;
             web_source?: components["schemas"]["WebSource"] | null;
+            /**
+             * Estimated
+             * @default none
+             * @enum {string}
+             */
+            estimated: "none" | "portion" | "unresolved";
+            /** Estimate Note */
+            estimate_note?: string | null;
+            /** Estimate Confirmed */
+            estimate_confirmed?: boolean | null;
         };
         /**
          * StagedItemOut
@@ -1549,6 +1737,16 @@ export interface components {
             /** Search Instead */
             search_instead?: boolean | null;
             web_source?: components["schemas"]["WebSource"] | null;
+            /**
+             * Estimated
+             * @default none
+             * @enum {string}
+             */
+            estimated: "none" | "portion" | "unresolved";
+            /** Estimate Note */
+            estimate_note?: string | null;
+            /** Estimate Confirmed */
+            estimate_confirmed?: boolean | null;
             /** Stale */
             stale?: boolean | null;
         };
@@ -2086,6 +2284,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EntryPatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_barcode_api_foods_barcode_get: {
+        parameters: {
+            query: {
+                code: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BarcodeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_log_from_food_api_logs_from_food_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FromFoodRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_log_photo_api_logs_photo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_create_log_photo_api_logs_photo_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogCreateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_estimate_api_resolve_confirm_estimate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmEstimateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StagedItem"];
                 };
             };
             /** @description Validation Error */

@@ -204,9 +204,15 @@ export default function DiaryList({
                 run(e.id, async () => {
                   const res = await patchEntryQty(e.id, qty);
                   // routes/entries.py builds its DiaryEntry without the
-                  // source/citation fields — keep the ones already rendered
+                  // source/citation/estimate fields — keep the ones already
+                  // rendered
                   onPatched(
-                    { ...res.entry, web_source: e.web_source, source: e.source },
+                    {
+                      ...res.entry,
+                      web_source: e.web_source,
+                      source: e.source,
+                      estimated: e.estimated,
+                    },
                     res.totals,
                   );
                 })

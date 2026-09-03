@@ -17,15 +17,12 @@ import { authClient } from "@/lib/auth/client";
 export type WebSource = components["schemas"]["WebSource"];
 
 /** §3.4a: the diary renders a web-transcribed food's citation as a visible,
- *  clickable link. routes/diary.py now emits `web_source` {url, title},
- *  `source` ('fdc' | 'off' | 'web') and `grams` on each entry; they are
- *  typed here as optional until typegen reruns on the updated /openapi.json
- *  (routes/entries.py's PATCH response leaves them null). */
-export type DiaryEntry = components["schemas"]["DiaryEntry"] & {
-  web_source?: WebSource | null;
-  source?: string | null;
-  grams?: number | null;
-};
+ *  clickable link. routes/diary.py emits `web_source` {url, title}, `source`
+ *  ('fdc' | 'off' | 'web') and `grams` on each entry (routes/entries.py's
+ *  PATCH response leaves them null), plus (M4) `estimated`: "portion" on a
+ *  row whose amount was read off a photo and confirmed before commit — an
+ *  "unresolved" row never commits. All generated from /openapi.json. */
+export type DiaryEntry = components["schemas"]["DiaryEntry"];
 
 export type DiaryMeals = Record<string, DiaryEntry[]>;
 

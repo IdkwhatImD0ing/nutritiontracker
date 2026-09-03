@@ -1,4 +1,4 @@
-"""Wire contracts for Usual — pydantic models, defined once (DESIGN.md §2, §5, §6.2).
+"""Wire contracts for Tally — pydantic models, defined once (DESIGN.md §2, §5, §6.2).
 
 FastAPI's /openapi.json is generated from these; frontend TypeScript is generated
 from that via scripts/typegen.sh. Never hand-maintain the TS side.
@@ -103,6 +103,16 @@ class StagedItem(BaseModel):
     servings: list[ServingOption] | None = None  # the food's serving list (§7.1 portion sheet)
     search_instead: bool | None = None  # §3.3 rule 3 "search instead" affordance
     web_source: WebSource | None = None  # §3.4a citation link (web-transcribed foods)
+    # §3.4a photo lane (M4) — what vision guessed: "portion" on a database
+    # food whose amount came from the photo, "unresolved" on an item no
+    # database matched (its foods row is source='estimate'; it carries NO
+    # numbers, cannot be confirmed or committed, and routes the user to
+    # Search). Renders flagged; the commit transaction refuses the row until
+    # estimate_confirmed is set, and only POST /api/resolve/confirm-estimate
+    # sets it (routes/photo.py).
+    estimated: Literal["none", "portion", "unresolved"] = "none"
+    estimate_note: str | None = None  # user-facing: what vision saw / why it is a guess
+    estimate_confirmed: bool | None = None
 
 
 # ---------------------------------------------------------------------------

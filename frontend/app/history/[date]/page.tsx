@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import HistoryDay from "@/components/HistoryDay";
 
-export const metadata: Metadata = { title: "Diary · Usual" };
+export const metadata: Metadata = { title: "Diary · Tally" };
 
 /** YYYY-MM-DD and a real calendar date (rejects 2026-02-30). */
 function validDate(s: string): boolean {

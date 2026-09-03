@@ -1,4 +1,4 @@
-/* Usual — hand CSS, dark-first, spruce accent family (§7.4 visual language) */
+/* Tally — hand CSS, dark-first, spruce accent family (§7.4 visual language) */
 
 :root {
   --bg: #121715;
@@ -183,7 +183,8 @@ input {
   margin: 0;
 }
 
-/* ---------- capture bar ---------- */
+/* ---------- capture row: the voice sheet's text field, the search box,
+   the barcode number (the mid-screen bar itself is gone, 2026-09-02) ---------- */
 
 .capture {
   display: flex;
@@ -230,7 +231,7 @@ input {
   margin: 6px 2px 0;
 }
 
-/* voice capture (M2 §8.1d / §13) — the mic lives on the capture bar */
+/* voice capture (M2 §8.1d / §13) — the mic lives in VoiceSheet */
 
 /* scoped under .capture so these outrank the generic `.capture button` rule
    above — the mic is the quiet button, the send arrow is the loud one */
@@ -299,6 +300,20 @@ input {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* §8.1d: type-it-instead while recording — cancels the clip, shows the field */
+.rec-type {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  text-decoration: underline;
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0;
+  cursor: pointer;
 }
 
 /* voice→text fallback notice (§13: degrade to typing, never block) */
@@ -977,6 +992,56 @@ input {
   color: var(--muted);
 }
 
+/* barcode scanner (the + sheet's Scan barcode lane) */
+
+.scan-view {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.scan-view video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.scan-frame {
+  position: absolute;
+  inset: 26% 12%;
+  border: 2px solid var(--mint);
+  border-radius: 8px;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.scan-torch {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  background: rgba(18, 23, 21, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--sage);
+  font-size: 0.78rem;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.scan-torch.on {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
+.scan-status {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0;
+}
+
 /* ---------- undo toast (BACKLOG 11) + pending badge (BACKLOG 12) ---------- */
 
 .toast {
@@ -1029,12 +1094,28 @@ input {
   justify-content: space-between;
 }
 
-.pending-pill.failed button {
+.pending-pill.failed button,
+.pending-pill.confirm button {
   background: none;
   border: none;
   color: var(--faint);
   cursor: pointer;
   padding: 2px 6px;
+}
+
+/* §3.4b: a photo straggler that landed after commit — confirm, then it commits */
+.pending-pill.confirm {
+  color: var(--amber);
+  justify-content: space-between;
+}
+
+.pending-pill.confirm .confirm-btn {
+  margin-left: auto;
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  color: var(--amber);
+  font-weight: 650;
+  padding: 2px 10px;
 }
 
 /* ---------- auth ---------- */

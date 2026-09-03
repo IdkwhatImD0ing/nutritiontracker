@@ -1,4 +1,4 @@
-# Usual — System Design
+# Tally — System Design
 
 **Name:** *Usual* (chosen 2026-08-20) — from "my usual breakfast," the phrase the resolver is built around. Repo stays `nutritiontracker`.
 **Status:** Rev 6 · 2026-08-20
@@ -13,7 +13,7 @@
 
 | Layer | Decision |
 |---|---|
-| Frontend | Next.js PWA — installable, iOS-dictation-friendly; photo capture planned (M4, the one estimation lane) |
+| Frontend | Next.js PWA — installable, iOS-dictation-friendly; a bottom + opens the four ways to log (barcode · photo · search · voice); photo is the one estimation lane (§3.4b) |
 | Backend | **Python FastAPI** — same Vercel project (Services), one origin; **Neon Managed Better Auth** (sessions in our own DB, JWKS-verified in FastAPI) |
 | Models | GPT-5.6: **Luna** parses utterances, **Terra** runs the food-search agent (OpenAI Agents SDK) |
 | STT | Deepgram Nova-3 (free via YC credits); OpenAI transcribe as one-env-var fallback |
@@ -39,7 +39,7 @@
 | OpenAI API key | GPT-5.6 Luna/Terra + web search tool | ~$1–2/mo → **redeem YC/student credits** | `OPENAI_API_KEY` |
 | Deepgram API key | STT | free via **$15K YC credits** | `DEEPGRAM_API_KEY` |
 | USDA FDC key (api.data.gov) | All food data — whole foods, branded, barcodes | free, instant email signup | `FDC_API_KEY` |
-| Open Food Facts | Branded/barcode fallback | free, **no key** — just a descriptive UA | `OFF_USER_AGENT="usual/0.1 (billzhangsc@gmail.com)"` |
+| Open Food Facts | Branded/barcode fallback | free, **no key** — just a descriptive UA | `OFF_USER_AGENT="tally/0.1 (billzhangsc@gmail.com)"` |
 | Langfuse Cloud (Hobby) | Traces + evals | free → **redeem $600 YC deal** for 90-day retention (Core) | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` (the v4 SDK name), `LANGFUSE_TRACING_ENVIRONMENT` (per Vercel env) |
 | Neon Auth (Managed Better Auth) | Sign-in + sessions, enabled on the branch (Console or MCP) | free ≤ 60k MAU (Beta) | `NEON_AUTH_BASE_URL`, `NEON_AUTH_COOKIE_SECRET` |
 | Local toolchain | Dev | Node 22+, Python 3.12, `uv`, `pnpm` | — |
@@ -279,17 +279,34 @@ Runs per unresolved item as a **client-triggered follow-up request**: `POST /api
 
 `needs_input` renders as a question chip on the row ("Which brand? Quest · Pure Protein · other"). **Options carry ids when the agent has already seen the candidates** — tapping one resolves locally with a single `get_food` (~instant), no second agent run. Free-text re-entry (a second agent run with the refinement) is reserved for genuinely unknowable answers. Without this, the cold-start path would be wait-3-8s → tap → wait-3-8s-again for a food the agent was just looking at, ~25 times in week one. `not_found` flips the row to a manual search box (a plain two-source search UI — the escape hatch, deliberately boring).
 
-The agent **never outputs nutrition numbers**; it only ever selects database ids (plus display strings). There is no code path from model output to the `entries.macros` field except through a cached `foods` row.
+The agent **never outputs nutrition numbers**; it only ever selects database ids (plus display strings). There is no code path from model output to the `entries.macros` field except through a cached `foods` row. **The one documented exception is mode 2 above:** the web-transcription lane's cited values do pass through the model — transcribed from the pinned official page, evidence-gated (BACKLOG 37/38), never estimated — into a `source='web'` foods row, and from there into `entries.macros` like any cached row. It is the only model-sourced path to macros in the system; the photo lane (§3.4b) adds no second one — vision's schema has no nutrition field, and its numberless `"unresolved"` row carries no numbers at all. **The one documented exception is mode 2 above:** the web-transcription lane's cited values do pass through the model — transcribed from the pinned official page, evidence-gated (BACKLOG 37/38), never estimated — into a `source='web'` foods row, and from there into `entries.macros` like any cached row. It is the only model-sourced path to macros in the system; the photo lane (§3.4b) adds no second one — vision's schema has no nutrition field, and its numberless `"unresolved"` row carries no numbers at all.
+
+### 3.4b The photo lane — vision decompose, flagged estimates, explicit confirm (M4)
+
+The photo is the one capture adapter that emits `ParsedItem[]` from pixels rather than words (§12 M4). `POST /api/logs/photo` (multipart: `image`, `id`, `captured_at`, `meal_hint?`, `tz?`) validates the upload twice — declared content type **and** magic bytes, JPEG/PNG/WebP only, 12 MB cap, HEIC refused by name because the vision API does not take it — then hands the bytes to `services/vision.py`: one `gpt-5.6-luna` Responses call (image input verified on the model page and the images-vision guide, 2026-09-02; luna is decompose's tier, and terra also accepts images if accuracy ever proves insufficient) with a strict schema of `{items: [{phrase, qty, unit, est_grams, confidence, note}], meal_hint}`. **The schema has no nutrition field and the instructions forbid numbers in free text** — vision identifies and measures; it never computes. Each item becomes a `ParsedItem` whose estimate rides the §7.3 spoken-quantity channel (a count for countable items, else `est_grams` as grams) into `cascade.resolve_item` — the identical tiers 1–3, tier 0 skipped because a saved-meal trigger is something you *say* — and `routes/logs._persist` writes the rows with `input_mode='photo'`.
+
+What the lane adds is the flag: three fields on `StagedItem` (§5) — `estimated: "none" | "portion" | "unresolved"` (default `"none"`, so text and voice rows are untouched), `estimate_note` (user-facing: what vision saw), and `estimate_confirmed` (written by exactly one route). The rules, each enforced in code:
+
+1. **A resolved database food whose amount came from the photo is `estimated="portion"`.** `routes/photo.py _flag` maps the estimate onto the food's *own* servings — a count onto a household serving, else `est_grams` onto the 100 g / gram serving — and recomputes macros from the cache. The numbers are database numbers; only the amount is a guess. Vision's identification confidence caps the row's confidence at every level — low, medium and high alike, so a `medium` vision call caps a high-confidence tier-1 row at medium; a row vision could not size keeps the resolver's usual portion, unflagged.
+2. **A row nothing resolves becomes a numberless estimate row, `estimated="unresolved"`** — a photo item with no database match. When tier 3 returns `not_found` on a row whose staged jsonb carries `vision` (the kick, an answer re-kick, or an edited-phrase re-resolution), `routes/photo.stage_estimate_food` persists what vision saw as a `foods` row with `source='estimate'`, `provenance = {vision item, model, captured_at, log_id, item_index}` and an **empty macros block**, and stages it resolved with `search_instead`, answering with the row *as stored* (its note included). It carries **no numbers**, cannot be confirmed (`confirm-estimate` 409s) and cannot commit (the core-macros guard, and rule 3's gate) — **Search is the way out**: the search sheet's pick swaps a database food in while the photo's portion (still in `spoken_qty`) applies to it. No model ever outputs calories for it: §3.4a's "only path to `entries.macros` is a cached foods row" holds, and the placeholder is invisible everywhere else — `/api/foods/search` hides `source='estimate'` rows, `/api/logs/from-food` and the answer chip refuse them (422 *photo-lane placeholder — pick a database food*), `/api/foods/select` takes database sources only, and tier 3's local-candidate pool excludes them, so a spoken phrase can never resolve to one.
+3. **Nothing estimated commits without an explicit confirm, server-side.** `POST /api/resolve/confirm-estimate {log_id, item_index}` sets `staged.estimate_confirmed=true` on a live row (409 on committed, removed, unflagged or numberless rows). `resolver/commit.py` decides the gate from the **stored rows only** — the payload can rename, re-index, relabel ("searching"), un-flag or omit a row and it changes nothing: every uncommitted stored row still carrying an unconfirmed flag blocks when it is resolved server-side *or* when the payload would commit it as resolved, and on a photo log a committable payload item with no stored row at all is refused outright (`photo log has no staged row for items [..]`), so nothing commits *around* a flagged row either. The whole commit is refused before any write with 409 `confirm the estimated rows first: [indexes]`; the late `commit-item` path runs the same gate over its one row. The payload rules the gate rides on — one payload item per `item_index`, removed rows never resurrected, the write loop committing exactly the gate-checked view — are stated in §3.5. Editing the portion in the portion sheet does *not* confirm; the committed payload records the stored flag and confirmation, whatever the client sent — a row the server never stored (text/voice) is written `"none"`.
+4. **The flag survives every rewrite, and only ever downgrades.** `KEEP_LOG_KEYS_SQL` carries `vision`, `estimate_note` and `estimated` through tier-3 results, `/api/resolve` re-resolutions, answers and search picks; `"portion"` stays `"portion"`, and an `"unresolved"` row that gains a database food becomes `"portion"` only when vision actually sized the item (a count or `est_grams` — that portion rides the spoken-quantity channel into the pick); when vision sized nothing, the pick's portion is the resolver's own and the row is honestly `"none"`. `vision` rides outside the null-stripping wrapper, so an unsized item's `qty`/`est_grams: null` reach the eval loop intact. `estimate_confirmed` is deliberately *not* carried — any re-resolution needs a fresh confirm.
+5. **Photo rows learn nothing** (§3.5) — on both sides of the table. *Write side:* commit — and the diary's `PATCH /api/entries/:id` food correction — read `logs.input_mode` and skip the alias upsert and the portion-default recompute for `photo`, `barcode` and `search` logs. *Read side:* commit still writes `final_*` for every row (the diary needs them), so every learning read over committed `item_resolutions` — `cascade.pick()` rule 3, `cascade.resolve_portion` steps 2–3 (which `tier3._apply_portion` goes through) and commit's alias-default recompute — appends `LEARNABLE_ROWS_SQL`: the row's log must be a spoken one (`input_mode` not in photo/barcode/search) *and* the row must carry no estimate flag, whatever its log says. There is no phrase worth remembering, and a photo-estimated 1.5 × 100 g or a barcode pick must never become the next spoken log's default.
+6. **The image bytes are never persisted** (§8.8). Each row's `staged->'vision'` keeps the raw structured output plus the model id for the eval loop; the trace records the mime type and byte count, never the image.
+
+The UI half (§7.1): an estimated row renders an amber *estimate* badge, muted `~kcal`, a note line, and a *Confirm estimate* chip; the Commit button is disabled with the reason until every *resolved* estimated row is confirmed (a numberless row says to pick a food with Search, or remove it). A photo row still in tier 3 never blocks the rest (§7.1): it commits as a §3.5 straggler, and the pending pill offers its *Confirm* when it lands — `commit-item` refuses it until then. Every resolution response (the kick, an answer, a search pick, `/api/resolve`) returns the row *as stored*, flag included, so a re-resolved photo row never renders unflagged. A committed photo portion stays flagged in the diary: `GET /api/diary` reads `estimated` off each entry's `item_resolutions` row, and Today's list and `/history/[date]` render the same *estimate* badge. A committed photo portion stays flagged in the diary: `GET /api/diary` reads `estimated` off each entry's `item_resolutions` row, and Today's list and `/history/[date]` render the same *estimate* badge. Zero items → an honest note ("No food recognized…") and the empty log is discarded — never a silently empty sheet; a vision failure removes its itemless log, so the same-id retry runs vision again instead of replaying an empty plate.
 
 ### 3.5 Learning writes — what commit does
 
 Commit is one ordinary interactive transaction (`BEGIN…COMMIT`) on the pooled Neon connection — fully supported through PgBouncer transaction mode — and **idempotent by construction**:
 
 0. **Compare-and-set:** `UPDATE logs SET status='committed', committed_at=now() WHERE id=$1 AND status='staged'`. If zero rows updated because the log is already committed, return the stored result with HTTP 200 — a retried commit (gym wifi dropping the response) must never double-insert. `entries` additionally carries `UNIQUE (log_id, item_index)`, so duplication is prevented by constraint, not convention.
-1. **Entries:** insert one row per committed staged item with macros *snapshotted* from the foods cache (per-serving macros × qty), plus `(food_id, serving_id, qty, alias_id, item_index)`. Historical data is immutable from this point.2. **Aliases** — for each item **except tier-0 expansions and removed rows**: upsert `(alias_norm(original phrase) → final food_id)`: existing row gets `use_count += 1, last_used_at = now`; if the user *explicitly chose* this food (chip tap, disambiguation, food edit), also set `last_explicit_at = now` and increment `rejected_count` on the alias he switched away from. New aliases are created with the serving/qty used. **The final food after any user edits is what gets learned.** Removed rows write their `item_resolutions` outcome but never an alias.
-3. **Portion defaults:** recompute the alias's default portion as the **mode of the last 10 committed portions for this alias** — now computable in one indexed query: `SELECT final_serving_id, final_qty FROM item_resolutions WHERE alias_id=$1 AND committed_at IS NOT NULL ORDER BY committed_at DESC LIMIT 10` (tie → most recent). Skipped for tier-0 expansions.
+1. **Entries:** insert one row per committed staged item with macros *snapshotted* from the foods cache (per-serving macros × qty), plus `(food_id, serving_id, qty, alias_id, item_index)`. Historical data is immutable from this point.2. **Aliases** — for each item **except tier-0 expansions, removed rows, and rows on `photo` / `barcode` / `search` logs** (§3.4b: nothing was spoken, so there is no phrase to learn): upsert `(alias_norm(original phrase) → final food_id)`: existing row gets `use_count += 1, last_used_at = now`; if the user *explicitly chose* this food (chip tap, disambiguation, food edit), also set `last_explicit_at = now` and increment `rejected_count` on the alias he switched away from. New aliases are created with the serving/qty used. **The final food after any user edits is what gets learned.** Removed rows write their `item_resolutions` outcome but never an alias.
+3. **Portion defaults:** recompute the alias's default portion as the **mode of the last 10 committed portions for this alias** — now computable in one indexed query: `SELECT final_serving_id, final_qty FROM item_resolutions WHERE alias_id=$1 AND committed_at IS NOT NULL ORDER BY committed_at DESC LIMIT 10` (tie → most recent). Skipped for tier-0 expansions and for the no-learn input modes above (a photo-estimated portion must never become a default).
 4. **Meal macro intent:** if decomposition flagged `save_intent` or the user tapped *Save as meal*, create/update the macro from the committed items (trigger phrases stored post-`norm()`).
 5. **Instrumentation + traces:** finalize the `logs` row (per-item `committed_at` on `item_resolutions`, `edited_items`, final serving/qty deltas) and post outcome scores (`user_edited`, per-item tier) to the trace platform by `trace_id` (§10 below).
+
+**Payload rules — the pre-write gate.** The commit payload is read through one view, `_payload_by_index`, keyed by `item_index`: the gate decides on it and the write loop iterates it, never the raw list. (a) **Unique `item_index`.** Two payload items under one index are refused outright — 409 `duplicate item_index in payload: [..]` — because a dict keeps one twin while a list walk would write the other, which is exactly how a forged row once slipped past the gate. (b) **Removed rows are never resurrected.** A payload item whose stored row is `status='removed'` is refused before anything else — 409 `items [..] were removed from staging` — on `commit` and on `commit-item` alike (a removed straggler is not a straggler). This runs *before* the estimate check, so a removed-and-unconfirmed row answers "removed", not "confirm first": the confirm it would invite is itself a 409 (§3.4b rule 3). (c) **The estimate check** (§3.4b rule 3), over the same view. (d) **A photo log's rows are only the ones the server staged.** On a `photo` log a committable payload item with no stored row is refused — 409 `photo log has no staged row for items [..]` — and `_commit_one` refuses the same case again, so the never-staged INSERT branch stays closed to photo logs whatever the caller. On a text/voice log that branch still inserts a client-only added row (a fallback: the sheet's add goes through `/api/resolve` and stages first), with any client-supplied estimate flag stripped to `"none"`. The whole gate runs before any write, so a refusal rolls the compare-and-set back with everything else, and the removal pass (stored rows absent from the payload → `removed`) keys off the same view.
 
 **Late-resolving items:** commit does not wait for stragglers. Items still `searching` at commit time stay uncommitted in `item_resolutions`; when tier 3 lands (or times out), the app badges "1 pending item" and `POST /api/logs/:id/commit-item` appends it — same per-item transaction, same idempotency constraint. `logs.committed_at` is the *first* commit (that's what the §9 latency metric measures); per-item `committed_at` records stragglers honestly. Without this path, a committed-then-resolved fairlife would silently never reach the diary — a ~42g protein hole in a 180g-target day.
 
@@ -307,10 +324,10 @@ Postgres (Neon), managed with Drizzle. Single user → no `user_id` anywhere.
 -- Cached food identities + nutrition. The only source of macro numbers in the system.
 CREATE TABLE foods (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  source          text NOT NULL,              -- 'fdc' | 'off' | 'web'
-  source_id       text NOT NULL,              -- fdcId, OFF barcode, or a hash for web-transcribed foods
+  source          text NOT NULL,              -- 'fdc' | 'off' | 'web' | 'estimate' (photo lane, §3.4b: macros deliberately empty)
+  source_id       text NOT NULL,              -- fdcId, OFF barcode, a hash for web-transcribed foods, "<log_id>:<item_index>" for estimates
   source_url      text,                       -- web foods: the official page the values were read from
-  provenance      jsonb,                      -- web foods: url_citation annotations + consulted sources
+  provenance      jsonb,                      -- web foods: url_citation annotations + consulted sources; estimates: the vision output + model + log
   name            text NOT NULL,              -- provider name, verbatim
   display_name    text NOT NULL,              -- short human name ("chicken breast, roasted"); trigram target
   brand           text,
@@ -358,11 +375,11 @@ CREATE TABLE meal_macros (
   updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
--- One capture session (voice or text). Instrumentation anchor. id is CLIENT-generated (idempotency key).
+-- One capture session. Instrumentation anchor. id is CLIENT-generated (idempotency key).
 CREATE TABLE logs (
   id              uuid PRIMARY KEY,           -- client-generated; POST /api/logs upserts by id
-  input_mode      text NOT NULL,              -- 'voice' | 'text'  (keyboard dictation arrives as 'text')
-  raw_input       text NOT NULL,              -- transcript or typed text
+  input_mode      text NOT NULL,              -- 'voice' | 'text' | 'photo' | 'barcode' | 'search'  (keyboard dictation arrives as 'text'; no CHECK — the last three learn nothing at commit, §3.5)
+  raw_input       text NOT NULL,              -- transcript or typed text; photo: "photo: <what vision saw>"; barcode/search: the food's display name
   captured_at     timestamptz NOT NULL,       -- client capture-start time (offline-safe)
   capture_fallback boolean NOT NULL DEFAULT false,  -- MediaRecorder failed → fell back to text
   capture_error   text,                       -- client-reported error, or 'silent_blob' / 'empty_transcript'
@@ -469,10 +486,14 @@ All routes behind the auth middleware (§2). JSON unless noted.
 | `/api/resolve` | POST | `{log_id, item_index, phrase, qty?, unit?}` → one `StagedItem`, **written to `item_resolutions`** like any other item (added/edited rows must not be telemetry ghosts). Runs a single-item decompose micro-call first (same cached prompt prefix) so tier 2b works identically — without it, an edited "protein shake" would skip his library and hit the network. |
 | `/api/resolve/tier3` | POST | `{log_id, item_index}` — the client-side tier-3 kick (§3.4): runs the search agent synchronously, writes the result, returns the updated `StagedItem` |
 | `/api/resolve/answer` | POST | `{log_id, item_index, answer}` — tier-3 question response. If the tapped option carried a `(source, source_id)`, resolve locally with one `get_food` (no second agent run); free-text answers re-enter tier 3 once. |
+| `/api/logs/photo` | POST | Multipart `{image, id, captured_at, meal_hint?, tz?}` → the same `{log_id, meal, items}` as `POST /api/logs`, with `input_mode='photo'`: vision → the identical cascade, estimated rows flagged (§3.4b). 415 on anything but JPEG/PNG/WebP by magic bytes (HEIC named), 413 over 12 MB, 503 when vision is unavailable (the degrade path is voice/text, never a fake empty plate). Idempotent by client id. The image is never stored. |
+| `/api/resolve/confirm-estimate` | POST | `{log_id, item_index}` — the explicit confirm on an estimated row (§3.4b); the only writer of `estimate_confirmed`. 409 on committed/removed/unflagged/numberless rows. |
 | `/api/aliases` | GET/PATCH | Back the alias edit sheet: list by phrase, pin/unpin, set default portion, delete a mapping |
 | `/api/foods/search` | GET | `?q=&source=` → manual search (local cache first, then FDC/OFF passthrough). The boring escape hatch. |
+| `/api/foods/barcode` | GET | `?code=` → digits only, then the §3.4 `gtinUpc` ladder against **FDC Branded only** (the OFF miss-fallback remains future work, §8.2). A hit is cached and answered from the row: `{found: true, food: {id, display_name, brand, source, servings, macros_per_100g}}`; a miss is `{found: false, food: null}`, never a 404. |
+| `/api/logs/from-food` | POST | `{id, food_id, serving_id?, qty?, meal_hint?, input_mode: "barcode" \| "search", captured_at}` → a log with ONE resolved row built from the cached food (tier `null`, no cascade, `alias_id` NULL; serving and qty default to his spoken portion of this food — §7.3 step 3, the mode of his last-10 committed portions on spoken logs (`LEARNABLE_ROWS_SQL`: a barcode or photo portion never counts) — else the provider default serving × 1 (step 4, the same default the text lane gets); an explicit `serving_id` wins (qty 1 unless given) and an explicit `qty` rides the remembered serving; `qty` must be finite and 0 < qty ≤ 1000 — 422, never a 500, on `1e309`/`NaN`; 422 on a `source='estimate'` placeholder). Same idempotency as `POST /api/logs`. These rows learn nothing at commit (§3.5). |
 | `/api/entries/:id` | PATCH/DELETE | Post-commit corrections (qty scales snapshot; serving re-derives; food corrections feed alias learning) |
-| `/api/diary` | GET | `?date=` → entries grouped by meal + day totals vs targets |
+| `/api/diary` | GET | `?date=` → entries grouped by meal + day totals vs targets; each entry carries `estimated` (`"portion"` on a confirmed photo portion, read off its `item_resolutions` row) so the diary badges it like a web food (§3.4b) |
 | `/api/meals` | GET/POST/PATCH/DELETE | Meal macro CRUD (norm() applied to trigger phrases on write); `POST /api/meals/from-log` for "save as meal" |
 | `/api/metrics` | GET | `?range=` → the §9 series for the /experiment view |
 
@@ -497,6 +518,9 @@ type StagedItem = {
   state_question?: boolean            // one-time cooked/raw toggle (answer persists to alias)
   question?: { text: string; options: { label: string; source?: string; source_id?: string }[] }
   confidence?: "high" | "medium" | "low"
+  estimated: "none" | "portion" | "unresolved"  // §3.4b photo lane; "none" everywhere else
+  estimate_note?: string                        // user-facing: what vision saw
+  estimate_confirmed?: boolean                  // set only by /api/resolve/confirm-estimate
 }
 ```
 
@@ -601,7 +625,7 @@ Five screens plus two utility pages — the PWA is deliberately shallow, and log
 
 | Page | Route | What's on it |
 |---|---|---|
-| **Today** (home) | `/` | The capture bar (mic + text field); the §7.1 staging list renders inline beneath it while a log is in flight; today's diary grouped by meal; the daily tracker per Bill's spec (2026-08-20): **a calories bar across the top, then three donut charts — protein, carbs, fat** — each showing **remaining-vs-target** (Cronometer's most-requested missing feature), protein visually loudest per the brief. App opens here; the warm ping fires here. |
+| **Today** (home) | `/` | The daily tracker up top, today's diary grouped by meal beneath it; the §7.1 staging sheet opens over it while a log is in flight. Logging starts from the bottom bar's + (below) — the mid-screen capture bar is gone (Bill, 2026-09-02). The tracker per Bill's spec (2026-08-20): **a calories bar across the top, then three donut charts — protein, carbs, fat** — each showing **remaining-vs-target** (Cronometer's most-requested missing feature), protein visually loudest per the brief. App opens here; the warm ping fires here. |
 | **History** | `/history` | A segmented range control — **3 days · week · month · year** (Bill's spec, 2026-08-20). 3-day view: per-day macro cards with full detail; week + month: daily kcal/protein bars against the target line; year: weekly averages with an adherence strip. Streak chip up top; tap any day to open its diary (entries editable per §5). |
 | **Library** | `/library` | His foods: aliases with use counts (the §7.1 edit sheet lives here — pin, default portion, delete), saved meals (§8.4 CRUD), manual food search |
 | **Settings** | `/settings` | Targets, meal windows, timezone, `profile_notes` (the agent-visible free text, §6.1), Cronometer baseline, the delete-icon-deletes-data warning (§8.6) |
@@ -611,11 +635,18 @@ Five screens plus two utility pages — the PWA is deliberately shallow, and log
 | Food detail | *(drill-in from Library or any diary row)* | The full "everything the database returned" panel (§7.1 rule), the aliases pointing at this food with use counts, portion default + pin, source badge with date/quality/citation |
 | First run | *(extension of Login, once)* | Sign in → mic permission → **goal wizard** (Bill's spec, 2026-08-20 — Cronometer-style): height, weight, age, sex, activity level → target weight + weekly rate → computed kcal (Mifflin-St Jeor × activity − rate) and macro targets (protein by g/kg bodyweight, a fat floor, carbs the remainder) — every number shown and editable before saving, stored in `settings`, re-editable there any time → Cronometer baseline |
 
-Navigation is a three-tab bar (**Today · History · Library**) with Settings behind an icon. The capture bar is persistent on Today rather than a floating button — the app's job *is* logging, so logging is the home screen, not a modal reached from it.
+Navigation is a bottom bar — **Today · History · [+] · Library** — with Settings behind an icon. **The + (Bill's ruling, 2026-09-02, replacing the mid-screen capture bar):** a raised circular button centered at the very bottom of every screen, in the thumb zone, the way the other food apps do it. Tapping it opens a sheet with exactly four rows, in this order:
+
+1. **Scan barcode** — rear camera into a `<video>`, read by the spec-shaped `barcode-detector` ponyfill (ZXing-C++ wasm, loaded lazily on first scan; iOS Safari ships no `BarcodeDetector`), retail formats only (EAN-13/8, UPC-A/E), a torch toggle where the track advertises one, and a typed-number fallback whenever the camera is denied or the code will not read → `GET /api/foods/barcode` → `POST /api/logs/from-food`. A miss says so and offers Search.
+2. **Take photo** — the §3.4b lane: the OS camera (`<input capture>`) or a library pick → client-side downscale to a ≤1600 px JPEG (EXIF orientation honoured; a 12 MP shot becomes a few hundred KB) → `POST /api/logs/photo`.
+3. **Search** — the manual search sheet, standalone → the pick is cached (`POST /api/foods/select`) → `POST /api/logs/from-food`.
+4. **Voice log** — the old capture bar's mic + text field, in a sheet: recording starts on open (the user just chose voice); a *Type instead* tap cancels the recording — nothing uploads, no STT spend — and shows the text field, so the §8.1d type-it-instead fallback and keyboard dictation stay one tap away → `POST /api/logs`.
+
+Every lane ends in the same staging sheet. Picked from another tab, the lane is handed to Today (sessionStorage) and the app navigates home. Logging is still one tap from anywhere — the tap is now the +, not a bar.
 
 **Mockups:** the published artifact's §7.4 embeds screen mockups (Today, the staging sheet, History) rendered in the design's own tokens — this markdown file carries the spec; the artifact carries the pictures.
 
-**Visual language (build-level guidance, not a pixel spec):** mobile-first, one-hand reachable — capture bar and Commit in the thumb zone; dark-mode-first, since the gym is the motivating context; one loud element per screen (the three-macro tracker, protein loudest) with everything else — chips, alternates, confidence styling — quiet until it needs attention; tabular numerals for all macro figures; system font stack (no font loading on the hot path). The component inventory falls out of §7.1 (staged-item row, alternates chip, portion sheet, meal picker, question chip, cooked/raw toggle) — each is specified there; this section fixes where they live.
+**Visual language (build-level guidance, not a pixel spec):** mobile-first, one-hand reachable — the + and Commit in the thumb zone; dark-mode-first, since the gym is the motivating context; one loud element per screen (the three-macro tracker, protein loudest) with everything else — chips, alternates, confidence styling — quiet until it needs attention; tabular numerals for all macro figures; system font stack (no font loading on the hot path). The component inventory falls out of §7.1 (staged-item row, alternates chip, portion sheet, meal picker, question chip, cooked/raw toggle) — each is specified there; this section fixes where they live.
 
 ---
 
@@ -642,7 +673,7 @@ Design commitments regardless of provider: (a) STT behind the `Transcriber` inte
 
 Net effect vs the brief's original FatSecret plan: same coverage class for his actual diet, zero cash cost, zero compliance machinery, and one API key instead of OAuth + proxy + cron.
 
-**Two scope rulings (Bill, 2026-08-20):** (1) **Barcodes must be proven, not assumed** — M0's exit criteria include a live spike of the `gtinUpc` normalization ladder against ~10 real pantry barcodes, with OFF as the miss-fallback. (2) **Restaurants means famous chains only** — the ones FDA menu labeling obliges to publish (20+ locations). Independent restaurants are out of scope: manual entry, and never estimation from text or voice.
+**Two scope rulings (Bill, 2026-08-20):** (1) **Barcodes must be proven, not assumed** — M0's exit criteria include a live spike of the `gtinUpc` normalization ladder against ~10 real pantry barcodes, with OFF as the miss-fallback — *as built (M4, 2026-09-02), `GET /api/foods/barcode` runs the ladder against FDC Branded only; there is no OFF adapter in `sources/` yet, so the miss-fallback remains future work, and a miss says so and offers Search.* (2) **Restaurants means famous chains only** — the ones FDA menu labeling obliges to publish (20+ locations). Independent restaurants are out of scope: manual entry, and never estimation from text or voice.
 
 ### 8.3 Why tier-2 matching exists
 
@@ -671,6 +702,10 @@ Bill's call (2026-08-20): **the app requires connectivity.** With no network, ca
 
 Alternatives rejected on verified grounds: **Supabase free** auto-pauses projects after 7 idle days and requires a *manual dashboard restore* — disqualifying (Neon wakes itself) — and Bill is already at his Supabase free-plan limits, so it would cost $25/mo from day one. **Auth (adopted 2026-08-20):** Neon's Managed Better Auth is the auth layer from day one (§2) — which also settles the Supabase question for good: identity already lives in our own Postgres (`neon_auth` schema) and branches with it. Multi-user later = widen the email allowlist + a `user_id` migration. Plain Postgres keeps the exit open regardless. **Capacity (asked 2026-08-20):** 0.5 GB is years of headroom for one user — a heavy day (10 logs with telemetry and agent transcripts) is well under 100 KB, so a year is tens of MB and the foods cache a few MB. Multi-user would budget very roughly ~20–50 MB per active user per year: the free tier hosts a handful, and past that Neon's paid tier ($19/mo, 10 GB) is a plan change, not a re-architecture. **Turso** is mid-platform-rewrite, has no pg_trgm/pgvector equivalents, and offers no relational win at this scale. **FatSecret's own diary** was already ruled out by the brief — and the ToS findings retroactively make that call look even better. Schema: §4 above.
 
+### 8.8 Photo bytes are never stored (2026-09-02)
+
+The photo lane keeps **nothing** of the image: the bytes go from the request to the vision call and are dropped — no column, no blob store, no trace attachment (the Langfuse generation records the mime type and byte count). What is kept is vision's structured output per row (`staged->'vision'`, §3.4b), which is what the eval loop actually needs: the question is "did vision see the plate right?", answerable from the items it listed against the rows he confirmed, not from re-running the picture. Two reasons. **Privacy** — a camera roll of meals is the most personal data this app could hold, and a single-user logger has no use for it once the rows are staged. **The Neon budget** — §8.7's 0.5 GB is years of headroom for text, but at a few hundred KB per downscaled shot, photos would eat it in a season. If a future eval ever needs the pixels, the honest path is an opt-in, capped blob store — not a jsonb column.
+
 ---
 
 ## 9. Instrumentation plan
@@ -679,7 +714,7 @@ First-class tables (`logs`, `item_resolutions`), not log lines — plus LLM trac
 
 | Metric | Definition (weekly series) | Source |
 |---|---|---|
-| **Log latency** | median + p90 of `committed_at − captured_at`, and separately `staged_ms` (capture → list rendered) | `logs` |
+| **Log latency** | median + p90 of `committed_at − captured_at`, and separately `staged_ms` (capture → list rendered; on a photo log the clock starts when the upload leaves the device, per attempt, so vision's round trip is in the number) | `logs` |
 | **Alias hit rate** | `count(tier ≤ 2 OR short_circuit) / count(*)` over items in committed logs — plus a companion series over committed **+ discarded** logs, because failures are likeliest to be discarded and a committed-only denominator would flatter the curve | `item_resolutions` |
 | **Adherence** | distinct local dates with ≥ 1 entry, per week, plotted against `cronometer_baseline_days_per_week` from settings | `entries` |
 
@@ -736,6 +771,7 @@ Runners-up, for the record: **Phoenix Cloud** (first-party Anthropic TS instrume
 | **Capture stop → staged: novel utterance** | **~2–7s voice / ~0.8–2.5s typed** | the number `staged_ms` tracks |
 | Commit tap → confirmed | < 500ms | one transaction |
 | Tier-3 item (novel food) | +3–8s, async | once per food, ever; never blocks other rows; 60s watchdog, one retry, then manual search. Web-transcribed restaurant items can run longer (multiple search actions) — same watchdog applies. |
+| Photo → staged (§3.4b) | ~4–5s | measured 2026-09-02: vision 3.1s (gpt-5.6-luna, effort low, a 960 px ~150 KB JPEG, 8 items) + the cascade/persist 1.2s for three tier-1 rows against Neon (mocked vision, `test_e2e_m4`); client downscale before upload is the lever on the transfer, not the model |
 
 Text logs (including iOS keyboard dictation) skip the first two stages. If p95 disappoints, the biggest lever is now the STT choice — `transcribe_ms` telemetry decides, and the OpenAI fallback (~1–1.6s benched) is one env var away — then trimming the inlined index and verifying caching. Luna→Terra is an accuracy lever, not a latency one.
 
@@ -755,7 +791,7 @@ Bias per the brief: text first, voice once the loop works. Each milestone ends d
 
 **M4 — photo capture (Bill, 2026-08-20):** camera/photo upload → GPT-5.6 vision decompose (identify items + portion estimates) → the same resolver + staging pipeline. Database nutrition wherever a food resolves; estimation only for what vision can't know, always visually flagged and confirmed — **the only estimation lane in the app** (§3.4a). *Exit: a photographed plate stages with resolved staples and flagged estimates.*
 
-Photo and barcode logging are explicitly out (§7 of the brief) but slot in later as capture adapters emitting `ParsedItem[]` into the same resolve→confirm pipeline. (Barcode lookup is already free when the scanner lands — FDC's `gtinUpc` field, §3.4.)
+Photo and barcode logging — out of scope in the brief — landed in M4 as capture adapters: photo emits `ParsedItem[]` into the same resolve→confirm pipeline (§3.4b); barcode and search skip the cascade and stage one row from a cached food (`POST /api/logs/from-food`, §5). All four ways to log sit behind the bottom + (§7.4).
 
 ---
 

@@ -166,9 +166,17 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
             ).fetchone()
 
         alias_id = entry["alias_id"]
-        learned = False
-        if food_changed and res is not None and res["tier"] != 0:
-            learned = True
+        learned = food_changed and res is not None and res["tier"] != 0
+        if learned:
+            # §3.4b rule 5 / R3: a correction on a photo, barcode or search
+            # log learns nothing — the same logs.input_mode gate as commit.
+            log = await (
+                await conn.execute(
+                    "SELECT input_mode FROM logs WHERE id = %s", (entry["log_id"],)
+                )
+            ).fetchone()
+            learned = log is not None and log["input_mode"] not in commit_tx._NO_LEARN_MODES
+        if learned:
             # §3.5: post-commit food corrections feed alias learning — same
             # explicit-choice semantics as staging edits: the original phrase
             # learns the corrected food; the abandoned mapping is rejected.

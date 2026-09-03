@@ -8,17 +8,24 @@ import {
   getDiary,
   patchTimings,
   type DayTotals,
+  type FoodSearchResult,
   type LogCreateResponse,
   type LogResponse,
   type StagedItem,
 } from "@/lib/api";
-import CaptureBar from "./CaptureBar";
+import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
+import BarcodeScanner from "./BarcodeScanner";
 import type { DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
+import { cacheFood } from "./LibraryApi";
+import ManualSearchSheet from "./ManualSearchSheet";
 import PendingItems from "./PendingItems";
+import PhotoCapture from "./PhotoCapture";
+import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import type { VoiceClip } from "./useVoiceCapture";
+import VoiceSheet from "./VoiceSheet";
 
 const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
@@ -54,6 +61,17 @@ export default function Today() {
   const discardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  // Owner ruling (2026-09-02): the capture bar left the Today screen; every
+  // way to log opens from the tab bar's + sheet. `lane` is which lane's sheet
+  // is up. The pick arrives from TabBar as a window event (Today mounted) or
+  // a sessionStorage handoff (navigated here from another tab).
+  const [lane, setLane] = useState<AddLane | null>(null);
+  // The photo lane owns its own sheet (PhotoCapture: pick → downscale →
+  // upload); the staged log then enters the same staging sheet as the rest.
+  const [photoOpen, setPhotoOpen] = useState(false);
+  // Search/barcode twin of pendingRef: one uuid per food, so a retried
+  // from-food log reuses it (§5 idempotent upsert).
+  const quickRef = useRef<{ id: string; foodId: string } | null>(null);
   // §8.4: "save this as my usual breakfast" said after logging resolves to
   // zero items — the server saved (or explained) it, so confirm that instead
   // of opening an empty staging sheet.
@@ -109,6 +127,38 @@ export default function Today() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const pickLane = (next: AddLane) => {
+    setCaptureError(null);
+    if (next === "photo") {
+      setLane(null);
+      flushDiscard(); // a new capture settles any still-undoable discard
+      setPhotoOpen(true);
+      return;
+    }
+    setPhotoOpen(false);
+    setLane(next);
+  };
+  // The + listener is bound once; the ref keeps it on the current closure.
+  const pickRef = useRef(pickLane);
+  pickRef.current = pickLane;
+
+  useEffect(() => {
+    const onAdd = (e: Event) =>
+      pickRef.current((e as CustomEvent<AddLane>).detail);
+    window.addEventListener(ADD_EVENT, onAdd);
+    // Picked on another tab: TabBar stashed the lane and navigated here.
+    try {
+      const stashed = sessionStorage.getItem(ADD_HANDOFF_KEY);
+      if (stashed != null) {
+        sessionStorage.removeItem(ADD_HANDOFF_KEY);
+        if (isAddLane(stashed)) pickRef.current(stashed);
+      }
+    } catch {
+      /* storage unavailable — the + is one tap away again */
+    }
+    return () => window.removeEventListener(ADD_EVENT, onAdd);
   }, []);
 
   // After a commit / late commit-item the diary has new rows — re-read it
@@ -184,6 +234,7 @@ export default function Today() {
       });
       pendingRef.current = null;
       voiceFailRef.current = null; // reported once, on the fallback log
+      setLane(null);
       enterStaging(log);
       return true;
     } catch {
@@ -231,6 +282,7 @@ export default function Today() {
         return false;
       }
       if (voiceFailRef.current === priorFailure) voiceFailRef.current = null;
+      setLane(null);
       enterStaging(res.log);
       return true;
     } catch {
@@ -240,6 +292,84 @@ export default function Today() {
     } finally {
       setCaptureBusy(false);
     }
+  };
+
+  // + sheet Search / Scan barcode lanes: one resolved row from a cached food
+  // (POST /api/logs/from-food), then the identical staging flow. Nothing is
+  // spoken, so these rows never learn (commit reads logs.input_mode).
+  // staged_ms here measures the pick → rendered.
+  const quickAdd = async (
+    foodId: string,
+    inputMode: "barcode" | "search",
+  ): Promise<void> => {
+    setCaptureBusy(true);
+    setCaptureError(null);
+    flushDiscard();
+    const attempt =
+      quickRef.current?.foodId === foodId
+        ? quickRef.current
+        : { id: crypto.randomUUID(), foodId };
+    quickRef.current = attempt;
+    t0Ref.current = performance.now();
+    try {
+      const log = await createLogFromFood({
+        id: attempt.id,
+        food_id: foodId,
+        serving_id: null,
+        qty: null,
+        meal_hint: null,
+        input_mode: inputMode,
+        captured_at: new Date().toISOString(),
+      });
+      quickRef.current = null;
+      setLane(null);
+      enterStaging(log);
+    } catch {
+      t0Ref.current = null;
+      setCaptureError("Couldn't log that — check your connection and retry.");
+    } finally {
+      setCaptureBusy(false);
+    }
+  };
+
+  // Search lane: an FDC hit is cached first (POST /api/foods/select, the
+  // library path) — from-food takes a foods.id, never a raw source id.
+  const searchSelect = async (hit: FoodSearchResult): Promise<void> => {
+    setCaptureBusy(true);
+    setCaptureError(null);
+    let foodId: string;
+    try {
+      foodId = await cacheFood(hit);
+    } catch {
+      setCaptureBusy(false);
+      setCaptureError("Couldn't select that food.");
+      return;
+    }
+    await quickAdd(foodId, "search");
+  };
+
+  const scanCode = async (code: string): Promise<void> => {
+    setCaptureBusy(true);
+    setCaptureError(null);
+    let hit: Awaited<ReturnType<typeof lookupBarcode>>;
+    try {
+      hit = await lookupBarcode(code);
+    } catch {
+      setCaptureBusy(false);
+      setCaptureError("Lookup failed — check your connection and retry.");
+      return;
+    }
+    if (!hit.found) {
+      // An honest miss (§13: never fail silently): FDC Branded — the only
+      // barcode source wired up; there is no Open Food Facts adapter —
+      // doesn't know this code. Say where we looked; the scanner offers search.
+      setCaptureBusy(false);
+      setCaptureError(
+        `${code.replace(/\D/g, "")} isn't in USDA FoodData Central's branded foods.`,
+      );
+      return;
+    }
+    await quickAdd(hit.food.id, "barcode");
   };
 
   const stagedRendered = (logId: string) => {
@@ -288,21 +418,11 @@ export default function Today() {
   return (
     <main className="shell">
       <header className="brand">
-        <h1>Usual</h1>
+        <h1>Tally</h1>
         <span className="date">{today}</span>
       </header>
 
       <Tracker totals={totals} />
-
-      <CaptureBar
-        busy={captureBusy}
-        error={captureError}
-        onSubmit={submit}
-        onSubmitAudio={submitAudio}
-        onVoiceFailure={(e) => {
-          voiceFailRef.current = e;
-        }}
-      />
 
       {pending ? (
         <PendingItems
@@ -344,6 +464,55 @@ export default function Today() {
           }}
         />
       ) : null}
+
+      {lane === "voice" ? (
+        <VoiceSheet
+          busy={captureBusy}
+          error={captureError}
+          onSubmit={submit}
+          onSubmitAudio={submitAudio}
+          onVoiceFailure={(e) => {
+            voiceFailRef.current = e;
+          }}
+          onClose={() => setLane(null)}
+        />
+      ) : null}
+
+      {lane === "search" ? (
+        <ManualSearchSheet
+          phrase=""
+          busy={captureBusy}
+          error={captureError}
+          onSelect={searchSelect}
+          onClose={() => setLane(null)}
+        />
+      ) : null}
+
+      {lane === "barcode" ? (
+        <BarcodeScanner
+          busy={captureBusy}
+          notice={captureError}
+          onCode={scanCode}
+          onSearchInstead={() => pickLane("search")}
+          onClose={() => setLane(null)}
+        />
+      ) : null}
+
+      {/* §3.4b photo lane: the staged log enters the identical staging flow;
+          staged_ms here measures the shot's upload start → rendered, so the
+          clock starts in onUploadStart (before the round trip, per attempt),
+          not once the staged log is already back. */}
+      <PhotoCapture
+        open={photoOpen}
+        onClose={() => setPhotoOpen(false)}
+        onUploadStart={() => {
+          t0Ref.current = performance.now();
+        }}
+        onStaged={(log) => {
+          setPhotoOpen(false);
+          enterStaging(log);
+        }}
+      />
 
       {staging ? (
         <StagingSheet

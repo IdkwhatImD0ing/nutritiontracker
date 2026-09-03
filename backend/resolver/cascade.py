@@ -39,6 +39,7 @@ from models import (
     ServingRef,
     StagedItem,
 )
+from resolver.commit import LEARNABLE_ROWS_SQL
 from resolver.norm import norm
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,10 @@ LIMIT 3
 """
 
 # §3.3 tier 2b — the validated library_match food, shaped like an alias row
-# (alias fields NULL) so the same staging/portion code path applies.
+# (alias fields NULL) so the same staging/portion code path applies. Never
+# the photo lane's numberless placeholder (R1: a source='estimate' row is not
+# a pick target on any lane — routes/logs.py passes no index_ids, so without
+# this "exists in the cache" would be the whole validation).
 _LIB_FOOD_SQL = """
 SELECT NULL AS alias_id, NULL AS alias_norm, f.id AS food_id,
        NULL AS default_serving_id, NULL AS default_qty, NULL AS state_answer,
@@ -91,7 +95,7 @@ SELECT NULL AS alias_id, NULL AS alias_norm, f.id AS food_id,
        f.default_serving_id AS food_default_serving_id,
        f.state, f.state_sensitive
 FROM foods f
-WHERE f.id = %s
+WHERE f.id = %s AND f.source <> 'estimate'
 """
 
 # Words that denote a measure rather than a countable household unit (§7.3).
@@ -224,10 +228,13 @@ async def pick(rows: list[dict]) -> dict:
     if explicit:
         return max(explicit, key=lambda r: r["last_explicit_at"])
 
+    # rule 3 counts what he SAID and committed — never a photo/barcode/search
+    # row whose phrase happens to norm() to this key (commit.LEARNABLE_ROWS_SQL)
     hist = await db.fetchall(
-        """
+        f"""
         SELECT final_food_id FROM item_resolutions
         WHERE phrase_norm = %s AND committed_at IS NOT NULL AND final_food_id IS NOT NULL
+          {LEARNABLE_ROWS_SQL}
         ORDER BY committed_at DESC LIMIT 10
         """,
         (rows[0]["alias_norm"],),
@@ -313,10 +320,14 @@ async def resolve_portion(
 async def _portion_mode(
     where: str, params: tuple, servings: list[dict]
 ) -> tuple[str, float] | None:
+    """Mode of the last 10 committed portions matching `where` — spoken logs
+    only, never an estimated row (commit.LEARNABLE_ROWS_SQL): a photo-guessed
+    1.5 × 100 g or a barcode pick must not become the next log's default."""
     hist = await db.fetchall(
         f"""
         SELECT final_serving_id, final_qty FROM item_resolutions
         WHERE {where} AND committed_at IS NOT NULL AND final_serving_id IS NOT NULL
+          {LEARNABLE_ROWS_SQL}
         ORDER BY committed_at DESC LIMIT 10
         """,
         params,
@@ -588,11 +599,13 @@ WHERE is_active
 ORDER BY updated_at DESC
 """
 
+# A saved meal pointing at a source='estimate' placeholder (it has no numbers
+# to log — R1) expands as a missing food: MEAL_BROKEN_GUARD, fix it in Library.
 _MACRO_FOODS_SQL = """
 SELECT id AS food_id, display_name, brand, servings,
        default_serving_id AS food_default_serving_id
 FROM foods
-WHERE id = ANY(%s::uuid[])
+WHERE id = ANY(%s::uuid[]) AND source <> 'estimate'
 """
 
 MEAL_REF_GUARD = "No saved meal called '{phrase}' — log the items, then tap Save as meal."

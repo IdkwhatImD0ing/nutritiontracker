@@ -4,18 +4,24 @@ import { useEffect, useRef, useState } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
 
 type Props = {
+  /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
+   *  lane — nothing prefilled, the field takes focus */
   phrase: string;
   /** true while the parent's food-select round trip is in flight */
   busy: boolean;
+  /** the parent's select failure, rendered above the results */
+  error?: string | null;
   onSelect: (r: FoodSearchResult) => void;
   onClose: () => void;
 };
 
 /** BACKLOG 3 / §3.4: `not_found` flips the row to a manual search box — a
- *  plain search UI over GET /api/foods/search, deliberately boring. */
+ *  plain search UI over GET /api/foods/search, deliberately boring. The same
+ *  sheet is the + sheet's Search lane (owner ruling, 2026-09-02). */
 export default function ManualSearchSheet({
   phrase,
   busy,
+  error,
   onSelect,
   onClose,
 }: Props) {
@@ -23,7 +29,7 @@ export default function ManualSearchSheet({
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [fdcDown, setFdcDown] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const seq = useRef(0);
 
   const run = async (q: string) => {
@@ -31,7 +37,7 @@ export default function ManualSearchSheet({
     if (!trimmed) return;
     const id = ++seq.current;
     setSearching(true);
-    setError(null);
+    setSearchError(null);
     try {
       const r = await searchFoods(trimmed);
       if (seq.current !== id) return;
@@ -40,7 +46,7 @@ export default function ManualSearchSheet({
     } catch {
       if (seq.current !== id) return;
       setResults([]);
-      setError("Search failed. Try again.");
+      setSearchError("Search failed. Try again.");
     } finally {
       if (seq.current === id) setSearching(false);
     }
@@ -71,6 +77,7 @@ export default function ManualSearchSheet({
             placeholder="Search foods"
             aria-label="Search foods"
             autoComplete="off"
+            autoFocus={!phrase}
           />
           <button type="submit" disabled={searching || !query.trim()} aria-label="Search">
             {searching ? <span className="spinner" /> : "→"}
@@ -78,6 +85,7 @@ export default function ManualSearchSheet({
         </form>
 
         {error ? <p className="sheet-error">{error}</p> : null}
+        {searchError ? <p className="sheet-error">{searchError}</p> : null}
         {fdcDown ? (
           <p className="subsheet-hint">
             Food database unreachable — showing your foods only.
@@ -99,7 +107,7 @@ export default function ManualSearchSheet({
               </span>
             </button>
           ))}
-          {results != null && results.length === 0 && !searching && !error ? (
+          {results != null && results.length === 0 && !searching && !searchError ? (
             <p className="subsheet-hint">No matches — try fewer words.</p>
           ) : null}
         </div>

@@ -335,7 +335,7 @@ export default function Settings() {
                 />
               </label>
               <p className="m3-note">
-                How often you logged before Usual. The adherence chart draws
+                How often you logged before Tally. The adherence chart draws
                 this line; zero means any logged day beats it.
               </p>
             </div>

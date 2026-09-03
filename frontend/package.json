@@ -1,5 +1,5 @@
 {
-  "name": "usual-frontend",
+  "name": "tally-frontend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@neondatabase/auth": "0.5.0-beta",
+    "barcode-detector": "3.2.2",
     "next": "^16.3.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

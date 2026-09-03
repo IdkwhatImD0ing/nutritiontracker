@@ -18,8 +18,15 @@ import {
 } from "@/lib/api";
 import FoodEditSheet from "./FoodEditSheet";
 import ManualSearchSheet from "./ManualSearchSheet";
+import {
+  confirmEstimate,
+  isEstimateRefusal,
+  readEstimate,
+  withEstimate,
+} from "./PhotoApi";
 import PortionSheet, { type PortionChoice } from "./PortionSheet";
 import StagedRow, { type PickOption } from "./StagedRow";
+import "@/app/photo.css";
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const POLL_FIRST_MS = 1_000;
@@ -327,6 +334,30 @@ export default function StagingSheet({
     }
   };
 
+  // §3.4a photo lane: the explicit confirm on an estimated row. Only the
+  // flag comes back onto the local row — a portion the user already fixed in
+  // the portion sheet must survive (C3: editing never confirms, confirming
+  // never reverts the edit; commit re-derives macros from the foods cache).
+  const confirm = async (item: StagedItem) => {
+    setRowBusy(item.item_index, true);
+    setError(null);
+    try {
+      const updated = await confirmEstimate(log.log_id, item.item_index);
+      const confirmed = readEstimate(updated).confirmed;
+      setItems((prev) =>
+        prev.map((i) =>
+          i.item_index === item.item_index
+            ? withEstimate(i, { estimate_confirmed: confirmed })
+            : i,
+        ),
+      );
+    } catch {
+      setError("Couldn't confirm that estimate.");
+    } finally {
+      setRowBusy(item.item_index, false);
+    }
+  };
+
   const pickMeal = (m: Meal) => {
     // Log-level chip propagates to ALL rows — searching ones included — and
     // survives kick/poll refreshes via the override merge (§7.1, BACKLOG 8).
@@ -362,7 +393,13 @@ export default function StagingSheet({
     mealOverridesRef.current.items[idx] = m; // added rows keep the sheet's meal
     setItems((prev) => [
       ...prev,
-      { item_index: idx, phrase, status: "searching" as const, meal: m },
+      {
+        item_index: idx,
+        phrase,
+        status: "searching" as const,
+        meal: m,
+        estimated: "none" as const,
+      },
     ]);
     setAddText("");
     resolveInto(idx, phrase);
@@ -387,7 +424,13 @@ export default function StagingSheet({
     setItems((prev) =>
       prev.map((i) =>
         i.item_index === idx
-          ? { item_index: idx, phrase: text, status: "searching" as const, meal: i.meal }
+          ? {
+              item_index: idx,
+              phrase: text,
+              status: "searching" as const,
+              meal: i.meal,
+              estimated: "none" as const,
+            }
           : i,
       ),
     );
@@ -468,6 +511,25 @@ export default function StagingSheet({
 
   const visible = items.filter((i) => !removed.has(i.item_index));
   const totalKcal = visible.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
+  // §3.4a: nothing estimated commits unconfirmed — the button says why, and
+  // the commit transaction refuses the same way (C4) if it ever gets there.
+  // Only RESOLVED rows count, the same rows the server gate checks: a photo
+  // row still in tier 3 carries the flag too, but it commits as a §3.5
+  // straggler (never blocking the rest, §7.1) and gets its confirm in the
+  // pending pill once it lands.
+  const unconfirmedRows = visible.filter((i) => {
+    const e = readEstimate(i);
+    return i.status === "resolved" && e.estimated !== "none" && !e.confirmed;
+  });
+  const unconfirmed = unconfirmedRows.length;
+  // A numberless estimate row (no database match) cannot be confirmed — it
+  // needs a food picked through Search, or removing.
+  const confirmFirst =
+    unconfirmed === 0
+      ? null
+      : unconfirmedRows.some((i) => i.macros == null)
+        ? "Pick a food for the unmatched row with Search, or remove it."
+        : `Confirm the ${unconfirmed === 1 ? "estimated row" : `${unconfirmed} estimated rows`} first.`;
 
   const commit = async () => {
     setCommitting(true);
@@ -495,8 +557,12 @@ export default function StagingSheet({
               : i,
           ),
       );
-    } catch {
-      setError("Commit failed — nothing was saved. Try again.");
+    } catch (e) {
+      setError(
+        isEstimateRefusal(e)
+          ? "Confirm the estimated rows first."
+          : "Commit failed — nothing was saved. Try again.",
+      );
       setCommitting(false);
     }
   };
@@ -570,6 +636,7 @@ export default function StagingSheet({
               onManualSearch={() => setManualFor(item.item_index)}
               onMeal={(m) => pickItemMeal(item.item_index, m)}
               onEditFood={() => setEditFor(item.item_index)}
+              onConfirmEstimate={() => confirm(item)}
             />
           ))}
           {visible.length === 0 ? (
@@ -600,10 +667,13 @@ export default function StagingSheet({
 
         <div className="sheet-foot">
           {error ? <p className="sheet-error">{error}</p> : null}
+          {confirmFirst && !error ? (
+            <p className="sheet-reason">{confirmFirst}</p>
+          ) : null}
           <button
             type="button"
             className="commit-btn"
-            disabled={committing || visible.length === 0}
+            disabled={committing || visible.length === 0 || unconfirmed > 0}
             onClick={commit}
           >
             {committing ? (

@@ -4,15 +4,15 @@ import "./globals.css";
 import { ServiceWorkerProvider } from "./serwist/provider";
 
 export const metadata: Metadata = {
-  applicationName: "Usual",
-  title: "Usual",
+  applicationName: "Tally",
+  title: "Tally",
   description: "Voice-first nutrition logging",
   // iOS installed-PWA chrome: standalone capable, dark ground under a
   // translucent status bar (globals.css already pads safe-area insets).
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Usual",
+    title: "Tally",
   },
   formatDetection: {
     telephone: false,

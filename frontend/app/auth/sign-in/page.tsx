@@ -4,7 +4,7 @@ import { signInAction } from "@/app/auth/actions";
 export default function SignInPage() {
   return (
     <AuthForm
-      title="Sign in to Usual"
+      title="Sign in to Tally"
       submitLabel="Sign in"
       action={signInAction}
       alt={{

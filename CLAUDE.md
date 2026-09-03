@@ -36,7 +36,7 @@ Invoke the `fact-checker` subagent (`.claude/agents/fact-checker.md`) before com
 
 ## Project context
 
-**Usual** — single-user voice-first nutrition logger. Next.js PWA + Python FastAPI deployed as
+**Tally** — single-user voice-first nutrition logger. Next.js PWA + Python FastAPI deployed as
 two Vercel Services on one origin; Neon Postgres; OpenAI Agents SDK; Deepgram STT; Langfuse traces.
 
 **New here? Read [docs/ONBOARDING.md](docs/ONBOARDING.md) first** — setup, commands, layout, current state.

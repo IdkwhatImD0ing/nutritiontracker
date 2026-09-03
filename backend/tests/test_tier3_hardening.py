@@ -186,7 +186,7 @@ def test_write_item_row_state_guard_table():
                     web_source={"url": "https://example.com/n", "title": "Nutrition"} if idx == 0 else None,
                 )
                 row = await item_row(conn, log_id, idx)
-                assert ok is expect, f"idx={idx} seeded={status} committed={committed}: got {ok}"
+                assert bool(ok) is expect, f"idx={idx} seeded={status} committed={committed}: got {ok}"
                 if expect:
                     assert row["status"] == "resolved" and row["tier"] == 3
                     assert row["proposed_food_id"] is not None

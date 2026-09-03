@@ -41,11 +41,35 @@ from resolver.norm import norm
 # must carry them forward — append this to a `staged = <new>::jsonb`
 # assignment. NULL-valued keys (absent on the old row) are stripped, so
 # nothing is invented.
+#
+# The photo lane's per-row provenance rides the same way (§3.4a,
+# routes/photo.py): the raw `vision` item, the user-facing `estimate_note`,
+# and the `estimated` flag — which a rewrite may only ever DOWNGRADE.
+# "portion" stays "portion": a tier-3 result or search pick swaps a database
+# food in (real numbers) while the portion still came from the photo.
+# "unresolved" (the numberless estimate row) becomes "portion" only when
+# vision actually sized the item (a count or est_grams — that portion rides
+# the spoken-quantity channel into the pick); otherwise the pick's qty is the
+# resolver's own and the row is "none". `estimate_confirmed` is deliberately
+# NOT carried — any re-resolution needs a fresh confirm (commit records the
+# stored value itself). `vision` rides OUTSIDE the strip_nulls wrapper:
+# jsonb_strip_nulls recurses, and the raw vision item legitimately carries
+# null qty/unit/est_grams that the eval loop must see intact.
 KEEP_LOG_KEYS_SQL = (
     " || jsonb_strip_nulls(jsonb_build_object("
     "'logged_at', item_resolutions.staged->'logged_at', "
     "'save_intent', item_resolutions.staged->'save_intent', "
-    "'when_hint_note', item_resolutions.staged->'when_hint_note'))"
+    "'when_hint_note', item_resolutions.staged->'when_hint_note', "
+    "'estimate_note', item_resolutions.staged->'estimate_note', "
+    "'estimated', CASE item_resolutions.staged->>'estimated' "
+    "WHEN 'portion' THEN to_jsonb('portion'::text) "
+    "WHEN 'unresolved' THEN to_jsonb((CASE WHEN "
+    "coalesce((item_resolutions.staged->'vision'->>'qty')::numeric, 0) > 0 "
+    "OR coalesce((item_resolutions.staged->'vision'->>'est_grams')::numeric, 0) > 0 "
+    "THEN 'portion' ELSE 'none' END)::text) END))"
+    " || CASE WHEN item_resolutions.staged ? 'vision' "
+    "THEN jsonb_build_object('vision', item_resolutions.staged->'vision') "
+    "ELSE '{}'::jsonb END"
 )
 
 
@@ -57,6 +81,17 @@ class LogNotCommittable(Exception):
     """Log exists but is in a state the operation can't act on."""
 
 
+class EstimateUnconfirmed(LogNotCommittable):
+    """§3.4a: an estimated row (photo lane) has not been confirmed through
+    /api/resolve/confirm-estimate. The whole commit is refused before any
+    write (routes map LogNotCommittable to 409); `item_indexes` names the
+    offenders and str() carries them for the route's detail."""
+
+    def __init__(self, item_indexes: list[int]):
+        super().__init__(f"confirm the estimated rows first: {item_indexes}")
+        self.item_indexes = item_indexes
+
+
 class ItemRefused(Exception):
     """One item failed the core-macros guard — refused, never partially written."""
 
@@ -66,6 +101,92 @@ class ItemRefused(Exception):
 
 
 _CORE_MACROS = ("kcal", "protein_g", "carb_g", "fat_g")
+
+# §3.4a / R3: rows the user never SPOKE learn nothing — a photo, barcode or
+# search log has no phrase worth remembering, and a photo-estimated portion
+# would poison the alias mode-of-10. Read off logs.input_mode at commit.
+_NO_LEARN_MODES = frozenset({"photo", "barcode", "search"})
+
+# The READ side of the same rule (DESIGN.md §3.5 step 3). Commit still writes
+# final_* for every row — the diary needs them — so every learning read over
+# committed item_resolutions (pick() rule 3, resolve_portion steps 2–3, which
+# tier3._apply_portion goes through, and _recompute_alias_default) appends
+# this to its WHERE: the row's log must be a spoken one, and a row still
+# carrying an estimate flag is out whatever its log says. Unaliased table
+# reference (`item_resolutions.`) — the readers query it without an alias.
+LEARNABLE_ROWS_SQL = (
+    " AND EXISTS (SELECT 1 FROM logs WHERE logs.id = item_resolutions.log_id"
+    " AND logs.input_mode NOT IN ("
+    + ", ".join(f"'{m}'" for m in sorted(_NO_LEARN_MODES))
+    + ")) AND coalesce(item_resolutions.staged->>'estimated', 'none') = 'none'"
+)
+
+
+def _unconfirmed_estimate(staged) -> bool:
+    """§3.4a: True when the STORED row is an estimate the user has not
+    confirmed. Only the stored row counts — `estimate_confirmed` is written by
+    /api/resolve/confirm-estimate alone; a client payload can rename, re-index
+    or relabel a row, never un-flag it."""
+    if not isinstance(staged, dict):
+        return False
+    return (staged.get("estimated") or "none") != "none" and (
+        staged.get("estimate_confirmed") is not True
+    )
+
+
+def _would_commit(item: StagedItem) -> bool:
+    return item.status == "resolved" and item.food is not None
+
+
+def _payload_by_index(items: list[StagedItem]) -> dict[int, StagedItem]:
+    """The ONE view of the payload: the gate decides on it and the write loop
+    iterates it, keyed by item_index. Two payload items under one index are
+    refused outright — a dict would keep one while a list walk wrote the
+    other, which is exactly how a forged row slipped past the gate."""
+    payload: dict[int, StagedItem] = {}
+    dupes: set[int] = set()
+    for item in items:
+        if item.item_index in payload:
+            dupes.add(item.item_index)
+        payload[item.item_index] = item
+    if dupes:
+        raise LogNotCommittable(f"duplicate item_index in payload: {sorted(dupes)}")
+    return payload
+
+
+def _estimate_gate(log: dict, res_rows: dict, payload: dict[int, StagedItem]) -> None:
+    """The pre-write gate, decided by stored rows only (before any write, so
+    a refusal rolls the CAS back with everything else).
+
+    A payload item whose stored row is 'removed' is refused: the user took it
+    out of staging, and nothing commits or resurrects it. §3.4a: an
+    uncommitted stored row still carrying an unconfirmed estimate blocks when
+    it is resolved server-side — whatever the payload says about it or omits
+    — or when the payload would commit it as resolved (a photo row still in
+    tier 3 never blocks the rest, §7.1, but cannot be committed around
+    either). On a photo log a payload item with no stored row is refused
+    outright: the stored row is the only place an estimate flag lives, so
+    nothing commits around it."""
+    removed = sorted(
+        idx for idx in payload if idx in res_rows and res_rows[idx]["status"] == "removed"
+    )
+    if removed:
+        raise LogNotCommittable(f"items {removed} were removed from staging")
+    unconfirmed = sorted(
+        idx
+        for idx, r in res_rows.items()
+        if r["committed_at"] is None
+        and _unconfirmed_estimate(r["staged"])
+        and (r["status"] == "resolved" or (idx in payload and _would_commit(payload[idx])))
+    )
+    if unconfirmed:
+        raise EstimateUnconfirmed(unconfirmed)
+    if log.get("input_mode") == "photo":
+        orphans = sorted(
+            idx for idx, item in payload.items() if idx not in res_rows and _would_commit(item)
+        )
+        if orphans:
+            raise LogNotCommittable(f"photo log has no staged row for items {orphans}")
 
 
 def _missing_core_macros(serving: dict) -> list[str]:
@@ -106,6 +227,7 @@ async def commit_log(
     scores: list[dict] = []
     errors: list[dict] = []
     meal: dict | None = None
+    payload = _payload_by_index(items)
     async with db.tx() as conn:
         # 0. compare-and-set — a retried commit must never double-insert
         cur = await conn.execute(
@@ -136,12 +258,16 @@ async def commit_log(
             ).fetchall()
         }
 
+        # §3.4a: nothing estimated commits unconfirmed — the stored rows
+        # decide, checked before any write (the 409 rolls the CAS back too).
+        _estimate_gate(log, res_rows, payload)
+
         edited_count = 0
         committed: list[dict] = []  # {food_id, serving_id, qty} — step 4's input
-        for item in items:
-            if item.status != "resolved" or item.food is None:
+        for idx, item in payload.items():  # the view the gate checked, never the raw list
+            if not _would_commit(item):
                 continue  # searching/needs_input/not_found stay uncommitted (§3.5)
-            res = res_rows.get(item.item_index)
+            res = res_rows.get(idx)
             try:
                 outcome = await _commit_one(conn, log, item, res, logged_at)
             except ItemRefused as e:
@@ -160,10 +286,9 @@ async def commit_log(
         # the client submits every non-removed row whatever its status. A row
         # present as 'searching' (client hadn't seen the server-side resolution
         # yet) must stay uncommitted so the §3.5 commit-item late path works.
-        payload_indexes = {item.item_index for item in items}
         for idx, r in res_rows.items():
             if (
-                idx not in payload_indexes
+                idx not in payload
                 and r["committed_at"] is None
                 and r["status"] != "removed"
             ):
@@ -218,6 +343,10 @@ async def commit_item(log_id: UUID, item: StagedItem) -> dict:
                 "log": log, "replayed": True, "scores": [], "errors": [],
                 "logged_at": logged_at,
             }
+        # the same gate as commit_log over this one row
+        _estimate_gate(
+            log, {res["item_index"]: res} if res is not None else {}, _payload_by_index([item])
+        )
         refused: str | None = None
         try:
             outcome = await _commit_one(conn, log, item, res, logged_at)
@@ -261,6 +390,11 @@ async def _commit_one(
     conn, log: dict, item: StagedItem, res: dict | None, logged_at: datetime
 ) -> dict:
     """Steps 1–3 + 5 of §3.5 for one item, inside the open transaction."""
+    if res is None and log.get("input_mode") == "photo":
+        # a photo log's rows are the ones the server staged (§3.4a) — the gate
+        # refuses these before any write; the INSERT branch below stays closed
+        # to them whatever the caller
+        raise LogNotCommittable(f"photo log has no staged row for item {item.item_index}")
     food = await (
         await conn.execute("SELECT * FROM foods WHERE id = %s", (item.food.id,))
     ).fetchone()
@@ -320,11 +454,23 @@ async def _commit_one(
     prior_edit = bool(res["was_edited"]) if res is not None else False
     was_edited = switched or serving_delta or qty_delta or prior_edit
 
-    # 2. alias — for each item except tier-0 expansions and removed rows.
+    staged_prev = res["staged"] if res is not None and isinstance(res["staged"], dict) else {}
+    # §3.4a: the stored flag and confirmation are what the gate checked — the
+    # committed payload records THOSE, whatever the client sent (a row the
+    # server never stored carries none: text/voice never estimate).
+    item = item.model_copy(
+        update={
+            "estimated": staged_prev.get("estimated") or "none",
+            "estimate_confirmed": staged_prev.get("estimate_confirmed"),
+        }
+    )
+
+    # 2. alias — for each item except tier-0 expansions, removed rows, and
+    # rows the user never spoke (photo/barcode/search logs: _NO_LEARN_MODES).
     # Learned for the ORIGINAL spoken phrase (res["phrase"]); rejected_count
     # lands on the abandoned pre-selection only when the user actually switched.
     alias_id = None
-    if tier != 0:
+    if tier != 0 and log.get("input_mode") not in _NO_LEARN_MODES:
         phrase = res["phrase"] if res is not None else item.phrase
         alias_id = await _learn_alias(
             conn,
@@ -339,10 +485,7 @@ async def _commit_one(
         # §3.4a: a known cooked/raw/dry intent (staged jsonb `state_answer`,
         # written by the resolver) persists to the alias — the state question
         # is asked at most once per phrase.
-        staged_prev = res["staged"] if res is not None else None
-        state_answer = (
-            staged_prev.get("state_answer") if isinstance(staged_prev, dict) else None
-        )
+        state_answer = staged_prev.get("state_answer")
         if state_answer in ("cooked", "raw", "dry"):
             await conn.execute(
                 "UPDATE aliases SET state_answer = %s WHERE id = %s",
@@ -436,7 +579,16 @@ async def _refuse_item(conn, log: dict, item: StagedItem, res: dict | None, reas
     verify-me via GET /api/logs/:id), keep it uncommitted, write nothing to
     entries/aliases. The refusal reason rides in the staged jsonb
     (`commit_error` — same extra-key precedent as spoken_qty)."""
-    refused = item.model_copy(update={"status": "needs_input", "confidence": "low"})
+    staged_prev = res["staged"] if res is not None and isinstance(res["staged"], dict) else {}
+    refused = item.model_copy(
+        update={
+            "status": "needs_input",
+            "confidence": "low",
+            # §3.4a: the stored row's flags, never the client's (as in _commit_one)
+            "estimated": staged_prev.get("estimated") or "none",
+            "estimate_confirmed": staged_prev.get("estimate_confirmed"),
+        }
+    )
     staged_payload = refused.model_dump(mode="json", exclude_none=True)
     staged_payload["commit_error"] = reason
     if res is None:
@@ -502,10 +654,10 @@ async def _learn_alias(
 async def _recompute_alias_default(conn, alias_id: str) -> None:
     hist = await (
         await conn.execute(
-            """
+            f"""
             SELECT final_serving_id, final_qty FROM item_resolutions
             WHERE alias_id = %s AND committed_at IS NOT NULL
-              AND final_serving_id IS NOT NULL AND final_qty IS NOT NULL
+              AND final_serving_id IS NOT NULL AND final_qty IS NOT NULL{LEARNABLE_ROWS_SQL}
             ORDER BY committed_at DESC LIMIT 10
             """,
             (alias_id,),

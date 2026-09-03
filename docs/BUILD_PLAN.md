@@ -1,4 +1,4 @@
-# Usual — Agent-Orchestrated Build Plan
+# Tally — Agent-Orchestrated Build Plan
 
 **Companion to [DESIGN.md](DESIGN.md)** (the spec every agent builds against and every reviewer audits against). 2026-08-20.
 

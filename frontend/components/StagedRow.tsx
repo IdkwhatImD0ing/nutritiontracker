@@ -1,6 +1,8 @@
 "use client";
 
 import type { Meal, StagedItem } from "@/lib/api";
+import { readEstimate } from "./PhotoApi";
+import "@/app/photo.css";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
@@ -45,6 +47,9 @@ type Props = {
   /** §7.1 food bullet (BACKLOG 23): tap the name → edit sheet (aliases,
    *  re-resolving text field, manual search) */
   onEditFood: () => void;
+  /** §3.4a photo lane: the explicit confirm on an estimated row — nothing
+   *  estimated commits without it (editing the portion does not count) */
+  onConfirmEstimate: () => void;
 };
 
 export default function StagedRow({
@@ -58,18 +63,35 @@ export default function StagedRow({
   onManualSearch,
   onMeal,
   onEditFood,
+  onConfirmEstimate,
 }: Props) {
   const searching = busy || item.status === "searching";
   const notFound = item.status === "not_found";
   const editable = !searching && !notFound; // §7.1: resolved/needs_input rows
   const name = item.food?.name ?? item.phrase;
   const macros = item.macros;
+  // §3.4a: photo-lane rows carry what vision guessed. "portion" = database
+  // food, photo-estimated amount; "unresolved" = no database match at all —
+  // what the photo saw, with no numbers. Both render distinct (the web-sourced
+  // treatment is the reference); "portion" blocks commit until confirmed,
+  // "unresolved" cannot commit at all (Search picks a food, or remove it).
+  const est = readEstimate(item);
+  const estimated = est.estimated !== "none";
+  // A numberless estimate row (no database match) has nothing to confirm —
+  // the server refuses the confirm too; its way out is Search (or remove).
+  const needsConfirm = estimated && !est.confirmed && macros != null;
 
   const portion =
     item.serving != null
       ? `${item.qty != null && item.qty !== 1 ? `${fmt1.format(item.qty)} × ` : ""}${item.serving.description}`
       : null;
-  const verify = item.confidence === "low" || item.confidence === "medium";
+  const verify =
+    item.confidence === "low" ||
+    item.confidence === "medium" ||
+    (est.estimated === "portion" && !est.confirmed);
+  // An unresolved row has no database numbers — offer the same escape hatch a
+  // not_found row gets (§3.4 "search instead"); there is no confirm for it.
+  const searchInstead = item.search_instead || est.estimated === "unresolved";
 
   const microEntries = macros
     ? Object.entries(macros).filter(
@@ -79,7 +101,7 @@ export default function StagedRow({
 
   return (
     <div
-      className={`row${searching ? " searching" : ""}${notFound ? " not-found" : ""}`}
+      className={`row${searching ? " searching" : ""}${notFound ? " not-found" : ""}${estimated ? ` estimated ${est.confirmed ? "confirmed" : "unconfirmed"}` : ""}`}
     >
       <div
         className="row-main"
@@ -115,6 +137,13 @@ export default function StagedRow({
             {item.web_source ? (
               <span className="badge web">web</span>
             ) : null}
+            {estimated ? (
+              <span
+                className={`badge estimate${est.confirmed ? " confirmed" : ""}`}
+              >
+                {est.confirmed ? "estimate ✓" : "estimate"}
+              </span>
+            ) : null}
           </div>
           <div className="row-sub">
             {item.food?.brand ? `${item.food.brand} · ` : ""}
@@ -142,7 +171,9 @@ export default function StagedRow({
         </div>
         <div className="row-kcal num">
           <span className="n">
-            {macros != null ? fmt.format(macros.kcal) : "—"}
+            {macros != null
+              ? `${estimated ? "~" : ""}${fmt.format(macros.kcal)}`
+              : "—"}
           </span>
           <span className="u">kcal</span>
         </div>
@@ -173,6 +204,17 @@ export default function StagedRow({
           >
             {item.web_source.title}
           </a>
+        </p>
+      ) : null}
+
+      {/* §3.4a photo lane: say what is a guess, in the row, whatever the
+          expansion state — a portion read off the photo, or a whole food no
+          database matched (unresolved: what the photo saw, no numbers). */}
+      {estimated ? (
+        <p className="estimate-note">
+          {est.estimated === "unresolved"
+            ? `${est.note ? `${est.note} · ` : ""}No database match, so no numbers — search to pick a food`
+            : `Portion estimated from the photo${est.note ? ` · ${est.note}` : ""}`}
         </p>
       ) : null}
 
@@ -216,7 +258,7 @@ export default function StagedRow({
       ) : null}
 
       {item.status === "resolved" &&
-      (item.alternates?.length || item.search_instead) ? (
+      (item.alternates?.length || searchInstead || needsConfirm) ? (
         <div className="chips">
           {(item.alternates ?? []).map((alt) => (
             <button
@@ -230,10 +272,22 @@ export default function StagedRow({
               {alt.label}
             </button>
           ))}
+          {/* §3.4a: the explicit confirm — the only thing that unblocks
+              commit for this row (server-enforced too, C4). */}
+          {needsConfirm ? (
+            <button
+              type="button"
+              className="chip confirm-estimate"
+              disabled={busy}
+              onClick={onConfirmEstimate}
+            >
+              Confirm estimate
+            </button>
+          ) : null}
           {/* §3.3 rule 3 (BACKLOG 32): a weak-trigram-only match resolves the
               top hit but offers the escape hatch inline — one tap to the
               manual-search sheet instead of committing a guess. */}
-          {item.search_instead ? (
+          {searchInstead ? (
             <button
               type="button"
               className="chip search-instead"

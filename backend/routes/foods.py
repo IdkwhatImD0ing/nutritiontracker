@@ -87,13 +87,16 @@ def _like_pattern(q: str) -> str:
 
 
 async def _local_hits(q: str) -> list[FoodHit]:
+    # source='estimate' is the photo lane's numberless placeholder
+    # (routes/photo.stage_estimate_food) — never a search hit (R1).
     rows = await db.fetchall(
         """
         SELECT id, source, source_id, display_name, brand,
                similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
         FROM foods
-        WHERE (display_name || ' ' || coalesce(brand, '')) ILIKE %s
-           OR similarity(display_name || ' ' || coalesce(brand, ''), %s) > %s
+        WHERE source <> 'estimate'
+          AND ((display_name || ' ' || coalesce(brand, '')) ILIKE %s
+               OR similarity(display_name || ' ' || coalesce(brand, ''), %s) > %s)
         ORDER BY sim DESC
         LIMIT %s
         """,
@@ -217,7 +220,12 @@ from routes.aliases import AliasRow, aliases_for_food  # noqa: E402
 from routes.diary import web_source_of  # noqa: E402
 
 _STALE_YEARS = 3
-_SOURCE_LABELS = {"fdc": "USDA FoodData Central", "off": "Open Food Facts", "web": "Web"}
+_SOURCE_LABELS = {
+    "fdc": "USDA FoodData Central",
+    "off": "Open Food Facts",
+    "web": "Web",
+    "estimate": "Photo estimate",  # §3.4b placeholder — no numbers
+}
 
 
 class NutrientRow(BaseModel):

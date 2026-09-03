@@ -1,4 +1,4 @@
-# Usual
+# Tally
 
 Voice-first nutrition logging: speak or type what you ate, confirm a pre-filled
 list, one tap to commit. The app learns your foods, portions, and phrasings so

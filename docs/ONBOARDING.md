@@ -1,10 +1,10 @@
 # Onboarding — start here after cloning
 
-**Usual** is a single-user, voice-first nutrition logger: say (or type) what you ate → a
+**Tally** is a single-user, voice-first nutrition logger: say (or type) what you ate → a
 pre-filled editable list → one tap to commit. It learns your foods, portions and phrasings,
 so the same meal gets faster every week.
 
-Everything below was verified on 2026-08-21 against commit `6b110a3`.
+Everything below was verified on 2026-09-03 at the Phase 5 commit (the one titled "Phase 5 (M4)…" in `git log`).
 
 ---
 
@@ -195,16 +195,31 @@ docs/                  DESIGN.md (spec) · BUILD_PLAN.md (phases) · BACKLOG.md 
 
 ## 7. Current state
 
-Phases 0–4 are built, tested and pushed. **M0–M3 are complete**: the core loop, the friction
-killers, voice + PWA, and saved meals + Library + History + goal wizard + `/experiment` +
-the eval harness. At `6b110a3`: 181 backend tests pass (non-live), 20 live, frontend
-type-checks and builds clean.
+**All five phases are built, tested and committed — M0 through M4 are complete**: the core
+loop, the friction killers, voice + PWA, saved meals + Library + History + goal wizard +
+`/experiment` + the eval harness, and the photo lane plus the bottom **+** with its four ways
+to log (barcode · photo · search · voice; DESIGN §3.4b, §7.4). Phase 5 went through three
+fix waves, each driven by adversarial verifiers reproducing bugs against the live database
+in rolled-back transactions before anything was fixed (BACKLOG 72–98 is the record; the
+commit-gate bypasses in 79, 91 and 92 are worth reading before touching `resolver/commit.py`).
+At the Phase 5 commit: 224 non-live backend tests pass, 21 live (the known xfail xpassed),
+frontend type-checks and builds clean, typegen is drift-free. Two tests in
+`test_tier3_live.py` are not `live`-marked but hit a real model / real FDC latency and can
+flake (BACKLOG 60, 71) — re-run once, never weaken.
 
-**Phase 5 (M4 — photo capture) is the remaining milestone**: camera/upload → GPT-5.6 vision
-decompose (identify items + estimate portions) → the same resolver and staging pipeline.
-Its gate: a photographed plate stages with resolved staples and flagged estimates. This is
-the *only* place estimation is allowed, and every estimated value must be visually flagged
-and confirmed before it commits (§3.4a).
+What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
+(18), the preview-protection bypass token (19), the input-hardening pass (98), and whatever
+real use turns up.
+
+**M4's gate — a photographed plate stages with resolved staples and flagged estimates — is
+met with vision mocked** (`tests/test_e2e_m4.py`) and exercised once for real by the single
+live vision test on a CC0 photo (`tests/test_photo.py`, 8 items identified in ~3 s, no
+nutrition numbers in the output). No agent has pointed a phone at a plate. Photo is the
+*only* place estimation is allowed; every estimated value is visually flagged and commit
+refuses it server-side until it is confirmed (§3.4b). An item nothing resolves is
+`estimated: "unresolved"` — a numberless row that shows what the photo saw and routes to
+Search; it can never confirm or commit, and the app never invents calories (BACKLOG 63,
+settled).
 
 Two open threads a new agent should know about:
 

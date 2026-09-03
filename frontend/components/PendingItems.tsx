@@ -8,6 +8,7 @@ import {
   type DayTotals,
   type StagedItem,
 } from "@/lib/api";
+import { confirmEstimate, readEstimate } from "./PhotoApi";
 
 const POLL_FIRST_MS = 250; // reopen feels immediate (BACKLOG 31 retry-on-open)
 const POLL_MS = 2_000;
@@ -38,10 +39,16 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
   const [failed, setFailed] = useState<StagedItem[]>(
     items.filter((i) => i.status !== "searching" && i.status !== "resolved"),
   );
+  // §3.4b: a photo row that resolved after commit still carries its
+  // unconfirmed portion estimate — commit-item refuses it (409) until the
+  // explicit confirm, so it waits here for the tap instead of failing.
+  const [unconfirmed, setUnconfirmed] = useState<StagedItem[]>([]);
   const waitingRef = useRef(waiting);
   waitingRef.current = waiting;
   const committingRef = useRef<Set<number>>(new Set());
   const rekickedRef = useRef<Set<number>>(new Set());
+  // the poll effect's land(), reachable from the Confirm button
+  const landRef = useRef<(item: StagedItem) => Promise<void>>(async () => {});
 
   useEffect(() => {
     let cancelled = false;
@@ -60,8 +67,26 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
       );
     };
 
+    const askConfirm = (item: StagedItem) => {
+      drop(item.item_index);
+      setUnconfirmed((prev) =>
+        prev.some((u) => u.item_index === item.item_index)
+          ? prev
+          : [...prev, item],
+      );
+    };
+
     const land = async (item: StagedItem) => {
       if (committingRef.current.has(item.item_index)) return;
+      // §3.4b: nothing estimated commits unconfirmed — a portion estimate
+      // waits for the Confirm tap; a numberless estimate row (no database
+      // match) has no post-commit way out here, so surface it honestly.
+      const est = readEstimate(item);
+      if (est.estimated !== "none" && !est.confirmed) {
+        if (item.macros == null) fail(item);
+        else askConfirm(item);
+        return;
+      }
       committingRef.current.add(item.item_index);
       try {
         const totals = await commitItem(logId, item);
@@ -78,6 +103,7 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
         if (!cancelled) fail(item); // commit-item is idempotent; retried on next mount
       }
     };
+    landRef.current = land;
 
     // BACKLOG 31 — 真 retry-on-open: anything already resolved (a commit-item
     // that failed before this mount, restored via the persisted pending state)
@@ -144,11 +170,32 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logId]);
 
-  useEffect(() => {
-    if (waiting.length === 0 && failed.length === 0) onDone();
-  }, [waiting.length, failed.length, onDone]);
+  // §3.4b: the explicit confirm, then the ordinary landing
+  const confirmAndLand = async (item: StagedItem) => {
+    setUnconfirmed((prev) =>
+      prev.filter((u) => u.item_index !== item.item_index),
+    );
+    try {
+      const updated = await confirmEstimate(logId, item.item_index);
+      // the sheet's meal override rides item.meal (BACKLOG 31); the confirm
+      // response only knows the inferred meal
+      await landRef.current({ ...updated, meal: item.meal });
+    } catch {
+      setFailed((prev) =>
+        prev.some((f) => f.item_index === item.item_index)
+          ? prev
+          : [...prev, item],
+      );
+    }
+  };
 
-  if (waiting.length === 0 && failed.length === 0) return null;
+  const idle =
+    waiting.length === 0 && failed.length === 0 && unconfirmed.length === 0;
+  useEffect(() => {
+    if (idle) onDone();
+  }, [idle, onDone]);
+
+  if (idle) return null;
 
   return (
     <div className="pending-wrap">
@@ -158,6 +205,31 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
           {waiting.length} pending item{waiting.length > 1 ? "s" : ""}…
         </div>
       ) : null}
+      {unconfirmed.map((u) => (
+        <div key={u.item_index} className="pending-pill confirm" role="status">
+          <span>
+            &ldquo;{u.phrase}&rdquo; — portion estimated from the photo
+          </span>
+          <button
+            type="button"
+            className="confirm-btn"
+            onClick={() => void confirmAndLand(u)}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() =>
+              setUnconfirmed((prev) =>
+                prev.filter((x) => x.item_index !== u.item_index),
+              )
+            }
+          >
+            ✕
+          </button>
+        </div>
+      ))}
       {failed.map((f) => (
         <div key={f.item_index} className="pending-pill failed" role="status">
           <span>&ldquo;{f.phrase}&rdquo; couldn&rsquo;t be added — needs attention</span>

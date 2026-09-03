@@ -26,7 +26,7 @@ import httpx
 _TIMEOUT = 20.0
 _MAX_FETCH_BYTES = 2_000_000  # download cap
 _MAX_TEXT_CHARS = 15_000  # extracted-text cap (what the agent sees)
-_USER_AGENT = "UsualNutritionLogger/0.1 (personal single-user nutrition app)"
+_USER_AGENT = "TallyNutritionLogger/0.1 (personal single-user nutrition app)"
 
 _TEXT_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
 

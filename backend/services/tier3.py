@@ -571,11 +571,15 @@ async def _apply_portion(
 
 
 async def _local_candidates(phrase: str) -> list[dict]:
+    # source='estimate' rows are the photo lane's numberless placeholders
+    # (routes/photo.py stage_estimate_food) — never a candidate for a spoken
+    # phrase: estimation is photo-only (R1).
     trigram = await db.fetchall(
         """
         SELECT id, source, source_id, display_name, brand,
                similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
         FROM foods
+        WHERE source <> 'estimate'
         ORDER BY sim DESC
         LIMIT 15
         """,
@@ -586,6 +590,7 @@ async def _local_candidates(phrase: str) -> list[dict]:
         SELECT f.id, f.source, f.source_id, f.display_name, f.brand,
                sum(a.use_count) AS uses
         FROM foods f JOIN aliases a ON a.food_id = f.id
+        WHERE f.source <> 'estimate'
         GROUP BY f.id, f.source, f.source_id, f.display_name, f.brand
         ORDER BY uses DESC, max(a.last_used_at) DESC
         LIMIT 10
@@ -1015,11 +1020,15 @@ async def _write_item_row(
     state_answer: str | None = None,
     tier: int = 3,
     web_source: dict | None = None,
-) -> bool:
-    """Write one item's staging state. Returns False when the row refused the
-    write: BACKLOG 27 — a tier-3 run that finishes after the user removed the
-    row (status='removed') or after the item committed (committed_at set) must
-    never resurrect/clobber it, so the UPDATE is conditional on live statuses.
+) -> dict | None:
+    """Write one item's staging state. Returns the staged jsonb AS STORED —
+    KEEP_LOG_KEYS_SQL carries a photo row's `estimated` flag and
+    `estimate_note` over the fresh payload (§3.4b), and every caller's
+    response must show what the row holds, not what was proposed — or None
+    when the row refused the write: BACKLOG 27 — a tier-3 run that finishes
+    after the user removed the row (status='removed') or after the item
+    committed (committed_at set) must never resurrect/clobber it, so the
+    UPDATE is conditional on live statuses.
 
     §3.1 invariant: a row that started as a tier-0 expansion keeps tier 0 in
     the column whatever re-resolves it (its phrase column is a food display
@@ -1041,7 +1050,7 @@ async def _write_item_row(
         # foods — staged key `web_source = {"url", "title"}` (integrator/V2
         # surfaces it on the wire and renders it as a visible link).
         staged_payload["web_source"] = web_source
-    updated = await db.execute(
+    row = await db.fetchone(
         f"""
         UPDATE item_resolutions
         SET status = %s,
@@ -1058,6 +1067,7 @@ async def _write_item_row(
         WHERE log_id = %s AND item_index = %s
           AND status IN ('searching', 'needs_input', 'not_found', 'resolved')
           AND committed_at IS NULL
+        RETURNING staged
         """,
         (
             item.status,
@@ -1075,7 +1085,13 @@ async def _write_item_row(
             item_index,
         ),
     )
-    return bool(updated)
+    return _as_dict(_col(row, 0, "staged")) if row is not None else None
+
+
+def _stored_item(stored: dict | None, item: StagedItem) -> StagedItem:
+    """The row as written — what the client renders (the §3.4b flag the
+    payload never carried); the in-memory item when the write was refused."""
+    return StagedItem.model_validate(stored) if stored else item
 
 
 async def _load_item(log_id: str, item_index: int) -> tuple[str, dict]:
@@ -1176,14 +1192,14 @@ async def resolve_item_from_source(
             question=Question.model_validate(prev_q) if prev_q else None,
             confidence="low",
         )
-        await _write_item_row(
+        stored = await _write_item_row(
             log_id, item_index, item,
             network_calls=network_calls,
             resolve_ms=int((time.perf_counter() - t0) * 1000),
             spoken_qty=spoken_qty,
             spoken_unit=spoken_unit,
         )
-        return item
+        return _stored_item(stored, item)
     food = dict(food)
     food.setdefault("source", source)
     food.setdefault("source_id", str(source_id))
@@ -1205,7 +1221,7 @@ async def resolve_item_from_source(
         serving_id=serving_id, confidence="low" if verify else "high",
         alternates=None, question=None, tier=tier,
     )
-    await _write_item_row(
+    stored = await _write_item_row(
         log_id, item_index, item,
         network_calls=network_calls,
         resolve_ms=int((time.perf_counter() - t0) * 1000),
@@ -1216,7 +1232,7 @@ async def resolve_item_from_source(
         tier=tier,
         web_source=_web_source(food),
     )
-    return item
+    return _stored_item(stored, item)
 
 
 async def resolve_item_from_food(
@@ -1251,7 +1267,7 @@ async def resolve_item_from_food(
         serving_id=serving_id, confidence="low" if verify else "high",
         alternates=None, question=None, tier=tier,
     )
-    await _write_item_row(
+    stored = await _write_item_row(
         log_id, item_index, item,
         resolve_ms=int((time.perf_counter() - t0) * 1000),
         proposed_food_id=str(food_id),
@@ -1261,7 +1277,7 @@ async def resolve_item_from_food(
         tier=tier,
         web_source=_web_source(food),
     )
-    return item
+    return _stored_item(stored, item)
 
 
 # ---------------------------------------------------------------------------
@@ -1440,7 +1456,7 @@ async def run_tier3(
         proposed_food_id = None
         web_source = None
 
-    await _write_item_row(
+    stored = await _write_item_row(
         log_id, item_index, item,
         network_calls=counter["network_calls"],
         resolve_ms=int((time.perf_counter() - t0) * 1000),
@@ -1452,4 +1468,4 @@ async def run_tier3(
         state_answer=state_intent if item.status == "resolved" else None,
         web_source=web_source,
     )
-    return item
+    return _stored_item(stored, item)

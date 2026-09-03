@@ -1,12 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
+import AddSheet, { ADD_EVENT, ADD_HANDOFF_KEY, type AddLane } from "./AddSheet";
 import "@/app/library/m3.css";
 
-/** §7.4 navigation: a three-tab bar (Today · History · Library) with Settings
- *  behind an icon. No props — every page mounts it as-is; the stylesheet
- *  rides along with the import so Today/History need nothing else. */
+/** §7.4 navigation: Today · History · [+] · Library, with Settings behind an
+ *  icon. The raised + in the middle is the one way to log (owner ruling,
+ *  2026-09-02 — the mid-screen capture bar is gone): it opens AddSheet, and
+ *  the pick reaches Today as a window event while Today is mounted, else as
+ *  a sessionStorage handoff followed by a navigation home. No props — every
+ *  page mounts it as-is; the stylesheet rides along with the import. */
 
 const stroke = {
   fill: "none",
@@ -52,38 +57,86 @@ function GearIcon() {
   );
 }
 
-const TABS = [
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" {...stroke} strokeWidth={2.4} aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+const LEFT = [
   { href: "/", label: "Today", Icon: TodayIcon },
   { href: "/history", label: "History", Icon: HistoryIcon },
-  { href: "/library", label: "Library", Icon: LibraryIcon },
 ];
+const RIGHT = [{ href: "/library", label: "Library", Icon: LibraryIcon }];
 
 export default function TabBar() {
   const pathname = usePathname() ?? "/";
+  const router = useRouter();
+  const [addOpen, setAddOpen] = useState(false);
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
+  const tab = ({ href, label, Icon }: (typeof LEFT)[number]) => (
+    <Link
+      key={href}
+      href={href}
+      className={isActive(href) ? "active" : undefined}
+      aria-current={isActive(href) ? "page" : undefined}
+    >
+      <Icon />
+      {label}
+    </Link>
+  );
+
+  const pick = (lane: AddLane) => {
+    setAddOpen(false);
+    if (pathname === "/") {
+      window.dispatchEvent(
+        new CustomEvent<AddLane>(ADD_EVENT, { detail: lane }),
+      );
+      return;
+    }
+    try {
+      sessionStorage.setItem(ADD_HANDOFF_KEY, lane);
+    } catch {
+      /* storage unavailable — Today opens and the + is one tap away again */
+    }
+    router.push("/");
+  };
+
   return (
-    <nav className="tabbar" aria-label="Main">
-      {TABS.map(({ href, label, Icon }) => (
+    <>
+      <nav className="tabbar" aria-label="Main">
+        {LEFT.map(tab)}
+        <div className="fab-slot">
+          <button
+            type="button"
+            className="fab"
+            aria-label="Log food"
+            aria-haspopup="dialog"
+            aria-expanded={addOpen}
+            onClick={() => setAddOpen(true)}
+          >
+            <PlusIcon />
+          </button>
+        </div>
+        {RIGHT.map(tab)}
         <Link
-          key={href}
-          href={href}
-          className={isActive(href) ? "active" : undefined}
-          aria-current={isActive(href) ? "page" : undefined}
+          href="/settings"
+          className={`gear${isActive("/settings") ? " active" : ""}`}
+          aria-label="Settings"
+          aria-current={isActive("/settings") ? "page" : undefined}
         >
-          <Icon />
-          {label}
+          <GearIcon />
         </Link>
-      ))}
-      <Link
-        href="/settings"
-        className={`gear${isActive("/settings") ? " active" : ""}`}
-        aria-label="Settings"
-        aria-current={isActive("/settings") ? "page" : undefined}
-      >
-        <GearIcon />
-      </Link>
-    </nav>
+      </nav>
+      <AddSheet
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onPick={pick}
+      />
+    </>
   );
 }

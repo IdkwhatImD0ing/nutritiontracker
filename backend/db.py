@@ -1,4 +1,4 @@
-"""Async Postgres access for Usual (DESIGN.md §2, §8.7).
+"""Async Postgres access for Tally (DESIGN.md §2, §8.7).
 
 One lazily-opened psycopg AsyncConnection per event loop, over the pooled
 (-pooler) Neon connection string — PgBouncer transaction mode supports the

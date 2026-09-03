@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import date as date_type
 from datetime import datetime, time as time_type, timedelta, timezone
+from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -47,6 +48,9 @@ class DiaryEntry(BaseModel):
     grams: float | None = None
     source: str | None = None  # 'fdc' | 'off' | 'web' — the source badge
     web_source: WebSource | None = None  # §3.4a citation, web foods only
+    # §3.4a: a confirmed photo portion renders flagged like a web food — read
+    # off the entry's item_resolutions row. An "unresolved" row never commits.
+    estimated: Literal["none", "portion"] = "none"
 
 
 class DiaryResponse(BaseModel):
@@ -139,8 +143,11 @@ async def get_diary(date: date_type | None = None) -> DiaryResponse:
         """
         SELECT e.id, e.meal, e.food_id, e.serving_id, e.qty, e.grams, e.macros,
                e.logged_at, e.created_at,
-               f.display_name, f.brand, f.servings, f.source, f.source_url, f.provenance
+               f.display_name, f.brand, f.servings, f.source, f.source_url, f.provenance,
+               ir.staged->>'estimated' AS estimated
         FROM entries e JOIN foods f ON f.id = e.food_id
+        LEFT JOIN item_resolutions ir
+               ON ir.log_id = e.log_id AND ir.item_index = e.item_index
         WHERE e.logged_at >= %s AND e.logged_at < %s
         ORDER BY e.logged_at, e.created_at
         """,
@@ -170,6 +177,7 @@ async def get_diary(date: date_type | None = None) -> DiaryResponse:
                 web_source=web_source_of(
                     r["source"], r["source_url"], r["provenance"], r["display_name"]
                 ),
+                estimated="portion" if r["estimated"] == "portion" else "none",
             )
         )
     return DiaryResponse(date=date, meals=meals, totals=await compute_day_totals(date))
