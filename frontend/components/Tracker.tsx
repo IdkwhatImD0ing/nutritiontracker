@@ -118,7 +118,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           label="Carbs"
           consumed={carb}
           target={carbTarget}
-          color="var(--sage)"
+          color="var(--carb)"
           size={84}
         />
         <Donut
@@ -133,7 +133,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           label="Fat"
           consumed={fat}
           target={fatTarget}
-          color="var(--moss)"
+          color="var(--fat)"
           size={84}
         />
       </div>

@@ -1,27 +1,50 @@
 /* Tally — hand CSS, dark-first, spruce accent family (§7.4 visual language) */
 
 :root {
-  --bg: #121715;
-  --surface: #1a201d;
-  --surface-2: #222925;
-  --surface-3: #2a322d;
-  --line: #2b332e;
-  --text: #f2f5f3;
-  --muted: #93a89d;
-  --faint: #5f7269;
+  --bg: #121318;
+  --surface: #1b1c22;
+  --surface-2: #24252d;
+  --surface-3: #2e2f38;
+  --line: #2c2d36;
+  --text: #f4f3ef;
+  --muted: #a5a7b3;
+  --faint: #8b8e9c;
 
-  --spruce: #23604a;
-  --spruce-deep: #1a4234;
-  --spruce-soft: #2c7a5e;
-  --mint: #4fd1a1; /* protein — the loud one */
-  --sage: #9db8ab; /* carbs — quiet */
-  --moss: #6d8d7e; /* fat — quiet */
+  /* The accent family. Kept under the old names so every component that
+     already says var(--spruce) / var(--mint) follows the theme unchanged. */
+  --spruce: #ff8a4c; /* fills: the +, commit, meal chips */
+  --spruce-deep: #7a3d1f; /* the quiet fill behind a selected chip */
+  --spruce-soft: #ff9d68; /* focus borders */
+  --mint: #ff8a4c; /* protein — the loud one — and links, spinner, toast */
+  --sage: #9aa0b5; /* generic quiet: mic, portion links, chart series B */
+  --moss: #7e8296; /* generic quieter: chart series C */
 
-  --amber: #d9a441;
-  --red: #c9705f;
+  /* Macros. Protein owns the accent; carbs and fat sit at the same
+     lightness so neither shouts (oklch L≈0.76, C≈0.13, hue apart). */
+  --carb: #63c6e8;
+  --fat: #c6a3f5;
 
-  --radius: 14px;
-  --font: Archivo, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Text on an accent fill. The accent is bright, so near-white on it is
+     about 2:1 — unreadable. Everything filled with --spruce uses this. */
+  --on-accent: #14100c;
+
+  --amber: #f5c451; /* verify / estimate flags */
+  --red: #ff6b6b;
+
+  --radius: 18px;
+  --font: var(--font-archivo), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-bricolage), var(--font-archivo), system-ui, sans-serif;
+}
+
+/* Numbers and headings carry the character; body text stays Archivo. */
+.display,
+.brand h1,
+.kcal-row .figures strong,
+.row-kcal .n,
+.donut .center-num {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.03em;
 }
 
 * {
@@ -211,6 +234,7 @@ input {
 
 .capture button {
   background: var(--spruce);
+  color: var(--on-accent);
   border: none;
   border-radius: var(--radius);
   width: 52px;
@@ -426,7 +450,7 @@ input {
 .meal-picker button.active {
   background: var(--spruce);
   border-color: var(--spruce);
-  color: var(--text);
+  color: var(--on-accent);
 }
 
 .sheet-body {
@@ -443,6 +467,7 @@ input {
 .commit-btn {
   width: 100%;
   background: var(--spruce);
+  color: var(--on-accent);
   border: none;
   border-radius: var(--radius);
   padding: 16px;
@@ -645,7 +670,7 @@ input {
 .chip.active {
   background: var(--spruce);
   border-color: var(--spruce);
-  color: var(--text);
+  color: var(--on-accent);
 }
 
 /* §3.3 rule 3 "search instead" affordance (BACKLOG 32) */
@@ -1169,6 +1194,7 @@ input {
 
 .auth-card button[type="submit"] {
   background: var(--spruce);
+  color: var(--on-accent);
   border: none;
   border-radius: 10px;
   padding: 13px;

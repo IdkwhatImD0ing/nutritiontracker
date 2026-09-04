@@ -144,8 +144,8 @@ function ThreeDays({
                 color="var(--mint)"
                 loud
               />
-              <MacroBar label="Carbs" value={d.carb_g} target={targets.carb_g} color="var(--sage)" />
-              <MacroBar label="Fat" value={d.fat_g} target={targets.fat_g} color="var(--moss)" />
+              <MacroBar label="Carbs" value={d.carb_g} target={targets.carb_g} color="var(--carb)" />
+              <MacroBar label="Fat" value={d.fat_g} target={targets.fat_g} color="var(--fat)" />
             </div>
             {mealChips.length ? (
               <div className="hcard-meals num">

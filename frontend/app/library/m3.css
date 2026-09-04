@@ -70,7 +70,7 @@
   border-radius: 50%;
   background: var(--spruce);
   border: 4px solid var(--bg);
-  color: var(--text);
+  color: var(--on-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -391,7 +391,7 @@ body:has(.tabbar) .shell {
 .m3-seg button.active {
   background: var(--spruce);
   border-color: var(--spruce);
-  color: var(--text);
+  color: var(--on-accent);
 }
 
 /* saved-meal item row: name + compact qty stepper + remove */

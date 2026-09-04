@@ -79,7 +79,7 @@
 .photo-actions button.primary {
   background: var(--spruce);
   border-color: var(--spruce);
-  color: var(--text);
+  color: var(--on-accent);
 }
 
 /* ---------- §3.4a estimated rows (photo lane only) ---------- */

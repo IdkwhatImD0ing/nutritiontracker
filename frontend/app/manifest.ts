@@ -14,8 +14,8 @@ export default function manifest(): MetadataRoute.Manifest {
     id: "/",
     start_url: "/",
     display: "standalone",
-    background_color: "#121715",
-    theme_color: "#121715",
+    background_color: "#121318",
+    theme_color: "#121318",
     icons: [
       // Full-bleed spruce-on-dark U mark; the glyph sits inside the maskable
       // safe zone, so the same assets serve both purposes.

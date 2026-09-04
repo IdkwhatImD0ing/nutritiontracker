@@ -1,7 +1,25 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Archivo, Bricolage_Grotesque } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerProvider } from "./serwist/provider";
+
+// Self-hosted at build time: no runtime request to Google, no layout shift.
+// Archivo was named in globals.css from the start but never actually loaded —
+// the app rendered in system-ui until this landed.
+const archivo = Archivo({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-archivo",
+  display: "swap",
+});
+
+const bricolage = Bricolage_Grotesque({
+  subsets: ["latin"],
+  weight: ["500", "800"],
+  variable: "--font-bricolage",
+  display: "swap",
+});
 
 const description =
   "Voice-first nutrition logger: say what you ate and Tally finds the foods, works out the macros, and keeps your diary. Photo, barcode, and search lanes too.";
@@ -54,7 +72,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#121715",
+  themeColor: "#121318",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -62,7 +80,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${archivo.variable} ${bricolage.variable}`}>
       <body>
         <ServiceWorkerProvider>{children}</ServiceWorkerProvider>
       </body>
