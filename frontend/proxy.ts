@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { getAuth } from "@/lib/auth/server";
 
 /**
@@ -9,12 +9,27 @@ import { getAuth } from "@/lib/auth/server";
  * script) is excluded too: a sign-in redirect on those breaks install checks
  * and SW registration, and none of them carries user data.
  *
- * `/welcome` is the public landing page and is excluded as well. It is also
- * the redirect target: a signed-out visitor to `/` gets told what Tally is
- * before being asked for an email, and the page links on to sign-in/sign-up.
+ * `/` serves two different pages. Signed in, it is Today. Signed out, it is
+ * the landing page — rendered AT `/`, not redirected to, so the front door
+ * has the address people actually share. The auth middleware is the one that
+ * knows which: when it wants to bounce an anonymous visitor off `/`, we turn
+ * that redirect into a rewrite of the landing route and keep the URL. Every
+ * other protected path still redirects, and lands on the same page.
  */
-export default function proxy(request: NextRequest) {
-  return getAuth().middleware({ loginUrl: "/welcome" })(request);
+const LANDING = "/welcome";
+
+export default async function proxy(request: NextRequest) {
+  const response = await getAuth().middleware({ loginUrl: LANDING })(request);
+
+  if (request.nextUrl.pathname !== "/") return response;
+
+  const location = response?.headers?.get("location");
+  if (!location) return response; // a session: fall through to Today
+
+  const target = new URL(location, request.url);
+  if (target.pathname !== LANDING) return response; // some other redirect
+
+  return NextResponse.rewrite(new URL(LANDING, request.url));
 }
 
 export const config = {
