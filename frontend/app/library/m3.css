@@ -655,3 +655,93 @@ body:has(.tabbar) .shell {
   background: var(--surface-3);
   color: var(--muted);
 }
+
+/* ---------- account card (Settings § Account) ---------- */
+
+.account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.account-who {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.account-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.account-email {
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-kind {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.account-badge {
+  align-self: flex-start;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.account-badge.owner {
+  background: var(--spruce);
+  color: var(--on-accent);
+}
+
+.account-badge.demo {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.account-note {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0;
+}
+
+.account-note code {
+  font-size: 0.78rem;
+  color: var(--sage);
+}
+
+.account-signout {
+  align-self: flex-start;
+  min-height: 44px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.9rem;
+  padding: 0 20px;
+  cursor: pointer;
+}
+
+.account-signout:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.account-signout:disabled {
+  color: var(--faint);
+  cursor: default;
+}

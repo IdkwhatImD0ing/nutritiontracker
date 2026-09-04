@@ -13,6 +13,7 @@ import {
 } from "./SettingsApi";
 import { CM_PER_IN, LB_PER_KG } from "./WizardMath";
 import WizardGoal from "./WizardGoal";
+import AccountCard from "./AccountCard";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -176,6 +177,8 @@ export default function Settings() {
       </header>
 
       {error ? <p className="sheet-error">{error}</p> : null}
+
+      <AccountCard />
 
       {!form ? (
         <p className="m3-empty">{error ? "" : "Loading…"}</p>
