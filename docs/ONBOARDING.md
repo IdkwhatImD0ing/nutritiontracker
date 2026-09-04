@@ -156,6 +156,14 @@ Notes that will save you an hour:
   context is discarded. An empty result in a new test is the first thing to check.
   `tests/conftest.py` imports `services.quota` before any test stubs the `services` package,
   so the routes' quota checks keep resolving under the stub.
+- **After any deploy, check the auth round-trip, not just `/api/health`.**
+  `curl -s https://<host>/api/auth/token` must answer Better Auth's
+  `{"message":"Unauthorized",...}` (401). If it answers `{"detail":"Not Found"}`
+  that is FastAPI replying, `/api/auth/*` is misrouted, and **no client can get
+  a JWT** — every authenticated call fails while `/api/health` still looks fine.
+  `/api/auth/*` belongs to the *web* service (`app/api/auth/[...path]`); every
+  other `/api/*` path is FastAPI's. `vercel.json` orders those two rules, and
+  `next.config.ts` does the same job locally with a `fallback` rewrite (BACKLOG 130).
 - `-m live` spends real API credits and hits real vendors.
 - `test_tier3_live.py::test_quest_bar_branded_or_question` is a **real model run and is
   nondeterministic** — it fails occasionally. Re-run once; never weaken the assertion to get

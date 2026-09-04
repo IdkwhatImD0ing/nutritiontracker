@@ -15,6 +15,12 @@
   },
   "rewrites": [
     {
+      "source": "/api/auth/(.*)",
+      "destination": {
+        "service": "web"
+      }
+    },
+    {
       "source": "/api/(.*)",
       "destination": {
         "service": "api"
