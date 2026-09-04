@@ -368,3 +368,23 @@ def test_live_jwks_has_ed25519_key():
     assert any(k.get("kty") == "OKP" and k.get("crv") == "Ed25519" for k in keys), (
         "no Ed25519 key in live JWKS"
     )
+
+
+def test_app_origin_accepts_a_comma_separated_list(monkeypatch):
+    """A domain change is a cutover, not an instant: APP_ORIGIN lists both
+    origins while DNS moves, then drops the old one. Without this the moment
+    the value flips, every state-changing request from the old hostname 403s
+    while reads keep working — 'the app loads but nothing saves'."""
+    import auth
+
+    monkeypatch.setenv("APP_ORIGIN", "https://old.example, https://new.example/")
+    allowed = auth._allowed_origins()
+    assert allowed == frozenset({"https://old.example", "https://new.example"})
+
+    # A single value still behaves exactly as before, trailing slash trimmed.
+    monkeypatch.setenv("APP_ORIGIN", "https://only.example/")
+    assert auth._allowed_origins() == frozenset({"https://only.example"})
+
+    # Empty entries from a trailing comma never become a wildcard "" origin.
+    monkeypatch.setenv("APP_ORIGIN", "https://a.example,,")
+    assert auth._allowed_origins() == frozenset({"https://a.example"})

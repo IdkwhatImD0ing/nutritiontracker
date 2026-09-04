@@ -26,7 +26,13 @@ const description =
 
 // Public-facing (the repo is open source and anyone can sign up for a demo
 // account). No social image exists yet, so openGraph/twitter carry text only.
+// Absolute URLs for Open Graph and Twitter cards. Without it Next warns and
+// emits relative URLs, which link previews cannot resolve. NEXT_PUBLIC_SITE_URL
+// lets a fork point it at its own domain without editing this file.
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tally.art3m1s.me";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   applicationName: "Tally",
   title: { default: "Tally", template: "%s · Tally" },
   description,

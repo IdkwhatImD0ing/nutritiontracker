@@ -157,10 +157,17 @@ def _allowed_origins() -> frozenset[str]:
     """Origins allowed on state-changing requests. Explicit APP_ORIGIN wins;
     when unset, default from Vercel's env (BACKLOG 14) so deployed
     environments are fail-closed without per-project config. Empty = nothing
-    configured (bare local dev)."""
+    configured (bare local dev).
+
+    APP_ORIGIN may list several origins, comma-separated. A domain change is
+    otherwise a flip-the-switch moment: the value pins exactly one origin, so
+    the instant it moves, every state-changing request from the old hostname
+    is refused. Listing both lets the old and new domain overlap while DNS
+    and any bookmarks catch up, then the old one is dropped."""
     explicit = _env("APP_ORIGIN")
     if explicit:
-        return frozenset({explicit.rstrip("/")})
+        origins = {o.strip().rstrip("/") for o in explicit.split(",")}
+        return frozenset(o for o in origins if o)
     derived: set[str] = set()
     for name in ("VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
         host = (_env(name) or "").strip().rstrip("/")
