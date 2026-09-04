@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from langfuse import Langfuse
 from langfuse.api import NotFoundError
 
-from evals.common import CORRECTIONS_DATASET, setup_langfuse, snapshot_context
+from evals.common import CORRECTIONS_DATASET, bind_owner, setup_langfuse, snapshot_context
 
 _ITEMS_SQL = """
 SELECT r.item_index, r.phrase, r.tier,
@@ -169,6 +169,7 @@ async def collect(
     """Returns the items written (or, dry-run, the items that would be)."""
     from services.context import build_agent_context
 
+    await bind_owner()  # Postgres reads below run as the owner's tenant (002)
     lf = setup_langfuse()
     since = datetime.now(timezone.utc) - timedelta(days=days)
     trace_ids = corrected_trace_ids(lf, environment, since, limit)

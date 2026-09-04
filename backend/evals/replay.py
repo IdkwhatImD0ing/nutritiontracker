@@ -41,6 +41,7 @@ from psycopg.types.json import Json
 from evals.common import (
     CORRECTIONS_DATASET,
     REPLAY_ENVIRONMENT,
+    bind_owner,
     context_from_snapshot,
     setup_langfuse,
 )
@@ -257,6 +258,7 @@ async def replay(
 ) -> ReplayRun:
     if tier3:
         _check_tier3_writes()  # before any run is created
+    await bind_owner()  # the cascade's reads (and --tier3's scratch rows) are the owner's (002)
     lf = lf or setup_langfuse(REPLAY_ENVIRONMENT)
     ds = lf.get_dataset(dataset)
     items = [i for i in ds.items if i.status == "ACTIVE"]

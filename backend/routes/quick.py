@@ -37,6 +37,7 @@ from resolver import cascade, foods_repo
 from routes import logs as logs_routes
 from routes.diary import web_source_of
 from routes.photo import ESTIMATE_PICK_REFUSAL
+from services import quota
 from sources import fdc
 
 router = APIRouter(dependencies=[Depends(require_user)])
@@ -189,21 +190,24 @@ async def create_log_from_food(body: FromFoodRequest) -> LogResponse:
         raise HTTPException(status_code=422, detail="qty overflows the food's macros")
     complete = all(k in scaled for k in cascade._CORE_MACROS)
 
-    # Idempotent by client id, exactly like POST /api/logs (§8.6): only the
-    # request that inserted the row writes the item; a duplicate replays the
-    # stored staging state (or 409s on a committed/discarded log).
-    inserted = await db.execute(
+    # Idempotent by client id, exactly like POST /api/logs (§8.6), the demo's
+    # attempt recorded with the claim (routes/logs.claim_log) — after the free
+    # refusals above, so an unknown food, a placeholder, a bad serving or qty
+    # cost nothing: only the request that inserted the row writes the item; a
+    # duplicate replays the stored staging state (or 409s on a committed/
+    # discarded log, 404s on another tenant's id).
+    if not await logs_routes.claim_log(
         """
         INSERT INTO logs (id, input_mode, raw_input, captured_at)
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (id) DO NOTHING
         """,
         (body.id, body.input_mode, food["display_name"], body.captured_at),
-    )
-    if inserted == 0:
+    ):
         replay = await logs_routes._duplicate_post_response(body.id)
         if replay is not None:
             return replay
+        await quota.check_log()  # this tenant's orphan, claimed for a re-run: the next attempt
 
     meal = body.meal_hint or await logs_routes.infer_meal(body.captured_at, None)
 

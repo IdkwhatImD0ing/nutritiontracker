@@ -9,7 +9,8 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Tally",
     short_name: "Tally",
-    description: "Voice-first nutrition logging",
+    description:
+      "Voice-first nutrition logging — say what you ate; Tally finds the foods and works out the macros.",
     id: "/",
     start_url: "/",
     display: "standalone",

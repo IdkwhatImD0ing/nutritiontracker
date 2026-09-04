@@ -133,6 +133,9 @@ def _reset_vision():
 
 
 import db  # noqa: E402
+
+
+from tenancy_harness import bind_test_tenant, override_user  # noqa: E402
 import services.tier3 as tier3  # noqa: E402
 from models import CommitRequest, Meal, StagedItem  # noqa: E402
 from routes import photo  # noqa: E402
@@ -186,6 +189,7 @@ async def isolated_db():
     conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):
@@ -814,7 +818,7 @@ def _photo_app():
 
     app = FastAPI()
     app.include_router(photo.router)
-    app.dependency_overrides[require_user] = lambda: {"email": "test", "user_id": "t"}
+    app.dependency_overrides[require_user] = override_user(email="test", user_id="t")
     return app
 
 

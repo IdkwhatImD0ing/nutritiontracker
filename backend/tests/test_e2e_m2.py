@@ -60,6 +60,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import auth  # noqa: E402
 import db  # noqa: E402
+from tenancy_harness import override_user  # noqa: E402
 import main  # noqa: E402
 
 pytestmark = pytest.mark.live
@@ -107,10 +108,9 @@ def _food_clip_bytes() -> bytes:
 
 @pytest.fixture()
 def client():
-    main.app.dependency_overrides[auth.require_user] = lambda: {
-        "email": "billzhangsc@gmail.com",
-        "sub": "e2e-m2",
-    }
+    main.app.dependency_overrides[auth.require_user] = override_user(
+        email="billzhangsc@gmail.com", user_id="e2e-m2"
+    )
     try:
         with TestClient(main.app) as c:
             yield c

@@ -58,6 +58,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import auth  # noqa: E402
 import db  # noqa: E402
+from tenancy_harness import override_user  # noqa: E402
 import main  # noqa: E402
 from resolver.norm import norm  # noqa: E402
 
@@ -76,10 +77,9 @@ def _run(coro):
 
 @pytest.fixture()
 def client():
-    main.app.dependency_overrides[auth.require_user] = lambda: {
-        "email": "billzhangsc@gmail.com",
-        "sub": "e2e-m1",
-    }
+    main.app.dependency_overrides[auth.require_user] = override_user(
+        email="billzhangsc@gmail.com", user_id="e2e-m1"
+    )
     try:
         with TestClient(main.app) as c:
             yield c
@@ -212,6 +212,7 @@ async def _res_rows(log_id: str) -> dict[int, dict]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("needs_002")  # real commit path: alias learning targets 002's constraint
 def test_m1_full_story(client: TestClient):
     t0 = _run(db.fetchone("SELECT now() AS t"))["t"]
     l1, l2 = str(uuid4()), str(uuid4())

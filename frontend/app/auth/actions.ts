@@ -17,21 +17,16 @@ export async function signInAction(
   redirect("/");
 }
 
-const ALLOWED_EMAIL = process.env.ALLOWED_EMAIL ?? "billzhangsc@gmail.com";
-
 export async function signUpAction(
   _prev: AuthFormState,
   formData: FormData,
 ): Promise<AuthFormState> {
-  const email = String(formData.get("email") ?? "");
-  // Single-user allowlist (§2): registration exists only for the one first-run
-  // sign-up; the API also rejects any token for a different email.
-  if (email.trim().toLowerCase() !== ALLOWED_EMAIL.trim().toLowerCase()) {
-    return { error: "Sign-up is restricted on this deployment" };
-  }
+  // Open sign-up (§8.9): any address may register. Which account is the
+  // owner is the API's call (backend/auth.py, ALLOWED_EMAIL); every other
+  // account is a demo, bounded by the quota rather than by this door.
   const { error } = await getAuth().signUp.email({
     name: String(formData.get("name") ?? ""),
-    email,
+    email: String(formData.get("email") ?? ""),
     password: String(formData.get("password") ?? ""),
   });
   if (error) return { error: error.message ?? "Sign-up failed" };

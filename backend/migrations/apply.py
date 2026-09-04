@@ -1,11 +1,21 @@
-"""Apply 001_init.sql to the Neon database named by DATABASE_URL in the repo-root .env.
+"""Apply a migration to the Neon database named by DATABASE_URL in the repo-root .env.
 
-Guard: this migration targets a brand-new database. If ANY user table already
-exists in schema public, nothing is applied:
-  - exactly the 7 expected tables present  -> already applied, no-op, exit 0
-  - anything else present                  -> unexpected state, abort, exit 1
+  python apply.py                -> 001_init.sql   (brand-new database only)
+  python apply.py 002            -> 002_multiuser.sql (tenancy; needs 001, refuses if applied)
+  python apply.py 002 --dry-run  -> apply 002 + verify inside one transaction, then ROLL BACK
+  python apply.py 002 --check    -> re-run 002's verification against the committed schema
+                                    (post-apply check; valid while the owner is the only
+                                    tenant, i.e. run it right after applying)
 
-Never prints secret values.
+Every migration runs in ONE transaction. 002 is verified before COMMIT (row
+counts unchanged, every existing row backfilled to the owner, RLS filters
+under the app role, the ledger's one-log-a-day unique index present, an
+insert with no tenant fails); a failed check rolls back. Guards:
+  001 - schema public must be empty; exactly the 7 tables present -> no-op, exit 0
+  002 - the 7 tables must be present and logs.user_id absent; present -> no-op, exit 0
+  002 --check - logs.user_id must be present
+
+Never prints secret values (the owner's user id is an identifier, not a secret).
 """
 
 import sys
@@ -17,6 +27,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = MIGRATIONS_DIR.parent.parent
 ENV_FILE = REPO_ROOT / ".env"
 SQL_FILE = MIGRATIONS_DIR / "001_init.sql"
+SQL_FILE_002 = MIGRATIONS_DIR / "002_multiuser.sql"
 
 EXPECTED_TABLES = {
     "foods",
@@ -27,6 +38,11 @@ EXPECTED_TABLES = {
     "entries",
     "settings",
 }
+# 002: the six tables that become user-owned (+ the ledger it creates)
+TENANT_TABLES = ("aliases", "meal_macros", "logs", "item_resolutions", "entries", "settings")
+RLS_TABLES = TENANT_TABLES + ("quota_events",)
+APP_ROLE = "tally_app"
+OWNER_EMAIL = "billzhangsc@gmail.com"  # auth.DEFAULT_ALLOWED_EMAIL; 002's DO block repeats it
 
 
 def read_database_url(env_file: Path) -> str:
@@ -45,42 +61,191 @@ def read_database_url(env_file: Path) -> str:
     sys.exit("ERROR: DATABASE_URL not found in .env.")
 
 
-def main() -> None:
-    dsn = read_database_url(ENV_FILE)
+def existing_tables(cur) -> set[str]:
+    cur.execute(
+        """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+        """
+    )
+    return {row[0] for row in cur.fetchall()}
+
+
+def apply_001(conn) -> None:
     sql = SQL_FILE.read_text(encoding="utf-8")
-
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-                ORDER BY table_name
-                """
-            )
-            existing = {row[0] for row in cur.fetchall()}
-
-            if existing:
-                names = ", ".join(sorted(existing))
-                if existing == EXPECTED_TABLES:
-                    print(
-                        "Guard: schema public already contains the 7 expected tables "
-                        f"({names}). Migration already applied - nothing to do."
-                    )
-                    sys.exit(0)
-                sys.exit(
-                    "ERROR: refusing to apply - schema public is not empty and does not "
-                    f"match an applied migration. Found {len(existing)} table(s): {names}. "
-                    "This migration only targets a brand-new database. No changes made."
+    with conn.cursor() as cur:
+        existing = existing_tables(cur)
+        if existing:
+            names = ", ".join(sorted(existing))
+            if existing == EXPECTED_TABLES:
+                print(
+                    "Guard: schema public already contains the 7 expected tables "
+                    f"({names}). Migration already applied - nothing to do."
                 )
+                sys.exit(0)
+            sys.exit(
+                "ERROR: refusing to apply - schema public is not empty and does not "
+                f"match an applied migration. Found {len(existing)} table(s): {names}. "
+                "This migration only targets a brand-new database. No changes made."
+            )
 
-            # Empty public schema: apply the whole migration in this one transaction.
-            cur.execute(sql)
-        conn.commit()
-
+        # Empty public schema: apply the whole migration in this one transaction.
+        cur.execute(sql)
+    conn.commit()
     print("Applied 001_init.sql: 7 tables created, settings seeded.")
 
 
+# ---------------------------------------------------------------------------
+# 002
+# ---------------------------------------------------------------------------
+
+
+def has_002(cur) -> bool:
+    cur.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'logs' AND column_name = 'user_id'"
+    )
+    return cur.fetchone() is not None
+
+
+def _count(cur, table: str) -> int:
+    cur.execute(f"SELECT count(*) FROM {table}")
+    return cur.fetchone()[0]
+
+
+def verify_002(cur, before: dict[str, int]) -> str:
+    """Assert the post-002 invariants inside the still-open transaction.
+    Returns the owner's user id. Any AssertionError rolls the migration back."""
+    cur.execute(
+        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (OWNER_EMAIL,)
+    )
+    owners = cur.fetchall()
+    assert len(owners) == 1, f"expected exactly one Neon Auth user for the owner, found {len(owners)}"
+    owner_id = owners[0][0]
+
+    for table, n in before.items():
+        assert _count(cur, table) == n, f"{table}: row count changed ({n} -> {_count(cur, table)})"
+    for table in TENANT_TABLES:
+        cur.execute(f"SELECT count(*) FROM {table} WHERE user_id IS DISTINCT FROM %s", (owner_id,))
+        stray = cur.fetchone()[0]
+        assert stray == 0, f"{table}: {stray} row(s) not backfilled to the owner"
+
+    cur.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = %s", (APP_ROLE,))
+    role = cur.fetchone()
+    assert role is not None and role[0] is False, f"role {APP_ROLE} missing or BYPASSRLS"
+    cur.execute(
+        "SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relrowsecurity AND c.relforcerowsecurity"
+    )
+    rls = {r[0] for r in cur.fetchall()}
+    assert rls == set(RLS_TABLES), f"RLS enabled+forced on {sorted(rls)}, expected {sorted(RLS_TABLES)}"
+    cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")
+    assert cur.fetchone()[0] == len(RLS_TABLES)
+    # the ledger's one-log-a-day rule (002 §5): a partial unique index
+    cur.execute(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+        "AND indexname = 'quota_events_log_day_key'"
+    )
+    idx = cur.fetchone()
+    assert (
+        idx is not None
+        and idx[0].startswith("CREATE UNIQUE INDEX")
+        and "WHERE (kind = 'log'::text)" in idx[0]
+    ), "quota_events_log_day_key missing, or not a partial unique index"
+
+    # Under the app role: the owner sees everything, another tenant nothing.
+    cur.execute(f"SET LOCAL ROLE {APP_ROLE}")
+    cur.execute("SELECT set_config('app.user_id', %s, true)", (owner_id,))
+    for table in TENANT_TABLES:
+        assert _count(cur, table) == before[table], f"{table}: owner cannot see own rows under RLS"
+    cur.execute("SELECT set_config('app.user_id', '002-verify-other', true)")
+    for table in TENANT_TABLES:
+        assert _count(cur, table) == 0, f"{table}: RLS leaks rows to another tenant"
+    assert _count(cur, "foods") == before["foods"], "foods must stay global"
+
+    # No tenant bound: an insert fails loudly, inside a savepoint — the policy's
+    # WITH CHECK refuses the NULL user_id (InsufficientPrivilege) before the
+    # NOT NULL constraint would; either is the fail-closed outcome.
+    cur.execute("SAVEPOINT no_tenant")
+    cur.execute("SELECT set_config('app.user_id', '', true)")
+    try:
+        cur.execute("INSERT INTO settings (key, value) VALUES ('002-verify', '1'::jsonb)")
+    except (psycopg.errors.NotNullViolation, psycopg.errors.InsufficientPrivilege):
+        pass
+    else:
+        raise AssertionError("insert with no app.user_id must fail")
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT no_tenant")
+    cur.execute("SET LOCAL ROLE NONE")
+    return owner_id
+
+
+def apply_002(conn, dry_run: bool) -> None:
+    sql = SQL_FILE_002.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        existing = existing_tables(cur)
+        if existing != EXPECTED_TABLES:
+            names = ", ".join(sorted(existing)) or "(none)"
+            sys.exit(
+                "ERROR: refusing to apply 002 - schema public does not match an applied 001. "
+                f"Found: {names}. No changes made."
+            )
+        if has_002(cur):
+            print("Guard: logs.user_id already exists - 002 already applied, nothing to do.")
+            sys.exit(0)
+        # The locks the ALTERs take anyway, up front: the verify counts must see
+        # the same rows even if the (old) app writes while this runs.
+        cur.execute(f"LOCK TABLE {', '.join(sorted(EXPECTED_TABLES))} IN ACCESS EXCLUSIVE MODE")
+        before = {t: _count(cur, t) for t in sorted(EXPECTED_TABLES)}
+        cur.execute(sql)
+        assert _count(cur, "quota_events") == 0  # just created
+        owner_id = verify_002(cur, before)
+    if dry_run:
+        conn.rollback()
+        print(
+            f"DRY RUN: 002_multiuser.sql applied and verified, then ROLLED BACK. "
+            f"Owner user id {owner_id}; row counts {before}."
+        )
+        return
+    conn.commit()
+    print(
+        f"Applied 002_multiuser.sql: user_id on {', '.join(TENANT_TABLES)} (backfilled to "
+        f"owner {owner_id}), quota_events created, RLS enabled+forced on {len(RLS_TABLES)} "
+        f"tables, role {APP_ROLE} granted. Row counts {before}."
+    )
+
+
+def check_002(conn) -> None:
+    """`--check`: 002's own verification against the committed schema, in a
+    transaction that is rolled back. The checks assume one tenant (every row
+    the owner's, the owner sees every row), so run it right after applying."""
+    with conn.cursor() as cur:
+        if not has_002(cur):
+            sys.exit("ERROR: 002 is not applied (logs.user_id absent) - nothing to check.")
+        counts = {t: _count(cur, t) for t in sorted(EXPECTED_TABLES)}
+        owner_id = verify_002(cur, counts)
+    conn.rollback()
+    print(f"CHECK OK: 002 invariants hold. Owner user id {owner_id}; row counts {counts}.")
+
+
+def main(argv: list[str]) -> None:
+    dry_run = "--dry-run" in argv
+    check = "--check" in argv
+    args = [a for a in argv if a not in ("--dry-run", "--check")]
+    which = args[0] if args else "001"
+    if which not in ("001", "002") or (which == "001" and (dry_run or check)) or (dry_run and check):
+        sys.exit(__doc__)
+    dsn = read_database_url(ENV_FILE)
+    with psycopg.connect(dsn) as conn:
+        if which == "001":
+            apply_001(conn)
+        elif check:
+            check_002(conn)
+        else:
+            apply_002(conn, dry_run)
+
+
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

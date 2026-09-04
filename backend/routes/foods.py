@@ -199,8 +199,7 @@ async def select_food(body: SelectRequest) -> SelectResponse:
     if food is None:  # stale index id (404) — §3.4 adapter rules
         raise HTTPException(status_code=404, detail="source id no longer exists")
     food = dict(food)
-    if body.display_name:
-        food["display_name"] = body.display_name
+    foods_repo.apply_label(food, body.display_name)  # owner only: the cache is shared
     food_id = await foods_repo.persist_food(food)
     return SelectResponse(food_id=str(food_id))
 
@@ -356,10 +355,34 @@ def _badge(row: dict) -> SourceBadge:
     )
 
 
+# §3.4b/§8.9: a photo placeholder (source='estimate') is the photographer's
+# alone. Its provenance names the log it came from, and under RLS that log is
+# visible only to its tenant — everyone else gets the 404 an unknown id gets.
+# What the photographer sees is trimmed of the row's internals: the log id,
+# item index and capture time are pointers, not food data, and the payload is
+# the same vision output again.
+_PLACEHOLDER_INTERNALS = ("log_id", "item_index", "captured_at")
+
+
+async def _own_placeholder(row: dict) -> bool:
+    try:
+        log_id = UUID(str((row["provenance"] or {}).get("log_id")))
+    except ValueError:
+        return False  # no pointer to a log: nobody's
+    return await db.fetchone("SELECT 1 AS hit FROM logs WHERE id = %s", (log_id,)) is not None
+
+
+def _public_provenance(row: dict) -> dict | None:
+    prov = row["provenance"]
+    if row["source"] != "estimate" or not isinstance(prov, dict):
+        return prov
+    return {k: v for k, v in prov.items() if k not in _PLACEHOLDER_INTERNALS} or None
+
+
 @router.get("/api/foods/{food_id}", response_model=FoodDetail)
 async def get_food_detail(food_id: UUID) -> FoodDetail:
     row = await db.fetchone("SELECT * FROM foods WHERE id = %s", (food_id,))
-    if row is None:
+    if row is None or (row["source"] == "estimate" and not await _own_placeholder(row)):
         raise HTTPException(status_code=404, detail="food not found")
     servings = [
         ServingOption(
@@ -395,8 +418,12 @@ async def get_food_detail(food_id: UUID) -> FoodDetail:
         citation=web_source_of(
             row["source"], row["source_url"], row["provenance"], row["display_name"]
         ),
-        provenance=row["provenance"],
-        payload=row["payload"] if isinstance(row["payload"], dict) else None,
+        provenance=_public_provenance(row),
+        payload=(
+            row["payload"]
+            if row["source"] != "estimate" and isinstance(row["payload"], dict)
+            else None
+        ),
         aliases=await aliases_for_food(str(row["id"])),
         refreshed_at=row["refreshed_at"],
         created_at=row["created_at"],

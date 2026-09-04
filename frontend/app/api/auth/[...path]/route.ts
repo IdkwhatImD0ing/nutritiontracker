@@ -9,9 +9,10 @@ export function GET(request: Request, ctx: Ctx) {
 }
 
 export function POST(request: Request, ctx: Ctx) {
-  // Single-user app: registration never happens over the public REST surface.
-  // The one legitimate sign-up (first run) goes through the server action,
-  // which calls the auth service directly and enforces the email allowlist.
+  // Registration never happens over the public REST surface: the one door is
+  // the sign-up server action (frontend/app/auth/actions.ts), which calls the
+  // auth service directly — so the demo copy, and any rate limit a burst of
+  // sign-ups ever needs (BACKLOG 103), live in one place.
   if (new URL(request.url).pathname.includes("sign-up")) {
     return new Response("sign-up is disabled", { status: 403 });
   }

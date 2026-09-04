@@ -31,7 +31,7 @@ from resolver import cascade
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from resolver.norm import norm
 from routes import photo
-from services import tier3
+from services import quota, tier3
 from sources import fdc
 
 router = APIRouter(dependencies=[Depends(require_user)])
@@ -142,6 +142,7 @@ async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
     if row is None:
         raise HTTPException(status_code=404, detail="unknown log item")
     _require_live(row)
+    await quota.check_resolve()  # demo: capped model spend — after the free refusals
     claimed = await db.execute(
         f"""
         UPDATE item_resolutions
@@ -199,6 +200,12 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
     prev = await _item_row(body.log_id, body.item_index)
     if prev is not None:
         _require_live(prev)  # a removed/committed row is never re-resolved
+    elif await db.fetchone("SELECT 1 AS hit FROM logs WHERE id = %s", (str(body.log_id),)) is None:
+        # an added phrase hangs on a log of this tenant's: an unknown or
+        # foreign log (invisible under RLS) is 404 here, before any model
+        # call — not a tenant-FK failure after the decompose micro-call
+        raise HTTPException(status_code=404, detail="log not found")
+    await quota.check_resolve()  # demo: capped model spend — after the free refusals
     prev_staged = _staged_dict(prev) if prev is not None else {}
     try:
         meal = Meal(prev_staged.get("meal") or "snack")
@@ -490,6 +497,7 @@ async def answer_question(body: AnswerRequest) -> StagedItem:
         if toggled is not None:
             return toggled
     # Free text: one re-kick — a second agent run carrying the refinement.
+    await quota.check_resolve()  # demo: capped model spend (the local paths above are free)
     claimed = await db.execute(
         f"""
         UPDATE item_resolutions

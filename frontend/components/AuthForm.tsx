@@ -7,6 +7,8 @@ type Props = {
   title: string;
   submitLabel: string;
   action: (prev: AuthFormState, formData: FormData) => Promise<AuthFormState>;
+  /** one line under the title — what the account being created gets */
+  intro?: string;
   withName?: boolean;
   alt: { text: string; href: string; label: string };
 };
@@ -15,6 +17,7 @@ export default function AuthForm({
   title,
   submitLabel,
   action,
+  intro,
   withName,
   alt,
 }: Props) {
@@ -24,6 +27,7 @@ export default function AuthForm({
     <main className="auth-wrap">
       <form className="auth-card" action={formAction}>
         <h1>{title}</h1>
+        {intro ? <p className="subsheet-hint auth-intro">{intro}</p> : null}
         {withName ? (
           <label>
             Name

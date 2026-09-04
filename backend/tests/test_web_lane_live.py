@@ -46,6 +46,8 @@ from psycopg.rows import dict_row  # noqa: E402
 from psycopg.types.json import Json  # noqa: E402
 
 import db  # noqa: E402
+
+from tenancy_harness import bind_test_tenant  # noqa: E402
 import services.tier3 as tier3  # noqa: E402
 from sources import web  # noqa: E402
 
@@ -101,6 +103,7 @@ async def isolated_db():
     conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):

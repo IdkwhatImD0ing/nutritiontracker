@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError, discardLog, type LogResponse, type Meal } from "@/lib/api";
+import {
+  ApiError,
+  discardLog,
+  quotaRefusal,
+  type LogResponse,
+  type Meal,
+} from "@/lib/api";
 import { createLogPhoto } from "./PhotoApi";
 import "@/app/photo.css";
 
@@ -76,6 +82,8 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
 }
 
 function uploadMessage(e: unknown): string {
+  const quota = quotaRefusal(e);
+  if (quota) return quota.detail; // the demo quota's own sentence, verbatim
   if (e instanceof ApiError) {
     if (e.status === 413) return "That photo is too large to send.";
     if (e.status === 400 || e.status === 415 || e.status === 422) {
@@ -155,7 +163,9 @@ export default function PhotoCapture({
       setPhase("pick");
       onStaged(log);
     } catch (e) {
-      // The shot stays so Retry re-sends it under the same id.
+      // The shot stays so Retry re-sends it under the same id — unless the
+      // demo quota refused it: a retry today would meet the same 429.
+      if (quotaRefusal(e)) setShot(null);
       setPhase("error");
       setError(uploadMessage(e));
     }

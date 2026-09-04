@@ -5,13 +5,31 @@ backend/sources/fdc.py get_food returns, plus its source/source_id identity)
 on UNIQUE (source, source_id) and returns the row uuid. Cache-forever: a
 conflict keeps the existing record (one row per real-world food) and only
 touches refreshed_at.
+
+The table is shared by every account (DESIGN §8.9), so what a caller may put
+on a row is a tenancy rule: apply_label() takes a chosen display name from
+the owner only, and services/tier3.add_food takes web transcriptions from the
+owner only. A demo's rows carry the adapter's own names.
 """
 
 from __future__ import annotations
 
 from psycopg.types.json import Json
 
+import auth
 import db
+
+
+def apply_label(food: dict, display_name: str | None) -> None:
+    """Put a caller-chosen short name on a food about to be cached — the
+    owner's only. Every account reads the cache back (manual search, the
+    tier-3 candidate list the agent is told to prefer), so a demo's label —
+    typed into a pick, or steered through the agent by the phrase — must not
+    become the row's name. A demo's rows keep the adapter's display name."""
+    if display_name and auth.is_owner():
+        food["display_name"] = display_name
+    elif not food.get("display_name"):
+        food["display_name"] = food.get("name", "")
 
 
 async def persist_food(food: dict) -> str:

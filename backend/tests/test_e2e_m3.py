@@ -64,6 +64,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import auth  # noqa: E402
 import db  # noqa: E402
+from tenancy_harness import override_user  # noqa: E402
 import main  # noqa: E402
 from resolver.norm import norm  # noqa: E402
 
@@ -78,10 +79,9 @@ def _run(coro):
 
 @pytest.fixture()
 def client():
-    main.app.dependency_overrides[auth.require_user] = lambda: {
-        "email": "billzhangsc@gmail.com",
-        "sub": "e2e-m3",
-    }
+    main.app.dependency_overrides[auth.require_user] = override_user(
+        email="billzhangsc@gmail.com", user_id="e2e-m3"
+    )
     try:
         with TestClient(main.app) as c:
             yield c
@@ -159,6 +159,7 @@ def _staged(idx: int, phrase: str, food_id: str, name: str, serving: dict, qty: 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("needs_002")  # real commit path: alias learning targets 002's constraint
 def test_m3_usual_breakfast_stages_instantly_and_the_curves_render(client: TestClient, monkeypatch):
     tag = uuid4().hex[:8]
     egg_serving = {

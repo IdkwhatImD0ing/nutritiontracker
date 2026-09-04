@@ -110,6 +110,9 @@ def _workstream_stubs():
 
 
 import db  # noqa: E402
+
+
+from tenancy_harness import bind_test_tenant  # noqa: E402
 from models import (  # noqa: E402
     CommitRequest,
     LogCreate,
@@ -172,6 +175,7 @@ async def isolated_db():
     conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):

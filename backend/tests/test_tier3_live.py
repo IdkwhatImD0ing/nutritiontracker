@@ -334,10 +334,19 @@ async def _persist_food(food: dict) -> str:
     return fid
 
 
+def _apply_label(food: dict, display_name: str | None) -> None:
+    """The real rule for the owner (these live runs are the owner's)."""
+    if display_name:
+        food["display_name"] = display_name
+    elif not food.get("display_name"):
+        food["display_name"] = food.get("name", "")
+
+
 resolver_pkg = types.ModuleType("resolver")
 resolver_pkg.__path__ = []
 foods_repo_stub = types.ModuleType("resolver.foods_repo")
 foods_repo_stub.persist_food = _persist_food
+foods_repo_stub.apply_label = _apply_label
 resolver_pkg.foods_repo = foods_repo_stub
 
 # ---------------------------------------------------------------------------
@@ -365,6 +374,7 @@ async def _require_user():
 
 
 auth_stub.require_user = _require_user
+auth_stub.is_owner = lambda: True  # the web lane and labels are the owner's
 
 # ---------------------------------------------------------------------------
 # Register stubs, then import the modules under test through synthetic packages

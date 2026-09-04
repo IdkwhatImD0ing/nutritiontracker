@@ -1,14 +1,22 @@
 """Auth dependency (DESIGN.md §2): offline JWT verification against Neon Auth JWKS.
 
+Any verified account is a user: ``require_user`` returns ``{id, email,
+is_owner}`` (id = the JWT ``sub`` = the Neon Auth user id; is_owner marks the
+one ALLOWED_EMAIL account — every other account is a demo, see
+services/quota.py) and binds ``db.current_user_id`` so every statement of the
+request runs as that tenant (migration 002 RLS).
+
 `require_user` is a module-level function used directly as a FastAPI dependency
 (``Depends(require_user)``) so ``app.dependency_overrides[require_user] = ...``
-works naturally in tests.
+works naturally in tests (an override must bind the tenant itself:
+tests/tenancy_harness.override_user).
 """
 
 from __future__ import annotations
 
 import os
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -16,7 +24,22 @@ import httpx
 import jwt
 from fastapi import HTTPException, Request
 
+import db
+
 DEFAULT_ALLOWED_EMAIL = "billzhangsc@gmail.com"
+
+# The request's verified user, for code that has no handle on the dependency
+# result (services/quota.py's one-line checks inside handlers tests also call
+# directly). Set beside db.current_user_id; None outside a request.
+current_user: ContextVar[dict | None] = ContextVar("current_user", default=None)
+
+
+def is_owner() -> bool:
+    """Whether the request's user is the owner. No user bound counts as a
+    demo — the quota and the shared-cache write rules both fail closed."""
+    user = current_user.get()
+    return bool(user and user.get("is_owner"))
+
 
 _STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -170,7 +193,7 @@ def _check_origin(request: Request) -> None:
 
 
 async def require_user(request: Request) -> dict:
-    """FastAPI dependency: verified, allowlisted user or 401/403."""
+    """FastAPI dependency: verified user ({id, email, is_owner}) or 401/403."""
     _check_origin(request)
     token = _bearer_token(request)
     try:
@@ -195,16 +218,27 @@ async def require_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="invalid token")
 
     email = payload.get("email")
-    allowed = _env("ALLOWED_EMAIL", DEFAULT_ALLOWED_EMAIL) or DEFAULT_ALLOWED_EMAIL
-    if not email or email.strip().lower() != allowed.strip().lower():
-        raise HTTPException(status_code=403, detail="email not allowed")
-    # The allowlist is only as strong as the email claim: sign-up is a public
-    # Better Auth endpoint, so a token whose email the holder never proved
-    # owning must not pass. Reject when the claim is present and false; a token
-    # without the claim is allowed (claim shape is the auth service's).
+    if not email:
+        raise HTTPException(status_code=403, detail="token has no email")
+    # The owner check is only as strong as the email claim: sign-up is a
+    # public Better Auth endpoint, so a token whose email the holder never
+    # proved owning must not pass. Reject when the claim is present and
+    # false; a token without the claim is allowed (claim shape is the auth
+    # service's).
     verified = payload.get("email_verified")
     if verified is None:
         verified = payload.get("emailVerified")
     if verified is not None and not verified:
         raise HTTPException(status_code=403, detail="email not verified")
-    return {"email": email, "user_id": payload.get("sub")}
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail="token missing sub")
+    allowed = _env("ALLOWED_EMAIL", DEFAULT_ALLOWED_EMAIL) or DEFAULT_ALLOWED_EMAIL
+    user = {
+        "id": str(sub),
+        "email": email,
+        "is_owner": email.strip().lower() == allowed.strip().lower(),
+    }
+    db.current_user_id.set(user["id"])  # the tenant every statement of this request runs as
+    current_user.set(user)
+    return user

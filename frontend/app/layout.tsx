@@ -3,10 +3,35 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import { ServiceWorkerProvider } from "./serwist/provider";
 
+const description =
+  "Voice-first nutrition logger: say what you ate and Tally finds the foods, works out the macros, and keeps your diary. Photo, barcode, and search lanes too.";
+
+// Public-facing (the repo is open source and anyone can sign up for a demo
+// account). No social image exists yet, so openGraph/twitter carry text only.
 export const metadata: Metadata = {
   applicationName: "Tally",
-  title: "Tally",
-  description: "Voice-first nutrition logging",
+  title: { default: "Tally", template: "%s · Tally" },
+  description,
+  keywords: [
+    "nutrition tracker",
+    "food diary",
+    "calorie counter",
+    "macro tracker",
+    "voice logging",
+    "open source",
+    "PWA",
+  ],
+  openGraph: {
+    title: "Tally",
+    description,
+    siteName: "Tally",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Tally",
+    description,
+  },
   // iOS installed-PWA chrome: standalone capable, dark ground under a
   // translucent status bar (globals.css already pads safe-area insets).
   appleWebApp: {

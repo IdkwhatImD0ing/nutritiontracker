@@ -10,7 +10,9 @@ type Props = {
    *  camera stays live so the user can try again, and search is offered */
   notice: string | null;
   onCode: (code: string) => void;
-  onSearchInstead: () => void;
+  /** absent when search would meet the same wall (a demo account's day's
+   *  log is spent — the notice is the server's 429) — no chip is offered */
+  onSearchInstead?: () => void;
   onClose: () => void;
 };
 
@@ -207,15 +209,17 @@ export default function BarcodeScanner({
         {notice ? (
           <>
             <p className="sheet-error">{notice}</p>
-            <div className="chips">
-              <button
-                type="button"
-                className="chip search-instead"
-                onClick={onSearchInstead}
-              >
-                Search instead
-              </button>
-            </div>
+            {onSearchInstead ? (
+              <div className="chips">
+                <button
+                  type="button"
+                  className="chip search-instead"
+                  onClick={onSearchInstead}
+                >
+                  Search instead
+                </button>
+              </div>
+            ) : null}
           </>
         ) : null}
 

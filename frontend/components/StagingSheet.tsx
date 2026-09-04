@@ -6,6 +6,7 @@ import {
   commitLog,
   getLog,
   kickTier3,
+  quotaRefusal,
   removeStagedItem,
   resolveItem,
   selectFood,
@@ -150,15 +151,27 @@ export default function StagingSheet({
         );
         if (local?.status === "searching") mergeItem(item);
       })
-      .catch(() => {
-        /* the poll + watchdog covers a failed kick */
+      .catch((e) => {
+        // A demo past its re-resolution cap gets the server's sentence (§5:
+        // never a generic error); the row stays `searching` and the poll +
+        // watchdog run it down to not_found. Any other failure the poll +
+        // watchdog cover on their own.
+        const q = quotaRefusal(e);
+        if (q) setError(q.detail);
       });
   };
 
   /** POST /api/resolve for one row (add-item and the §7.1 edit-sheet text
    *  field). The route runs tiers 1–2 and, when needed, tier 3 inline — the
-   *  response is final, no client-side kick. */
-  const resolveInto = (itemIndex: number, phrase: string) => {
+   *  response is final, no client-side kick. `before` is the row as it was
+   *  before the edit (null for a freshly added row): a demo-quota 429 spent
+   *  nothing server-side, so the sheet shows the server's sentence and puts
+   *  the row back (or drops the added one) instead of a not_found row. */
+  const resolveInto = (
+    itemIndex: number,
+    phrase: string,
+    before: StagedItem | null,
+  ) => {
     resolvingRef.current.add(itemIndex);
     resolveItem({ log_id: log.log_id, item_index: itemIndex, phrase })
       .then((item) => {
@@ -170,8 +183,18 @@ export default function StagingSheet({
         );
         if (local == null || local.status === "searching") mergeItem(item);
       })
-      .catch(() => {
+      .catch((e) => {
         resolvingRef.current.delete(itemIndex);
+        const q = quotaRefusal(e);
+        if (q) {
+          setError(q.detail);
+          setItems((prev) =>
+            before
+              ? prev.map((i) => (i.item_index === itemIndex ? before : i))
+              : prev.filter((i) => i.item_index !== itemIndex),
+          );
+          return;
+        }
         setItems((prev) =>
           prev.map((i) =>
             i.item_index === itemIndex
@@ -327,8 +350,9 @@ export default function StagingSheet({
         answer,
       });
       mergeItem(updated);
-    } catch {
-      setError("Couldn't update that item.");
+    } catch (e) {
+      // a demo past its re-resolution cap: the server's sentence, verbatim
+      setError(quotaRefusal(e)?.detail ?? "Couldn't update that item.");
     } finally {
       setRowBusy(item.item_index, false);
     }
@@ -402,7 +426,7 @@ export default function StagingSheet({
       },
     ]);
     setAddText("");
-    resolveInto(idx, phrase);
+    resolveInto(idx, phrase, null);
   };
 
   // §7.1 food bullet (BACKLOG 23) — the three edit-sheet exits.
@@ -419,6 +443,8 @@ export default function StagingSheet({
     if (editFor == null) return;
     const idx = editFor;
     setEditFor(null);
+    const before =
+      itemsRef.current.find((i) => i.item_index === idx) ?? null;
     // Full row reset: the new phrase replaces the old resolution wholesale
     // (server-side too — /api/resolve rewrites the staged payload).
     setItems((prev) =>
@@ -434,7 +460,7 @@ export default function StagingSheet({
           : i,
       ),
     );
-    resolveInto(idx, text);
+    resolveInto(idx, text, before);
   };
 
   const editManualSearch = () => {

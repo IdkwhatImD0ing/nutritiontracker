@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { searchFoods, type FoodSearchResult } from "@/lib/api";
+import { quotaRefusal, searchFoods, type FoodSearchResult } from "@/lib/api";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -43,10 +43,11 @@ export default function ManualSearchSheet({
       if (seq.current !== id) return;
       setResults(r.hits);
       setFdcDown(r.fdcError != null);
-    } catch {
+    } catch (e) {
       if (seq.current !== id) return;
       setResults([]);
-      setSearchError("Search failed. Try again.");
+      // a demo 429 says why in its own words — show those, not the generic line
+      setSearchError(quotaRefusal(e)?.detail ?? "Search failed. Try again.");
     } finally {
       if (seq.current === id) setSearching(false);
     }

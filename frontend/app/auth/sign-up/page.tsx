@@ -5,6 +5,7 @@ export default function SignUpPage() {
   return (
     <AuthForm
       title="Create your account"
+      intro="New accounts are demos: one log a day — by voice, photo, barcode, or search — in a diary only you can see."
       submitLabel="Sign up"
       action={signUpAction}
       withName

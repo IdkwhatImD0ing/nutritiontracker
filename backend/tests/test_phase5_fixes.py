@@ -75,6 +75,9 @@ def _tracing_stub():
 
 
 import db  # noqa: E402
+
+
+from tenancy_harness import bind_test_tenant, override_user  # noqa: E402
 import services.tier3 as tier3  # noqa: E402
 from models import CommitRequest, FoodRef, Meal, ParsedItem, ServingRef, StagedItem  # noqa: E402
 from resolver import cascade  # noqa: E402
@@ -124,6 +127,7 @@ async def isolated_db():
     conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):
@@ -878,7 +882,7 @@ def test_g3_non_finite_qty_is_a_422_not_a_500(monkeypatch):
 
     monkeypatch.setattr(quick, "_load_food", never)
     monkeypatch.setattr(main, "tracing", sys.modules["tracing"])
-    main.app.dependency_overrides[auth.require_user] = lambda: {"email": "t", "sub": "phase5"}
+    main.app.dependency_overrides[auth.require_user] = override_user(email="t", user_id="phase5")
     ids: list = []
     try:
         with TestClient(main.app, raise_server_exceptions=False) as client:

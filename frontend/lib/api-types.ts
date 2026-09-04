@@ -527,6 +527,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Me */
+        get: operations["get_me_api_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -852,6 +869,15 @@ export interface components {
             /** Fat G */
             fat_g: number;
             targets: components["schemas"]["MacroTargets"];
+        };
+        /** DemoQuota */
+        DemoQuota: {
+            /** Limit */
+            limit: number;
+            /** Used Today */
+            used_today: number;
+            /** Resets At */
+            resets_at: string;
         };
         /**
          * DiaryEntry
@@ -1294,6 +1320,14 @@ export interface components {
             fiber_g?: number | null;
         } & {
             [key: string]: number;
+        };
+        /** MeResponse */
+        MeResponse: {
+            /** Email */
+            email: string;
+            /** Is Owner */
+            is_owner: boolean;
+            demo: components["schemas"]["DemoQuota"] | null;
         };
         /**
          * Meal
@@ -2927,6 +2961,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_me_api_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResponse"];
                 };
             };
         };

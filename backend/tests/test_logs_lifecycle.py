@@ -151,6 +151,9 @@ def _reset_decompose():
 
 
 import db  # noqa: E402
+
+
+from tenancy_harness import bind_test_tenant, override_user  # noqa: E402
 from models import (  # noqa: E402
     CommitRequest,
     LogCreate,
@@ -183,6 +186,7 @@ async def isolated_db():
     conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):
@@ -678,7 +682,7 @@ def _voice_app():
 
     app = FastAPI()
     app.include_router(logs_routes.router)
-    app.dependency_overrides[require_user] = lambda: {"email": "test", "user_id": "t"}
+    app.dependency_overrides[require_user] = override_user(email="test", user_id="t")
     return app
 
 

@@ -190,7 +190,7 @@ async def put_settings(body: SettingsUpdate) -> SettingsResponse:
             for key, value in updates.items():
                 await conn.execute(
                     "INSERT INTO settings (key, value) VALUES (%s, %s) "
-                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    "ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
                     (key, Json(value)),
                 )
     return await _read_settings()

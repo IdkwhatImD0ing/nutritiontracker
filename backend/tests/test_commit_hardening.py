@@ -61,6 +61,9 @@ def _tracing_stub():
 
 
 import db  # noqa: E402
+
+
+from tenancy_harness import bind_test_tenant  # noqa: E402
 from models import FoodRef, Meal, ServingRef, StagedItem  # noqa: E402
 from resolver import commit as commit_tx  # noqa: E402
 from resolver.norm import norm  # noqa: E402
@@ -100,6 +103,7 @@ async def isolated_db():
     )
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):
@@ -444,6 +448,7 @@ def test_delete_entry():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("needs_002")  # real commit path: alias learning targets 002's constraint
 def test_commit_timing_live_batched_flush():
     saved_stub = sys.modules.pop("tracing")  # the real module, for real flushes
     log_id = uuid4()

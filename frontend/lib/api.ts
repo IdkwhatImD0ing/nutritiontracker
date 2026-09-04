@@ -41,10 +41,40 @@ type Ok<Op> = Op extends { responses: { 200: infer R } } ? JsonOf<R> : never;
 
 export class ApiError extends Error {
   status: number;
+  /** FastAPI's `detail` when the body was JSON with a string one — the
+   *  server's own user-facing sentence. A demo-quota 429 also carries
+   *  `resets_at` (ISO UTC); callers show `detail` verbatim (§13: never a
+   *  generic error where the server already said why). */
+  detail: string | null = null;
+  resetsAt: string | null = null;
   constructor(status: number, body: string) {
     super(`API ${status}: ${body.slice(0, 200)}`);
     this.status = status;
+    try {
+      const j = JSON.parse(body);
+      // {detail, resets_at} at the top level, or nested one deeper when the
+      // route raised HTTPException(detail={...}).
+      const d = j && typeof j.detail === "object" && j.detail ? j.detail : j;
+      if (typeof d?.detail === "string") this.detail = d.detail;
+      if (typeof d?.resets_at === "string") this.resetsAt = d.resets_at;
+    } catch {
+      /* plain-text body — nothing to surface beyond the status */
+    }
   }
+}
+
+/** The demo quota's refusal (HTTP 429, services/quota.py) or null for any
+ *  other failure: `detail` is the server's sentence ("Demo accounts can log
+ *  once a day — resets at …"), shown verbatim in the lane's own error
+ *  surface; `resetsAt` the ISO UTC instant the banner turns into local time. */
+export type QuotaRefusal = { detail: string; resetsAt: string | null };
+
+export function quotaRefusal(e: unknown): QuotaRefusal | null {
+  if (!(e instanceof ApiError) || e.status !== 429) return null;
+  return {
+    detail: e.detail ?? "Demo limit reached — try again tomorrow.",
+    resetsAt: e.resetsAt,
+  };
 }
 
 /** Small token cache so the hot path doesn't round-trip /token per request. */

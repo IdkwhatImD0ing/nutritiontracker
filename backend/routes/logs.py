@@ -22,6 +22,7 @@ from psycopg.types.json import Json
 from pydantic import BaseModel, Field
 from starlette.routing import Match
 
+import auth
 import db
 from auth import require_user
 from models import LogCreate, LogResponse, Meal, StagedItem
@@ -29,6 +30,7 @@ from resolver import cascade
 from resolver import commit as commit_tx
 from resolver.norm import norm
 from routes.commit import SavedMealNote
+from services import quota
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -51,7 +53,10 @@ _MAX_TIER3_ATTEMPTS = 2
 # legitimately run for tens of seconds before failing or succeeding. 90s
 # covers that tail and matches the client's own GET-poll hard stop (§5) — a
 # retry never claims a pipeline the client is still willing to wait on.
-# (Voice adds nothing here: STT completes before the log row is inserted.)
+# Voice and photo sit inside the window too: the row is claimed before STT /
+# vision runs (the claim is what answers a replay and records the demo's
+# attempt, so it cannot wait for the transcript), which puts one STT call
+# (services/transcribe: 30s per provider) ahead of decompose.
 _RERUN_GRACE_SECONDS = 90
 
 # Multipart upload bounds (Phase-3 panel): a ~10s MediaRecorder clip is tens
@@ -250,6 +255,52 @@ class _MultipartRoute(APIRoute):
         return match, child_scope
 
 
+# The claim of a client id — the lanes' idempotent insert (§8.6). Every lane's
+# insert names its own columns; this is the text/voice one.
+_INSERT_LOG_SQL = """
+INSERT INTO logs (id, input_mode, raw_input, captured_at, capture_fallback,
+                  capture_error, transcribe_ms)
+VALUES (%s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (id) DO NOTHING
+"""
+
+
+async def claim_log(sql: str, params: tuple) -> bool:
+    """The §8.6 claim of a client id and the demo's attempt, together.
+
+    `sql` inserts the lane's log row ON CONFLICT (id) DO NOTHING. When this
+    request inserted it, the demo's attempt is recorded in the same
+    transaction (quota.admit_log) — a refusal rolls the row back, so a 429
+    leaves nothing behind. False when the id already exists: this tenant's
+    own row (a replay, or an orphan to re-run) or another tenant's, which RLS
+    makes look the same here — _duplicate_post_response tells them apart,
+    spending nothing. The owner records nothing, so its claim is the bare
+    insert with no transaction around it.
+    """
+    if auth.is_owner():
+        return bool(await db.execute(sql, params))
+    async with db.tx() as conn:
+        inserted = (await conn.execute(sql, params)).rowcount
+        if inserted:
+            await quota.admit_log(conn)
+    return bool(inserted)
+
+
+async def _drop_empty_log(log_id: UUID) -> None:
+    """The lane failed before anything was staged (STT or vision down):
+    remove the itemless log row. The client retries under the SAME client id
+    (§5), and an itemless staged row younger than the §8.6 grace period
+    would replay through _duplicate_post_response as items=[] — read as "no
+    food" — instead of running the lane again. The demo quota is untouched:
+    the attempt was recorded with the claim, so dropping the row does not
+    hand the account another STT/vision call."""
+    await db.execute(
+        "DELETE FROM logs WHERE id = %s AND status = 'staged' "
+        "AND NOT EXISTS (SELECT 1 FROM item_resolutions WHERE log_id = logs.id)",
+        (log_id,),
+    )
+
+
 async def create_log_voice(
     audio: Annotated[UploadFile, File()],
     log_id: Annotated[UUID, Form(alias="id")],
@@ -275,13 +326,30 @@ async def create_log_voice(
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise HTTPException(413, f"audio exceeds {MAX_AUDIO_BYTES} bytes")
 
+    # §8.6 before STT: the claim of the client id answers a stored log — a
+    # replay of live items or of a recorded capture failure, the 409 of a
+    # committed log, the 404 of an id that is not this tenant's — before a
+    # byte reaches the transcriber, and records the demo's attempt with the
+    # row it claims: after the free request checks above (a malformed part
+    # costs nothing), before any STT spend, so a silent blob or an empty
+    # transcript counts like any attempt. The row carries '' until the
+    # transcript lands.
+    if not await claim_log(
+        _INSERT_LOG_SQL,
+        (log_id, "voice", "", captured_at, capture_fallback, capture_error, None),
+    ):
+        failed = await _stored_capture_failure(log_id)
+        if failed is not None:
+            return failed  # the same outcome again (§5 idempotency), no STT
+        replay = await _duplicate_post_response(log_id)
+        if replay is not None:
+            return replay
+        await quota.check_log()  # this tenant's orphan, claimed for a re-run: the next attempt
+
     # §13's silent-blob failure, caught server-side: a zero-byte blob is a
     # capture failure before any STT spend.
     if not audio_bytes:
-        return await _capture_failure(
-            log_id, captured_at, capture_fallback, "silent_blob", None, "",
-            client_error=capture_error,
-        )
+        return await _capture_failure(log_id, "silent_blob", None, "", client_error=capture_error)
 
     from services import transcribe as stt  # lazy: stubbed in route tests
 
@@ -290,15 +358,22 @@ async def create_log_voice(
     except stt.TranscriptionError as e:
         # every provider declined (§8.1: down, or its key is not configured)
         # — the client's degrade path is typing, not a fake empty meal; 503
-        # tells it to retry or fall back to text, and the detail says why
+        # tells it to retry or fall back to text, and the detail says why.
+        # The itemless row goes too: a retry under this id must run STT
+        # again, not replay an empty log. The demo's attempt stands.
+        await _drop_empty_log(log_id)
         raise HTTPException(503, f"transcription unavailable — retry or type it ({e})")
 
     if stt.is_near_empty(result.text):
         return await _capture_failure(
-            log_id, captured_at, capture_fallback, "empty_transcript",
-            result.transcribe_ms, result.text, client_error=capture_error,
+            log_id, "empty_transcript", result.transcribe_ms, result.text,
+            client_error=capture_error,
         )
 
+    await db.execute(
+        "UPDATE logs SET raw_input = %s, transcribe_ms = %s WHERE id = %s",
+        (result.text, result.transcribe_ms, log_id),
+    )
     body = LogCreate(
         id=log_id,
         text=result.text,
@@ -307,9 +382,7 @@ async def create_log_voice(
         capture_fallback=capture_fallback,
         capture_error=capture_error,
     )
-    return await create_log(
-        body, input_mode="voice", transcribe_ms=result.transcribe_ms
-    )
+    return await _run_pipeline(body)
 
 
 # Registered before the JSON route: the router tries routes in order, and this
@@ -359,8 +432,6 @@ async def create_log_endpoint(body: LogCreate) -> LogCreateResponse:
 
 async def _capture_failure(
     log_id: UUID,
-    captured_at: datetime,
-    capture_fallback: bool,
     error: str,
     transcribe_ms: int | None,
     transcript: str,
@@ -368,10 +439,13 @@ async def _capture_failure(
     client_error: str | None = None,
 ) -> CaptureFailureResponse:
     """§5/§8.1d: record the failure (the §9 counter reads capture_error) and
-    return capture_failure — never an empty staged log. status
-    'capture_failure' keeps the row out of every staged-log lifecycle:
-    commit/discard CAS on 'staged', and the orphan-claim above never re-runs
-    a pipeline for it. Idempotent by client id like the happy path.
+    return capture_failure — never an empty staged log. The row was claimed
+    by this request (claim_log) with the form fields; this stamps the outcome
+    on it. status 'capture_failure' keeps the row out of every staged-log
+    lifecycle: commit/discard CAS on 'staged', and the orphan-claim above
+    never re-runs a pipeline for it. Idempotent by client id like the happy
+    path: a same-id POST is answered from the stored row before STT
+    (_stored_capture_failure).
 
     client_error is the client's own prior-attempt failure (the capture_error
     form field). §9 counts both classes, so neither may overwrite the other:
@@ -381,43 +455,58 @@ async def _capture_failure(
     stored = f"{error};client={client_error}" if client_error else error
     await db.execute(
         """
-        INSERT INTO logs (id, input_mode, raw_input, captured_at, capture_fallback,
-                          capture_error, transcribe_ms, status)
-        VALUES (%s, 'voice', %s, %s, %s, %s, %s, 'capture_failure')
-        ON CONFLICT (id) DO NOTHING
+        UPDATE logs SET raw_input = %s, capture_error = %s, transcribe_ms = %s,
+                        status = 'capture_failure'
+        WHERE id = %s AND status = 'staged'
         """,
-        (log_id, transcript, captured_at, capture_fallback, stored, transcribe_ms),
+        (transcript, stored, transcribe_ms, log_id),
     )
     return CaptureFailureResponse(
         log_id=log_id, capture_error=error, client_capture_error=client_error
     )
 
 
-async def create_log(
-    body: LogCreate,
-    *,
-    input_mode: str = "text",
-    transcribe_ms: int | None = None,
-) -> LogCreateResponse:
-    # Idempotent upsert by client id (§5, §8.6): a concurrent double-drain or
-    # retry cannot create two logs — and only the request that actually
-    # inserted the row (or claimed an orphan, below) runs the pipeline.
-    inserted = await db.execute(
-        """
-        INSERT INTO logs (id, input_mode, raw_input, captured_at, capture_fallback,
-                          capture_error, transcribe_ms)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (id) DO NOTHING
-        """,
-        (body.id, input_mode, body.text, body.captured_at, body.capture_fallback,
-         body.capture_error, transcribe_ms),
+async def _stored_capture_failure(log_id: UUID) -> CaptureFailureResponse | None:
+    """The voice lane's idempotent replay (§5, §8.6): a same-id POST after a
+    recorded capture failure — the client keeps the id only while an upload's
+    response was lost — answers the stored outcome again, 200 with the same
+    body, before a byte reaches STT and without touching the quota. None
+    unless this tenant's row is a capture_failure; another lane's POST on
+    such an id stays the 409 of a log that left 'staged', as before."""
+    row = await db.fetchone(
+        "SELECT capture_error FROM logs WHERE id = %s AND status = 'capture_failure'",
+        (log_id,),
     )
-    if inserted == 0:
+    if row is None:
+        return None
+    server, _, client = (row["capture_error"] or "empty_transcript").partition(";client=")
+    return CaptureFailureResponse(
+        log_id=log_id, capture_error=server, client_capture_error=client or None
+    )
+
+
+async def create_log(body: LogCreate) -> LogCreateResponse:
+    # Idempotent claim by client id (§5, §8.6), the demo's attempt with it: a
+    # concurrent double-drain or retry cannot create two logs — and only the
+    # request that actually inserted the row (or claimed an orphan, below)
+    # runs the pipeline. A refused attempt leaves no row.
+    if not await claim_log(
+        _INSERT_LOG_SQL,
+        (body.id, "text", body.text, body.captured_at, body.capture_fallback,
+         body.capture_error, None),
+    ):
         replay = await _duplicate_post_response(body.id)
         if replay is not None:
             return replay
-        # orphaned staged log claimed (earlier attempt died mid-pipeline) → re-run
+        # orphaned staged log claimed (earlier attempt died mid-pipeline) →
+        # re-run: for a demo, the next attempt
+        await quota.check_log()
+    return await _run_pipeline(body)
 
+
+async def _run_pipeline(body: LogCreate) -> LogCreateResponse:
+    """§3.0 short-circuit, else decompose → the per-log cascade → _persist,
+    on a log row this request owns (a fresh claim, or a claimed orphan)."""
     meal = await infer_meal(body.captured_at, body.tz)
 
     # §3.0 whole-utterance short-circuit — the LLM leaves the hot path entirely.
@@ -527,8 +616,10 @@ async def _duplicate_post_response(log_id: UUID) -> LogResponse | None:
     """
     existing = await _load_log_response(log_id)
     if existing is None:
-        # the conflicting row vanished between INSERT and this read
-        raise HTTPException(409, "log in transition — retry")
+        # the id exists (the insert conflicted) but no row is visible: another
+        # tenant's log, which reads as no log at all (§8.9) — or, rarely, a
+        # row that vanished between the insert and this read
+        raise HTTPException(404, "log not found")
     if existing.items:
         return existing  # replay: the stored staging state
     log = await db.fetchone("SELECT status FROM logs WHERE id = %s", (log_id,))

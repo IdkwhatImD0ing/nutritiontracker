@@ -3,7 +3,9 @@
 Routers own their routes and apply auth.require_user router-wide; /api/health
 is the single unauthenticated route. Tracing initializes at startup and flushes
 at shutdown; the AI routes (logs, resolve/tier3, commit scoring) each flush
-before returning per the §10 serverless rule.
+before returning per the §10 serverless rule. The demo quota's 429
+(services/quota.py) gets its own handler so the body carries
+{detail, resets_at, used, limit} — the shape frontend/lib/api.ts reads.
 """
 
 from contextlib import asynccontextmanager
@@ -19,6 +21,7 @@ from routes import (
     foods,
     history,
     logs,
+    me,
     meals,
     metrics,
     photo,
@@ -26,6 +29,7 @@ from routes import (
     resolve,
     settings,
 )
+from services import quota
 
 
 @asynccontextmanager
@@ -39,6 +43,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Tally API", lifespan=lifespan)
+app.add_exception_handler(quota.QuotaExceeded, quota.exception_handler)
 
 
 @app.get("/api/health")
@@ -64,3 +69,5 @@ app.include_router(aliases.router)
 app.include_router(history.router)
 app.include_router(settings.router)
 app.include_router(metrics.router)
+# Open-sourcing (§8.9): who the caller is + the demo quota; the banner reads it.
+app.include_router(me.router)

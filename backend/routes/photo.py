@@ -44,7 +44,15 @@ from auth import require_user
 from models import FoodRef, Macros, Meal, ParsedItem, ServingOption, ServingRef, StagedItem
 from resolver import cascade, foods_repo
 from resolver.commit import KEEP_LOG_KEYS_SQL
-from routes.logs import LogCreateResponse, _duplicate_post_response, _persist, infer_meal
+from routes.logs import (
+    LogCreateResponse,
+    _drop_empty_log,
+    _duplicate_post_response,
+    _persist,
+    claim_log,
+    infer_meal,
+)
+from services import quota
 
 if TYPE_CHECKING:
     from services.vision import VisionItem, VisionResult
@@ -225,19 +233,6 @@ def _summary(seen: VisionResult) -> str:
     return "photo: " + (", ".join(parts) if parts else "nothing recognized")
 
 
-async def _drop_empty_log(log_id: UUID) -> None:
-    """Vision failed before anything was staged: remove the itemless log row.
-    PhotoCapture retries under the SAME client id (§5), and an itemless staged
-    row younger than the §8.6 grace period would replay through
-    _duplicate_post_response as items=[] — which the client reads as "no food
-    in that photo" — instead of running vision again."""
-    await db.execute(
-        "DELETE FROM logs WHERE id = %s AND status = 'staged' "
-        "AND NOT EXISTS (SELECT 1 FROM item_resolutions WHERE log_id = logs.id)",
-        (log_id,),
-    )
-
-
 # ---------------------------------------------------------------------------
 # POST /api/logs/photo
 # ---------------------------------------------------------------------------
@@ -271,19 +266,25 @@ async def create_log_photo(
     if sniffed is None:
         raise HTTPException(415, "not a JPEG, PNG or WebP image")
 
-    inserted = await db.execute(
+    # §8.6 + the demo quota (routes/logs.claim_log): the claim of the client
+    # id answers a stored log — a replay, a foreign id's 404 — before vision,
+    # and records the attempt with the row: after the free upload checks,
+    # before any vision spend; it stands even when vision fails and the row
+    # is dropped below (a retry under the same id is the next attempt).
+    if not await claim_log(
         """
         INSERT INTO logs (id, input_mode, raw_input, captured_at)
         VALUES (%s, 'photo', '', %s)
         ON CONFLICT (id) DO NOTHING
         """,
         (log_id, captured_at),
-    )
-    if inserted == 0:
+    ):
         replay = await _duplicate_post_response(log_id)
         if replay is not None:
             return replay
-        # orphaned staged log claimed (earlier attempt died mid-pipeline) → re-run
+        # orphaned staged log claimed (earlier attempt died mid-pipeline) →
+        # re-run: for a demo, the next attempt
+        await quota.check_log()
 
     import tracing
     from services import vision  # lazy: stubbed in route tests

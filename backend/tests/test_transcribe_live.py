@@ -140,6 +140,8 @@ def test_build_keyterms_db_brands_first_then_aliases_by_use():
 
     import db
 
+    from tenancy_harness import bind_test_tenant  # noqa: E402
+
     tag = uuid.uuid4().hex[:8]
     brand, alias_hi, alias_lo = f"kt brand {tag}", f"kt alias hi {tag}", f"kt alias lo {tag}"
 
@@ -149,6 +151,7 @@ def test_build_keyterms_db_brands_first_then_aliases_by_use():
         )
         outer = conn.transaction(force_rollback=True)
         await outer.__aenter__()
+        await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
         orig = db.fetchall
 
         async def fetchall(sql, params=()):

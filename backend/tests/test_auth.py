@@ -85,22 +85,36 @@ def app_client(monkeypatch):
     auth._keys.clear()
 
 
-def test_valid_token_allowlisted_email_passes(app_client):
+def test_valid_token_allowlisted_email_is_owner(app_client):
     client, state = app_client
     priv, jwk = _keypair("kid-a")
     state["jwks"] = {"keys": [jwk]}
     r = client.get("/whoami", headers={"Authorization": f"Bearer {_token(priv, 'kid-a')}"})
     assert r.status_code == 200
-    assert r.json() == {"email": ALLOWED, "user_id": "user-123"}
+    assert r.json() == {"id": "user-123", "email": ALLOWED, "is_owner": True}
 
 
-def test_wrong_email_403(app_client):
+def test_other_email_is_a_demo_user(app_client):
+    """Any verified account gets in (002 tenancy); only the allowlisted email
+    is the owner. Sign-up is open, so the quota (services/quota.py) is what
+    bounds a stranger, not the door."""
     client, state = app_client
     priv, jwk = _keypair("kid-a")
     state["jwks"] = {"keys": [jwk]}
-    tok = _token(priv, "kid-a", email="mallory@example.com")
+    tok = _token(priv, "kid-a", email="mallory@example.com", sub="user-456")
     r = client.get("/whoami", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert r.json() == {"id": "user-456", "email": "mallory@example.com", "is_owner": False}
+
+
+def test_token_without_email_or_sub_rejected(app_client):
+    client, state = app_client
+    priv, jwk = _keypair("kid-a")
+    state["jwks"] = {"keys": [jwk]}
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {_token(priv, 'kid-a', email=None)}"})
     assert r.status_code == 403
+    r = client.get("/whoami", headers={"Authorization": f"Bearer {_token(priv, 'kid-a', sub=None)}"})
+    assert r.status_code == 401
 
 
 def test_unverified_email_claim_403(app_client):

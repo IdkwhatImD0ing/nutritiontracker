@@ -29,6 +29,7 @@ from agents import Agent, MaxTurnsExceeded, ModelSettings, Runner, WebSearchTool
 from openai.types.responses.web_search_tool import Filters as WebSearchFilters
 from pydantic import BaseModel
 
+import auth
 import db
 import tracing
 from models import (
@@ -466,6 +467,14 @@ Output contract:
 - "not_found": nothing matched and no useful question exists.
 """
 
+# Appended for a non-owner run (§8.9, BACKLOG 119): no web tools exist there.
+_NO_WEB_LANE = """
+
+This account has no web lane: web_search, pin_chain_domain and fetch_page are
+not available. Restaurant/chain items (rule 2a) are "not_found" here — never
+estimated, never an FDC stand-in for a current menu item.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Env / small helpers
@@ -821,6 +830,17 @@ def _build_agent(
         with the source_id this tool returns.
         """
         if source == "web":
+            if not auth.is_owner():
+                # §8.9: the shared cache takes web transcriptions from the
+                # owner only. A demo's phrase can steer the pin to any domain,
+                # and a web row this account created is a pre-existing food —
+                # past the evidence gate — to every other account's tier 3.
+                return json.dumps({
+                    "error": "web_lane_owner_only",
+                    "message": "this account cannot add web-transcribed foods — choose a "
+                               "database entry (search_generic / search_branded) or "
+                               "answer not_found.",
+                })
             if web is None:
                 return json.dumps({
                     "error": "missing_web_payload",
@@ -871,7 +891,7 @@ def _build_agent(
         food = dict(food)
         food.setdefault("source", source)
         food.setdefault("source_id", str(source_id))
-        food["display_name"] = display_name.strip() or food.get("name", "")
+        foods_repo.apply_label(food, display_name.strip())  # owner only: shared cache
         food_id = await foods_repo.persist_food(food)
         persisted[(source, str(source_id))] = str(food_id)
         food_cache[(source, str(source_id))] = food
@@ -932,6 +952,18 @@ def _build_agent(
             )
         return json.dumps(page, default=str)
 
+    if not auth.is_owner():
+        # §8.9 / BACKLOG 119: the web lane is the owner's. A demo's run gets
+        # no hosted web_search (every action is billed), no pin, no
+        # fetch_page — FDC only — and is told so, so rule 2a ends in
+        # not_found instead of turns spent looking for the tools.
+        return Agent(
+            name="tier3-food-resolver",
+            instructions=INSTRUCTIONS + _NO_WEB_LANE,
+            model=MODEL,
+            tools=[search_generic, search_branded, get_food, get_food_history, add_food],
+            output_type=Tier3Result,
+        )
     return Agent(
         name="tier3-food-resolver",
         instructions=INSTRUCTIONS,
@@ -1203,10 +1235,7 @@ async def resolve_item_from_source(
     food = dict(food)
     food.setdefault("source", source)
     food.setdefault("source_id", str(source_id))
-    if display_name:
-        food["display_name"] = display_name
-    elif not food.get("display_name"):
-        food["display_name"] = food.get("name", "")
+    foods_repo.apply_label(food, display_name)  # owner only: the cache is shared
     if food_row_id is None:
         food_row_id = await foods_repo.persist_food(food)
     serving_id, qty, verify = await _apply_portion(
@@ -1404,10 +1433,7 @@ async def run_tier3(
         food = dict(food)
         food.setdefault("source", src)
         food.setdefault("source_id", sid)
-        if display_name:
-            food["display_name"] = display_name
-        elif not food.get("display_name"):
-            food["display_name"] = food.get("name", "")
+        foods_repo.apply_label(food, display_name)  # owner only: the cache is shared
         food_row_id = persisted.get((src, sid)) or await foods_repo.persist_food(food)
         if src == "web" and (src, sid) in persisted:
             # §4: provenance = the agent's citations + what web_search actually

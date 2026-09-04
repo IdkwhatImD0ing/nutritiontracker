@@ -7,6 +7,7 @@ import {
   discardLog,
   getDiary,
   patchTimings,
+  quotaRefusal,
   type DayTotals,
   type FoodSearchResult,
   type LogCreateResponse,
@@ -15,10 +16,12 @@ import {
 } from "@/lib/api";
 import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
 import BarcodeScanner from "./BarcodeScanner";
+import DemoBanner from "./DemoBanner";
 import type { DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
 import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
+import { getMe, type Me } from "./MeApi";
 import PendingItems from "./PendingItems";
 import PhotoCapture from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
@@ -61,6 +64,13 @@ export default function Today() {
   const discardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  // Demo accounts (GET /api/me): the banner's quota, re-read after every
+  // log attempt so "next log at …" shows the moment the day's log is spent.
+  // Owner → demo null → no banner. A failed read renders nothing: the
+  // server enforces the quota; the banner only explains it.
+  const [me, setMe] = useState<Me | null>(null);
+  const demo = me?.demo ?? null;
+  const quotaSpent = demo != null && demo.used_today >= demo.limit;
   // Owner ruling (2026-09-02): the capture bar left the Today screen; every
   // way to log opens from the tab bar's + sheet. `lane` is which lane's sheet
   // is up. The pick arrives from TabBar as a window event (Today mounted) or
@@ -103,6 +113,13 @@ export default function Today() {
       })
       .catch(() => {
         /* zero-state renders gracefully without the diary */
+      });
+    getMe()
+      .then((m) => {
+        if (!cancelled) setMe(m);
+      })
+      .catch(() => {
+        /* no banner — the quota is enforced server-side regardless */
       });
     // BACKLOG 31: restore persisted stragglers so the retry actually happens
     // on the next open, as the old comment only claimed.
@@ -184,6 +201,34 @@ export default function Today() {
     }
   };
 
+  const refreshMe = () => {
+    getMe().then(setMe).catch(() => {});
+  };
+
+  // A demo 429 carries the server's own sentence and the reset instant: the
+  // sentence goes in the lane's error surface verbatim (never the generic
+  // line), the instant into the banner — no round trip. Returns whether the
+  // failure was the quota. `fallback` null keeps captureError clear, for a
+  // lane that words its own non-quota failures (voice).
+  const failCapture = (e: unknown, fallback: string | null): boolean => {
+    const q = quotaRefusal(e);
+    setCaptureError(q?.detail ?? fallback);
+    if (!q) return false;
+    setMe((m) =>
+      m?.demo
+        ? {
+            ...m,
+            demo: {
+              ...m.demo,
+              used_today: Math.max(m.demo.used_today, m.demo.limit),
+              resets_at: q.resetsAt ?? m.demo.resets_at,
+            },
+          }
+        : m,
+    );
+    return true;
+  };
+
   const flushDiscard = () => {
     if (discardTimer.current) {
       clearTimeout(discardTimer.current);
@@ -199,6 +244,7 @@ export default function Today() {
   // §8.4: a log that staged nothing but carried a save outcome is a
   // "save as my usual …" utterance, not a meal — confirm it and stage nothing.
   const enterStaging = (log: LogCreateResponse): void => {
+    if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
       setSavedNote(
         log.saved_meal
@@ -237,9 +283,9 @@ export default function Today() {
       setLane(null);
       enterStaging(log);
       return true;
-    } catch {
+    } catch (e) {
       t0Ref.current = null;
-      setCaptureError("Couldn't log that — check your connection and retry.");
+      failCapture(e, "Couldn't log that — check your connection and retry.");
       return false;
     } finally {
       setCaptureBusy(false);
@@ -285,9 +331,12 @@ export default function Today() {
       setLane(null);
       enterStaging(res.log);
       return true;
-    } catch {
+    } catch (e) {
       t0Ref.current = null;
-      voiceFailRef.current = "upload_failed";
+      // The demo quota refusing the upload is not a voice failure: §13's
+      // counter stays clean, and the sheet shows the server's sentence
+      // instead of "type it instead" (typing meets the same wall).
+      if (!failCapture(e, null)) voiceFailRef.current = "upload_failed";
       return false;
     } finally {
       setCaptureBusy(false);
@@ -324,9 +373,9 @@ export default function Today() {
       quickRef.current = null;
       setLane(null);
       enterStaging(log);
-    } catch {
+    } catch (e) {
       t0Ref.current = null;
-      setCaptureError("Couldn't log that — check your connection and retry.");
+      failCapture(e, "Couldn't log that — check your connection and retry.");
     } finally {
       setCaptureBusy(false);
     }
@@ -422,6 +471,8 @@ export default function Today() {
         <span className="date">{today}</span>
       </header>
 
+      {demo ? <DemoBanner demo={demo} /> : null}
+
       <Tracker totals={totals} />
 
       {pending ? (
@@ -493,7 +544,8 @@ export default function Today() {
           busy={captureBusy}
           notice={captureError}
           onCode={scanCode}
-          onSearchInstead={() => pickLane("search")}
+          // a spent quota meets the same 429 in the search lane — don't offer it
+          onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}
           onClose={() => setLane(null)}
         />
       ) : null}
@@ -504,7 +556,11 @@ export default function Today() {
           not once the staged log is already back. */}
       <PhotoCapture
         open={photoOpen}
-        onClose={() => setPhotoOpen(false)}
+        onClose={() => {
+          setPhotoOpen(false);
+          // the sheet owns its 429 surface; the banner catches up on close
+          if (demo) refreshMe();
+        }}
         onUploadStart={() => {
           t0Ref.current = performance.now();
         }}

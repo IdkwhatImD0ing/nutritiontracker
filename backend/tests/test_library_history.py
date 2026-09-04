@@ -30,6 +30,8 @@ if __import__("sys").platform == "win32":  # psycopg async needs the selector lo
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import db  # noqa: E402
+
+from tenancy_harness import bind_test_tenant  # noqa: E402
 from routes.aliases import AliasPatch, delete_alias, list_aliases, patch_alias  # noqa: E402
 from routes.diary import get_diary  # noqa: E402
 from routes.foods import get_food_detail  # noqa: E402
@@ -48,6 +50,7 @@ async def isolated_db():
     conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):

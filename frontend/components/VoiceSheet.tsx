@@ -100,6 +100,13 @@ export default function VoiceSheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // The parent worded the failure (a demo 429: "Demo accounts can log once a
+  // day — resets at …") — drop this sheet's own "type it instead" notice so
+  // it can't resurface once the error clears; typing meets the same wall.
+  useEffect(() => {
+    if (error) setNotice(null);
+  }, [error]);
+
   const toggleMic = async () => {
     if (busy) return;
     setNotice(null);

@@ -638,7 +638,7 @@ async def _learn_alias(
             INSERT INTO aliases (alias_norm, food_id, default_serving_id, default_qty,
                                  origin, use_count, last_used_at, last_explicit_at)
             VALUES (%s, %s, %s, %s, %s, 1, now(), CASE WHEN %s THEN now() END)
-            ON CONFLICT (alias_norm, food_id) DO UPDATE
+            ON CONFLICT (user_id, alias_norm, food_id) DO UPDATE
             SET use_count = aliases.use_count + 1,
                 last_used_at = now(),
                 last_explicit_at = COALESCE(EXCLUDED.last_explicit_at,

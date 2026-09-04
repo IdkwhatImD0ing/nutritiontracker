@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 import db
 from auth import require_user
 from resolver import commit as commit_tx
+from routes.photo import ESTIMATE_PICK_REFUSAL
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -136,6 +137,27 @@ def _items_dicts(items: list[MealItemIn]) -> list[dict]:
     return [i.model_dump() for i in items]
 
 
+_PLACEHOLDER_SQL = (
+    "SELECT 1 AS hit FROM foods WHERE id = ANY(%s::uuid[]) AND source = 'estimate' LIMIT 1"
+)
+
+
+async def _refuse_placeholders(conn, items: list[MealItemIn]) -> None:
+    """R1/§3.4b: the photo lane's numberless placeholder (source='estimate') is
+    not a food — a saved meal holding one would expand to a row that can
+    never commit (item 58's broken-meal guard). Refused like every other pick
+    path (photo.ESTIMATE_PICK_REFUSAL), before validate_meal_items; ids that
+    are not uuids are left to its own 422."""
+    ids: list[str] = []
+    for i in items:
+        try:
+            ids.append(str(UUID(i.food_id)))
+        except ValueError:
+            continue
+    if ids and await (await conn.execute(_PLACEHOLDER_SQL, (ids,))).fetchone() is not None:
+        raise HTTPException(422, ESTIMATE_PICK_REFUSAL)
+
+
 # ---------------------------------------------------------------------------
 # routes
 # ---------------------------------------------------------------------------
@@ -164,6 +186,7 @@ async def create_meal(body: MealCreate) -> MealOut:
             ).fetchone()
             if dup is not None:
                 raise HTTPException(409, f"a saved meal named '{body.name.strip()}' exists")
+            await _refuse_placeholders(conn, body.items)
             row = await commit_tx.save_meal_macro(
                 conn,
                 name=body.name,
@@ -194,6 +217,8 @@ async def patch_meal(meal_id: UUID, body: MealPatch) -> MealOut:
                 if body.trigger_phrases is not None
                 else list(row["trigger_phrases"])
             )
+            if body.items is not None:
+                await _refuse_placeholders(conn, body.items)
             items = (
                 await commit_tx.validate_meal_items(conn, _items_dicts(body.items))
                 if body.items is not None

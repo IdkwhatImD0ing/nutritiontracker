@@ -114,6 +114,9 @@ def _reset_vision():
 
 
 import db  # noqa: E402
+
+
+from tenancy_harness import bind_test_tenant, override_user  # noqa: E402
 import main  # noqa: E402
 from models import CommitRequest, Meal, StagedItem, Tier3KickRequest  # noqa: E402
 from resolver import cascade, foods_repo  # noqa: E402
@@ -171,6 +174,7 @@ async def isolated_db():
     conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
     outer = conn.transaction(force_rollback=True)
     await outer.__aenter__()
+    await bind_test_tenant(conn)  # 002: app role + the fixed test tenant, inside the rollback
     orig = (db.fetchall, db.fetchone, db.execute, db.tx)
 
     async def fetchall(sql, params=()):
@@ -528,7 +532,7 @@ def test_main_app_carries_the_m4_routes_in_a_safe_order(monkeypatch):
     # (string detail) must claim the path ahead of GET /api/foods/{food_id},
     # whose UUID parse error would be a list.
     monkeypatch.setattr(main, "tracing", sys.modules["tracing"])
-    main.app.dependency_overrides[auth.require_user] = lambda: {"email": "e2e", "sub": "e2e-m4"}
+    main.app.dependency_overrides[auth.require_user] = override_user(email="e2e", user_id="e2e-m4")
     try:
         with TestClient(main.app) as client:
             r = client.get("/api/foods/barcode", params={"code": "no digits"})
