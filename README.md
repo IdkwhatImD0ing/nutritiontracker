@@ -92,4 +92,8 @@ is the ledger of every finding and what happened to it.
 
 ## License
 
-[LICENSE: choose one — none committed yet]
+[MIT](LICENSE) © 2026 Bill Zhang. Use it, fork it, run your own.
+
+The nutrition data is not mine to license: USDA FoodData Central is public
+domain, and chain-restaurant values are transcribed from each chain's own
+published page and stored with a link back to it.

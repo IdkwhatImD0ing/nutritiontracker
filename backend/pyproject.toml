@@ -1,8 +1,9 @@
 [project]
-name = "usual-backend"
+name = "tally-backend"
 version = "0.1.0"
-description = "Usual — FastAPI backend"
+description = "Tally — FastAPI backend"
 requires-python = ">=3.12"
+license = { text = "MIT" }
 dependencies = [
     "fastapi",
     "pydantic>=2",
