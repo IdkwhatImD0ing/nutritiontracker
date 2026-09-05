@@ -144,7 +144,7 @@ export default function Library() {
   };
 
   return (
-    <main className="shell">
+    <main className="shell library">
       <header className="brand">
         <h1>Library</h1>
         <span className="date">
@@ -154,7 +154,7 @@ export default function Library() {
 
       {loadError ? <p className="sheet-error">{loadError}</p> : null}
 
-      <section className="m3-section" aria-label="Find a food">
+      <section className="m3-section lib-search" aria-label="Find a food">
         <form className="capture" onSubmit={runSearch}>
           <input
             value={query}
@@ -200,7 +200,7 @@ export default function Library() {
         ) : null}
       </section>
 
-      <section className="m3-section" aria-label="Saved meals">
+      <section className="m3-section lib-meals" aria-label="Saved meals">
         <h2>
           Saved meals
           <span className="count num">{meals ? activeMeals.length : ""}</span>
@@ -229,7 +229,7 @@ export default function Library() {
         </button>
       </section>
 
-      <section className="m3-section" aria-label="Your foods">
+      <section className="m3-section lib-foods" aria-label="Your foods">
         <h2>
           Your foods
           <span className="count num">

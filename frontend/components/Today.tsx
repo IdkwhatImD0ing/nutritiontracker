@@ -465,9 +465,12 @@ export default function Today() {
   });
 
   return (
-    <main className="shell">
+    <main className="shell today">
       <header className="brand">
-        <h1>Tally</h1>
+        <h1>
+          <span className="brand-app">Tally</span>
+          <span className="brand-page">Today</span>
+        </h1>
         <span className="date">{today}</span>
       </header>
 

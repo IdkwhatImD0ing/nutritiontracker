@@ -1226,3 +1226,134 @@ input {
   color: var(--mint);
   text-decoration: none;
 }
+
+/* ---------- desktop ----------
+   Nothing above this line changes under 900px: the phone layout is the
+   design. From 900px the same screens get a wider canvas, not a second
+   design — the navigation rail (m3.css) takes the left edge, .shell widens
+   into a reading column, and every bottom sheet becomes a centered modal.
+   From 1140px the pages with two natural halves put them side by side
+   (Today / the day view here: tracker + diary; Library and Settings in
+   m3.css; History in history.css) — same components, same tokens. */
+
+/* Today's h1: "Tally" on a phone, where it is the app's front page; "Today"
+   on desktop, where the rail already carries the wordmark. */
+.brand .brand-page {
+  display: none;
+}
+
+@keyframes modal-in {
+  from {
+    transform: translate(-50%, -47%);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, -50%);
+    opacity: 1;
+  }
+}
+
+@media (min-width: 900px) {
+  .shell {
+    max-width: 760px;
+    padding: 40px 40px 64px;
+    gap: 24px;
+  }
+
+  .brand h1 {
+    font-size: 1.75rem;
+  }
+
+  .brand .date {
+    font-size: 0.95rem;
+  }
+
+  .brand .brand-app {
+    display: none;
+  }
+
+  .brand .brand-page {
+    display: inline;
+  }
+
+  /* bottom sheets → centered modals; the grabber has nothing to grab */
+  .sheet,
+  .subsheet {
+    top: 50%;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    max-width: none;
+    border-bottom: 1px solid var(--line);
+    border-radius: 20px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+    animation: modal-in 220ms ease-out;
+  }
+
+  .sheet {
+    width: min(600px, calc(100vw - 48px));
+    height: min(86dvh, 860px);
+  }
+
+  .subsheet {
+    width: min(520px, calc(100vw - 48px));
+    max-height: 84dvh;
+    padding: 22px;
+  }
+
+  .grabber {
+    display: none;
+  }
+
+  .sheet-head {
+    padding-top: 16px;
+  }
+
+  .sheet-foot {
+    padding-bottom: 14px;
+  }
+
+  .toast {
+    bottom: 32px;
+  }
+}
+
+@media (min-width: 1140px) {
+  /* tracker beside the diary. The tracker keeps the left column and stays
+     put while the diary scrolls; its row span is what lets the right column
+     (pending stragglers, then the diary) flow past it. */
+  .shell.today,
+  .shell.day {
+    max-width: 1200px;
+    display: grid;
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    grid-auto-rows: max-content;
+    column-gap: 36px;
+    row-gap: 24px;
+    align-items: start;
+  }
+
+  .shell.today > .brand,
+  .shell.today > .demo-banner,
+  .shell.day > .brand {
+    grid-column: 1 / -1;
+  }
+
+  .shell.today > .tracker,
+  .shell.day > .tracker {
+    grid-column: 1;
+    grid-row: span 3;
+    position: sticky;
+    top: 40px;
+  }
+
+  .shell.today > .pending-wrap,
+  .shell.today > .diary,
+  .shell.today > .diary-empty,
+  .shell.day > .hist-error,
+  .shell.day > .diary,
+  .shell.day > .diary-empty {
+    grid-column: 2;
+  }
+}

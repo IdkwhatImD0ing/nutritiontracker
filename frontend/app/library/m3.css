@@ -745,3 +745,212 @@ body:has(.tabbar) .shell {
   color: var(--faint);
   cursor: default;
 }
+
+/* ---------- desktop: the tab bar stands up as a navigation rail ----------
+   Same markup, same destinations. From 900px the bar that hugged the bottom
+   of a phone runs down the left edge — wordmark, then a "Log food" button
+   where the + was, the destinations with labels beside their icons, Settings
+   at the foot. .rail-only marks the three bits (wordmark, two labels) that a
+   phone never shows. globals.css carries the .shell / sheet counterparts. */
+
+.tabbar .rail-only {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  :root {
+    --rail-w: 232px;
+  }
+
+  .tabbar {
+    top: 0;
+    right: auto;
+    bottom: 0;
+    left: 0;
+    width: var(--rail-w);
+    max-width: none;
+    margin: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    border-top: none;
+    border-right: 1px solid var(--line);
+    padding: 28px 16px 24px;
+  }
+
+  .tabbar .rail-only {
+    display: inline;
+  }
+
+  .tabbar .rail-brand {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 1.45rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    padding: 2px 12px 20px;
+  }
+
+  .tabbar a {
+    order: 2;
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 12px;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    letter-spacing: 0;
+    color: var(--muted);
+  }
+
+  .tabbar a:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+
+  .tabbar a.active {
+    background: var(--surface-2);
+  }
+
+  .tabbar a.gear {
+    order: 3;
+    flex: 0 0 auto;
+    border-left: none;
+    margin: auto 0 0;
+  }
+
+  /* rail order: wordmark, Log food, the destinations, Settings at the foot */
+  .tabbar .fab-slot {
+    order: 1;
+    flex: 0 0 auto;
+    display: block;
+    margin: 0 0 14px;
+  }
+
+  .tabbar .fab {
+    width: 100%;
+    height: 48px;
+    margin: 0;
+    border: none;
+    border-radius: 14px;
+    box-shadow: none;
+    gap: 10px;
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 650;
+  }
+
+  .tabbar .fab:active {
+    transform: scale(0.98);
+  }
+
+  .tabbar .fab svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* content sits right of the rail; there is no bottom bar to clear */
+  body:has(.tabbar) {
+    padding-left: var(--rail-w);
+  }
+
+  body:has(.tabbar) .shell {
+    padding-bottom: 64px;
+  }
+
+  body:has(.tabbar) .toast {
+    left: calc(50% + var(--rail-w) / 2);
+  }
+
+  /* the + sheet: four lanes as a 2 × 2 of tiles */
+  .subsheet.add-sheet {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .add-sheet .subsheet-title {
+    grid-column: 1 / -1;
+  }
+
+  .add-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    min-height: 112px;
+    padding: 18px;
+  }
+
+  .wizard-inner {
+    max-width: 560px;
+    padding-top: 56px;
+  }
+}
+
+@media (min-width: 1140px) {
+  /* Library: the search across the top, saved meals beside your foods */
+  .shell.library {
+    max-width: 1200px;
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    column-gap: 36px;
+    row-gap: 24px;
+    align-content: start;
+    align-items: start;
+  }
+
+  .shell.library > .brand,
+  .shell.library > .sheet-error,
+  .shell.library > .lib-search {
+    grid-column: 1 / -1;
+  }
+
+  .shell.library > .lib-search {
+    max-width: 640px;
+  }
+
+  .shell.library > .lib-meals {
+    grid-column: 1;
+  }
+
+  .shell.library > .lib-foods {
+    grid-column: 2;
+  }
+
+  /* Settings: cards in pairs (equal height per row), the free-text notes
+     across both columns, Save and its status last */
+  .shell.settings {
+    max-width: 1200px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 36px;
+    row-gap: 24px;
+    align-content: start;
+  }
+
+  .shell.settings > .brand,
+  .shell.settings > .sheet-error,
+  .shell.settings > .m3-empty,
+  .shell.settings > .m3-wide,
+  .shell.settings > .commit-btn,
+  .shell.settings > .m3-status {
+    grid-column: 1 / -1;
+  }
+
+  .shell.settings > .m3-section > .m3-card {
+    flex: 1;
+  }
+
+  .shell.settings > .commit-btn {
+    order: 2;
+    width: auto;
+    justify-self: start;
+    padding: 14px 36px;
+  }
+
+  .shell.settings > .m3-status {
+    order: 3;
+    text-align: left;
+  }
+}

@@ -11,7 +11,9 @@ import "@/app/library/m3.css";
  *  2026-09-02 — the mid-screen capture bar is gone): it opens AddSheet, and
  *  the pick reaches Today as a window event while Today is mounted, else as
  *  a sessionStorage handoff followed by a navigation home. No props — every
- *  page mounts it as-is; the stylesheet rides along with the import. */
+ *  page mounts it as-is; the stylesheet rides along with the import. From
+ *  900px m3.css stands this same markup up as a navigation rail on the
+ *  left; .rail-only marks the wordmark and labels only the rail shows. */
 
 const stroke = {
   fill: "none",
@@ -109,6 +111,7 @@ export default function TabBar() {
   return (
     <>
       <nav className="tabbar" aria-label="Main">
+        <span className="rail-brand rail-only">Tally</span>
         {LEFT.map(tab)}
         <div className="fab-slot">
           <button
@@ -120,6 +123,7 @@ export default function TabBar() {
             onClick={() => setAddOpen(true)}
           >
             <PlusIcon />
+            <span className="rail-only">Log food</span>
           </button>
         </div>
         {RIGHT.map(tab)}
@@ -130,6 +134,7 @@ export default function TabBar() {
           aria-current={isActive("/settings") ? "page" : undefined}
         >
           <GearIcon />
+          <span className="rail-only">Settings</span>
         </Link>
       </nav>
       <AddSheet
