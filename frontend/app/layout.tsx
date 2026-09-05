@@ -50,11 +50,23 @@ export const metadata: Metadata = {
     description,
     siteName: "Tally",
     type: "website",
+    url: "/",
+    locale: "en_US",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        type: "image/png",
+        alt: "Tally — say what you ate.",
+      },
+    ],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "Tally",
     description,
+    images: ["/og.png"],
   },
   // iOS installed-PWA chrome: standalone capable, dark ground under a
   // translucent status bar (globals.css already pads safe-area insets).
@@ -71,14 +83,27 @@ export const metadata: Metadata = {
   other: {
     "apple-mobile-web-app-capable": "yes",
   },
+  // Declared explicitly rather than via app/ file conventions, so the emitted
+  // <link> set is greppable in one place. Order is the browser's preference
+  // order: .ico first for the ones that only ever ask for /favicon.ico, then
+  // the SVG that every current browser prefers and scales cleanly.
   icons: {
-    icon: "/icons/icon-192.png",
-    apple: "/apple-touch-icon.png",
+    icon: [
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      { url: "/icons/icon.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/icons/icon-512.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 
 export const viewport: Viewport = {
   themeColor: "#121318",
+  // globals.css defines one (dark) palette with no light counterpart, so say so
+  // rather than leaving the UA to guess: this is what makes form controls,
+  // scrollbars and the tap-highlight render dark instead of stock light.
+  colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",

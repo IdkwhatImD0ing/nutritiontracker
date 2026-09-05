@@ -27,6 +27,19 @@
         "dev"
       ],
       "autoPort": true
+    },
+    {
+      "//": "Service workers, the manifest and install checks only behave in a production build (DESIGN.md §2). Needs `pnpm --dir frontend build` first.",
+      "name": "tally-web-prod",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "frontend",
+        "start",
+        "--port",
+        "3100"
+      ],
+      "port": 3100
     }
   ]
 }
