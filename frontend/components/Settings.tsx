@@ -171,7 +171,7 @@ export default function Settings() {
   const body = form ? describeBody(form.body) : null;
 
   return (
-    <main className="shell">
+    <main className="shell settings">
       <header className="brand">
         <h1>Settings</h1>
       </header>
@@ -303,7 +303,7 @@ export default function Settings() {
             ) : null}
           </section>
 
-          <section className="m3-section" aria-label="Profile notes">
+          <section className="m3-section m3-wide" aria-label="Profile notes">
             <h2>Profile notes</h2>
             <label className="m3-field">
               What the assistant should always know

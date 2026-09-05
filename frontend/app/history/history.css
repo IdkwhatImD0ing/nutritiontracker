@@ -218,3 +218,56 @@
   font-size: 0.64rem;
   letter-spacing: 0.05em;
 }
+
+/* ---------- desktop ----------
+   From 900px (the rail and the wider .shell live in m3.css / globals.css):
+   the range control and its span label share a row, the 3-day cards tile as
+   many across as fit, the week / month / year charts pair up. */
+
+@media (min-width: 900px) {
+  .shell.history {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    column-gap: 20px;
+    align-content: start;
+    align-items: start;
+  }
+
+  .shell.history > * {
+    grid-column: 1 / -1;
+  }
+
+  .shell.history > .segmented {
+    grid-column: 1;
+  }
+
+  .shell.history > .range-label {
+    grid-column: 2;
+    align-self: center;
+    margin: 0;
+    text-align: left;
+  }
+
+  .hcards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+
+  .hcharts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* the year view's third chart is the adherence strip — 52 cells want the
+     whole row, as does the hint under every range */
+  .hcharts > .chart:nth-child(3),
+  .hcharts > .hhint {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1140px) {
+  .shell.history {
+    max-width: 1200px;
+  }
+}

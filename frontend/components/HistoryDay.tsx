@@ -33,7 +33,7 @@ export default function HistoryDay({ date }: { date: string }) {
   }, [date]);
 
   return (
-    <main className="shell">
+    <main className="shell day">
       <header className="brand">
         <h1>
           <Link href="/history" className="back-link" aria-label="Back to history">

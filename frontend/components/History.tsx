@@ -72,7 +72,7 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
   const streak = range?.streak ?? null;
 
   return (
-    <main className="shell">
+    <main className="shell history">
       <header className="brand">
         <h1>History</h1>
         {streak != null ? (
