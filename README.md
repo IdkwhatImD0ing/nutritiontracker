@@ -56,19 +56,63 @@ writes the entries, and learns the alias and portion for next time.
 
 ## Try it
 
-The live app is at https://nutritiontracker-tau.vercel.app. Sign up with an email and password and you
+The live app is at **https://tally.art3m1s.me**. Sign up with an email and password and you
 get a demo account: one log per day, in any lane — voice, text, photo, barcode or search —
 resetting at midnight UTC, plus ten re-resolutions a day for the calls that re-run a model
-on an edited row. Your rows are your own; the database isolates every account. But a demo
-is for trying the loop, not for keeping a diary. Run your own instance for that.
+on an edited row. Your rows are your own; the database isolates every account. A demo is for
+trying the loop, not for keeping a diary. Fork it for that.
 
-## Run it yourself
+## Fork it and run your own
 
-[docs/ONBOARDING.md](docs/ONBOARDING.md) has the full setup, and its "Running your own
-instance" section is the from-scratch path: the keys you need (free tiers, except that
-OpenAI meters usage — a dollar or two a month for one person), a Neon project with auth
-enabled, the two migrations, and deploying the two services to Vercel. Once the env is in
-place, local development is two commands.
+Everything here is yours to take: MIT, no server of mine involved, and the whole thing is
+built to be run by one person on free tiers. You need four accounts (Vercel, Neon, OpenAI,
+Deepgram) and a free USDA key. Only OpenAI meters usage — for one person logging a few meals
+a day it is roughly a dollar or two a month, and most logs cost nothing at all because a
+repeat meal never reaches a model.
+
+```bash
+gh repo fork IdkwhatImD0ing/nutritiontracker --clone && cd nutritiontracker
+cp .env.example .env          # fill in your own keys
+cd backend && uv sync && cd ../frontend && pnpm install
+```
+
+Then create a Neon project with auth enabled, run the two migrations, point Vercel at your
+fork, and set `ALLOWED_EMAIL` to your address so your account is the owner and everyone
+else is a demo. **[docs/ONBOARDING.md §8](docs/ONBOARDING.md)** walks each step with the
+exact commands and the two ordering rules that will otherwise bite you.
+
+### Or hand it to a coding agent
+
+This project was built by agents, so it is written to be legible to one. Point an agent at
+your fork and paste this:
+
+```text
+Set up this repository as my own running instance.
+
+Read docs/ONBOARDING.md first — section 8 is the from-scratch path — then docs/DESIGN.md
+for the architecture. Work through the setup with me:
+
+1. Tell me exactly which accounts and API keys I need to create, with the URL for each and
+   what the free tier gives me. Wait for me to paste each value into .env myself — never
+   ask me to paste a secret into the chat, and never print one back.
+2. Once .env is filled in, verify each key actually works before going further, and tell
+   me which ones failed rather than assuming.
+3. Apply migrations 001 then 002 with backend/migrations/apply.py, using --dry-run first
+   and --check after. Set ALLOWED_EMAIL to my address; that account becomes the owner and
+   every other sign-up is a demo capped at one log a day.
+4. Get it running locally (two servers), and confirm the auth round-trip works — not just
+   /api/health. `curl /api/auth/token` must answer Better Auth's 401, not FastAPI's 404.
+5. Deploy to Vercel as two Services on one origin per vercel.json, set APP_ORIGIN to my
+   domain, and add that domain to Neon Auth's trusted list.
+
+Constraints that are not style preferences — they are in CLAUDE.md and each one has already
+caused a bug: never commit .env or print a secret value; API types are generated from
+pydantic, so re-run `pnpm run typegen` after changing a model and never hand-edit
+lib/api-types.ts; DB tests run inside force-rollback transactions and must leave no rows;
+pin full model ids, never a bare alias.
+
+Ask me before anything irreversible: applying a migration, deploying, or pushing.
+```
 
 ## How it was built
 

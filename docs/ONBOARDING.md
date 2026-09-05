@@ -164,6 +164,11 @@ Notes that will save you an hour:
   `/api/auth/*` belongs to the *web* service (`app/api/auth/[...path]`); every
   other `/api/*` path is FastAPI's. `vercel.json` orders those two rules, and
   `next.config.ts` does the same job locally with a `fallback` rewrite (BACKLOG 130).
+- **`next build` and `next dev` share `.next`.** Running a production build
+  between dev sessions leaves artifacts the next `next dev` serves instead of
+  compiling: routes 404 that plainly exist, and `/api/auth/*` falls through to
+  the backend. If the app is 404ing on a page whose file is right there, stop the
+  dev server, delete `frontend/.next`, and start it again.
 - `-m live` spends real API credits and hits real vendors.
 - `test_tier3_live.py::test_quest_bar_branded_or_question` is a **real model run and is
   nondeterministic** — it fails occasionally. Re-run once; never weaken the assertion to get
@@ -171,6 +176,28 @@ Notes that will save you an hour:
   run it with the rest of the suite.
 - **Changing a pydantic model changes the API contract.** Re-run `typegen` or the frontend
   will type-check against a stale schema.
+
+---
+
+## 4b. Changing the domain
+
+Three things are pinned to the hostname; miss the second and every write fails
+with a 403 that looks nothing like a DNS problem.
+
+1. **Vercel** — add the domain to the project and let it issue a certificate.
+2. **`APP_ORIGIN`** (Production env) — `backend/auth.py` refuses a
+   state-changing request whose `Origin` does not match it. It accepts a
+   comma-separated list, so set **both** origins during the cutover
+   (`https://old.example,https://new.example`), deploy, move DNS, then drop the
+   old one. Reads keep working throughout; it is only POST/PATCH/DELETE that
+   are checked, which is why the symptom is "the app loads but nothing saves".
+3. **Neon Auth trusted domains** — Console → your project → Auth. The session
+   cookie and the redirect targets are bound to the origin; a domain that is not
+   on the list can sign in and immediately appear signed out.
+
+Optional but worth it: `NEXT_PUBLIC_SITE_URL` sets `metadataBase`, which makes
+the Open Graph and Twitter URLs absolute so link previews resolve. It defaults
+to the canonical domain in `app/layout.tsx`.
 
 ---
 

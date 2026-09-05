@@ -7,7 +7,9 @@ import { getAuth } from "@/lib/auth/server";
  * and every other /api/* route is FastAPI's, which verifies the Bearer JWT
  * itself (§2). The PWA surface (manifest, icons, the Serwist service-worker
  * script) is excluded too: a sign-in redirect on those breaks install checks
- * and SW registration, and none of them carries user data.
+ * and SW registration, and none of them carries user data. `og.png` is on the
+ * list for the same reason — a link unfurler is by definition signed out, and
+ * a 307 to the landing page is not an image.
  *
  * `/` serves two different pages. Signed in, it is Today. Signed out, it is
  * the landing page — rendered AT `/`, not redirected to, so the front door
@@ -34,6 +36,6 @@ export default async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|auth|welcome|serwist|manifest.webmanifest|icons|apple-touch-icon.png).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|auth|welcome|serwist|manifest.webmanifest|icons|apple-touch-icon.png|og.png|screenshots).*)",
   ],
 };
