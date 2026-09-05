@@ -342,7 +342,7 @@ person. DESIGN §0.5 has the *why* for each.
 
 | Need | Where | Env var(s) |
 |---|---|---|
-| Neon project | [neon.tech](https://neon.tech); enable **Auth** on the branch (Console → Project → Branch → Auth) | `DATABASE_URL` (the **pooled** `-pooler` string), `NEON_AUTH_BASE_URL` |
+| Neon project | [neon.tech](https://neon.tech); enable **Auth** on the branch (Console → Project → Branch → Auth). Under email + password turn on **Require email verification** with the *verification code* method, and leave both *send verification email* toggles (at sign-up, at sign-in) **off** — the app sends the code itself, so a Console send would mean two codes | `DATABASE_URL` (the **pooled** `-pooler` string), `NEON_AUTH_BASE_URL` |
 | Cookie secret | generate one: `openssl rand -base64 32` | `NEON_AUTH_COOKIE_SECRET` |
 | Your owner address | the email you will sign up with | `ALLOWED_EMAIL` |
 | OpenAI | an API key with access to the GPT-5.6 family and the web search tool | `OPENAI_API_KEY` |
@@ -378,12 +378,12 @@ Two migrations, in order, from the repo root, against the `DATABASE_URL` in `.en
 
 2. **Sign up as the owner** before 002: start both servers (§3), open
    http://localhost:3000/auth/sign-up and register with the `ALLOWED_EMAIL` address (the
-   backend reads it from `.env`; the sign-up page itself accepts any address). Sign-up
-   writes only to the auth service (users live in the `neon_auth` schema of your
-   database); 002 needs that one user to exist. Let nobody else sign up before 002 is
-   applied — until then nothing separates accounts. Only sign-up works at this point: the
-   API errors on every DB-touching request until step 4, because this tree's backend runs
-   as the `tally_app` role that 002 creates.
+   backend reads it from `.env`; the sign-up page itself accepts any address), then enter
+   the code it emails you. Sign-up writes only to the auth service (users live in the
+   `neon_auth` schema of your database); 002 needs that one user to exist. Let nobody else
+   sign up before 002 is applied — until then nothing separates accounts. Only sign-up
+   works at this point: the API errors on every DB-touching request until step 4, because
+   this tree's backend runs as the `tally_app` role that 002 creates.
 
 3. **Point 002 at your address.** The owner lookup is hardcoded to the original author's
    email in two places — the `DO` block at the top of `backend/migrations/002_multiuser.sql`

@@ -1227,6 +1227,16 @@ input {
   text-decoration: none;
 }
 
+/* the "send a new code" button on the verify step: a link, not a second CTA */
+.auth-card button.auth-linkish {
+  background: none;
+  color: var(--mint);
+  padding: 0;
+  margin-top: 0;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 /* ---------- desktop ----------
    Nothing above this line changes under 900px: the phone layout is the
    design. From 900px the same screens get a wider canvas, not a second
