@@ -55,6 +55,9 @@ html,
 body {
   margin: 0;
   padding: 0;
+  /* An installed iOS app rubber-bands the whole document on any drag, fixed
+     chrome included, then springs back. Safari 16+ honours this on the root. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -80,7 +83,8 @@ input {
   max-width: 480px;
   margin: 0 auto;
   min-height: 100dvh;
-  padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+  padding: calc(20px + env(safe-area-inset-top)) 16px
+    calc(24px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -1150,7 +1154,8 @@ input {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: calc(24px + env(safe-area-inset-top)) 24px
+    calc(24px + env(safe-area-inset-bottom));
 }
 
 .auth-card {
@@ -1266,7 +1271,7 @@ input {
 @media (min-width: 900px) {
   .shell {
     max-width: 760px;
-    padding: 40px 40px 64px;
+    padding: calc(40px + env(safe-area-inset-top)) 40px 64px;
     gap: 24px;
   }
 
