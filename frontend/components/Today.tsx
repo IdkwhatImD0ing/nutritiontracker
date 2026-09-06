@@ -425,12 +425,12 @@ export default function Today() {
       return;
     }
     if (!hit.found) {
-      // An honest miss (§13: never fail silently): FDC Branded — the only
-      // barcode source wired up; there is no Open Food Facts adapter —
-      // doesn't know this code. Say where we looked; the scanner offers search.
+      // An honest miss (§13: never fail silently): neither FDC Branded nor
+      // Open Food Facts knows this code. Say where we looked; the scanner
+      // offers search.
       setCaptureBusy(false);
       setCaptureError(
-        `${code.replace(/\D/g, "")} isn't in USDA FoodData Central's branded foods.`,
+        `${code.replace(/\D/g, "")} isn't in USDA FoodData Central or Open Food Facts.`,
       );
       return;
     }

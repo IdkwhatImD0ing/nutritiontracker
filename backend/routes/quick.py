@@ -2,10 +2,12 @@
 
 Two of the four + actions never pass through decompose or the cascade:
 
-- GET /api/foods/barcode?code= — digits-only normalization, then the §3.4
-  barcode ladder (sources/fdc.lookup_barcode). A hit is persisted
-  (foods_repo.persist_food) so the returned id is stable; a miss is
-  {found: false, food: null}, never a 404.
+- GET /api/foods/barcode?code= — digits-only normalization, then the foods
+  cache (a code seen before answers with no network call), then the §3.4
+  barcode ladder against FDC Branded (sources/fdc.lookup_barcode, one query),
+  then Open Food Facts on a miss (sources/off.lookup_barcode — the §8.2
+  quality-gated fallback). A hit is persisted (foods_repo.persist_food) so
+  the returned id is stable; a miss is {found: false, food: null}, never a 404.
 - POST /api/logs/from-food — a log with ONE resolved staged row built from a
   cached foods row: an explicit pick (input_mode 'barcode' | 'search'), so
   tier is NULL (no cascade tier) and alias_id NULL. The user never spoke a
@@ -38,7 +40,7 @@ from routes import logs as logs_routes
 from routes.diary import web_source_of
 from routes.photo import ESTIMATE_PICK_REFUSAL
 from services import quota
-from sources import fdc
+from sources import fdc, off
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -108,18 +110,38 @@ async def lookup_barcode(code: str) -> BarcodeResponse:
     digits = re.sub(r"\D", "", code)
     if not digits:
         raise HTTPException(status_code=422, detail="barcode has no digits")
-    try:
-        food = await fdc.lookup_barcode(digits)
-    except httpx.HTTPError as e:
-        # class name only — never the message, it may embed a URL (§10)
-        raise HTTPException(
-            status_code=503, detail=f"barcode lookup unavailable ({type(e).__name__})"
-        )
-    if food is None:
-        return BarcodeResponse(found=False, food=None)
-    # persist first so the id is stable, then answer from the cached row —
-    # a cache-forever conflict keeps the existing record (foods_repo)
-    row = await _load_food(await foods_repo.persist_food(food))
+    # A code seen before answers from the cache, no network: an FDC row
+    # carries its stored gtinUpc in the payload, an OFF row is keyed by the
+    # barcode — each under whichever padding its source uses, so every rung
+    # of the ladder is tried. FDC first when both have it (§8.2).
+    variants = fdc.gtin_variants(digits)
+    row = await db.fetchone(
+        f"""
+        SELECT {_FOOD_COLS} FROM foods
+        WHERE (source = 'fdc' AND payload->>'gtinUpc' = ANY(%s))
+           OR (source = 'off' AND source_id = ANY(%s))
+        ORDER BY (source = 'fdc') DESC, created_at
+        LIMIT 1
+        """,
+        (variants, variants),
+    )
+    if row is None:
+        try:
+            # FDC Branded first; Open Food Facts only on its miss — the §8.2
+            # fallback-on-evidence rule, and OFF reads are rate-limited per IP
+            food = await fdc.lookup_barcode(digits)
+            if food is None:
+                food = await off.lookup_barcode(digits)
+        except httpx.HTTPError as e:
+            # class name only — never the message, it may embed a URL (§10)
+            raise HTTPException(
+                status_code=503, detail=f"barcode lookup unavailable ({type(e).__name__})"
+            )
+        if food is None:
+            return BarcodeResponse(found=False, food=None)
+        # persist first so the id is stable, then answer from the cached row —
+        # a cache-forever conflict keeps the existing record (foods_repo)
+        row = await _load_food(await foods_repo.persist_food(food))
     return BarcodeResponse(
         found=True,
         food=BarcodeFood(

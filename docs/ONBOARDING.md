@@ -102,7 +102,7 @@ keeps staging food and says a weight could not be saved, `GET /api/weights` answ
 and Today's weight card renders nothing — but apply it **before** pushing this tree all
 the same: until it lands, every rollback-harness test replays 003 inside its own
 transaction (a lock on `logs` for the test's duration, as 002's replay was, BACKLOG 118
-and 134), and two test runs at once deadlock on it.
+and 135), and two test runs at once deadlock on it.
 
 ---
 
@@ -326,7 +326,7 @@ day the tier-3 web lane widened from famous chains to packaged/retail products t
 (§3.4 rule 2b). At this tree, **before 003 is applied**: `tests/test_agent.py` (10, offline, the
 rollback harness) passes; the suites the change touches (`test_tenancy`, `test_logs_lifecycle`,
 `test_quota_hardening`, `test_tier3_hardening`, `test_phase3_minors`) show only the five
-pre-existing failures of BACKLOG 133 (62 pass); `tests/test_agent_live.py`'s weigh-in story skips
+pre-existing failures of BACKLOG 134 (62 pass); `tests/test_agent_live.py`'s weigh-in story skips
 until `apply.py 003` lands (`needs_003`), and its "costco tonkotsu ramen" story resolved live to
 FDC Branded's *Nongshim Tonkotsu Premium Ramen with Black Garlic Oil* (agent + decompose 10–11 s,
 tier 3 15–18 s over two runs) — the product was in the database, so the web lane was not needed. The generated
@@ -384,8 +384,9 @@ person. DESIGN §0.5 has the *why* for each.
 | Langfuse | a free Hobby project. `backend/tracing.py` builds the client at startup; how the SDK behaves with no keys is unverified and a project takes two minutes, so treat the keys as required | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT=development` |
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |
 
-`OFF_USER_AGENT` is in `.env.example` for the day an Open Food Facts adapter lands (DESIGN
-§8.2); nothing reads it today.
+`OFF_USER_AGENT` is read by `backend/sources/off.py`, the barcode miss-fallback (DESIGN
+§8.2); Open Food Facts needs no key, only a descriptive User-Agent, and the adapter falls
+back to the string DESIGN §0.5 documents when the variable is unset.
 
 ### 8.2 Env files
 

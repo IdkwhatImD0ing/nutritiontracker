@@ -86,7 +86,7 @@ USER_ID = "e2e-agent"  # a synthetic tenant: the owner's own rows are never touc
 def client():
     # override_user binds the tenant inside the REQUEST's context only; the
     # test's own reads and the cleanup run in this context, so they must be
-    # bound to the same tenant or RLS shows them nothing (BACKLOG 133).
+    # bound to the same tenant or RLS shows them nothing (BACKLOG 134).
     user = {"id": USER_ID, "email": "billzhangsc@gmail.com", "is_owner": True}
     t_id = db.current_user_id.set(USER_ID)
     t_user = auth.current_user.set(user)

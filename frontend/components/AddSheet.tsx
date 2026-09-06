@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { loadDetector } from "./BarcodeScanner";
 
 /** The + sheet (owner ruling, 2026-09-02): the mid-screen capture bar is
  *  gone; every way to log opens from the tab bar's + button. Exactly four
@@ -107,6 +108,13 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  // Warm the barcode decoder (its ~1 MB wasm) the moment the sheet opens:
+  // that download is the slow part of a first scan, and it is one HTTP-cached
+  // fetch per page, so a sheet opened for another lane costs it once.
+  useEffect(() => {
+    if (open) loadDetector().catch(() => {});
+  }, [open]);
 
   if (!open) return null;
 

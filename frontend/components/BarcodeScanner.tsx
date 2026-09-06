@@ -19,14 +19,55 @@ type Props = {
 type Camera = "starting" | "live" | "denied" | "unavailable";
 
 /** Retail formats only: the lane's job is a packaged food's GTIN for the §3.4
- *  gtinUpc ladder (sources/fdc.lookup_barcode — FDC Branded is the only
- *  barcode source; there is no Open Food Facts adapter). QR and the rest are
- *  noise here. */
+ *  gtinUpc ladder (FDC Branded, then Open Food Facts on a miss —
+ *  backend/routes/quick.py). QR and the rest are noise here. */
 const FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e"] as const;
-const TICK_MS = 150;
-/** ~1s of empty frames re-arms the last code (the user pointed away and back) */
-const REARM_TICKS = 7;
+/** ~1s of detection attempts without the code re-arms it (the user pointed
+ *  away and back). Attempts, not wall-clock: a lookup's own duration, when no
+ *  detection runs, must not count. */
+const REARM_MS = 1000;
 const MIN_DIGITS = 6; // UPC-E prints as six
+
+type DetectorModule = typeof import("barcode-detector/ponyfill");
+let detectorModule: Promise<DetectorModule> | null = null;
+let wasm: Promise<unknown> | null = null;
+
+/** The wasm fetch + instantiation, once. zxing-wasm caches the instantiation
+ *  promise per overrides — a *rejected* one too (offline, a blocked CDN), and
+ *  detect() would then fail until a reload, which a PWA may not see for
+ *  days. So a failure is forgotten here and the retry passes `equalityFn`
+ *  to force a fresh instantiation past that cache. */
+function warmWasm(m: DetectorModule): Promise<unknown> {
+  if (!wasm) {
+    wasm = Promise.resolve(
+      m.prepareZXingModule({ fireImmediately: true, equalityFn: () => false }),
+    ).catch((e) => {
+      wasm = null;
+      throw e;
+    });
+  }
+  return wasm;
+}
+
+/** The decoder: the ponyfill's glue plus its ~1 MB reader wasm, fetched once
+ *  per page. The + sheet calls this the moment it opens, so by the time the
+ *  user has picked Scan and granted the camera the reader is usually already
+ *  here — that download behind the permission prompt was most of "the first
+ *  scan is slow". A failed load is forgotten so the next call retries. */
+export function loadDetector(): Promise<DetectorModule> {
+  if (!detectorModule) {
+    detectorModule = import("barcode-detector/ponyfill").catch((e) => {
+      detectorModule = null;
+      throw e;
+    });
+  }
+  return detectorModule.then((m) => {
+    warmWasm(m).catch(() => {
+      /* detect() reports the failure when it runs; the next load retries */
+    });
+    return m;
+  });
+}
 
 const CAMERA_TEXT: Record<Camera, string> = {
   starting: "Starting camera…",
@@ -38,8 +79,9 @@ const CAMERA_TEXT: Record<Camera, string> = {
 /** The + sheet's Scan barcode lane. iOS Safari ships no BarcodeDetector, so
  *  the spec-shaped ponyfill from `barcode-detector` (ZXing-C++ wasm) reads on
  *  every browser — imported lazily so its glue stays out of the Today bundle
- *  (the ~1 MB reader wasm is fetched on the first scan, from jsDelivr by
- *  default). Camera via getUserMedia, rear-facing, tracks stopped on close;
+ *  (the ~1 MB reader wasm comes from jsDelivr by default, prefetched when
+ *  the + sheet opens — `loadDetector`). Camera via getUserMedia, rear-facing,
+ *  720p requested, tracks stopped on close;
  *  a torch toggle where the track advertises one; a typed-number fallback
  *  when the camera is denied or the code won't read. */
 export default function BarcodeScanner({
@@ -73,14 +115,25 @@ export default function BarcodeScanner({
   useEffect(() => {
     const video = videoRef.current;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let frame = 0;
     setCamera("starting");
     setTorch(null);
+    // The decoder loads while the permission prompt is up, not after it. A
+    // failure surfaces where it is awaited below, not as a stray rejection
+    // while the prompt is still up (or after a denial, which never awaits).
+    const detectorReady = loadDetector();
+    detectorReady.catch(() => {});
     (async () => {
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
+          video: {
+            facingMode: { ideal: "environment" },
+            // 720p, not the 640×480 many phones hand out by default: a retail
+            // code needs its bars a few pixels wide to read at arm's length
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
           audio: false,
         });
       } catch (e) {
@@ -107,12 +160,20 @@ export default function BarcodeScanner({
         | (MediaTrackCapabilities & { torch?: boolean })
         | undefined;
       if (caps?.torch) setTorch(false);
-      const { BarcodeDetector } = await import("barcode-detector/ponyfill");
+      const { BarcodeDetector } = await detectorReady;
       if (cancelled) return;
       const detector = new BarcodeDetector({ formats: [...FORMATS] });
       setCamera("live");
       let last: string | null = null;
-      let misses = 0;
+      let missingSince: number | null = null; // first attempt that lost the code
+      // Back to back on animation frames — the next detect() starts as soon
+      // as the previous one settles (rAF yields to paint and idles in a
+      // hidden tab), so a code is read on the first frame that shows it
+      // rather than on a fixed 150 ms tick. A code stays armed while it is in
+      // frame; ~1 s of attempts without it re-arms (pointed away and back).
+      // The clock starts on the first empty attempt, never during a lookup
+      // (no attempts run while busy), so a "not found" that took a second
+      // cannot re-submit the code still in frame on the first dropped frame.
       const tick = async () => {
         if (cancelled) return;
         // readyState ≥ HAVE_CURRENT_DATA: detect() throws on a frameless video
@@ -123,21 +184,27 @@ export default function BarcodeScanner({
           } catch {
             /* an undecodable frame — the next one may do */
           }
-          if (code && code !== last) {
-            last = code;
-            misses = 0;
-            if (!cancelled) onCodeRef.current(code);
-          } else if (!code && ++misses >= REARM_TICKS) {
-            last = null;
+          if (code) {
+            missingSince = null;
+            if (code !== last) {
+              last = code;
+              if (!cancelled) onCodeRef.current(code);
+            }
+          } else if (last) {
+            missingSince ??= performance.now();
+            if (performance.now() - missingSince > REARM_MS) {
+              last = null;
+              missingSince = null;
+            }
           }
         }
-        if (!cancelled) timer = setTimeout(tick, TICK_MS);
+        if (!cancelled) frame = requestAnimationFrame(tick);
       };
-      void tick();
+      frame = requestAnimationFrame(tick);
     })();
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      cancelAnimationFrame(frame);
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       if (video) video.srcObject = null;
