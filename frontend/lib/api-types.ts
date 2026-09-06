@@ -544,6 +544,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/weights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Weights */
+        get: operations["get_weights_api_weights_get"];
+        /** Put Weight */
+        put: operations["put_weight_api_weights_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -557,6 +575,18 @@ export interface components {
             week: string;
             /** Days Logged */
             days_logged: number;
+        };
+        /**
+         * AgentOutcome
+         * @description What the agent lane did with the utterance (§6.4): its one-sentence
+         *     reply, and the weigh-in it recorded, if any. Staged items ride the
+         *     LogResponse as on any other log. Assembled from what the tools did,
+         *     never from what the model said.
+         */
+        AgentOutcome: {
+            /** Reply */
+            reply: string;
+            weight?: components["schemas"]["WeightEntry"] | null;
         };
         /** AliasDeleteResponse */
         AliasDeleteResponse: {
@@ -1234,6 +1264,11 @@ export interface components {
             capture_fallback: boolean;
             /** Capture Error */
             capture_error?: string | null;
+            /**
+             * Agent
+             * @default false
+             */
+            agent: boolean;
         };
         /**
          * LogCreateResponse
@@ -1241,7 +1276,8 @@ export interface components {
          *     as my usual breakfast" decomposes to zero items and a save_intent; the
          *     macro is built server-side from the most recent committed log and
          *     reported here (`saved_meal`), or `note` says why nothing was saved —
-         *     never a silently empty staging list.
+         *     never a silently empty staging list. `agent` is set on an agent-lane log
+         *     (§6.4) — with zero items it is what the client shows instead of a sheet.
          */
         LogCreateResponse: {
             /**
@@ -1255,6 +1291,7 @@ export interface components {
             saved_meal?: components["schemas"]["SavedMealNote"] | null;
             /** Note */
             note?: string | null;
+            agent?: components["schemas"]["AgentOutcome"] | null;
         };
         /**
          * LogPollResponse
@@ -1860,6 +1897,46 @@ export interface components {
             adherence: number;
             avg?: components["schemas"]["MacroSums"] | null;
         };
+        /** WeightEntry */
+        WeightEntry: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Weight Kg */
+            weight_kg: number;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "kg" | "lb";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "agent" | "manual";
+            /** Log Id */
+            log_id?: string | null;
+        };
+        /** WeightPut */
+        WeightPut: {
+            /** Weight */
+            weight: number;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "kg" | "lb";
+            /** Day */
+            day?: string | null;
+        };
+        /** WeightsResponse */
+        WeightsResponse: {
+            latest: components["schemas"]["WeightEntry"] | null;
+            /** Entries */
+            entries: components["schemas"]["WeightEntry"][];
+        };
     };
     responses: never;
     parameters: never;
@@ -1912,6 +1989,8 @@ export interface operations {
                     /** @default false */
                     capture_fallback?: boolean;
                     capture_error?: string;
+                    /** @default false */
+                    agent?: boolean;
                 };
             };
         };
@@ -2981,6 +3060,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+        };
+    };
+    get_weights_api_weights_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeightsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_weight_api_weights_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeightPut"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeightEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -407,6 +407,70 @@ a {
   margin: 0;
 }
 
+/* ---------- weight card (agent mode, §6.4): the latest weigh-in + 30 days ---------- */
+
+.weight-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: var(--shadow-card);
+}
+
+.weight-card .label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.weight-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.weight-num {
+  line-height: 1;
+}
+
+.weight-num strong {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.weight-num .unit {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-left: 5px;
+}
+
+.weight-sub {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.weight-empty {
+  font-size: 0.8rem;
+  color: var(--faint);
+  margin: 0;
+}
+
+.weight-spark {
+  width: 96px;
+  height: 34px;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
 /* ---------- composer: the sheets' text field + a round send ---------- */
 
 .capture {
@@ -1920,6 +1984,7 @@ a {
     top: 40px;
   }
 
+  .shell.today > .weight-card,
   .shell.today > .pending-wrap,
   .shell.today > .diary,
   .shell.today > .diary-empty,

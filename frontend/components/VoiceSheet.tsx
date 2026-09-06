@@ -79,13 +79,16 @@ function SendIcon() {
   );
 }
 
-/** The + sheet's Voice log lane — the old mid-screen capture bar (mic + text
- *  field) moved into a sheet (owner ruling, 2026-09-02). Recording starts on
- *  open: the user just chose "Voice log", so a second mic tap would be
- *  ceremony. While recording, the sheet is one big stop target and a clock;
- *  a "Type instead" tap cancels the recording (nothing uploads) and shows
- *  the text field, so §8.1d's type-it-instead fallback (and iOS keyboard
- *  dictation) stays one tap away even mid-recording. */
+/** The + sheet's Agent lane (§6.4, 2026-09-06 — formerly "Voice log"): the
+ *  old mid-screen capture bar (mic + text field) in a sheet (owner ruling,
+ *  2026-09-02), now the front door of the agent — what you say or type here
+ *  can be what you ate, your weight, or both; the parent sends it with
+ *  agent=true. Voice is still the default: recording starts on open (the
+ *  user just chose the lane, so a second mic tap would be ceremony). While
+ *  recording, the sheet is one big stop target and a clock; a "Type instead"
+ *  tap cancels the recording (nothing uploads) and shows the text field, so
+ *  §8.1d's type-it-instead fallback (and iOS keyboard dictation) stays one
+ *  tap away even mid-recording. */
 export default function VoiceSheet({
   busy,
   error,
@@ -174,9 +177,9 @@ export default function VoiceSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Voice log">
+      <div className="subsheet" role="dialog" aria-label="Agent">
         <div className="sheet-head-row">
-          <div className="subsheet-title">Voice log</div>
+          <div className="subsheet-title">Agent</div>
           <button
             type="button"
             className="sheet-close"
@@ -237,8 +240,8 @@ export default function VoiceSheet({
               type="text"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="What did you eat?"
-              aria-label="Log food"
+              placeholder="What you ate, or your weight"
+              aria-label="Tell the agent"
               enterKeyHint="send"
               autoComplete="off"
             />
@@ -257,8 +260,8 @@ export default function VoiceSheet({
         {!recording && !notice && !error ? (
           <p className="subsheet-hint">
             {supported
-              ? "Tap the mic to record, or type what you ate."
-              : "No microphone here — type what you ate."}
+              ? "Tap the mic and say it — what you ate, or your weight — or type it."
+              : "No microphone here — type what you ate, or your weight."}
           </p>
         ) : null}
       </div>

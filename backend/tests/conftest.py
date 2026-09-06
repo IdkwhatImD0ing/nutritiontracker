@@ -63,6 +63,28 @@ def _real_db_path_before_002(live_schema):
     db._bind_tenant = orig
 
 
+@pytest.fixture(scope="session")
+def live_has_003() -> bool | None:
+    """Is 003's `weights` table on the real database? None without one."""
+    try:
+        with psycopg.connect(db._database_url()) as conn:
+            return conn.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = 'weights'"
+            ).fetchone() is not None
+    except (RuntimeError, psycopg.OperationalError):
+        return None
+
+
+@pytest.fixture
+def needs_003(live_has_003):
+    """For the real-path tests that write a weigh-in (the agent lane, live):
+    skipped until 003 is applied for real. The rollback harnesses apply 003
+    inside their own transaction and never need this."""
+    if live_has_003 is False:
+        pytest.skip("needs migration 003 applied to the database (apply.py 003)")
+
+
 @pytest.fixture
 def needs_002(live_schema):
     """For the few real-path tests whose statements only exist after 002

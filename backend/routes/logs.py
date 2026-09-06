@@ -4,6 +4,12 @@ M2: POST /api/logs accepts multipart (audio blob + the same fields) alongside
 the JSON body; audio runs through the Transcriber interface
 (services/transcribe.py) and an empty/near-empty transcript returns the §5
 capture_failure status — never an empty staged log.
+
+Agent mode (§6.4, 2026-09-06): `agent: true` (JSON field / form field) routes
+the utterance through services/agent.py after the §3.0 short-circuit — the
+agent hands the food part to the unchanged decompose → cascade → staging
+pipeline (_stage_from_text) and a spoken weight to routes/weights; the
+response reports what it did under `agent`.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from models import LogCreate, LogResponse, Meal, StagedItem
 from resolver import cascade
 from resolver import commit as commit_tx
 from resolver.norm import norm
+from routes import weights as weights_route
 from routes.commit import SavedMealNote
 from services import quota
 
@@ -56,7 +63,9 @@ _MAX_TIER3_ATTEMPTS = 2
 # Voice and photo sit inside the window too: the row is claimed before STT /
 # vision runs (the claim is what answers a replay and records the demo's
 # attempt, so it cannot wait for the transcript), which puts one STT call
-# (services/transcribe: 30s per provider) ahead of decompose.
+# (services/transcribe: 30s per provider) ahead of decompose. The agent lane
+# (§6.4) adds one short routing run (services/agent, four turns at most)
+# ahead of decompose; the same window covers it.
 _RERUN_GRACE_SECONDS = 90
 
 # Multipart upload bounds (Phase-3 panel): a ~10s MediaRecorder clip is tens
@@ -91,15 +100,27 @@ class LogPollResponse(LogResponse):
     items: list[StagedItemOut]  # type: ignore[assignment]
 
 
+class AgentOutcome(BaseModel):
+    """What the agent lane did with the utterance (§6.4): its one-sentence
+    reply, and the weigh-in it recorded, if any. Staged items ride the
+    LogResponse as on any other log. Assembled from what the tools did,
+    never from what the model said."""
+
+    reply: str
+    weight: weights_route.WeightEntry | None = None
+
+
 class LogCreateResponse(LogResponse):
     """POST /api/logs: LogResponse + the §8.4 itemless save path. "Save this
     as my usual breakfast" decomposes to zero items and a save_intent; the
     macro is built server-side from the most recent committed log and
     reported here (`saved_meal`), or `note` says why nothing was saved —
-    never a silently empty staging list."""
+    never a silently empty staging list. `agent` is set on an agent-lane log
+    (§6.4) — with zero items it is what the client shows instead of a sheet."""
 
     saved_meal: SavedMealNote | None = None
     note: str | None = None
+    agent: AgentOutcome | None = None
 
 
 class TimingsPatch(BaseModel):
@@ -308,6 +329,7 @@ async def create_log_voice(
     tz: Annotated[str, Form()],
     capture_fallback: Annotated[bool, Form()] = False,
     capture_error: Annotated[str | None, Form()] = None,
+    agent: Annotated[bool, Form()] = False,
 ) -> LogCreateResponse | CaptureFailureResponse:
     """Audio → transcribe (§8.1) → the identical pipeline. input_mode='voice',
     transcribe_ms stored; empty/near-empty transcript → capture_failure (§5).
@@ -381,6 +403,7 @@ async def create_log_voice(
         tz=tz,
         capture_fallback=capture_fallback,
         capture_error=capture_error,
+        agent=agent,
     )
     return await _run_pipeline(body)
 
@@ -410,6 +433,7 @@ _MULTIPART_OPENAPI = {
                         "tz": {"type": "string"},
                         "capture_fallback": {"type": "boolean", "default": False},
                         "capture_error": {"type": "string"},
+                        "agent": {"type": "boolean", "default": False},
                     },
                 }
             }
@@ -505,18 +529,28 @@ async def create_log(body: LogCreate) -> LogCreateResponse:
 
 
 async def _run_pipeline(body: LogCreate) -> LogCreateResponse:
-    """§3.0 short-circuit, else decompose → the per-log cascade → _persist,
-    on a log row this request owns (a fresh claim, or a claimed orphan)."""
+    """§3.0 short-circuit, else — through the agent when the log asks for it
+    (§6.4) — decompose → the per-log cascade → _persist, on a log row this
+    request owns (a fresh claim, or a claimed orphan)."""
     meal = await infer_meal(body.captured_at, body.tz)
 
     # §3.0 whole-utterance short-circuit — the LLM leaves the hot path entirely.
     # Meal macro first (tier 0, N rows — "my usual breakfast"), then alias
-    # (tier 1, one row); None → decompose.
+    # (tier 1, one row); None → decompose. The agent lane keeps it: a
+    # memorized phrase stages in one round trip whichever sheet it came from.
     sc = await cascade.short_circuit_all(body.text, meal)
     if sc is not None:
         await _persist(body.id, sc, meal, short_circuit=True)
         return LogCreateResponse(log_id=body.id, meal=meal, items=[r.staged for r in sc])
 
+    if body.agent:
+        return await _run_agent_lane(body, meal)
+    return await _stage_from_text(body, meal, body.text)
+
+
+async def _stage_from_text(body: LogCreate, meal: Meal, text: str) -> LogCreateResponse:
+    """decompose → when/meal hints → the per-log cascade → _persist, for
+    `text`: the whole utterance, or the food part the agent handed over."""
     # decompose (gpt-5.6-luna) wrapped in a tracing generation (§10)
     import tracing
     from services.context import build_agent_context
@@ -527,8 +561,8 @@ async def _run_pipeline(body: LogCreate) -> LogCreateResponse:
     t0 = time.monotonic()
     trace_id: str | None = None
     async with tracing.generation("decompose") as gen:
-        parsed = await decompose(body.text, ctx)
-        gen.update(input=body.text, output=parsed.model_dump(mode="json"))
+        parsed = await decompose(text, ctx)
+        gen.update(input=text, output=parsed.model_dump(mode="json"))
         trace_id = gen.trace_id
     decompose_ms = int((time.monotonic() - t0) * 1000)
     try:
@@ -564,6 +598,110 @@ async def _run_pipeline(body: LogCreate) -> LogCreateResponse:
         log_id=body.id, meal=meal, items=[r.staged for r in resolutions],
         saved_meal=saved_meal, note=note,
     )
+
+
+async def _run_agent_lane(body: LogCreate, meal: Meal) -> LogCreateResponse:
+    """§6.4: the front-door agent. Its two effects are closures over this
+    log: the food part of the utterance goes through _stage_from_text
+    exactly as a plain log would, a spoken weight through
+    routes/weights.record_weight under this log's id. The response is
+    assembled from what those closures recorded — the model contributes the
+    one-sentence reply and nothing else."""
+    import tracing
+    from services import agent as agent_svc
+
+    tracing.init_tracing()
+    result: dict = {"staged": None, "weight": None}
+
+    async def stage_food(text: str) -> dict:
+        staged = await _stage_from_text(body, meal, text)
+        result["staged"] = staged
+        # what was staged, for the model — never the numbers: the reply must
+        # not state macros, the sheet does
+        return {
+            "meal": staged.meal.value,
+            "items": [
+                {
+                    "phrase": it.phrase,
+                    "status": it.status,
+                    "food": it.food.name if it.food else None,
+                    "qty": it.qty,
+                    "serving": it.serving.description if it.serving else None,
+                }
+                for it in staged.items
+            ],
+            "saved_meal": staged.saved_meal.name if staged.saved_meal else None,
+            "note": staged.note,
+        }
+
+    async def record_weight(value: float, unit: str, day) -> dict:
+        previous = await weights_route.latest_entry(before=day)
+        entry = await weights_route.record_weight(
+            weight=value, unit=unit, day=day, source="agent", log_id=body.id,
+        )
+        result["weight"] = entry
+        shown = weights_route.from_kg(entry.weight_kg, unit)
+        out: dict = {"day": entry.day.isoformat(), "weight": shown, "unit": unit}
+        if previous is not None:
+            before = weights_route.from_kg(previous.weight_kg, unit)
+            out["previous"] = {"day": previous.day.isoformat(), "weight": before, "unit": unit}
+            out["change"] = round(shown - before, 1)  # computed here, never by the model
+        return out
+
+    settings = {
+        r["key"]: r["value"]
+        for r in await db.fetchall(
+            "SELECT key, value FROM settings WHERE key IN ('body', 'profile_notes')"
+        )
+    }
+    last = await weights_route.latest_entry()
+    # the unit to assume when none is spoken: how the last weigh-in was said,
+    # else the wizard's display preference, else pounds
+    body_units = (settings.get("body") or {}).get("units")
+    unit_pref = last.unit if last is not None else ("kg" if body_units == "metric" else "lb")
+    try:
+        now_local = body.captured_at.astimezone(ZoneInfo(body.tz))
+    except Exception:
+        now_local = body.captured_at.astimezone(timezone.utc)
+    deps = agent_svc.AgentDeps(
+        stage_food=stage_food,
+        record_weight=record_weight,
+        now_local=now_local,
+        unit_pref=unit_pref,
+        last_weight=(
+            {
+                "day": last.day.isoformat(),
+                "weight": weights_route.from_kg(last.weight_kg, last.unit),
+                "unit": last.unit,
+            }
+            if last is not None
+            else None
+        ),
+        profile_notes=settings.get("profile_notes") or "",
+    )
+    async with tracing.generation("agent") as gen:
+        run = await agent_svc.run_agent(body.text, deps)
+        gen.update(
+            input=body.text,
+            output={
+                "reply": run.reply,
+                "food_calls": run.food_calls,
+                "weight": run.weight,
+                "max_turns_hit": run.max_turns_hit,
+            },
+        )
+    try:
+        tracing.flush()  # serverless flush rule (§10)
+    except Exception:
+        pass
+
+    outcome = AgentOutcome(reply=run.reply, weight=result["weight"])
+    staged = result["staged"]
+    if staged is None:
+        # nothing staged: the row stays an itemless staged log, as the §8.4
+        # save-intent path leaves it — nothing counts it (§9)
+        return LogCreateResponse(log_id=body.id, meal=meal, items=[], agent=outcome)
+    return staged.model_copy(update={"agent": outcome})
 
 
 async def _save_intent_without_items(name: str) -> tuple[SavedMealNote | None, str | None]:

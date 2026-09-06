@@ -28,6 +28,7 @@ from routes import (
     quick,
     resolve,
     settings,
+    weights,
 )
 from services import quota
 
@@ -71,3 +72,6 @@ app.include_router(settings.router)
 app.include_router(metrics.router)
 # Open-sourcing (§8.9): who the caller is + the demo quota; the banner reads it.
 app.include_router(me.router)
+# Agent mode (§6.4, 2026-09-06): the weigh-in log behind the agent's log_weight
+# tool and Today's weight card.
+app.include_router(weights.router)

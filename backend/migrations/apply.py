@@ -6,6 +6,9 @@
   python apply.py 002 --check    -> re-run 002's verification against the committed schema
                                     (post-apply check; valid while the owner is the only
                                     tenant, i.e. run it right after applying)
+  python apply.py 003            -> 003_weights.sql (the weigh-in log; needs 002, no-op if applied)
+  python apply.py 003 --dry-run  -> apply 003 + verify inside one transaction, then ROLL BACK
+  python apply.py 003 --check    -> re-run 003's verification against the committed schema
 
 Every migration runs in ONE transaction. 002 is verified before COMMIT (row
 counts unchanged, every existing row backfilled to the owner, RLS filters
@@ -14,6 +17,7 @@ insert with no tenant fails); a failed check rolls back. Guards:
   001 - schema public must be empty; exactly the 7 tables present -> no-op, exit 0
   002 - the 7 tables must be present and logs.user_id absent; present -> no-op, exit 0
   002 --check - logs.user_id must be present
+  003 - logs.user_id must be present (002 applied) and `weights` absent; present -> no-op, exit 0
 
 Never prints secret values (the owner's user id is an identifier, not a secret).
 """
@@ -28,6 +32,7 @@ REPO_ROOT = MIGRATIONS_DIR.parent.parent
 ENV_FILE = REPO_ROOT / ".env"
 SQL_FILE = MIGRATIONS_DIR / "001_init.sql"
 SQL_FILE_002 = MIGRATIONS_DIR / "002_multiuser.sql"
+SQL_FILE_003 = MIGRATIONS_DIR / "003_weights.sql"
 
 EXPECTED_TABLES = {
     "foods",
@@ -140,9 +145,11 @@ def verify_002(cur, before: dict[str, int]) -> str:
         "WHERE n.nspname = 'public' AND c.relrowsecurity AND c.relforcerowsecurity"
     )
     rls = {r[0] for r in cur.fetchall()}
-    assert rls == set(RLS_TABLES), f"RLS enabled+forced on {sorted(rls)}, expected {sorted(RLS_TABLES)}"
+    # 003's `weights` is RLS-covered too once it exists (a --check after 003)
+    expected_rls = set(RLS_TABLES) | ({"weights"} if has_003(cur) else set())
+    assert rls == expected_rls, f"RLS enabled+forced on {sorted(rls)}, expected {sorted(expected_rls)}"
     cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")
-    assert cur.fetchone()[0] == len(RLS_TABLES)
+    assert cur.fetchone()[0] == len(expected_rls)
     # the ledger's one-log-a-day rule (002 §5): a partial unique index
     cur.execute(
         "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
@@ -230,17 +237,110 @@ def check_002(conn) -> None:
     print(f"CHECK OK: 002 invariants hold. Owner user id {owner_id}; row counts {counts}.")
 
 
+# ---------------------------------------------------------------------------
+# 003 — the weigh-in log (agent mode, 2026-09-06)
+# ---------------------------------------------------------------------------
+
+
+def has_003(cur) -> bool:
+    cur.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = 'weights'"
+    )
+    return cur.fetchone() is not None
+
+
+def verify_003(cur) -> None:
+    """003's invariants inside the still-open transaction: RLS enabled AND
+    forced with one policy, one weigh-in per user per day (updated in place),
+    the app role writes and reads its own rows and sees nobody else's, and a
+    write with no tenant bound fails. Every probe row is rolled back to a
+    savepoint, so a real apply commits nothing but the table."""
+    cur.execute(
+        "SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relname = 'weights'"
+    )
+    assert cur.fetchone() == (True, True), "weights: RLS must be enabled and forced"
+    cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'weights'")
+    assert cur.fetchone()[0] == 1, "weights: expected exactly one policy"
+    cur.execute(
+        "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'weights' "
+        "AND indexdef LIKE 'CREATE UNIQUE INDEX%(user_id, day)'"
+    )
+    assert cur.fetchone() is not None, "weights: UNIQUE (user_id, day) missing"
+
+    cur.execute("SAVEPOINT verify_003")
+    try:
+        cur.execute(f"SET LOCAL ROLE {APP_ROLE}")
+        cur.execute("SELECT set_config('app.user_id', '003-verify-a', true)")
+        cur.execute(
+            "INSERT INTO weights (day, weight_kg, unit, source) VALUES (current_date, 80, 'kg', 'manual')"
+        )
+        cur.execute(
+            "INSERT INTO weights (day, weight_kg, unit, source) VALUES (current_date, 81, 'kg', 'manual') "
+            "ON CONFLICT (user_id, day) DO UPDATE SET weight_kg = EXCLUDED.weight_kg"
+        )
+        cur.execute("SELECT count(*), max(weight_kg) FROM weights")
+        assert cur.fetchone() == (1, 81), "weights: one row per user per day, updated in place"
+        cur.execute("SELECT set_config('app.user_id', '003-verify-b', true)")
+        cur.execute("SELECT count(*) FROM weights")
+        assert cur.fetchone()[0] == 0, "weights: RLS leaks rows to another tenant"
+        cur.execute("SELECT set_config('app.user_id', '', true)")
+        try:
+            cur.execute(
+                "INSERT INTO weights (day, weight_kg, unit, source) VALUES (current_date, 80, 'kg', 'manual')"
+            )
+        except (psycopg.errors.NotNullViolation, psycopg.errors.InsufficientPrivilege):
+            pass
+        else:
+            raise AssertionError("weights: insert with no app.user_id must fail")
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT verify_003")  # probes gone, SET LOCAL ROLE undone with them
+    cur.execute("SET LOCAL ROLE NONE")
+
+
+def apply_003(conn, dry_run: bool) -> None:
+    sql = SQL_FILE_003.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        if not has_002(cur):
+            sys.exit("ERROR: refusing to apply 003 - 002 (logs.user_id) is not applied. No changes made.")
+        if has_003(cur):
+            print("Guard: table weights already exists - 003 already applied, nothing to do.")
+            sys.exit(0)
+        cur.execute(sql)
+        verify_003(cur)
+    if dry_run:
+        conn.rollback()
+        print("DRY RUN: 003_weights.sql applied and verified, then ROLLED BACK.")
+        return
+    conn.commit()
+    print("Applied 003_weights.sql: weights created, RLS enabled+forced, one policy, one weigh-in a day.")
+
+
+def check_003(conn) -> None:
+    """`--check`: 003's own verification against the committed schema, rolled back."""
+    with conn.cursor() as cur:
+        if not has_003(cur):
+            sys.exit("ERROR: 003 is not applied (table weights absent) - nothing to check.")
+        verify_003(cur)
+    conn.rollback()
+    print("CHECK OK: 003 invariants hold.")
+
+
 def main(argv: list[str]) -> None:
     dry_run = "--dry-run" in argv
     check = "--check" in argv
     args = [a for a in argv if a not in ("--dry-run", "--check")]
     which = args[0] if args else "001"
-    if which not in ("001", "002") or (which == "001" and (dry_run or check)) or (dry_run and check):
+    if which not in ("001", "002", "003") or (which == "001" and (dry_run or check)) or (dry_run and check):
         sys.exit(__doc__)
     dsn = read_database_url(ENV_FILE)
     with psycopg.connect(dsn) as conn:
         if which == "001":
             apply_001(conn)
+        elif which == "003":
+            check_003(conn) if check else apply_003(conn, dry_run)
         elif check:
             check_002(conn)
         else:

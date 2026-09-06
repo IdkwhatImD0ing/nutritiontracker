@@ -24,9 +24,18 @@ export type LogCreate = components["schemas"]["LogCreate"];
 export type LogResponse = components["schemas"]["LogPollResponse"];
 /** §8.4: POST /api/logs answers LogCreateResponse — a LogResponse plus the
  *  itemless "save this as my usual breakfast" outcome (`saved_meal`, or
- *  `note` saying why nothing was saved). Both are absent on an ordinary log. */
+ *  `note` saying why nothing was saved), and (§6.4) `agent`: what the agent
+ *  lane did — its reply and the weigh-in it recorded, if any. All three are
+ *  absent on an ordinary log. */
 export type LogCreateResponse = LogResponse &
-  Pick<components["schemas"]["LogCreateResponse"], "saved_meal" | "note">;
+  Pick<
+    components["schemas"]["LogCreateResponse"],
+    "saved_meal" | "note" | "agent"
+  >;
+export type AgentOutcome = components["schemas"]["AgentOutcome"];
+/** §6.4 weight tracking: one weigh-in (routes/weights.py) — kg plus the
+ *  unit it was said in, which is how the card shows it back. */
+export type WeightEntry = components["schemas"]["WeightEntry"];
 export type DayTotals = components["schemas"]["DayTotals"];
 export type Macros = components["schemas"]["Macros"];
 export type Meal = components["schemas"]["Meal"];
@@ -163,6 +172,14 @@ export function getDiary(
 ): Promise<Ok<operations["get_diary_api_diary_get"]>> {
   const qs = date ? `?date=${encodeURIComponent(date)}` : "";
   return request(`/api/diary${qs}`);
+}
+
+/** §6.4 weight tracking: GET /api/weights?days= — the newest weigh-in and
+ *  the window's entries, newest first (routes/weights.py). */
+export function getWeights(
+  days = 90,
+): Promise<Ok<operations["get_weights_api_weights_get"]>> {
+  return request(`/api/weights?days=${days}`);
 }
 
 /** §3.5 late-straggler append: POST /api/logs/:id/commit-item. */
@@ -308,6 +325,8 @@ export async function createLogAudio(args: {
    *  retrying — lands in logs.capture_error so the §9 counter still sees it
    *  (capture_fallback stays false: voice succeeded, nothing fell back) */
   capture_error?: string | null;
+  /** §6.4: the Agent lane — the transcript runs through the front-door agent */
+  agent?: boolean;
 }): Promise<AudioLogResult> {
   const { blob, mimeType, capturedAt } = args.clip;
   const ext = mimeType.includes("mp4") ? "m4a" : "webm";
@@ -316,6 +335,7 @@ export async function createLogAudio(args: {
   form.set("captured_at", capturedAt);
   form.set("tz", args.tz);
   if (args.capture_error) form.set("capture_error", args.capture_error);
+  if (args.agent) form.set("agent", "true");
   form.set("audio", new File([blob], `clip.${ext}`, { type: mimeType }));
   const res = await multipart("/api/logs", form);
   if (!res.ok) {
