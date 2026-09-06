@@ -2,8 +2,9 @@
 
 Every isolated_db copy calls bind_test_tenant(conn) right after opening its
 force-rollback transaction. Inside that transaction it
-  1. applies 002 when the database is still pre-002 (DDL is transactional —
-     it rolls back with the test), so the suite exercises RLS either way;
+  1. applies 002 when the database is still pre-002, and 003 (the weigh-in
+     log) while it is not yet applied — DDL is transactional, it rolls back
+     with the test — so the suite exercises RLS either way;
   2. switches to the app role and binds one fixed tenant, exactly as db.py
      does for a request (db.tenant_sql) — neondb_owner itself bypasses RLS;
   3. seeds the 001 settings rows for that tenant — a fresh tenant has none,
@@ -27,6 +28,9 @@ import db
 TEST_USER_ID = "test-user"
 SQL_002 = (
     Path(__file__).resolve().parents[1] / "migrations" / "002_multiuser.sql"
+).read_text(encoding="utf-8")
+SQL_003 = (
+    Path(__file__).resolve().parents[1] / "migrations" / "003_weights.sql"
 ).read_text(encoding="utf-8")
 
 # 001_init.sql's seeds (DESIGN.md §4, §7.2), for the bound tenant.
@@ -56,6 +60,14 @@ async def has_002(conn) -> bool:
     return await cur.fetchone() is not None
 
 
+async def has_003(conn) -> bool:
+    cur = await conn.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = 'weights'"
+    )
+    return await cur.fetchone() is not None
+
+
 async def switch_tenant(conn, user_id: str) -> None:
     """(Re)bind the open transaction to one tenant, as db.py does per request."""
     await conn.execute(db.tenant_sql(user_id))
@@ -65,6 +77,8 @@ async def switch_tenant(conn, user_id: str) -> None:
 async def bind_test_tenant(conn, user_id: str = TEST_USER_ID) -> None:
     if not await has_002(conn):
         await conn.execute(SQL_002)
+    if not await has_003(conn):  # the weigh-in log, the same way — rolls back with the test
+        await conn.execute(SQL_003)
     await switch_tenant(conn, user_id)
     await conn.execute(SEED_SETTINGS_SQL)
     auth.current_user.set({"id": user_id, "email": "test", "is_owner": True})

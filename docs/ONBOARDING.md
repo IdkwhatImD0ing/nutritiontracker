@@ -95,6 +95,15 @@ a transaction that is rolled back, the same way the tests run. **Order matters:*
 statement as the `tally_app` role that only 002 creates, so a push first means every
 DB-touching request fails until 002 lands (fail-closed, not a leak — but an outage).
 
+Migration 003 (the weigh-in log behind agent mode — `weights`, DESIGN §4, §6.4) is
+applied the same way, by hand, after 002: `apply.py 003 --dry-run`, then `apply.py 003`,
+then `apply.py 003 --check`. Unlike 002 its absence is not an outage — the Agent lane
+keeps staging food and says a weight could not be saved, `GET /api/weights` answers 503
+and Today's weight card renders nothing — but apply it **before** pushing this tree all
+the same: until it lands, every rollback-harness test replays 003 inside its own
+transaction (a lock on `logs` for the test's duration, as 002's replay was, BACKLOG 118
+and 135), and two test runs at once deadlock on it.
+
 ---
 
 ## 3. Running it locally
@@ -143,6 +152,11 @@ Notes that will save you an hour:
   There is no dev branch yet (BACKLOG 18) — creating one needs Console access, because the
   project is Vercel-Marketplace-managed and invisible to the Neon API token. Keep the
   rollback pattern and leave no rows behind.
+- **One DB suite at a time while a migration is pending.** Until `apply.py 003` lands,
+  every rollback-harness test replays 003 inside its transaction, and the new table's FK
+  to `logs` holds a lock on `logs` for the test's duration — two suites at once deadlock
+  on it (`DeadlockDetected`, seen 2026-09-06) and production writes wait. The real-path
+  weigh-in tests skip until then (`needs_003`, the way `needs_002` worked).
 - **Every query runs as a user.** The database enforces tenancy (RLS on the user-owned
   tables; `foods` is shared), keyed on the `app.user_id` setting and the `tally_app` role that
   `backend/db.py` binds at the top of every transaction from the JWT's `sub`. With no user
@@ -240,19 +254,20 @@ backend/
   models.py            pydantic contracts — the single source of truth for API types
   auth.py              JWT verification, owner-vs-demo, Origin check
   db.py  tracing.py    connection; binds tally_app + app.user_id per transaction; Langfuse setup
-  migrations/          001_init.sql, 002_multiuser.sql, apply.py (`002 --dry-run` verifies + rolls back)
+  migrations/          001_init.sql, 002_multiuser.sql, 003_weights.sql, apply.py (`--dry-run` verifies + rolls back)
   resolver/
     cascade.py         the resolver cascade: tier 0 → 1 → 2 → 3, and macro expansion
     commit.py          §3.5 idempotent commit transaction, alias/portion learning
     norm.py            phrase normalization (used by every tier)
   services/
+    agent.py           the Agent lane's front door (§6.4): log_food → the pipeline, log_weight → weights
     decompose.py       utterance → items (Luna, structured output)
-    tier3.py           the OpenAI-Agents food-resolution agent + its tools
+    tier3.py           the OpenAI-Agents food-resolution agent + its tools (web lane: chains + retail products)
     transcribe.py      Deepgram/OpenAI behind one interface
     context.py         what the LLM is told about your history
     quota.py           demo quota: one log a day, ten paid re-resolutions (§5 of DESIGN)
   sources/             fdc.py (USDA), web.py (restaurant transcription lane)
-  routes/              one module per API surface (me.py: GET /api/me)
+  routes/              one module per API surface (me.py: GET /api/me; weights.py: the weigh-in log)
   evals/               Langfuse dataset collection + replay harness (runs as the owner)
   tests/               pytest; `-m live` marks the ones that spend money; tenancy_harness.py
                        binds every isolated_db to a tenant
@@ -300,6 +315,24 @@ the voice lane's idempotent `capture_failure` replay that the claim-first change
 `test_commit_hardening` and `test_resolver`, and `test_tenancy` 7); live, 19 pass, 2 skip for the
 same reason (`test_e2e_m1`, `test_e2e_m3`) and the known xfail xfails; typegen is drift-free,
 `tsc` and `next build` are clean.
+
+**2026-09-06 — agent mode.** The + sheet's fourth row is now **Agent** (DESIGN §6.4, §8.10): the
+same voice-first sheet, but every utterance runs through a front-door agent (`services/agent.py`,
+gpt-5.6-luna, two tools) after the §3.0 short-circuit — `log_food` hands the food part, verbatim,
+to the unchanged decompose → cascade → staging pipeline, and `log_weight` records a spoken body
+weight in the new `weights` table (migration 003, `routes/weights.py`, Today's weight card). Only
+`POST /api/logs` with `agent: true` takes that path; every other caller is untouched. The same
+day the tier-3 web lane widened from famous chains to packaged/retail products the databases miss
+(§3.4 rule 2b). At this tree, **before 003 is applied**: `tests/test_agent.py` (10, offline, the
+rollback harness) passes; the suites the change touches (`test_tenancy`, `test_logs_lifecycle`,
+`test_quota_hardening`, `test_tier3_hardening`, `test_phase3_minors`) show only the five
+pre-existing failures of BACKLOG 134 (62 pass); `tests/test_agent_live.py`'s weigh-in story skips
+until `apply.py 003` lands (`needs_003`), and its "costco tonkotsu ramen" story resolved live to
+FDC Branded's *Nongshim Tonkotsu Premium Ramen with Black Garlic Oil* (agent + decompose 10–11 s,
+tier 3 15–18 s over two runs) — the product was in the database, so the web lane was not needed. The generated
+types are regenerated (commit `frontend/lib/api-types.ts` and `openapi.json` with the change);
+`tsc` and `next build` are clean. Nobody has rendered the Agent sheet or the weight card in a
+browser — the dev app's Today needs a signed-in session.
 
 What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
 (18, now 100), the preview-protection bypass token (19), the input-hardening pass (98), the

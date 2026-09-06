@@ -90,9 +90,11 @@ const ROWS = [
     Icon: SearchIcon,
   },
   {
+    // §6.4 (2026-09-06): the voice lane is the agent's front door — the lane
+    // id stays "voice" (the capture is voice-first, typing the fallback)
     lane: "voice",
-    label: "Voice log",
-    sub: "Say or type what you ate",
+    label: "Agent",
+    sub: "Say or type it — what you ate, your weight",
     Icon: MicIcon,
   },
 ] as const;

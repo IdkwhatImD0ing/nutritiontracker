@@ -155,6 +155,9 @@ class LogCreate(BaseModel):
     tz: str
     capture_fallback: bool = False
     capture_error: str | None = None
+    # the + sheet's Agent lane (§6.4): route the utterance through the
+    # front-door agent after the §3.0 short-circuit (food and/or a weigh-in)
+    agent: bool = False
 
 
 class LogResponse(BaseModel):

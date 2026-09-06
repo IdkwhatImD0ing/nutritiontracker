@@ -1,9 +1,11 @@
 """Tier-3 search agent — cold-start LLM-driven search over food sources.
 
-DESIGN.md §3.4, §3.4a, §6.3. Sources this phase: FDC + the restaurant web lane
-(rule 2a — hosted web_search pinned to the chain's official domain, fetch_page
-as the deterministic fallback, add_food's web_transcribed mode). OFF is a later
-phase. The agent only ever selects database ids — no model output carries
+DESIGN.md §3.4, §3.4a, §6.3. Sources this phase: FDC + the web lane (rule 2a —
+hosted web_search pinned to the chain's official domain, fetch_page as the
+deterministic fallback, add_food's web_transcribed mode — and, since
+2026-09-06, rule 2b: the same lane and the same gates for a packaged/retail
+product the databases miss, pinned to the brand's or retailer's official
+site). OFF is a later phase. The agent only ever selects database ids — no model output carries
 nutrition numbers — with exactly one carve-out (§3.4a mode 2): add_food's web
 mode transcribes published values from a chain's official page. Its schema
 requires source_url + citations, and CODE enforces the rest: the run must be
@@ -384,12 +386,15 @@ with the fewest tool calls that give a confident answer.
 Tools:
 - search_generic(query): USDA FDC generic/whole foods (SR Legacy + Foundation), condensed.
 - search_branded(query): USDA FDC Branded (US packaged products), with brand owner.
-- web_search (hosted): search the public web. Restaurant/chain items ONLY (rule 2a) —
-  never for generic or packaged foods.
-- pin_chain_domain(domain): pin web_search to one official domain (e.g. "mcdonalds.com").
-  REQUIRED before any web search for a chain item: searches after the pin only see that
-  domain, and add_food's web mode refuses an unpinned run or a source_url off the pinned
-  domain. Re-pin if the chain publishes nutrition on a different official domain.
+- web_search (hosted): search the public web — the web lane (rules 2a and 2b): chain
+  menu items, and packaged/retail products the databases do not carry. Never for a
+  generic whole food.
+- pin_chain_domain(domain): pin web_search to one OFFICIAL domain — the chain's, the
+  brand's or the retailer's (e.g. "mcdonalds.com", "nongshimusa.com", "costco.com").
+  REQUIRED before the search that reads a nutrition page: searches after the pin only
+  see that domain, and add_food's web mode refuses an unpinned run or a source_url off
+  the pinned domain. An unpinned search is allowed only to identify a product (rule
+  2b). Re-pin if the nutrition facts are published on a different official domain.
 - fetch_page(url): plain HTTP fetch + text extraction of one page — the deterministic
   fallback when web_search cannot read a chain's nutrition page (JS calculator, blocked
   page). HTML only; PDFs cannot be extracted.
@@ -399,7 +404,7 @@ Tools:
 - add_food(...): the custom-food gate — exactly two modes; call it exactly once, for
   your final chosen food, before you answer:
   * from_source: source="fdc" with source_id — cache a database entry (the normal path).
-  * web_transcribed: source="web" with the web payload — chain items only (rule 2a).
+  * web_transcribed: source="web" with the web payload — the web lane (rules 2a/2b).
     Requires source_url (the official page), citations, and per-serving values EXACTLY
     as read from the page. Use the source_id it returns in your final answer.
   display_name is a short human name ("chicken breast, grilled", "Big Mac") — never
@@ -429,6 +434,17 @@ Ranking and routing rules:
    for a current menu item. Independent (non-chain) restaurants are OUT OF SCOPE:
    return "not_found" so the user gets manual entry — NEVER estimate nutrition from
    general knowledge.
+2b. Packaged/retail product the databases miss ("costco tonkotsu ramen", a store brand,
+   a new SKU): FIRST work out what the product is — the brand and the exact item (a
+   retailer phrase usually names a branded product it sells; one unpinned web_search
+   may identify it) — and try search_branded under that name. If FDC Branded has no
+   match, use the web lane exactly as in 2a: pin_chain_domain with the brand's or the
+   retailer's OFFICIAL domain (the manufacturer's site, or the retailer's product
+   page), web_search or fetch_page the page that shows the Nutrition Facts panel, and
+   transcribe its per-serving values EXACTLY as published into add_food(source="web").
+   Only the brand's or the retailer's own page counts — never a recipe site, a
+   nutrition aggregator, or your memory. Nothing official found -> "not_found" (the
+   user gets manual entry), never an estimate.
 3. Cooked vs raw: if the phrase or state field disambiguates, match it; otherwise prefer
    the cooked entry for state-sensitive foods (meat, fish, rice, pasta, legumes).
 4. Query refinement allowed: if results are junk, refine and retry ("protein bar" ->
@@ -471,8 +487,9 @@ Output contract:
 _NO_WEB_LANE = """
 
 This account has no web lane: web_search, pin_chain_domain and fetch_page are
-not available. Restaurant/chain items (rule 2a) are "not_found" here — never
-estimated, never an FDC stand-in for a current menu item.
+not available. Restaurant/chain items (rule 2a) and products FDC Branded lacks
+(rule 2b) are "not_found" here — never estimated, never an FDC stand-in for a
+current menu item.
 """
 
 
@@ -906,8 +923,9 @@ def _build_agent(
 
     @function_tool(failure_error_function=_tool_error)
     async def pin_chain_domain(domain: str) -> str:
-        """Pin web_search to one official chain domain (e.g. "mcdonalds.com").
-        Applies to every web_search after this call; call again to re-pin.
+        """Pin web_search to one OFFICIAL domain — the chain's, the brand's or
+        the retailer's (e.g. "mcdonalds.com", "costco.com"). Applies to every
+        web_search after this call; call again to re-pin.
         """
         d = re.sub(r"^https?://", "", domain.strip().lower()).split("/")[0]
         d = d[4:] if d.startswith("www.") else d

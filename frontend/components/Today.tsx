@@ -29,6 +29,7 @@ import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import type { VoiceClip } from "./useVoiceCapture";
 import VoiceSheet from "./VoiceSheet";
+import WeightCard from "./WeightCard";
 
 const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
@@ -86,6 +87,9 @@ export default function Today() {
   // zero items — the server saved (or explained) it, so confirm that instead
   // of opening an empty staging sheet.
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  // §6.4: the weight card re-reads GET /api/weights when an agent log
+  // recorded a weigh-in (the response says so; the card owns the series).
+  const [weightsKey, setWeightsKey] = useState(0);
   // One client uuid per log (§5 idempotent upsert): a retry of the same text
   // reuses the id so a double-submit can't create two logs.
   const pendingRef = useRef<{ id: string; text: string } | null>(null);
@@ -245,6 +249,7 @@ export default function Today() {
   // "save as my usual …" utterance, not a meal — confirm it and stage nothing.
   const enterStaging = (log: LogCreateResponse): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
+    if (log.agent?.weight) setWeightsKey((k) => k + 1);
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
       setSavedNote(
         log.saved_meal
@@ -253,7 +258,15 @@ export default function Today() {
       );
       return;
     }
-    setSavedNote(null);
+    // §6.4: the agent's one-sentence reply is the answer when nothing was
+    // staged (a weigh-in, an utterance with no food in it) — never an empty
+    // sheet. With items it shows only when a weigh-in was recorded too; a
+    // plain food log's answer is the sheet, as before.
+    if (log.items.length === 0) {
+      setSavedNote(log.agent?.reply ?? "Nothing was logged — try again.");
+      return;
+    }
+    setSavedNote(log.agent?.weight ? log.agent.reply : null);
     setStaging({ log, restore: null });
   };
 
@@ -277,6 +290,8 @@ export default function Today() {
         // failure — capture_fallback + the client-detected capture_error.
         capture_fallback: voiceFailRef.current != null,
         capture_error: voiceFailRef.current,
+        // §6.4: this sheet is the Agent lane — food and/or a weigh-in
+        agent: true,
       });
       pendingRef.current = null;
       voiceFailRef.current = null; // reported once, on the fallback log
@@ -315,6 +330,7 @@ export default function Today() {
         clip,
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         capture_error: priorFailure,
+        agent: true, // §6.4: the Agent lane
       });
       // The server answered (staged or capture_failure) — the attempt is
       // spent; only a failed upload keeps the id for a retry.
@@ -477,6 +493,8 @@ export default function Today() {
       {demo ? <DemoBanner demo={demo} /> : null}
 
       <Tracker totals={totals} />
+
+      <WeightCard refreshKey={weightsKey} />
 
       {pending ? (
         <PendingItems
