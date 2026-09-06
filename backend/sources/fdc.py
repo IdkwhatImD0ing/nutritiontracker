@@ -460,14 +460,18 @@ async def lookup_barcode(code: str) -> dict | None:
     answers from the combined query in one round trip (~0.3 s) where the
     rung-by-rung version spent four. Exact matches are preferred in rung
     order, then FDC's own rank.
+
+    Raises httpx.HTTPStatusError on a non-2xx search: a 429/5xx is an outage,
+    not a miss. Read as a miss, the route would let Open Food Facts stand in
+    and cache its row, and every rescan would then answer from that row
+    without FDC ever being asked again.
     """
     variants = gtin_variants(code)
     if not variants:
         return None
     r = await _get("/foods/search", query=" OR ".join(f"gtinUpc:{v}" for v in variants),
                    dataType="Branded", pageSize=5)
-    if r.status_code != 200:
-        return None
+    r.raise_for_status()
     hits = r.json().get("foods", [])
     rank = {v: i for i, v in enumerate(variants)}
     hits.sort(key=lambda f: rank.get(f.get("gtinUpc") or "", len(rank)))

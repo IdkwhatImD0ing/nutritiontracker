@@ -109,7 +109,10 @@ def _nutrients(nutriments: dict, suffix: str) -> dict[str, float]:
     return out
 
 
-_SIZE_ONLY = re.compile(r"[\d.,]+\s*[a-zA-Z]+")  # "39g", "355 ml" — no household text
+# A metric size ("39g", "355 ml", "28.4 grams") as opposed to household text
+# ("1 cup", "2 tbsp", "1 bar"), which is kept and gets the metric size appended
+# the way an FDC label serving reads ("1 cup (39 g)").
+_METRIC_SIZE = re.compile(r"[\d.,]+\s*(?:g|gr|grams?|ml|millilit(?:er|re)s?)", re.IGNORECASE)
 
 
 def _servings(product: dict, per_100: dict[str, float]) -> tuple[list[dict], str]:
@@ -128,8 +131,10 @@ def _servings(product: dict, per_100: dict[str, float]) -> tuple[list[dict], str
         macros = {k: round(v * quantity / 100, 2) for k, v in per_100.items()}
 
     text = (product.get("serving_size") or "").strip()
-    if quantity is not None and (not text or _SIZE_ONLY.fullmatch(text)):
+    if quantity is not None and (not text or _METRIC_SIZE.fullmatch(text)):
         description = f"{quantity:g} {unit}"
+    elif text and quantity is not None and not _METRIC_SIZE.search(text):
+        description = f"{text} ({quantity:g} {unit})"  # "1 cup" -> "1 cup (39 g)"
     elif text:
         description = text
     else:

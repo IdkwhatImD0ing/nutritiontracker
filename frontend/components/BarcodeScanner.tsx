@@ -22,7 +22,9 @@ type Camera = "starting" | "live" | "denied" | "unavailable";
  *  gtinUpc ladder (FDC Branded, then Open Food Facts on a miss —
  *  backend/routes/quick.py). QR and the rest are noise here. */
 const FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e"] as const;
-/** ~1s without the code in frame re-arms it (the user pointed away and back) */
+/** ~1s of detection attempts without the code re-arms it (the user pointed
+ *  away and back). Attempts, not wall-clock: a lookup's own duration, when no
+ *  detection runs, must not count. */
 const REARM_MS = 1000;
 const MIN_DIGITS = 6; // UPC-E prints as six
 
@@ -163,12 +165,15 @@ export default function BarcodeScanner({
       const detector = new BarcodeDetector({ formats: [...FORMATS] });
       setCamera("live");
       let last: string | null = null;
-      let lastSeen = 0;
+      let missingSince: number | null = null; // first attempt that lost the code
       // Back to back on animation frames — the next detect() starts as soon
       // as the previous one settles (rAF yields to paint and idles in a
       // hidden tab), so a code is read on the first frame that shows it
       // rather than on a fixed 150 ms tick. A code stays armed while it is in
-      // frame; ~1 s without it re-arms (pointed away and back).
+      // frame; ~1 s of attempts without it re-arms (pointed away and back).
+      // The clock starts on the first empty attempt, never during a lookup
+      // (no attempts run while busy), so a "not found" that took a second
+      // cannot re-submit the code still in frame on the first dropped frame.
       const tick = async () => {
         if (cancelled) return;
         // readyState ≥ HAVE_CURRENT_DATA: detect() throws on a frameless video
@@ -180,13 +185,17 @@ export default function BarcodeScanner({
             /* an undecodable frame — the next one may do */
           }
           if (code) {
-            lastSeen = performance.now();
+            missingSince = null;
             if (code !== last) {
               last = code;
               if (!cancelled) onCodeRef.current(code);
             }
-          } else if (last && performance.now() - lastSeen > REARM_MS) {
-            last = null;
+          } else if (last) {
+            missingSince ??= performance.now();
+            if (performance.now() - missingSince > REARM_MS) {
+              last = null;
+              missingSince = null;
+            }
           }
         }
         if (!cancelled) frame = requestAnimationFrame(tick);

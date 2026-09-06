@@ -25,6 +25,7 @@ if str(BACKEND) not in sys.path:
 if sys.platform == "win32":  # psycopg async needs the selector loop on Windows
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+import httpx
 import psycopg
 import pytest
 from fastapi import HTTPException
@@ -306,6 +307,48 @@ def test_barcode_rescan_answers_from_the_cache_without_the_network(monkeypatch):
     assert calls == ["fdc", "fdc", "off"]
     assert first.found and first.food.id == stripped.food.id == padded.food.id
     assert hit.found and hit.food.source == "off" and hit.food.id == rescan.food.id
+
+
+_FDC_SEARCH = httpx.Request("GET", "https://api.nal.usda.gov/fdc/v1/foods/search")
+
+
+def test_barcode_fdc_error_is_503_and_never_an_off_answer(monkeypatch):
+    """A 429/5xx from FDC is an outage, not a miss: the route says so (503)
+    rather than caching an Open Food Facts row that every rescan would then
+    answer from without FDC ever being asked again."""
+
+    async def fdc_down(code):
+        raise httpx.HTTPStatusError(
+            "429", request=_FDC_SEARCH, response=httpx.Response(429, request=_FDC_SEARCH)
+        )
+
+    async def no_off(code):
+        raise AssertionError("Open Food Facts must not stand in for an FDC outage")
+
+    monkeypatch.setattr(fdc, "lookup_barcode", fdc_down)
+    monkeypatch.setattr(off, "lookup_barcode", no_off)
+
+    async def run():
+        async with isolated_db():
+            return await quick.lookup_barcode(code="049000050104")
+
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(run())
+    assert e.value.status_code == 503
+    # class name only — never the message, which embeds the URL (§10)
+    assert "HTTPStatusError" in e.value.detail and "usda" not in e.value.detail.lower()
+
+
+def test_fdc_lookup_raises_on_a_non_2xx_search(monkeypatch):
+    """The source itself: a rate-limited or failing search raises (the route's
+    503 path) instead of reading as a miss."""
+
+    async def rate_limited(path, **params):
+        return httpx.Response(429, request=_FDC_SEARCH)
+
+    monkeypatch.setattr(fdc, "_get", rate_limited)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(fdc.lookup_barcode("049000050104"))
 
 
 # ---------------------------------------------------------------------------

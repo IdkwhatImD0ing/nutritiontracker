@@ -119,9 +119,16 @@ def test_normalize_beverage_is_per_100ml_with_no_gram_weight():
 
 
 def test_normalize_household_serving_text_is_kept():
-    product = dict(CHEERIOS, serving_size="1 cup (39 g)")
-    food = off.normalize(product, "016000275287")
-    assert food["servings"][0]["description"] == "1 cup (39 g)"
+    def description(serving_size: str) -> str:
+        food = off.normalize(dict(CHEERIOS, serving_size=serving_size), "016000275287")
+        return food["servings"][0]["description"]
+
+    assert description("1 cup (39 g)") == "1 cup (39 g)"  # already carries the size
+    assert description("1 cup") == "1 cup (39 g)"  # household text kept, size appended
+    assert description("2 tbsp") == "2 tbsp (39 g)"
+    assert description("39g") == "39 g"  # a bare metric size is normalized
+    assert description("39 grams") == "39 g"
+    assert description("") == "39 g"
 
 
 def test_normalize_scales_per_100_when_off_has_no_serving_figures():
