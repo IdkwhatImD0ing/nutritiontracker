@@ -1,6 +1,7 @@
 -- Tally — migration 003: the weigh-in log (agent mode, 2026-09-06).
 -- Applied by apply.py in ONE transaction (`python apply.py 003`; `--dry-run`
--- applies + verifies + rolls back). Additive: one new user-owned table.
+-- applies + verifies + rolls back). Additive: one new user-owned table and
+-- one nullable column on logs.
 --
 -- One weigh-in per user per LOCAL day — the day is the user's (the app
 -- computes it from the client's tz / settings.timezone), never the database
@@ -35,3 +36,11 @@ ALTER TABLE weights FORCE ROW LEVEL SECURITY;
 CREATE POLICY weights_tenant ON weights
   USING (user_id = current_setting('app.user_id', true))
   WITH CHECK (user_id = current_setting('app.user_id', true));
+
+-- The agent's one-sentence reply, stamped on the log it answered
+-- (routes/logs._run_agent_lane). A same-id replay (§8.6: a lost response)
+-- answers the outcome again instead of an empty staging list — the weigh-in
+-- itself is read back through weights.log_id — and an itemless agent log
+-- that finished is never mistaken for an orphan and re-run. NULL on every
+-- other log.
+ALTER TABLE logs ADD COLUMN agent_reply text;

@@ -679,7 +679,9 @@ async def _run_agent_lane(body: LogCreate, meal: Meal) -> LogCreateResponse:
         ),
         profile_notes=settings.get("profile_notes") or "",
     )
+    trace_id: str | None = None
     async with tracing.generation("agent") as gen:
+        trace_id = getattr(gen, "trace_id", None)
         run = await agent_svc.run_agent(body.text, deps)
         gen.update(
             input=body.text,
@@ -696,6 +698,14 @@ async def _run_agent_lane(body: LogCreate, meal: Meal) -> LogCreateResponse:
         pass
 
     outcome = AgentOutcome(reply=run.reply, weight=result["weight"])
+    # §8.6: the outcome lands on the row, so a same-id replay answers it again
+    # (_duplicate_post_response) and an itemless agent log that finished is
+    # never taken for an orphan and re-run. The agent's trace is the log's
+    # trace when nothing else stamped one (a weight-only log never persists).
+    await db.execute(
+        "UPDATE logs SET agent_reply = %s, trace_id = coalesce(trace_id, %s) WHERE id = %s",
+        (run.reply, trace_id, body.id),
+    )
     staged = result["staged"]
     if staged is None:
         # nothing staged: the row stays an itemless staged log, as the §8.4
@@ -758,9 +768,11 @@ async def _duplicate_post_response(log_id: UUID) -> LogResponse | None:
         # tenant's log, which reads as no log at all (§8.9) — or, rarely, a
         # row that vanished between the insert and this read
         raise HTTPException(404, "log not found")
-    if existing.items:
-        return existing  # replay: the stored staging state
-    log = await db.fetchone("SELECT status FROM logs WHERE id = %s", (log_id,))
+    log = await db.fetchone("SELECT status, agent_reply FROM logs WHERE id = %s", (log_id,))
+    if existing.items or (log is not None and log["agent_reply"] is not None):
+        # replay: the stored staging state — and, on an agent-lane log, the
+        # outcome it recorded (§6.4): a weight-only log has no items but is done
+        return await _replay_response(existing, log)
     if log is not None and log["status"] != "staged":
         raise HTTPException(409, f"log already {log['status']}")
     # Staged with no items: the owner is either still mid-pipeline or dead.
@@ -778,6 +790,20 @@ async def _duplicate_post_response(log_id: UUID) -> LogResponse | None:
     if claimed == 0:
         return existing  # a concurrent request owns the pipeline; client polls
     return None  # orphan claimed — caller re-runs the pipeline
+
+
+async def _replay_response(existing: LogPollResponse, log: dict | None) -> LogCreateResponse:
+    """The stored staging state as POST answers it, plus the agent outcome when
+    the row carries one: the reply as stamped, the weigh-in read back from
+    weights.log_id (None when none was recorded, or a later log replaced
+    that day's entry)."""
+    reply = log["agent_reply"] if log is not None else None
+    agent = None
+    if reply is not None:
+        agent = AgentOutcome(reply=reply, weight=await weights_route.entry_for_log(existing.log_id))
+    return LogCreateResponse(
+        log_id=existing.log_id, meal=existing.meal, items=existing.items, agent=agent
+    )
 
 
 async def _persist(

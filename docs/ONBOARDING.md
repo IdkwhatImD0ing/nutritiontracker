@@ -95,7 +95,7 @@ a transaction that is rolled back, the same way the tests run. **Order matters:*
 statement as the `tally_app` role that only 002 creates, so a push first means every
 DB-touching request fails until 002 lands (fail-closed, not a leak — but an outage).
 
-Migration 003 (the weigh-in log behind agent mode — `weights`, DESIGN §4, §6.4) is
+Migration 003 (the weigh-in log behind agent mode — `weights` plus `logs.agent_reply`, DESIGN §4, §6.4) is
 applied the same way, by hand, after 002: `apply.py 003 --dry-run`, then `apply.py 003`,
 then `apply.py 003 --check`. Unlike 002 its absence is not an outage — the Agent lane
 keeps staging food and says a weight could not be saved, `GET /api/weights` answers 503
@@ -155,7 +155,7 @@ Notes that will save you an hour:
 - **One DB suite at a time while a migration is pending.** Until `apply.py 003` lands,
   every rollback-harness test replays 003 inside its transaction, and the new table's FK
   to `logs` holds a lock on `logs` for the test's duration — two suites at once deadlock
-  on it (`DeadlockDetected`, seen 2026-09-06) and production writes wait. The real-path
+  on it (`DeadlockDetected`, seen 2026-09-06) and production reads and writes of `logs` wait. The real-path
   weigh-in tests skip until then (`needs_003`, the way `needs_002` worked).
 - **Every query runs as a user.** The database enforces tenancy (RLS on the user-owned
   tables; `foods` is shared), keyed on the `app.user_id` setting and the `tally_app` role that

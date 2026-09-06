@@ -269,6 +269,11 @@ def verify_003(cur) -> None:
         "AND indexdef LIKE 'CREATE UNIQUE INDEX%(user_id, day)'"
     )
     assert cur.fetchone() is not None, "weights: UNIQUE (user_id, day) missing"
+    cur.execute(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' "
+        "AND table_name = 'logs' AND column_name = 'agent_reply'"
+    )
+    assert cur.fetchone() is not None, "logs.agent_reply missing"
 
     cur.execute("SAVEPOINT verify_003")
     try:
@@ -315,7 +320,10 @@ def apply_003(conn, dry_run: bool) -> None:
         print("DRY RUN: 003_weights.sql applied and verified, then ROLLED BACK.")
         return
     conn.commit()
-    print("Applied 003_weights.sql: weights created, RLS enabled+forced, one policy, one weigh-in a day.")
+    print(
+        "Applied 003_weights.sql: weights created, RLS enabled+forced, one policy, one weigh-in "
+        "a day; logs.agent_reply added."
+    )
 
 
 def check_003(conn) -> None:

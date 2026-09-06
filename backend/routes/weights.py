@@ -138,6 +138,19 @@ async def latest_entry(*, before: date_type | None = None) -> WeightEntry | None
     return _entry(row) if row else None
 
 
+async def entry_for_log(log_id: UUID) -> WeightEntry | None:
+    """The weigh-in an agent log recorded, for a same-id replay (§8.6) — None
+    when it recorded none, or when a later log replaced that day's entry."""
+    try:
+        row = await db.fetchone(
+            "SELECT day, weight_kg, unit, source, log_id FROM weights WHERE log_id = %s",
+            (log_id,),
+        )
+    except psycopg.errors.UndefinedTable:
+        return None
+    return _entry(row) if row else None
+
+
 @router.get("/api/weights", response_model=WeightsResponse)
 async def get_weights(days: int = Query(90, ge=1, le=3660)) -> WeightsResponse:
     today = await local_date(datetime.now(timezone.utc))

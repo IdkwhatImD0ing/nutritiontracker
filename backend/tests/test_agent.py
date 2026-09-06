@@ -387,14 +387,29 @@ def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
             assert runner.calls == 1
             assert "Usual weight unit: lb" in runner.input and "2026-09-06 08:30" in runner.input
 
+            # §8.6: a same-id replay (a lost response) answers the outcome again
+            # — the items and the weigh-in — without a second agent run
+            assert log["agent_reply"] == "Staged 1 item and logged 180.4 lb."
+            monkeypatch.setattr(agent_svc, "Runner", _RefusingRunner)
+            replay = await logs_routes.create_log(body)
+            assert [it.phrase for it in replay.items] == ["eggs"]
+            assert replay.agent is not None and replay.agent.reply == "Staged 1 item and logged 180.4 lb."
+            assert replay.agent.weight == w
+
             # the next agent run sees this weigh-in as the last one, in its unit
             runner2 = _fake_runner([], "Nothing to log.")
             monkeypatch.setattr(agent_svc, "Runner", runner2)
-            resp2 = await logs_routes.create_log(_log("hello there", agent=True))
+            hello = _log("hello there", agent=True)
+            resp2 = await logs_routes.create_log(hello)
             assert resp2.items == [] and resp2.agent is not None and resp2.agent.weight is None
             assert resp2.agent.reply == "Nothing to log."
             assert "Last weigh-in: 180.4 lb on 2026-09-06" in runner2.input
             assert seen == ["two eggs"]  # no decompose for an utterance with no food
+            # ...and its replay carries the reply too: no weigh-in, no new run
+            monkeypatch.setattr(agent_svc, "Runner", _RefusingRunner)
+            replay2 = await logs_routes.create_log(hello)
+            assert replay2.items == [] and replay2.agent is not None
+            assert replay2.agent.reply == "Nothing to log." and replay2.agent.weight is None
 
     _run(scenario())
 
@@ -415,8 +430,25 @@ def test_agent_lane_weight_only_leaves_an_itemless_log(monkeypatch):
             assert resp.agent.weight.day == LOCAL_DAY - timedelta(days=1)
             assert resp.agent.weight.weight_kg == 82.5 and resp.agent.weight.unit == "kg"
             assert await _scalar(conn, "SELECT count(*) FROM item_resolutions WHERE log_id = %s", (body.id,)) == 0
-            log = await (await conn.execute("SELECT status, raw_input FROM logs WHERE id = %s", (body.id,))).fetchone()
+            log = await (await conn.execute(
+                "SELECT status, raw_input, agent_reply FROM logs WHERE id = %s", (body.id,)
+            )).fetchone()
             assert log["status"] == "staged" and log["raw_input"] == body.text
+            # §8.6: the outcome is on the row — a same-id replay answers it again
+            # without a second run, and past the orphan grace period the finished
+            # log is not re-run either (it is done, not dead)
+            assert log["agent_reply"] == "Logged 82.5 kg for yesterday."
+            monkeypatch.setattr(agent_svc, "Runner", _RefusingRunner)
+            replay = await logs_routes.create_log(body)
+            assert replay.items == [] and replay.agent is not None
+            assert replay.agent.reply == "Logged 82.5 kg for yesterday."
+            assert replay.agent.weight == resp.agent.weight
+            await conn.execute(
+                "UPDATE logs SET created_at = created_at - interval '1 hour' WHERE id = %s", (body.id,)
+            )
+            replay = await logs_routes.create_log(body)
+            assert replay.agent is not None and replay.agent.weight is not None
+            assert await _scalar(conn, "SELECT count(*) FROM weights") == 1
 
     _run(scenario())
 
