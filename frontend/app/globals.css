@@ -1,37 +1,54 @@
-/* Tally — hand CSS, dark-first, spruce accent family (§7.4 visual language) */
+/* Tally — hand CSS, dark-first. One warm graphite ground, hairline surfaces,
+   Bricolage Grotesque numerals, and a single apricot accent that is spent on
+   the things that matter: the +, Commit, protein, and the calorie bar.
+   Every class name below is a contract with a component; the tokens are the
+   theme. (§7.4 visual language.) */
 
 :root {
-  --bg: #121318;
-  --surface: #1b1c22;
-  --surface-2: #24252d;
-  --surface-3: #2e2f38;
-  --line: #2c2d36;
-  --text: #f4f3ef;
-  --muted: #a5a7b3;
-  --faint: #8b8e9c;
+  /* ground */
+  --bg: #111113;
+  --surface: #1a1a1f;
+  --surface-2: #222228;
+  --surface-3: #2c2c34;
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.14);
 
-  /* The accent family. Kept under the old names so every component that
+  /* ink */
+  --text: #f4f1ea;
+  --muted: #a3a29f;
+  --faint: #6f6e6c;
+
+  /* the accent family. Kept under the old names so every component that
      already says var(--spruce) / var(--mint) follows the theme unchanged. */
-  --spruce: #ff8a4c; /* fills: the +, commit, meal chips */
-  --spruce-deep: #7a3d1f; /* the quiet fill behind a selected chip */
-  --spruce-soft: #ff9d68; /* focus borders */
-  --mint: #ff8a4c; /* protein — the loud one — and links, spinner, toast */
-  --sage: #9aa0b5; /* generic quiet: mic, portion links, chart series B */
-  --moss: #7e8296; /* generic quieter: chart series C */
+  --accent: #f6a55c;
+  --accent-strong: #ff9a3c;
+  --accent-soft: rgba(246, 165, 92, 0.14);
+  --accent-line: rgba(246, 165, 92, 0.45);
+  --on-accent: #1b1208; /* text on an accent fill */
+  --spruce: var(--accent); /* fills: the +, commit, meal chips */
+  --spruce-deep: var(--accent-soft); /* the quiet fill behind a selected chip */
+  --spruce-soft: #ffbe85; /* focus borders, hover */
+  --mint: var(--accent); /* protein — the loud one — and links, spinner, toast */
+  --sage: #b3b1ad; /* generic quiet: mic, portion links, chart series B */
+  --moss: #7f7d7a; /* generic quieter: chart series C */
 
-  /* Macros. Protein owns the accent; carbs and fat sit at the same
-     lightness so neither shouts (oklch L≈0.76, C≈0.13, hue apart). */
-  --carb: #63c6e8;
-  --fat: #c6a3f5;
+  /* macros. Protein owns the accent; carbs and fat sit at the same
+     lightness so neither shouts. */
+  --carb: #6cc4dd;
+  --fat: #bda6f2;
 
-  /* Text on an accent fill. The accent is bright, so near-white on it is
-     about 2:1 — unreadable. Everything filled with --spruce uses this. */
-  --on-accent: #14100c;
+  --amber: #e8c468; /* verify / estimate flags */
+  --red: #f26b6b;
+  --green: #74cf9c;
 
-  --amber: #f5c451; /* verify / estimate flags */
-  --red: #ff6b6b;
+  --radius: 20px;
+  --radius-sm: 12px;
+  --radius-xs: 8px;
+  --shadow-card:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 10px 30px -18px rgba(0, 0, 0, 0.7);
+  --shadow-float: 0 18px 40px -16px rgba(0, 0, 0, 0.75);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
-  --radius: 18px;
   --font: var(--font-archivo), system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: var(--font-bricolage), var(--font-archivo), system-ui, sans-serif;
 }
@@ -60,21 +77,76 @@ body {
   overscroll-behavior: none;
 }
 
+/* The ground is painted on <html> too: iOS paints the status-bar band and any
+   overscroll from the root element, so a body-only background reads as a
+   pale strip under the island. */
+html {
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Atmosphere: one warm glow behind the top of every screen. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(60% 34% at 50% -6%, rgba(246, 165, 92, 0.13), transparent 70%),
+    radial-gradient(40% 24% at 110% 10%, rgba(108, 196, 221, 0.05), transparent 70%);
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font-family: inherit;
   color: inherit;
 }
 
+button {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--mint);
+}
+
 .num {
   font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ---------- shell ---------- */
@@ -83,86 +155,196 @@ input {
   max-width: 480px;
   margin: 0 auto;
   min-height: 100dvh;
-  padding: calc(20px + env(safe-area-inset-top)) 16px
-    calc(24px + env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.brand {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.brand h1 {
-  margin: 0;
-  font-size: 1.35rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-
-.brand .date {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-/* ---------- tracker (the one loud element) ---------- */
-
-.tracker {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 18px 16px 20px;
+  padding: calc(12px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 
+/* One staggered rise on load; nothing else moves on its own. `backwards`,
+   not `both`: a lingering transform would make each card the containing
+   block for any position:fixed sheet mounted inside it (DiaryList's
+   save-as-meal sheet lives inside .diary). */
+.shell > * {
+  animation: rise 420ms var(--ease) backwards;
+}
+
+.shell > :nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.shell > :nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.shell > :nth-child(4) {
+  animation-delay: 120ms;
+}
+
+.shell > :nth-child(n + 5) {
+  animation-delay: 160ms;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Page header: sticky, sits under the status bar with its own inset so the
+   title never slides under the island. Content scrolling beneath it is
+   blurred; the title itself never is. */
+.brand {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: calc(-12px - env(safe-area-inset-top)) -18px -4px;
+  padding: calc(14px + env(safe-area-inset-top)) 18px 10px;
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  animation: none;
+}
+
+.brand::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line-strong), transparent);
+  opacity: 0.6;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  line-height: 1.1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.brand .date {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* ---------- tracker (the one loud element) ---------- */
+
+.tracker {
+  position: relative;
+  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.tracker::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+}
+
 .kcal-row {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: flex-end;
+  gap: 12px;
 }
 
 .kcal-row .label {
-  font-size: 0.8rem;
+  display: block;
+  font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
+  font-weight: 600;
   color: var(--muted);
+  margin-bottom: 4px;
 }
 
 .kcal-row .figures {
   font-size: 1rem;
+  line-height: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .kcal-row .figures strong {
-  font-size: 1.35rem;
-  font-weight: 700;
+  font-size: 2.6rem;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
 }
 
 .kcal-row .figures .of {
   color: var(--muted);
-  font-weight: 400;
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.kcal-row .left {
+  text-align: right;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-bottom: 4px;
+}
+
+.kcal-row .left strong {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.kcal-row .left.over strong {
+  color: var(--amber);
 }
 
 .kcal-bar {
-  height: 10px;
-  border-radius: 5px;
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
   background: var(--surface-3);
   overflow: hidden;
 }
 
 .kcal-bar .fill {
   height: 100%;
-  border-radius: 5px;
-  background: linear-gradient(90deg, var(--spruce), var(--spruce-soft));
-  transition: width 400ms ease;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  box-shadow: 0 0 12px rgba(246, 165, 92, 0.35);
+  transition: width 600ms var(--ease);
 }
 
 .kcal-bar .fill.over {
-  background: linear-gradient(90deg, var(--spruce-soft), var(--amber));
+  background: linear-gradient(90deg, var(--accent-strong), var(--amber));
 }
 
 .donuts {
@@ -170,13 +352,14 @@ input {
   align-items: flex-end;
   justify-content: space-around;
   gap: 8px;
+  padding-top: 2px;
 }
 
 .donut {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .donut svg {
@@ -184,23 +367,37 @@ input {
 }
 
 .donut .center-num {
-  font-weight: 700;
+  font-weight: 800;
   fill: var(--text);
 }
 
 .donut .center-sub {
   fill: var(--muted);
-}
-
-.donut .macro-label {
-  font-size: 0.78rem;
-  color: var(--muted);
+  font-size: 9px;
   letter-spacing: 0.04em;
 }
 
-.donut.loud .macro-label {
-  color: var(--mint);
+.donut .macro-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.donut .macro-label::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot, var(--muted));
+}
+
+.donut.loud .macro-label {
+  color: var(--text);
 }
 
 .zero-hint {
@@ -210,22 +407,27 @@ input {
   margin: 0;
 }
 
-/* ---------- capture row: the voice sheet's text field, the search box,
-   the barcode number (the mid-screen bar itself is gone, 2026-09-02) ---------- */
+/* ---------- composer: the sheets' text field + a round send ---------- */
 
 .capture {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
 .capture input {
   flex: 1;
-  background: var(--surface);
+  min-width: 0;
+  height: 50px;
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 14px 16px;
+  border-radius: 16px;
+  padding: 0 16px;
   font-size: 1rem;
   outline: none;
+  transition:
+    border-color 150ms,
+    background 150ms;
 }
 
 .capture input::placeholder {
@@ -233,61 +435,188 @@ input {
 }
 
 .capture input:focus {
-  border-color: var(--spruce-soft);
+  border-color: var(--accent-line);
+  background: var(--surface-3);
 }
 
-.capture button {
-  background: var(--spruce);
-  color: var(--on-accent);
+/* the send: a round accent button (form submit) */
+.capture button,
+.send-btn {
+  flex-shrink: 0;
+  width: 50px;
+  height: 50px;
   border: none;
-  border-radius: var(--radius);
-  width: 52px;
-  font-size: 1.2rem;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  font-size: 1.15rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  transition: background 150ms;
+  box-shadow: 0 6px 16px -8px rgba(246, 165, 92, 0.7);
+  transition:
+    transform 120ms var(--ease),
+    filter 150ms,
+    background 150ms;
 }
 
-.capture button:disabled {
+.capture button:active,
+.send-btn:active {
+  transform: scale(0.94);
+}
+
+.capture button:disabled,
+.send-btn:disabled {
   background: var(--surface-3);
   color: var(--faint);
+  box-shadow: none;
   cursor: default;
+}
+
+.capture button svg,
+.send-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 .capture-error {
   color: var(--red);
   font-size: 0.82rem;
-  margin: 6px 2px 0;
+  margin: 4px 2px 0;
 }
 
 /* voice capture (M2 §8.1d / §13) — the mic lives in VoiceSheet */
 
 /* scoped under .capture so these outrank the generic `.capture button` rule
-   above — the mic is the quiet button, the send arrow is the loud one */
+   above — the mic is the quiet button, the send is the loud one */
 .capture .mic-btn {
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  width: 52px;
-  flex-shrink: 0;
   color: var(--sage);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 150ms;
+  box-shadow: none;
+}
+
+.capture .mic-btn:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
 }
 
 .capture .mic-btn.rec {
   background: var(--red);
   border-color: var(--red);
-  color: var(--text);
+  color: #fff;
 }
 
 .capture .mic-btn:disabled {
   background: var(--surface-3);
   border-color: var(--line);
   color: var(--faint);
-  cursor: default;
+}
+
+/* the recording stage: one big stop target, the clock, the way out */
+.voice-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 4px;
+}
+
+.voice-big {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: none;
+  background: var(--red);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 12px 30px -10px rgba(242, 107, 107, 0.7);
+  transition: transform 120ms var(--ease);
+}
+
+.voice-big:active {
+  transform: scale(0.95);
+}
+
+.voice-big::before,
+.voice-big::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 2px solid rgba(242, 107, 107, 0.45);
+  animation: halo 1.8s ease-out infinite;
+  pointer-events: none;
+}
+
+.voice-big::after {
+  animation-delay: 0.9s;
+}
+
+@keyframes halo {
+  from {
+    transform: scale(0.85);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.voice-big svg {
+  width: 30px;
+  height: 30px;
+}
+
+.voice-big:disabled {
+  background: var(--surface-3);
+  color: var(--faint);
+  box-shadow: none;
+}
+
+.voice-big:disabled::before,
+.voice-big:disabled::after {
+  display: none;
+}
+
+.voice-timer {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 2rem;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin-top: 8px;
+}
+
+.voice-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.voice-alt {
+  margin-top: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 550;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+
+.voice-alt:hover {
+  border-color: var(--line-strong);
 }
 
 .rec-status {
@@ -297,15 +626,15 @@ input {
   gap: 10px;
   background: var(--surface);
   border: 1px solid var(--red);
-  border-radius: var(--radius);
+  border-radius: 16px;
   padding: 14px 16px;
   font-size: 1rem;
   min-width: 0;
 }
 
 .rec-dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--red);
   flex-shrink: 0;
@@ -348,7 +677,57 @@ input {
 .capture-notice {
   color: var(--amber);
   font-size: 0.82rem;
-  margin: 6px 2px 0;
+  margin: 4px 2px 0;
+}
+
+/* ---------- inline notices: an error with its retry ---------- */
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.notice span {
+  flex: 1;
+  min-width: 0;
+}
+
+.notice.error {
+  border-left-color: var(--red);
+  color: var(--text);
+}
+
+.notice.warn {
+  border-left-color: var(--amber);
+}
+
+.notice-btn {
+  flex-shrink: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.notice-btn:hover {
+  border-color: var(--line-strong);
+}
+
+.notice-btn:disabled {
+  color: var(--faint);
+  cursor: default;
 }
 
 /* ---------- staging sheet ---------- */
@@ -356,8 +735,17 @@ input {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 9, 8, 0.6);
+  background: rgba(6, 6, 9, 0.62);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   z-index: 40;
+  animation: fade 200ms ease-out;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
 }
 
 .sheet {
@@ -369,19 +757,20 @@ input {
   max-width: 480px;
   height: 92dvh; /* opens tall, per §7.1 */
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-bottom: none;
-  border-radius: 20px 20px 0 0;
+  border-radius: 24px 24px 0 0;
   z-index: 50;
   display: flex;
   flex-direction: column;
-  animation: sheet-up 240ms ease-out;
+  box-shadow: var(--shadow-float);
+  animation: sheet-up 320ms var(--ease);
 }
 
 @keyframes sheet-up {
   from {
-    transform: translateY(24px);
-    opacity: 0.6;
+    transform: translateY(40px);
+    opacity: 0;
   }
   to {
     transform: translateY(0);
@@ -390,7 +779,7 @@ input {
 }
 
 .sheet-head {
-  padding: 10px 16px 12px;
+  padding: 10px 18px 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -398,7 +787,7 @@ input {
   width: 36px;
   height: 4px;
   border-radius: 2px;
-  background: var(--surface-3);
+  background: var(--line-strong);
   margin: 0 auto 12px;
 }
 
@@ -406,29 +795,52 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
 }
 
 .sheet-title {
-  font-size: 1rem;
-  font-weight: 650;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
 }
 
 .sheet-close {
-  background: none;
-  border: none;
+  width: 34px;
+  height: 34px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 50%;
   color: var(--muted);
-  font-size: 1.1rem;
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.sheet-close:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.sheet-close:disabled {
+  color: var(--faint);
+  cursor: default;
 }
 
 .meal-chip {
-  background: var(--spruce-deep);
-  color: var(--text);
-  border: 1px solid var(--spruce);
+  margin-left: auto;
+  margin-right: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
   border-radius: 999px;
-  padding: 5px 14px;
-  font-size: 0.82rem;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 650;
   cursor: pointer;
   text-transform: capitalize;
 }
@@ -436,7 +848,7 @@ input {
 .meal-picker {
   display: flex;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .meal-picker button {
@@ -444,46 +856,63 @@ input {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 7px 0;
+  padding: 8px 0;
   font-size: 0.8rem;
+  font-weight: 550;
   color: var(--muted);
   cursor: pointer;
   text-transform: capitalize;
 }
 
 .meal-picker button.active {
-  background: var(--spruce);
-  border-color: var(--spruce);
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--on-accent);
 }
 
 .sheet-body {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 16px;
+  padding: 6px 18px;
+  overscroll-behavior: contain;
 }
 
 .sheet-foot {
-  padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+  padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
+  background: var(--surface);
 }
 
 .commit-btn {
   width: 100%;
-  background: var(--spruce);
+  min-height: 54px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   color: var(--on-accent);
   border: none;
-  border-radius: var(--radius);
-  padding: 16px;
-  font-size: 1.05rem;
-  font-weight: 650;
-  color: var(--text);
+  border-radius: 16px;
+  padding: 0 18px;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   cursor: pointer;
+  box-shadow: 0 10px 24px -12px rgba(246, 165, 92, 0.8);
+  transition:
+    transform 120ms var(--ease),
+    filter 150ms;
+}
+
+.commit-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.commit-btn:active:not(:disabled) {
+  transform: scale(0.985);
 }
 
 .commit-btn:disabled {
   background: var(--surface-3);
   color: var(--faint);
+  box-shadow: none;
   cursor: default;
 }
 
@@ -508,7 +937,7 @@ input {
 .row-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   cursor: pointer;
 }
 
@@ -519,16 +948,17 @@ input {
 
 .row-name {
   font-size: 0.98rem;
-  font-weight: 550;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .row-sub {
   font-size: 0.8rem;
   color: var(--muted);
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .row-sub .verify {
@@ -538,31 +968,43 @@ input {
 .row-kcal {
   text-align: right;
   flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
 }
 
 .row-kcal .n {
-  font-size: 1.25rem;
-  font-weight: 700;
+  font-size: 1.3rem;
 }
 
 .row-kcal .u {
-  font-size: 0.7rem;
-  color: var(--muted);
-  margin-left: 2px;
+  font-size: 0.68rem;
+  color: var(--faint);
+  letter-spacing: 0.04em;
 }
 
 .row-remove {
+  width: 30px;
+  height: 30px;
   background: none;
   border: none;
+  border-radius: 50%;
   color: var(--faint);
-  font-size: 1rem;
+  font-size: 0.85rem;
   cursor: pointer;
-  padding: 6px;
+  padding: 0;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 120ms,
+    color 120ms;
 }
 
 .row-remove:hover {
   color: var(--red);
+  background: rgba(242, 107, 107, 0.12);
 }
 
 .row.searching .row-name {
@@ -575,16 +1017,19 @@ input {
 
 .badge {
   display: inline-block;
-  font-size: 0.68rem;
-  border-radius: 4px;
-  padding: 2px 6px;
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 6px;
+  padding: 3px 6px;
   margin-left: 6px;
   vertical-align: 2px;
 }
 
 .badge.searching {
-  background: var(--spruce-deep);
-  color: var(--sage);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .badge.not-found {
@@ -593,15 +1038,15 @@ input {
 }
 
 .badge.needs-input {
-  background: #3d3320;
+  background: rgba(232, 196, 104, 0.16);
   color: var(--amber);
 }
 
 /* §3.4a web-transcribed food: distinct badge + the citation as a visible,
    clickable link (OpenAI usage-terms requirement, not taste) */
 .badge.web {
-  background: #1f2a3d;
-  color: #8fb4e3;
+  background: rgba(108, 196, 221, 0.14);
+  color: #8fd0e6;
 }
 
 .web-cite {
@@ -614,7 +1059,7 @@ input {
 }
 
 .web-cite a {
-  color: #8fb4e3;
+  color: #8fd0e6;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -623,10 +1068,10 @@ input {
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid var(--faint);
-  border-top-color: var(--mint);
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
   border-radius: 50%;
-  animation: spin 0.9s linear infinite;
+  animation: spin 0.8s linear infinite;
   vertical-align: -1px;
   margin-right: 6px;
 }
@@ -650,15 +1095,25 @@ input {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 5px 12px;
-  font-size: 0.78rem;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
   color: var(--muted);
   cursor: pointer;
+  transition:
+    border-color 120ms,
+    color 120ms,
+    background 120ms;
 }
 
 .chip:hover {
-  border-color: var(--spruce-soft);
+  border-color: var(--line-strong);
   color: var(--text);
+}
+
+.chip:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .chip .usual-dot {
@@ -666,15 +1121,20 @@ input {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--mint);
-  margin-right: 5px;
+  background: var(--accent);
+  margin-right: 6px;
   vertical-align: 1px;
 }
 
 .chip.active {
-  background: var(--spruce);
-  border-color: var(--spruce);
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--on-accent);
+  font-weight: 600;
+}
+
+.chip.active .usual-dot {
+  background: var(--on-accent);
 }
 
 /* §3.3 rule 3 "search instead" affordance (BACKLOG 32) */
@@ -711,6 +1171,7 @@ input {
 
 .portion-btn.verify {
   color: var(--amber);
+  text-decoration-color: var(--amber);
 }
 
 .manual-hint {
@@ -740,8 +1201,10 @@ input {
 .row-detail {
   margin-top: 12px;
   background: var(--surface-2);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 12px;
+  animation: rise 220ms var(--ease);
 }
 
 .macro-grid {
@@ -756,8 +1219,10 @@ input {
 }
 
 .macro-cell .v {
-  font-size: 1.05rem;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 .macro-cell.protein .v {
@@ -765,10 +1230,10 @@ input {
 }
 
 .macro-cell .k {
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   margin-top: 2px;
 }
 
@@ -803,10 +1268,10 @@ input {
 }
 
 .detail-meal > .k {
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
 .detail-meal .chips {
@@ -817,16 +1282,19 @@ input {
 
 .add-item {
   display: flex;
+  align-items: center;
   gap: 8px;
   padding: 12px 0 16px;
 }
 
 .add-item input {
   flex: 1;
+  min-width: 0;
+  height: 44px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 14px;
+  border-radius: 14px;
+  padding: 0 14px;
   font-size: 0.92rem;
   outline: none;
 }
@@ -836,16 +1304,22 @@ input {
 }
 
 .add-item input:focus {
-  border-color: var(--spruce-soft);
+  border-color: var(--accent-line);
 }
 
 .add-item button {
-  background: var(--surface-3);
-  border: none;
-  border-radius: 10px;
   width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 50%;
   font-size: 1rem;
+  font-weight: 700;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .add-item button:disabled {
@@ -858,8 +1332,11 @@ input {
 .subsheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 9, 8, 0.55);
+  background: rgba(6, 6, 9, 0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   z-index: 60;
+  animation: fade 200ms ease-out;
 }
 
 .subsheet {
@@ -869,29 +1346,47 @@ input {
   bottom: 0;
   margin: 0 auto;
   max-width: 480px;
-  max-height: 70dvh;
+  max-height: 78dvh;
   overflow-y: auto;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
   border-bottom: none;
-  border-radius: 20px 20px 0 0;
+  border-radius: 24px 24px 0 0;
   z-index: 70;
-  padding: 18px 16px calc(16px + env(safe-area-inset-bottom));
+  padding: 14px 18px calc(18px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 14px;
-  animation: sheet-up 200ms ease-out;
+  box-shadow: var(--shadow-float);
+  animation: sheet-up 280ms var(--ease);
+}
+
+/* every sub-sheet gets a grabber, drawn rather than mounted */
+.subsheet::before {
+  content: "";
+  display: block;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  margin: 0 auto -2px;
+  flex-shrink: 0;
 }
 
 .subsheet-title {
-  font-size: 1rem;
-  font-weight: 650;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .subsheet-hint {
-  font-size: 0.8rem;
-  color: var(--faint);
+  font-size: 0.82rem;
+  color: var(--muted);
   margin: 0;
+  line-height: 1.45;
 }
 
 /* qty stepper — friction #3's escape hatch (§7.1) */
@@ -903,29 +1398,34 @@ input {
 }
 
 .stepper button {
-  width: 52px;
+  width: 54px;
   background: var(--surface-3);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   font-size: 1.3rem;
   cursor: pointer;
   padding: 10px 0;
 }
 
+.stepper button:active {
+  background: var(--line-strong);
+}
+
 .stepper input {
   flex: 1;
   text-align: center;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  font-size: 1.2rem;
-  font-weight: 700;
+  border-radius: 14px;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 800;
   outline: none;
   min-width: 0;
 }
 
 .stepper input:focus {
-  border-color: var(--spruce-soft);
+  border-color: var(--accent-line);
 }
 
 .serving-list {
@@ -936,29 +1436,30 @@ input {
 
 .serving-list button {
   text-align: left;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
   font-size: 0.9rem;
   color: var(--muted);
   cursor: pointer;
 }
 
 .serving-list button.active {
-  border-color: var(--spruce-soft);
+  border-color: var(--accent-line);
   color: var(--text);
-  background: var(--spruce-deep);
+  background: var(--accent-soft);
 }
 
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
 
 .edit-label {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
+  font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 2px;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
 }
 
 .alias-count {
@@ -967,15 +1468,16 @@ input {
 }
 
 .chip.active .alias-count {
-  color: var(--sage);
+  color: var(--on-accent);
+  opacity: 0.7;
 }
 
 .edit-manual-btn {
   text-align: left;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
   font-size: 0.9rem;
   color: var(--sage);
   cursor: pointer;
@@ -997,14 +1499,18 @@ input {
 
 .search-results button {
   text-align: left;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  padding: 11px 14px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.search-results button:hover {
+  border-color: var(--line-strong);
 }
 
 .search-results button:disabled {
@@ -1014,6 +1520,7 @@ input {
 
 .search-results .result-name {
   font-size: 0.92rem;
+  font-weight: 550;
 }
 
 .search-results .result-sub {
@@ -1027,7 +1534,7 @@ input {
   position: relative;
   aspect-ratio: 4 / 3;
   background: #000;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -1041,18 +1548,19 @@ input {
 .scan-frame {
   position: absolute;
   inset: 26% 12%;
-  border: 2px solid var(--mint);
-  border-radius: 8px;
-  opacity: 0.8;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  opacity: 0.85;
   pointer-events: none;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
 }
 
 .scan-torch {
   position: absolute;
   right: 10px;
   bottom: 10px;
-  background: rgba(18, 23, 21, 0.75);
-  border: 1px solid var(--line);
+  background: rgba(17, 17, 19, 0.75);
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
   color: var(--sage);
   font-size: 0.78rem;
@@ -1077,27 +1585,30 @@ input {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  bottom: calc(100px + env(safe-area-inset-bottom));
   z-index: 80;
-  background: var(--surface-3);
-  border: 1px solid var(--line);
+  max-width: calc(100% - 32px);
+  background: #26262d;
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
-  padding: 10px 12px 10px 18px;
+  padding: 10px 10px 10px 18px;
   display: flex;
   align-items: center;
   gap: 14px;
   font-size: 0.88rem;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-float);
+  animation: rise 240ms var(--ease);
 }
 
 .toast button {
-  background: none;
+  background: var(--accent-soft);
   border: none;
-  color: var(--mint);
-  font-size: 0.88rem;
-  font-weight: 650;
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.84rem;
+  font-weight: 700;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 6px 12px;
 }
 
 .pending-wrap {
@@ -1113,7 +1624,7 @@ input {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 9px 14px;
   font-size: 0.82rem;
   color: var(--muted);
 }
@@ -1144,7 +1655,22 @@ input {
   border-radius: 999px;
   color: var(--amber);
   font-weight: 650;
-  padding: 2px 10px;
+  padding: 3px 10px;
+}
+
+/* the demo strip under the Today header */
+.pending-pill.demo-banner {
+  border-radius: var(--radius-sm);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.pending-pill.demo-banner .sheet-close {
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
 }
 
 /* ---------- auth ---------- */
@@ -1154,59 +1680,71 @@ input {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: calc(24px + env(safe-area-inset-top)) 24px
-    calc(24px + env(safe-area-inset-bottom));
+  padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
 }
 
 .auth-card {
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 28px 24px;
+  border-radius: 24px;
+  padding: 30px 26px 26px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  box-shadow: var(--shadow-card);
+  animation: rise 420ms var(--ease);
 }
 
 .auth-card h1 {
   margin: 0 0 4px;
-  font-size: 1.3rem;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.6rem;
+  letter-spacing: -0.03em;
+}
+
+.auth-intro {
+  margin-top: -6px;
 }
 
 .auth-card label {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
 .auth-card input {
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px 14px;
-  font-size: 0.95rem;
+  border-radius: 14px;
+  padding: 13px 14px;
+  font-size: 1rem;
   outline: none;
+  transition: border-color 150ms;
 }
 
 .auth-card input:focus {
-  border-color: var(--spruce-soft);
+  border-color: var(--accent-line);
 }
 
 .auth-card button[type="submit"] {
-  background: var(--spruce);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   color: var(--on-accent);
   border: none;
-  border-radius: 10px;
-  padding: 13px;
-  font-size: 0.98rem;
-  font-weight: 650;
+  border-radius: 14px;
+  min-height: 52px;
+  font-size: 1rem;
+  font-weight: 700;
   cursor: pointer;
   margin-top: 4px;
+  box-shadow: 0 10px 24px -12px rgba(246, 165, 92, 0.8);
 }
 
 .auth-card button[type="submit"]:disabled {
@@ -1221,15 +1759,16 @@ input {
 }
 
 .auth-alt {
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   color: var(--muted);
   text-align: center;
-  margin: 0;
+  margin: 4px 0 0;
 }
 
 .auth-alt a {
-  color: var(--mint);
+  color: var(--accent);
   text-decoration: none;
+  font-weight: 600;
 }
 
 /* the "send a new code" button on the verify step: a link, not a second CTA */
@@ -1238,6 +1777,8 @@ input {
   color: var(--mint);
   padding: 0;
   margin-top: 0;
+  min-height: 0;
+  box-shadow: none;
   font-size: 0.82rem;
   font-weight: 500;
 }
@@ -1275,8 +1816,23 @@ input {
     gap: 24px;
   }
 
+  /* the rail carries the wordmark and nothing scrolls under an island here,
+     so the header is a plain heading again, not a sticky blurred strip */
+  .brand {
+    position: static;
+    margin: 0;
+    padding: 0 0 4px;
+    background: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .brand::after {
+    display: none;
+  }
+
   .brand h1 {
-    font-size: 1.75rem;
+    font-size: 2rem;
   }
 
   .brand .date {
@@ -1317,7 +1873,8 @@ input {
     padding: 22px;
   }
 
-  .grabber {
+  .grabber,
+  .subsheet::before {
     display: none;
   }
 

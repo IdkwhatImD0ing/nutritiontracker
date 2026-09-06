@@ -29,8 +29,8 @@ export default function manifest(): MetadataRoute.Manifest {
     // Portrait only: §7's bottom tab bar and the thumb-zone + are laid out for
     // a phone held upright, and nothing in the app rewards a landscape column.
     orientation: "portrait",
-    background_color: "#121318",
-    theme_color: "#121318",
+    background_color: "#111113",
+    theme_color: "#111113",
     categories: ["food", "health", "lifestyle"],
     icons: [
       // Two purposes, two files. The `any` art fills the square the way a

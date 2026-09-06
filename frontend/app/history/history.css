@@ -5,25 +5,34 @@
 .back-link {
   color: var(--muted);
   text-decoration: none;
-  margin-right: 8px;
-  font-weight: 400;
+  margin-right: 4px;
+  font-weight: 500;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.back-link:hover {
+  color: var(--text);
 }
 
 /* streak chip */
 
 .streak-chip {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 4px 12px;
+  padding: 5px 12px;
   color: var(--muted);
   background: var(--surface);
+  white-space: nowrap;
 }
 
 .streak-chip.live {
-  color: var(--mint);
-  border-color: var(--spruce);
-  background: var(--spruce-deep);
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
 }
 
 /* segmented range control */
@@ -33,7 +42,8 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 3px;
+  padding: 4px;
+  gap: 2px;
 }
 
 .segmented button {
@@ -41,23 +51,26 @@
   background: none;
   border: none;
   border-radius: 999px;
-  padding: 8px 0;
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  padding: 9px 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   color: var(--muted);
   cursor: pointer;
+  transition:
+    background 160ms,
+    color 160ms;
 }
 
 .segmented button.active {
-  background: var(--spruce);
-  color: var(--text);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .range-label {
-  margin: -10px 0 0;
+  margin: -8px 0 0;
   text-align: center;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--muted);
 }
 
@@ -99,19 +112,27 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px 16px;
+  padding: 16px 18px 18px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   font: inherit;
   color: inherit;
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color 120ms,
+    transform 120ms var(--ease);
 }
 
 .hcard:hover,
 .hcard:focus-visible {
-  border-color: var(--spruce-soft);
+  border-color: var(--line-strong);
   outline: none;
+}
+
+.hcard:active {
+  transform: scale(0.99);
 }
 
 .hcard.empty {
@@ -125,8 +146,9 @@
 }
 
 .hcard-day {
-  font-size: 0.95rem;
-  font-weight: 650;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .hcard-date {
@@ -135,18 +157,31 @@
 }
 
 .hcard-entries {
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   color: var(--faint);
 }
 
+.hcard-kcal {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .hcard-kcal strong {
-  font-size: 1.3rem;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
 }
 
 .hcard-kcal .of {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
+}
+
+.hcard .kcal-bar {
+  height: 6px;
 }
 
 .hcard-macros {
@@ -162,18 +197,19 @@
   align-items: baseline;
   gap: 4px;
   font-size: 0.72rem;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
 }
 
 .hcard-macro-row .k {
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  font-size: 0.62rem;
+  font-weight: 600;
 }
 
 .hcard-macro-row .v {
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -187,15 +223,15 @@
 }
 
 .hcard-bar {
-  height: 5px;
-  border-radius: 3px;
+  height: 4px;
+  border-radius: 999px;
   background: var(--surface-3);
   overflow: hidden;
 }
 
 .hcard-bar .fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 999px;
   transition: width 300ms ease;
 }
 
@@ -208,15 +244,16 @@
   font-size: 0.74rem;
   color: var(--muted);
   border-top: 1px solid var(--line);
-  padding-top: 8px;
+  padding-top: 10px;
   margin-top: 2px;
 }
 
 .hcard-meals .k {
   color: var(--faint);
   text-transform: uppercase;
-  font-size: 0.64rem;
-  letter-spacing: 0.05em;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
 
 /* ---------- desktop ----------

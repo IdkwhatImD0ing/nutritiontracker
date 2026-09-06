@@ -88,11 +88,12 @@
   min-height: 52px;
   padding: 0 26px;
   border-radius: 999px;
-  background: var(--spruce);
-  color: #14100c;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
   font-size: 1rem;
   font-weight: 700;
   text-decoration: none;
+  box-shadow: 0 10px 24px -12px rgba(246, 165, 92, 0.8);
   transition: filter 150ms;
 }
 
@@ -102,9 +103,10 @@
 
 .land-btn.ghost {
   background: transparent;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   color: var(--text);
   font-weight: 550;
+  box-shadow: none;
 }
 
 .land-btn.ghost:hover {
@@ -121,13 +123,14 @@
 /* ---------- the worked example ---------- */
 
 .land-demo {
-  background: var(--surface);
+  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 22px 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-shadow: var(--shadow-card);
 }
 
 .land-said {
