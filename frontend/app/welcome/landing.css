@@ -4,7 +4,7 @@
 .land {
   max-width: 720px;
   margin: 0 auto;
-  padding: 0 20px calc(48px + env(safe-area-inset-bottom));
+  padding: env(safe-area-inset-top) 20px calc(48px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 72px;

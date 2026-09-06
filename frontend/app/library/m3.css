@@ -775,7 +775,7 @@ body:has(.tabbar) .shell {
     gap: 4px;
     border-top: none;
     border-right: 1px solid var(--line);
-    padding: 28px 16px 24px;
+    padding: calc(28px + env(safe-area-inset-top)) 16px 24px;
   }
 
   .tabbar .rail-only {
@@ -884,7 +884,7 @@ body:has(.tabbar) .shell {
 
   .wizard-inner {
     max-width: 560px;
-    padding-top: 56px;
+    padding-top: calc(56px + env(safe-area-inset-top));
   }
 }
 
