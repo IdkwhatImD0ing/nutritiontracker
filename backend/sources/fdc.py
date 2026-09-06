@@ -13,9 +13,10 @@ responses (2026-08-20):
   and ``foodNutrients`` (per 100 g/ml), with GS1 unit mapping (GRM/MLT/OZA)
   and a sanity check for absurd serving units (a live Clif record claimed a
   "68.0 MG" serving);
-- barcode lookup uses field-scoped ``gtinUpc:`` queries (unquoted — quoting
-  the value returns HTTP 400, verified live) with the normalization ladder:
-  as-scanned -> leading zeros stripped -> zero-padded to 13 -> to 14.
+- barcode lookup uses one field-scoped ``gtinUpc:`` query (unquoted — quoting
+  the value returns HTTP 400, verified live) OR-ing every rung of the
+  normalization ladder: as-scanned, leading zeros stripped, zero-padded to
+  13, to 14 (the OR form verified live 2026-09-06).
 """
 
 from __future__ import annotations
@@ -433,34 +434,47 @@ async def search_branded(query: str) -> list[dict]:
     return hits
 
 
-async def lookup_barcode(code: str) -> dict | None:
-    """Barcode lookup via the §3.4 normalization ladder.
-
-    as-scanned -> leading zeros stripped -> zero-padded to 13 -> to 14,
-    each as a field-scoped (unquoted) gtinUpc: query. Stored gtinUpc lengths
-    are inconsistent and matching is literal — verified failing in both
-    directions otherwise.
-    """
+def gtin_variants(code: str) -> list[str]:
+    """The §3.4 normalization ladder as a list, in rung order and deduplicated:
+    as-scanned -> leading zeros stripped -> the stripped form zero-padded to
+    13 -> to 14. Padding the *stripped* form matters: a 14-digit scan padded
+    as-is never yields the 13-digit form Open Food Facts keys its records by.
+    Stored gtinUpc lengths are inconsistent and matching is literal — verified
+    failing in both directions otherwise — so every rung is a candidate; the
+    foods cache is searched with the same list (routes/quick.py)."""
     digits = re.sub(r"\D", "", code or "")
-    if not digits:
+    stripped = digits.lstrip("0")
+    out: list[str] = []
+    for candidate in (digits, stripped, stripped.zfill(13), stripped.zfill(14)):
+        if candidate and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+async def lookup_barcode(code: str) -> dict | None:
+    """Barcode lookup via the §3.4 normalization ladder — in ONE search call.
+
+    Every rung goes into a single field-scoped query, ``gtinUpc:A OR
+    gtinUpc:B OR ...`` (unquoted — quoting the value returns HTTP 400).
+    Verified live 2026-09-06: a 12-digit UPC-A whose record is stored 14-digit
+    answers from the combined query in one round trip (~0.3 s) where the
+    rung-by-rung version spent four. Exact matches are preferred in rung
+    order, then FDC's own rank.
+    """
+    variants = gtin_variants(code)
+    if not variants:
         return None
-    ladder = [digits, digits.lstrip("0"), digits.zfill(13), digits.zfill(14)]
-    seen: set[str] = set()
-    for candidate in ladder:
-        if not candidate or candidate in seen:
-            continue
-        seen.add(candidate)
-        r = await _get("/foods/search", query=f"gtinUpc:{candidate}",
-                       dataType="Branded", pageSize=5)
-        if r.status_code != 200:
-            continue
-        hits = r.json().get("foods", [])
-        # prefer an exact gtinUpc match, else take hits in rank order
-        hits.sort(key=lambda f: (f.get("gtinUpc") or "") != candidate)
-        for hit in hits[:3]:
-            food = await get_food("fdc", str(hit["fdcId"]))
-            if food is not None:  # None = stale index entry (404) — drop the hit
-                return food
+    r = await _get("/foods/search", query=" OR ".join(f"gtinUpc:{v}" for v in variants),
+                   dataType="Branded", pageSize=5)
+    if r.status_code != 200:
+        return None
+    hits = r.json().get("foods", [])
+    rank = {v: i for i, v in enumerate(variants)}
+    hits.sort(key=lambda f: rank.get(f.get("gtinUpc") or "", len(rank)))
+    for hit in hits[:3]:
+        food = await get_food("fdc", str(hit["fdcId"]))
+        if food is not None:  # None = stale index entry (404) — drop the hit
+            return food
     return None
 
 

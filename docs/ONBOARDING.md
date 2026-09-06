@@ -351,8 +351,9 @@ person. DESIGN §0.5 has the *why* for each.
 | Langfuse | a free Hobby project. `backend/tracing.py` builds the client at startup; how the SDK behaves with no keys is unverified and a project takes two minutes, so treat the keys as required | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT=development` |
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |
 
-`OFF_USER_AGENT` is in `.env.example` for the day an Open Food Facts adapter lands (DESIGN
-§8.2); nothing reads it today.
+`OFF_USER_AGENT` is read by `backend/sources/off.py`, the barcode miss-fallback (DESIGN
+§8.2); Open Food Facts needs no key, only a descriptive User-Agent, and the adapter falls
+back to the string DESIGN §0.5 documents when the variable is unset.
 
 ### 8.2 Env files
 
