@@ -190,6 +190,32 @@ def test_log_food_tool_runs_once_per_utterance():
     _run(scenario())
 
 
+def test_log_food_failure_frees_the_slot_and_is_not_reported_as_staged():
+    async def scenario():
+        calls: list[str] = []
+
+        async def flaky(text: str) -> dict:
+            calls.append(text)
+            if len(calls) == 1:
+                raise RuntimeError("decompose is down")
+            return {"meal": "lunch", "items": [{"phrase": "rice", "status": "searching"}]}
+
+        deps = _deps(stage_food=flaky)
+        state: dict = {}
+        agent = agent_svc.build_agent(deps, state)
+        name, args = "log_food", json.dumps({"text": "rice"})
+        out = await _tool(agent, name).on_invoke_tool(_ctx(name, args), args)
+        # the sanitized tool error reaches the model; the internals do not
+        assert "RuntimeError" in out and "decompose" not in out
+        assert state["food_calls"] == 0  # the slot is free again: nothing was staged
+        assert agent_svc._fallback_reply(state) == "I couldn't work that one out — try again, or type it."
+        out = await _invoke(agent, name, text="rice")
+        assert out["items"][0]["phrase"] == "rice" and state["food_calls"] == 1
+        assert calls == ["rice", "rice"]
+
+    _run(scenario())
+
+
 def test_agent_input_carries_the_context_block():
     deps = _deps(last_weight={"day": "2026-09-02", "weight": 181.0, "unit": "lb"}, profile_notes="trains at 6pm")
     text = agent_svc.agent_input("I weigh 180", deps)

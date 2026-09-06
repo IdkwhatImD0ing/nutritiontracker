@@ -87,7 +87,7 @@ class AgentRun:
     """What actually happened — assembled from tool-side state, not model claims."""
 
     reply: str
-    food_calls: int
+    food_calls: int  # log_food calls that staged something (0 or 1)
     weight: dict | None
     transcript: list
     max_turns_hit: bool = False
@@ -115,8 +115,16 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
                 "error": "already_called",
                 "message": "log_food runs once per utterance — everything was already staged.",
             })
+        # claimed before the await (two parallel calls must not both stage),
+        # released on failure: the pipeline persists in one transaction, so a
+        # failed call staged nothing and the model may try once more
         state["food_calls"] += 1
-        return json.dumps(await deps.stage_food(text), default=str)
+        try:
+            out = await deps.stage_food(text)
+        except Exception:
+            state["food_calls"] -= 1
+            raise  # failure_error_function tells the model, without the internals
+        return json.dumps(out, default=str)
 
     @function_tool(failure_error_function=_tool_error)
     async def log_weight(weight: float, unit: Unit, days_ago: int = 0) -> str:

@@ -79,8 +79,11 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
   }
 
   const unit = latest.unit;
-  // the route answers newest first; the sparkline wants oldest first
+  // the route answers newest first; the sparkline wants oldest first. The
+  // window can be empty while `latest` is older than it — then there is no
+  // sparkline, only the number and its date.
   const series = [...data.entries].reverse();
+  const last = series.at(-1) ?? null;
   const prev = series.filter((e) => e.day < latest.day).at(-1) ?? null;
   const value = shown(latest.weight_kg, unit);
   const delta = prev ? Math.round((value - shown(prev.weight_kg, unit)) * 10) / 10 : null;
@@ -115,24 +118,26 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
           {change ? ` · ${change}` : ""}
         </div>
       </div>
-      <svg
-        className="weight-spark"
-        viewBox={`0 0 ${W} ${H}`}
-        aria-label={`Weight, last ${DAYS} days`}
-        role="img"
-      >
-        {series.length > 1 ? (
-          <path
-            d={path}
-            fill="none"
-            stroke="var(--mint)"
-            strokeWidth={1.6}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        ) : null}
-        <circle cx={x(latest.day)} cy={y(latest.weight_kg)} r={2.4} fill="var(--mint)" />
-      </svg>
+      {last ? (
+        <svg
+          className="weight-spark"
+          viewBox={`0 0 ${W} ${H}`}
+          aria-label={`Weight, last ${DAYS} days`}
+          role="img"
+        >
+          {series.length > 1 ? (
+            <path
+              d={path}
+              fill="none"
+              stroke="var(--mint)"
+              strokeWidth={1.6}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          ) : null}
+          <circle cx={x(last.day)} cy={y(last.weight_kg)} r={2.4} fill="var(--mint)" />
+        </svg>
+      ) : null}
     </section>
   );
 }
