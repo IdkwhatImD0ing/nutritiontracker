@@ -50,7 +50,7 @@ writes the entries, and learns the alias and portion for next time.
 - Neon Postgres (`pg_trgm`) with Neon Managed Better Auth; Row-Level Security for tenancy
 - OpenAI Agents SDK — `gpt-5.6-luna` parses utterances and reads photos, `gpt-5.6-terra` runs the food-search agent
 - Deepgram Nova-3 for speech, OpenAI transcribe as the fallback
-- USDA FoodData Central for all food data; Open Food Facts is the designed quality-gated fallback (adapter not wired yet); chain restaurants via cited transcription of the chain's own page
+- USDA FoodData Central for all food data; Open Food Facts as the quality-gated barcode fallback; chain restaurants via cited transcription of the chain's own page
 - Langfuse for traces, commit-time scores and the correction → replay eval loop
 - API types defined once in pydantic and generated to TypeScript from the OpenAPI schema
 

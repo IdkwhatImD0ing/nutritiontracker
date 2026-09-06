@@ -25,6 +25,7 @@ if str(BACKEND) not in sys.path:
 if sys.platform == "win32":  # psycopg async needs the selector loop on Windows
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+import httpx
 import psycopg
 import pytest
 from fastapi import HTTPException
@@ -61,7 +62,7 @@ from routes import foods as foods_routes  # noqa: E402
 from routes import quick  # noqa: E402
 from routes import resolve as resolve_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
-from sources import fdc  # noqa: E402
+from sources import fdc, off  # noqa: E402
 
 NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
 
@@ -164,8 +165,15 @@ def test_barcode_hit_normalizes_persists_and_returns_contract_shape(monkeypatch)
 
     monkeypatch.setattr(fdc, "lookup_barcode", fake_lookup)
 
+    async def no_off(code):
+        raise AssertionError("Open Food Facts must not be consulted on an FDC hit")
+
+    monkeypatch.setattr(off, "lookup_barcode", no_off)
+
     async def run():
         async with isolated_db():
+            # the fake payload carries no gtinUpc, so the rescan is not a
+            # cache hit — both scans reach FDC (the cache path has its own test)
             resp = await quick.lookup_barcode(code=" 0-49000 05010-4 ")
             again = await quick.lookup_barcode(code="049000050104")
             row = await db.fetchone(
@@ -189,16 +197,25 @@ def test_barcode_hit_normalizes_persists_and_returns_contract_shape(monkeypatch)
 
 
 def test_barcode_miss_is_found_false(monkeypatch):
+    asked: list[str] = []
+
     async def fake_lookup(code):
+        asked.append("fdc")
+        return None
+
+    async def fake_off(code):
+        asked.append("off")
         return None
 
     monkeypatch.setattr(fdc, "lookup_barcode", fake_lookup)
+    monkeypatch.setattr(off, "lookup_barcode", fake_off)
 
     async def run():
         async with isolated_db():
             return await quick.lookup_barcode(code="000000000000")
 
     resp = asyncio.run(run())
+    assert asked == ["fdc", "off"]  # FDC first; Open Food Facts only on its miss
     assert resp.found is False and resp.food is None
     assert resp.model_dump() == {"found": False, "food": None}
 
@@ -208,9 +225,130 @@ def test_barcode_without_digits_is_422_before_any_lookup(monkeypatch):
         raise AssertionError("lookup must not run for a digitless code")
 
     monkeypatch.setattr(fdc, "lookup_barcode", fake_lookup)
+    monkeypatch.setattr(off, "lookup_barcode", fake_lookup)
     with pytest.raises(HTTPException) as e:
         asyncio.run(quick.lookup_barcode(code="not-a-barcode"))
     assert e.value.status_code == 422
+
+
+def test_barcode_fdc_miss_falls_back_to_open_food_facts(monkeypatch):
+    name = f"zz quick off {uuid4().hex[:8]}"
+    code = f"0{uuid4().int % 10**12:012d}"  # a 13-digit code, OFF's stored form
+    food = dict(
+        _fake_food(name, brand="OffBrand"),
+        source="off",
+        source_id=code,
+        payload={"code": code, "completeness": 0.7},
+    )
+
+    async def fdc_miss(code):
+        return None
+
+    async def off_hit(code):
+        return food
+
+    monkeypatch.setattr(fdc, "lookup_barcode", fdc_miss)
+    monkeypatch.setattr(off, "lookup_barcode", off_hit)
+
+    async def run():
+        async with isolated_db():
+            resp = await quick.lookup_barcode(code=code)
+            row = await db.fetchone(
+                "SELECT source, source_id FROM foods WHERE id = %s", (resp.food.id,)
+            )
+            return resp, row
+
+    resp, row = asyncio.run(run())
+    assert resp.found is True and resp.food is not None
+    assert resp.food.source == "off"
+    assert resp.food.display_name == name and resp.food.brand == "OffBrand"
+    assert row["source"] == "off" and row["source_id"] == code
+
+
+def test_barcode_rescan_answers_from_the_cache_without_the_network(monkeypatch):
+    """Each source stores a code under its own padding — FDC 14-digit in the
+    payload's gtinUpc, OFF 13-digit as source_id — and a rescan, under any
+    rung of the ladder, is served from foods before either is asked."""
+    tail = f"{uuid4().int % 10**11:011d}"
+    upc = "0" + tail  # a 12-digit UPC-A, FDC-known
+    upc2 = "1" + tail  # a second code, OFF-only
+    fdc_food = dict(_fake_food(f"zz quick fdc {tail}"), payload={"gtinUpc": upc.zfill(14)})
+    off_food = dict(
+        _fake_food(f"zz quick off {tail}"),
+        source="off",
+        source_id=upc2.zfill(13),
+        payload={"code": upc2.zfill(13)},
+    )
+    calls: list[str] = []
+
+    async def fdc_lookup(code):
+        calls.append("fdc")
+        return fdc_food if code == upc else None
+
+    async def off_lookup(code):
+        calls.append("off")
+        return off_food
+
+    monkeypatch.setattr(fdc, "lookup_barcode", fdc_lookup)
+    monkeypatch.setattr(off, "lookup_barcode", off_lookup)
+
+    async def run():
+        async with isolated_db():
+            first = await quick.lookup_barcode(code=upc)
+            stripped = await quick.lookup_barcode(code=tail)  # leading zero gone
+            padded = await quick.lookup_barcode(code=upc.zfill(14))
+            hit = await quick.lookup_barcode(code=upc2)
+            rescan = await quick.lookup_barcode(code=upc2.zfill(14))
+            return first, stripped, padded, hit, rescan
+
+    first, stripped, padded, hit, rescan = asyncio.run(run())
+    # one FDC lookup for three scans of the first code; one FDC miss + one OFF
+    # lookup for two scans of the second
+    assert calls == ["fdc", "fdc", "off"]
+    assert first.found and first.food.id == stripped.food.id == padded.food.id
+    assert hit.found and hit.food.source == "off" and hit.food.id == rescan.food.id
+
+
+_FDC_SEARCH = httpx.Request("GET", "https://api.nal.usda.gov/fdc/v1/foods/search")
+
+
+def test_barcode_fdc_error_is_503_and_never_an_off_answer(monkeypatch):
+    """A 429/5xx from FDC is an outage, not a miss: the route says so (503)
+    rather than caching an Open Food Facts row that every rescan would then
+    answer from without FDC ever being asked again."""
+
+    async def fdc_down(code):
+        raise httpx.HTTPStatusError(
+            "429", request=_FDC_SEARCH, response=httpx.Response(429, request=_FDC_SEARCH)
+        )
+
+    async def no_off(code):
+        raise AssertionError("Open Food Facts must not stand in for an FDC outage")
+
+    monkeypatch.setattr(fdc, "lookup_barcode", fdc_down)
+    monkeypatch.setattr(off, "lookup_barcode", no_off)
+
+    async def run():
+        async with isolated_db():
+            return await quick.lookup_barcode(code="049000050104")
+
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(run())
+    assert e.value.status_code == 503
+    # class name only — never the message, which embeds the URL (§10)
+    assert "HTTPStatusError" in e.value.detail and "usda" not in e.value.detail.lower()
+
+
+def test_fdc_lookup_raises_on_a_non_2xx_search(monkeypatch):
+    """The source itself: a rate-limited or failing search raises (the route's
+    503 path) instead of reading as a miss."""
+
+    async def rate_limited(path, **params):
+        return httpx.Response(429, request=_FDC_SEARCH)
+
+    monkeypatch.setattr(fdc, "_get", rate_limited)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(fdc.lookup_barcode("049000050104"))
 
 
 # ---------------------------------------------------------------------------
