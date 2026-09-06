@@ -41,11 +41,13 @@ state — "cooked", "raw", or "dry" ONLY when the user said it or a synonym
 brand — the brand name if one was spoken ("fairlife", "Quest"), else null.
 
 library_match — the PERSONAL FOOD INDEX below lists foods the user logs
-often, one per line as: index_id | display_name | brand. If the item's phrase
-is semantically the same food as one entry (e.g. "protein shake" when the
-index holds the shake they always log), set library_match to that entry's
-index_id, copied verbatim. Only ids that appear in the index are allowed; if
-no entry is clearly the same food, use null.
+often, and RECENTLY LOGGED FOODS lists what they logged lately (newest
+first); both use one line per food: index_id | display_name | brand. If the
+item's phrase is semantically the same food as one entry (e.g. "protein
+shake" when the index holds the shake they always log; "fairlife" when a
+fairlife milk was logged recently), set library_match to that entry's
+index_id, copied verbatim. Only ids that appear in one of the two lists are
+allowed; if no entry is clearly the same food, use null.
 
 meal_ref — the SAVED MEALS list below names the user's saved meals. If the
 phrase refers to one of them, set meal_ref to that name exactly as listed;
@@ -63,12 +65,15 @@ my usual breakfast" -> {"name": "usual breakfast"}); otherwise null.
 """
 
 
-def render_context(ctx) -> str:
-    """Context block (§6.1): profile notes, targets, food index, saved meals."""
-    index_lines = "\n".join(
-        f"{index_id} | {display_name} | {brand or '-'}"
-        for index_id, display_name, brand in ctx.food_index
+def _food_lines(foods) -> str:
+    return "\n".join(
+        f"{index_id} | {display_name} | {brand or '-'}" for index_id, display_name, brand in foods
     )
+
+
+def render_context(ctx) -> str:
+    """Context block (§6.1): profile notes, targets, food index, the recently
+    logged foods, saved meals."""
     targets = (
         "\n".join(f"{k}: {v}" for k, v in sorted(ctx.targets.items()))
         if ctx.targets
@@ -79,6 +84,8 @@ def render_context(ctx) -> str:
         f"PROFILE NOTES:\n{ctx.profile_notes or '(none)'}\n\n"
         f"TARGETS:\n{targets}\n\n"
         f"PERSONAL FOOD INDEX (index_id | display_name | brand):\n"
-        f"{index_lines or '(empty)'}\n\n"
+        f"{_food_lines(ctx.food_index) or '(empty)'}\n\n"
+        f"RECENTLY LOGGED FOODS (index_id | display_name | brand; newest first):\n"
+        f"{_food_lines(ctx.recent_foods) or '(empty)'}\n\n"
         f"SAVED MEALS:\n{meals}"
     )

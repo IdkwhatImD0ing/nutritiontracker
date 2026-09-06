@@ -324,6 +324,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/foods/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Recent Foods
+         * @description The foods this account has logged, newest first, one per food, capped
+         *     at foods_repo.RECENT_FOODS_CAP (200) — the Search lane's "previously
+         *     added" list (§7.4). Every hit is already cached (food_id set), so a pick
+         *     goes straight to /api/logs/from-food. Declared before /api/foods/{food_id}
+         *     so the literal path wins.
+         */
+        get: operations["list_recent_foods_api_foods_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/foods/select": {
         parameters: {
             query?: never;
@@ -2568,6 +2592,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_recent_foods_api_foods_recent_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FoodHit"][];
                 };
             };
         };

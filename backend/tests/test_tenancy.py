@@ -249,7 +249,7 @@ def _stub_pipeline(monkeypatch, *, decompose=None, vision=None) -> None:
         yield SimpleNamespace(trace_id="trace-test", update=lambda **kw: None)
 
     async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[])
+        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
 
     async def refuse(*args, **kwargs):
         raise AssertionError("no model call expected here")

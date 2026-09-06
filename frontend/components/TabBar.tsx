@@ -6,14 +6,16 @@ import { useState } from "react";
 import AddSheet, { ADD_EVENT, ADD_HANDOFF_KEY, type AddLane } from "./AddSheet";
 import "@/app/library/m3.css";
 
-/** §7.4 navigation: Today · History · [+] · Library, with Settings behind an
- *  icon. The raised + in the middle is the one way to log (owner ruling,
- *  2026-09-02 — the mid-screen capture bar is gone): it opens AddSheet, and
- *  the pick reaches Today as a window event while Today is mounted, else as
- *  a sessionStorage handoff followed by a navigation home. No props — every
- *  page mounts it as-is; the stylesheet rides along with the import. From
- *  900px m3.css stands this same markup up as a navigation rail on the
- *  left; .rail-only marks the wordmark and labels only the rail shows. */
+/** §7.4 navigation: Today · History · [+] · Library · Settings — five equal
+ *  slots, so the raised + sits dead centre (owner feedback, 2026-09-06; the
+ *  gear used to be a narrow unlabelled sixth thing on the right). The + is
+ *  the one way to log (owner ruling, 2026-09-02 — the mid-screen capture bar
+ *  is gone): it opens AddSheet, and the pick reaches Today as a window event
+ *  while Today is mounted, else as a sessionStorage handoff followed by a
+ *  navigation home. No props — every page mounts it as-is; the stylesheet
+ *  rides along with the import. From 900px m3.css stands this same markup
+ *  up as a navigation rail on the left; .rail-only marks the wordmark and
+ *  the + button's label, which only the rail shows. */
 
 const stroke = {
   fill: "none",
@@ -134,7 +136,7 @@ export default function TabBar() {
           aria-current={isActive("/settings") ? "page" : undefined}
         >
           <GearIcon />
-          <span className="rail-only">Settings</span>
+          Settings
         </Link>
       </nav>
       <AddSheet

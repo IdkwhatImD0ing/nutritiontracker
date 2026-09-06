@@ -64,12 +64,13 @@ function describeBody(b: Body): string | null {
 }
 
 /** §7.4 Settings: targets, meal windows, timezone, profile_notes (the
- *  agent-visible free text, §6.1), the Cronometer baseline, the experiment
- *  link, the on-device-state note. One Save writes everything (PUT). */
+ *  agent-visible free text, §6.1), the experiment link, the on-device-state
+ *  note. One Save writes everything (PUT). The Cronometer baseline left this
+ *  page on 2026-09-06 (owner feedback); the setting itself stays, read by the
+ *  adherence chart, and PUT never touches a key it is not sent. */
 export default function Settings() {
   const [form, setForm] = useState<SettingsT | null>(null);
   const [targets, setTargets] = useState<TargetText>(targetText({}));
-  const [baseline, setBaseline] = useState("0");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -78,7 +79,6 @@ export default function Settings() {
   const load = (s: SettingsT) => {
     setForm(s);
     setTargets(targetText(s.targets));
-    setBaseline(String(s.cronometer_baseline_days_per_week));
   };
 
   // `attempt` re-runs the read: the failure notice carries a Retry rather
@@ -130,12 +130,6 @@ export default function Settings() {
       setError("Fill in all four targets, or clear all four.");
       return;
     }
-    // §9: the adherence chart's comparison line — the route takes 0..7.
-    const days = Number.parseInt(baseline, 10);
-    if (!Number.isInteger(days) || days < 0 || days > 7) {
-      setError("Cronometer baseline must be a whole number of days, 0–7.");
-      return;
-    }
     setBusy(true);
     setError(null);
     setStatus(null);
@@ -146,7 +140,6 @@ export default function Settings() {
           meal_windows: form.meal_windows,
           timezone: form.timezone.trim(),
           profile_notes: form.profile_notes,
-          cronometer_baseline_days_per_week: days,
         }),
       );
       setStatus("Saved.");
@@ -269,7 +262,6 @@ export default function Settings() {
                     )
                   }
                   aria-label="Meal outside every window"
-                  style={{ gridColumn: "2 / 4" }}
                 >
                   {MEALS.map((meal) => (
                     <option key={meal} value={meal}>
@@ -338,27 +330,6 @@ export default function Settings() {
               Injected verbatim every time a log is parsed or a food is searched
               for. Preferences, conventions, what a word means to you.
             </p>
-          </section>
-
-          <section className="m3-section" aria-label="Baseline">
-            <h2>Baseline</h2>
-            <div className="m3-card">
-              <label className="m3-field">
-                Cronometer baseline — days per week
-                <input
-                  inputMode="numeric"
-                  value={baseline}
-                  onChange={(e) => setBaseline(e.target.value)}
-                  placeholder="0"
-                  aria-label="Cronometer baseline days per week"
-                  className="num"
-                />
-              </label>
-              <p className="m3-note">
-                How often you logged before Tally. The adherence chart draws
-                this line; zero means any logged day beats it.
-              </p>
-            </div>
           </section>
 
           <button

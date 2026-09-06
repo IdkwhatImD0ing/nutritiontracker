@@ -84,7 +84,7 @@ export default function DiaryEntryRow({
             {/* §7.4: food detail is a drill-in from any diary row. The row's
                 own tap still toggles the expander. */}
             <Link
-              className="name-btn"
+              className="name-btn food-name"
               href={`/library/food/${encodeURIComponent(entry.food.id)}`}
               onClick={(e) => e.stopPropagation()}
             >
