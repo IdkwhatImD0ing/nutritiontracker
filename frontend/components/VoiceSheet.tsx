@@ -37,12 +37,55 @@ function mmss(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+function MicIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10v1a7 7 0 0 0 14 0v-1" />
+      <path d="M12 18v4" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 19V5M6 11l6-6 6 6" />
+    </svg>
+  );
+}
+
 /** The + sheet's Voice log lane — the old mid-screen capture bar (mic + text
  *  field) moved into a sheet (owner ruling, 2026-09-02). Recording starts on
  *  open: the user just chose "Voice log", so a second mic tap would be
- *  ceremony. A "Type instead" tap cancels the recording (nothing uploads)
- *  and shows the text field, so §8.1d's type-it-instead fallback (and iOS
- *  keyboard dictation) stays one tap away even mid-recording. */
+ *  ceremony. While recording, the sheet is one big stop target and a clock;
+ *  a "Type instead" tap cancels the recording (nothing uploads) and shows
+ *  the text field, so §8.1d's type-it-instead fallback (and iOS keyboard
+ *  dictation) stays one tap away even mid-recording. */
 export default function VoiceSheet({
   busy,
   error,
@@ -144,29 +187,51 @@ export default function VoiceSheet({
           </button>
         </div>
 
-        <form
-          className="capture"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const trimmed = text.trim();
-            if (!trimmed || busy || recording) return;
-            const ok = await onSubmit(trimmed);
-            if (ok) {
-              setText("");
-              setNotice(null);
-            }
-          }}
-        >
-          {recording ? (
-            <div className="rec-status num" aria-live="polite">
+        {recording ? (
+          <div className="voice-stage" aria-live="polite">
+            <button
+              type="button"
+              className="voice-big"
+              aria-label="Stop recording"
+              disabled={busy}
+              onClick={toggleMic}
+            >
+              <StopIcon />
+            </button>
+            <div className="voice-timer num">{mmss(elapsedMs)}</div>
+            <div className="voice-caption">
               <span className="rec-dot" />
-              {mmss(elapsedMs)}
-              <span className="rec-hint">listening — tap to stop</span>
-              <button type="button" className="rec-type" onClick={typeInstead}>
-                Type instead
-              </button>
+              Listening — tap to stop
             </div>
-          ) : (
+            <button type="button" className="voice-alt" onClick={typeInstead}>
+              Type instead
+            </button>
+          </div>
+        ) : (
+          <form
+            className="capture"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const trimmed = text.trim();
+              if (!trimmed || busy) return;
+              const ok = await onSubmit(trimmed);
+              if (ok) {
+                setText("");
+                setNotice(null);
+              }
+            }}
+          >
+            {supported ? (
+              <button
+                type="button"
+                className="mic-btn"
+                aria-label="Record a voice log"
+                disabled={busy}
+                onClick={toggleMic}
+              >
+                <MicIcon />
+              </button>
+            ) : null}
             <input
               ref={inputRef}
               type="text"
@@ -177,46 +242,16 @@ export default function VoiceSheet({
               enterKeyHint="send"
               autoComplete="off"
             />
-          )}
-          {supported ? (
             <button
-              type="button"
-              className={`mic-btn${recording ? " rec" : ""}`}
-              aria-label={recording ? "Stop recording" : "Record a voice log"}
-              disabled={busy}
-              onClick={toggleMic}
+              type="submit"
+              className="send-btn"
+              disabled={busy || !text.trim()}
+              aria-label="Log"
             >
-              {recording ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-                  <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-                </svg>
-              ) : (
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <rect x="9" y="2" width="6" height="12" rx="3" />
-                  <path d="M5 10v1a7 7 0 0 0 14 0v-1" />
-                  <path d="M12 18v4" />
-                </svg>
-              )}
+              {busy ? <span className="spinner" /> : <SendIcon />}
             </button>
-          ) : null}
-          <button
-            type="submit"
-            disabled={busy || recording || !text.trim()}
-            aria-label="Log"
-          >
-            {busy ? <span className="spinner" /> : "↑"}
-          </button>
-        </form>
+          </form>
+        )}
         {error ? <p className="capture-error">{error}</p> : null}
         {notice && !error ? <p className="capture-notice">{notice}</p> : null}
         {!recording && !notice && !error ? (

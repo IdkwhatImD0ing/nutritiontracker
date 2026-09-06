@@ -211,18 +211,31 @@ async def require_user(request: Request) -> dict:
     if not kid:
         raise HTTPException(status_code=401, detail="token missing kid")
     key = await _signing_key(kid)
+    origin = _expected_issuer()
     try:
         payload = jwt.decode(
             token,
             key=key.key,
             algorithms=["EdDSA"],
-            issuer=_expected_issuer(),
-            options={"require": ["exp"]},
+            issuer=origin,
+            # Neon's tokens carry `aud` = the auth origin (their docs' example
+            # payload and Python snippet both show it). PyJWT refuses ANY token
+            # with an `aud` claim unless told which audience to accept, so
+            # leaving this to the default 401'd every real request with
+            # "invalid token" while the offline tests (no aud) stayed green.
+            # Checked by hand below so a token without the claim still passes.
+            options={"require": ["exp"], "verify_aud": False},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="invalid token")
+
+    aud = payload.get("aud")
+    if aud:
+        audiences = aud if isinstance(aud, list) else [aud]
+        if origin not in audiences:
+            raise HTTPException(status_code=401, detail="invalid token")
 
     email = payload.get("email")
     if not email:

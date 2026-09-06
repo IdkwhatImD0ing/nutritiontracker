@@ -15,22 +15,36 @@
 .photo-option {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   text-align: left;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px;
-  font-size: 0.95rem;
+  border-radius: 16px;
+  min-height: 60px;
+  padding: 12px 14px;
+  font-size: 0.98rem;
+  font-weight: 600;
   color: var(--text);
   cursor: pointer;
+  transition:
+    border-color 120ms,
+    background 120ms;
+}
+
+.photo-option:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-3);
 }
 
 .photo-option svg {
   width: 22px;
   height: 22px;
   flex-shrink: 0;
-  color: var(--sage);
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 9px;
+  box-sizing: content-box;
+  border-radius: 12px;
 }
 
 .photo-option:disabled {
@@ -43,8 +57,8 @@
   width: 100%;
   max-height: 40dvh;
   object-fit: contain;
-  border-radius: 12px;
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
 }
 
 .photo-status {
@@ -67,18 +81,20 @@
 
 .photo-actions button {
   flex: 1;
-  background: var(--surface);
+  min-height: 46px;
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 11px 14px;
+  border-radius: 14px;
+  padding: 0 14px;
   font-size: 0.9rem;
+  font-weight: 600;
   color: var(--sage);
   cursor: pointer;
 }
 
 .photo-actions button.primary {
-  background: var(--spruce);
-  border-color: var(--spruce);
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--on-accent);
 }
 
@@ -86,7 +102,7 @@
 
 /* same amber family as needs-input/verify: attention, not error */
 .badge.estimate {
-  background: #3d3320;
+  background: rgba(232, 196, 104, 0.16);
   color: var(--amber);
 }
 
@@ -98,7 +114,6 @@
 /* numbers are a guess until confirmed — muted, never the bold headline */
 .row.estimated .row-kcal .n {
   color: var(--muted);
-  font-weight: 600;
 }
 
 .row.estimated.confirmed .row-kcal .n {

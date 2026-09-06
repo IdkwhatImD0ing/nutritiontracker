@@ -135,6 +135,27 @@ def test_unverified_email_claim_403(app_client):
     assert r.status_code == 200
 
 
+def test_audience_claim_is_accepted_when_it_names_the_auth_origin(app_client):
+    """Neon's real tokens carry `aud` = the auth origin. PyJWT rejects any
+    token with an `aud` claim unless an audience is supplied, which is how
+    every production request 401'd with "invalid token" while these tests
+    (tokens without `aud`) passed. The origin must be accepted, as a string
+    or inside a list; a foreign audience must still be refused."""
+    client, state = app_client
+    priv, jwk = _keypair("kid-a")
+    state["jwks"] = {"keys": [jwk]}
+    hdr = lambda tok: {"Authorization": f"Bearer {tok}"}  # noqa: E731
+
+    r = client.get("/whoami", headers=hdr(_token(priv, "kid-a", aud=BASE)))
+    assert r.status_code == 200
+    r = client.get("/whoami", headers=hdr(_token(priv, "kid-a", aud=[BASE, "https://x.test"])))
+    assert r.status_code == 200
+    r = client.get("/whoami", headers=hdr(_token(priv, "kid-a", aud="https://other.test")))
+    assert r.status_code == 401
+    r = client.get("/whoami", headers=hdr(_token(priv, "kid-a", aud=["https://other.test"])))
+    assert r.status_code == 401
+
+
 def test_expired_token_401(app_client):
     client, state = app_client
     priv, jwk = _keypair("kid-a")

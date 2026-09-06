@@ -70,10 +70,30 @@ function MicIcon() {
 }
 
 const ROWS = [
-  { lane: "barcode", label: "Scan barcode", Icon: BarcodeIcon },
-  { lane: "photo", label: "Take photo", Icon: CameraIcon },
-  { lane: "search", label: "Search", Icon: SearchIcon },
-  { lane: "voice", label: "Voice log", Icon: MicIcon },
+  {
+    lane: "barcode",
+    label: "Scan barcode",
+    sub: "Packaged food, numbers from the label",
+    Icon: BarcodeIcon,
+  },
+  {
+    lane: "photo",
+    label: "Take photo",
+    sub: "Names the plate; you confirm the amounts",
+    Icon: CameraIcon,
+  },
+  {
+    lane: "search",
+    label: "Search",
+    sub: "Your foods first, then the USDA database",
+    Icon: SearchIcon,
+  },
+  {
+    lane: "voice",
+    label: "Voice log",
+    sub: "Say or type what you ate",
+    Icon: MicIcon,
+  },
 ] as const;
 
 export default function AddSheet({ open, onClose, onPick }: Props) {
@@ -93,15 +113,23 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet add-sheet" role="dialog" aria-label="Log food">
         <div className="subsheet-title">Log food</div>
-        {ROWS.map(({ lane, label, Icon }) => (
+        {ROWS.map(({ lane, label, sub, Icon }) => (
           <button
             key={lane}
             type="button"
             className="add-row"
             onClick={() => onPick(lane)}
           >
-            <Icon />
-            {label}
+            <span className="add-row-icon">
+              <Icon />
+            </span>
+            <span className="add-row-text">
+              {label}
+              <span className="add-row-sub">{sub}</span>
+            </span>
+            <span className="add-row-chev" aria-hidden="true">
+              ›
+            </span>
           </button>
         ))}
       </div>

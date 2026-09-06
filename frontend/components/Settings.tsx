@@ -81,19 +81,23 @@ export default function Settings() {
     setBaseline(String(s.cronometer_baseline_days_per_week));
   };
 
+  // `attempt` re-runs the read: the failure notice carries a Retry rather
+  // than asking for a page reload.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    setError(null);
     getSettings()
       .then((s) => {
         if (!cancelled) load(s);
       })
       .catch(() => {
-        if (!cancelled) setError("Couldn't load settings — reload to retry.");
+        if (!cancelled) setError("Couldn't load your settings.");
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
   const setWindow = (
     meal: (typeof WINDOW_MEALS)[number],
@@ -176,12 +180,25 @@ export default function Settings() {
         <h1>Settings</h1>
       </header>
 
-      {error ? <p className="sheet-error">{error}</p> : null}
+      {error && !form ? (
+        <div className="notice error" role="alert">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="notice-btn"
+            onClick={() => setAttempt((n) => n + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      ) : error ? (
+        <p className="sheet-error">{error}</p>
+      ) : null}
 
       <AccountCard />
 
       {!form ? (
-        <p className="m3-empty">{error ? "" : "Loading…"}</p>
+        error ? null : <p className="m3-empty">Loading…</p>
       ) : (
         <>
           <section className="m3-section" aria-label="Daily targets">

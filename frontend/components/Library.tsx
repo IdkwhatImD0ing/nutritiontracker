@@ -92,20 +92,24 @@ export default function Library() {
   /** the same sheet with no meal = the §8.4 "build one in Library" path */
   const [newMeal, setNewMeal] = useState(false);
 
+  // `attempt` re-runs both reads: the failure notice carries a Retry rather
+  // than asking for a page reload.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    setLoadError(null);
     Promise.allSettled([getAliases(), getMeals()]).then(([a, m]) => {
       if (cancelled) return;
       setAliases(a.status === "fulfilled" ? a.value : []);
       setMeals(m.status === "fulfilled" ? m.value : []);
       if (a.status === "rejected" || m.status === "rejected") {
-        setLoadError("Couldn't load part of your library — reload to retry.");
+        setLoadError("Couldn't load part of your library.");
       }
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
   const groups = useMemo(() => groupByFood(aliases ?? []), [aliases]);
   const activeMeals = (meals ?? []).filter((m) => m.is_active);
@@ -152,7 +156,22 @@ export default function Library() {
         </span>
       </header>
 
-      {loadError ? <p className="sheet-error">{loadError}</p> : null}
+      {loadError ? (
+        <div className="notice error" role="alert">
+          <span>{loadError}</span>
+          <button
+            type="button"
+            className="notice-btn"
+            onClick={() => {
+              setAliases(null);
+              setMeals(null);
+              setAttempt((n) => n + 1);
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
 
       <section className="m3-section lib-search" aria-label="Find a food">
         <form className="capture" onSubmit={runSearch}>

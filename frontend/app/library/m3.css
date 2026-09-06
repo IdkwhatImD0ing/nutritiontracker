@@ -14,9 +14,13 @@
   max-width: 480px;
   display: flex;
   align-items: stretch;
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-  padding: 6px 8px calc(8px + env(safe-area-inset-bottom));
+  /* flush with the bottom edge: the surface runs under the home indicator,
+     and only the inset itself keeps the targets above it */
+  padding: 6px 10px env(safe-area-inset-bottom);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  border-top: 1px solid var(--line-strong);
   z-index: 30;
 }
 
@@ -25,19 +29,29 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 3px;
-  padding: 6px 0 4px;
+  min-height: 54px;
+  padding: 4px 0;
   color: var(--faint);
   text-decoration: none;
-  font-size: 0.68rem;
-  letter-spacing: 0.04em;
-  border-radius: 10px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-radius: 14px;
+  transition: color 150ms;
 }
 
 .tabbar a svg {
-  width: 22px;
-  height: 22px;
+  width: 23px;
+  height: 23px;
   display: block;
+  transition: transform 200ms var(--ease);
+}
+
+.tabbar a:active svg {
+  transform: scale(0.9);
 }
 
 .tabbar a.active {
@@ -45,13 +59,14 @@
 }
 
 .tabbar a.active svg {
-  color: var(--mint);
+  color: var(--accent);
 }
 
 .tabbar a.gear {
-  flex: 0 0 56px;
+  flex: 0 0 52px;
   border-left: 1px solid var(--line);
-  margin-left: 4px;
+  border-radius: 0;
+  margin-left: 2px;
 }
 
 /* the + (owner ruling, 2026-09-02): one raised button in the middle of the
@@ -66,27 +81,37 @@
 .tabbar .fab {
   width: 58px;
   height: 58px;
-  margin-top: -28px;
+  margin-top: -24px;
   border-radius: 50%;
-  background: var(--spruce);
-  border: 4px solid var(--bg);
+  background: linear-gradient(160deg, var(--spruce-soft), var(--accent) 45%, var(--accent-strong));
+  border: none;
+  outline: 5px solid var(--bg);
   color: var(--on-accent);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  box-shadow:
+    0 10px 24px -8px rgba(246, 165, 92, 0.75),
+    0 2px 0 rgba(255, 255, 255, 0.18) inset;
   transition:
-    background 150ms,
-    transform 120ms;
+    transform 140ms var(--ease),
+    filter 150ms;
 }
 
 .tabbar .fab:hover {
-  background: var(--spruce-soft);
+  filter: brightness(1.06);
 }
 
 .tabbar .fab:active {
-  transform: scale(0.94);
+  transform: scale(0.93);
+}
+
+.tabbar .fab:focus-visible {
+  outline: 5px solid var(--bg);
+  box-shadow:
+    0 0 0 7px var(--accent-line),
+    0 10px 24px -8px rgba(246, 165, 92, 0.75);
 }
 
 .tabbar .fab svg {
@@ -96,7 +121,7 @@
 
 /* pages keep their content above the bar (and its raised +) */
 body:has(.tabbar) .shell {
-  padding-bottom: calc(112px + env(safe-area-inset-bottom));
+  padding-bottom: calc(100px + env(safe-area-inset-bottom));
 }
 
 /* ---------- + sheet (AddSheet): four rows, icon + label, big targets ---------- */
@@ -106,7 +131,7 @@ body:has(.tabbar) .shell {
 }
 
 .add-sheet .subsheet-title {
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .add-row {
@@ -114,26 +139,64 @@ body:has(.tabbar) .shell {
   align-items: center;
   gap: 14px;
   width: 100%;
-  min-height: 60px;
+  min-height: 64px;
   text-align: left;
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 14px 16px;
+  border-radius: 16px;
+  padding: 12px 14px;
   font-size: 1rem;
-  font-weight: 550;
+  font-weight: 600;
   cursor: pointer;
+  transition:
+    border-color 120ms,
+    background 120ms,
+    transform 120ms var(--ease);
 }
 
 .add-row:hover {
-  border-color: var(--spruce-soft);
+  border-color: var(--line-strong);
+  background: var(--surface-3);
 }
 
-.add-row svg {
-  width: 24px;
-  height: 24px;
-  color: var(--sage);
+.add-row:active {
+  transform: scale(0.985);
+}
+
+.add-row-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+}
+
+.add-row-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.add-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.add-row-sub {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.add-row-chev {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 1.1rem;
 }
 
 /* ---------- page furniture ---------- */
@@ -146,10 +209,11 @@ body:has(.tabbar) .shell {
 
 .m3-section h2 {
   margin: 0;
-  font-size: 0.78rem;
-  font-weight: 600;
+  padding: 0 2px;
+  font-size: 0.7rem;
+  font-weight: 650;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--muted);
   display: flex;
   justify-content: space-between;
@@ -158,7 +222,7 @@ body:has(.tabbar) .shell {
 
 .m3-section h2 .count {
   color: var(--faint);
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
 }
@@ -167,10 +231,11 @@ body:has(.tabbar) .shell {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 12px 14px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-shadow: var(--shadow-card);
 }
 
 .m3-card.inactive {
@@ -185,12 +250,13 @@ body:has(.tabbar) .shell {
 }
 
 .m3-card-title {
-  font-weight: 550;
+  font-weight: 600;
   font-size: 0.98rem;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .m3-card-title a {
@@ -204,9 +270,13 @@ body:has(.tabbar) .shell {
 }
 
 .m3-card-stat {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
   color: var(--sage);
   flex-shrink: 0;
+  background: var(--surface-3);
+  border-radius: 999px;
+  padding: 3px 10px;
 }
 
 .m3-card-btn {
@@ -214,16 +284,24 @@ body:has(.tabbar) .shell {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 12px 14px;
+  padding: 14px 16px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 4px;
   width: 100%;
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color 120ms,
+    transform 120ms var(--ease);
 }
 
 .m3-card-btn:hover {
-  border-color: var(--spruce-soft);
+  border-color: var(--line-strong);
+}
+
+.m3-card-btn:active {
+  transform: scale(0.99);
 }
 
 .m3-card-btn.inactive {
@@ -232,21 +310,34 @@ body:has(.tabbar) .shell {
 
 .m3-empty {
   color: var(--faint);
-  font-size: 0.85rem;
+  font-size: 0.86rem;
   margin: 0;
-  padding: 6px 2px;
-  line-height: 1.4;
+  padding: 14px 16px;
+  line-height: 1.5;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.m3-empty em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 600;
 }
 
 .m3-link-btn {
   background: none;
   border: none;
   padding: 0;
-  color: var(--sage);
-  font-size: 0.82rem;
+  color: var(--accent);
+  font-size: 0.84rem;
+  font-weight: 600;
   cursor: pointer;
+  text-decoration: none;
+}
+
+.m3-link-btn:hover {
   text-decoration: underline;
-  text-decoration-color: var(--faint);
   text-underline-offset: 3px;
 }
 
@@ -260,16 +351,23 @@ body:has(.tabbar) .shell {
 }
 
 .m3-back {
+  align-self: flex-start;
   color: var(--muted);
   text-decoration: none;
   font-size: 0.85rem;
+  font-weight: 600;
+  padding-top: 6px;
+}
+
+.m3-back:hover {
+  color: var(--text);
 }
 
 .m3-note {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--faint);
   margin: 0;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .m3-note a {
@@ -277,8 +375,9 @@ body:has(.tabbar) .shell {
 }
 
 .m3-status {
-  font-size: 0.82rem;
-  color: var(--mint);
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--green);
   margin: 0;
   text-align: center;
 }
@@ -308,7 +407,10 @@ body:has(.tabbar) .shell {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
   min-width: 0;
 }
@@ -320,14 +422,18 @@ body:has(.tabbar) .shell {
 .m3-window select {
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 11px 13px;
-  font-size: 0.95rem;
+  border-radius: var(--radius-sm);
+  padding: 12px 13px;
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--text);
   outline: none;
   font-family: inherit;
   width: 100%;
   min-width: 0;
+  transition: border-color 150ms;
 }
 
 .m3-field input:focus,
@@ -335,7 +441,13 @@ body:has(.tabbar) .shell {
 .m3-field textarea:focus,
 .m3-window input:focus,
 .m3-window select:focus {
-  border-color: var(--spruce-soft);
+  border-color: var(--accent-line);
+}
+
+.m3-field input.num {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
 }
 
 .m3-field textarea {
@@ -361,6 +473,12 @@ body:has(.tabbar) .shell {
   gap: 8px;
 }
 
+.m3-grid-4 .m3-field input {
+  padding-left: 8px;
+  padding-right: 8px;
+  text-align: center;
+}
+
 /* meal window row: name | start | end (§7.2 clock windows) */
 .m3-window {
   display: grid;
@@ -372,25 +490,38 @@ body:has(.tabbar) .shell {
   text-transform: capitalize;
 }
 
+.m3-window input,
+.m3-window select {
+  padding: 9px 10px;
+  font-size: 0.92rem;
+}
+
 .m3-seg {
   display: flex;
-  gap: 6px;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px;
 }
 
 .m3-seg button {
   flex: 1;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: none;
+  border: none;
   border-radius: 999px;
   padding: 9px 0;
-  font-size: 0.82rem;
+  font-size: 0.84rem;
+  font-weight: 600;
   color: var(--muted);
   cursor: pointer;
+  transition:
+    background 150ms,
+    color 150ms;
 }
 
 .m3-seg button.active {
-  background: var(--spruce);
-  border-color: var(--spruce);
+  background: var(--accent);
   color: var(--on-accent);
 }
 
@@ -399,7 +530,7 @@ body:has(.tabbar) .shell {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -413,7 +544,8 @@ body:has(.tabbar) .shell {
 }
 
 .m3-item .name {
-  font-size: 0.9rem;
+  font-size: 0.92rem;
+  font-weight: 550;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -432,21 +564,22 @@ body:has(.tabbar) .shell {
 }
 
 .m3-item-qty button {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   background: var(--surface-3);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 1rem;
   cursor: pointer;
   padding: 0;
 }
 
 .m3-item-qty .q {
-  min-width: 34px;
+  min-width: 36px;
   text-align: center;
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 800;
 }
 
 /* ---------- goal wizard (§7.4 first run) ---------- */
@@ -463,7 +596,7 @@ body:has(.tabbar) .shell {
   max-width: 480px;
   margin: 0 auto;
   min-height: 100dvh;
-  padding: calc(20px + env(safe-area-inset-top)) 16px
+  padding: calc(22px + env(safe-area-inset-top)) 18px
     calc(24px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
@@ -480,53 +613,71 @@ body:has(.tabbar) .shell {
   height: 4px;
   border-radius: 2px;
   background: var(--surface-3);
+  transition: background 300ms;
 }
 
 .wizard-steps span.done {
-  background: var(--spruce-soft);
+  background: var(--accent);
 }
 
 .wizard h1 {
-  margin: 0;
-  font-size: 1.35rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
+  margin: 4px 0 0;
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
 }
 
 .wizard-lead {
   color: var(--muted);
-  font-size: 0.9rem;
-  margin: 0;
-  line-height: 1.45;
+  font-size: 0.92rem;
+  margin: -6px 0 0;
+  line-height: 1.5;
 }
 
 /* the one loud element on the last step: the computed number */
 .wizard-hero {
-  background: var(--surface);
+  position: relative;
+  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 18px 16px;
+  padding: 22px 16px;
   text-align: center;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.wizard-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
 }
 
 .wizard-hero .big {
-  font-size: 2.4rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--mint);
+  font-family: var(--font-display);
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--accent);
 }
 
 .wizard-hero .big small {
-  font-size: 1rem;
+  font-family: var(--font);
+  font-size: 0.95rem;
   color: var(--muted);
-  font-weight: 400;
-  margin-left: 4px;
+  font-weight: 500;
+  letter-spacing: 0;
+  margin-left: 6px;
 }
 
 .wizard-hero .sub {
   font-size: 0.8rem;
   color: var(--muted);
-  margin-top: 4px;
+  margin-top: 8px;
   line-height: 1.4;
 }
 
@@ -539,12 +690,17 @@ body:has(.tabbar) .shell {
 
 .wizard-ghost {
   background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  min-height: 50px;
   color: var(--muted);
   font-size: 0.95rem;
+  font-weight: 550;
   cursor: pointer;
+}
+
+.wizard-ghost:hover {
+  color: var(--text);
 }
 
 /* ---------- food detail (§7.1 "everything the database returned") ---------- */
@@ -552,15 +708,16 @@ body:has(.tabbar) .shell {
 .fd-head {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .fd-head h1 {
   margin: 0;
-  font-size: 1.3rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
 }
 
 .fd-meta {
@@ -584,9 +741,11 @@ body:has(.tabbar) .shell {
 }
 
 .fd-kcal .n {
-  font-size: 2rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
 }
 
 .fd-kcal .u {
@@ -605,7 +764,7 @@ body:has(.tabbar) .shell {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  padding: 7px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--line);
   font-size: 0.86rem;
 }
@@ -627,13 +786,15 @@ body:has(.tabbar) .shell {
   cursor: pointer;
   color: var(--sage);
   font-size: 0.85rem;
+  padding: 4px 2px;
 }
 
 .fd-raw pre {
   font-size: 0.68rem;
   line-height: 1.35;
   background: var(--surface-2);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 10px;
   margin: 8px 0 0;
   overflow-x: auto;
@@ -642,12 +803,12 @@ body:has(.tabbar) .shell {
 }
 
 .badge.fdc {
-  background: var(--spruce-deep);
-  color: var(--sage);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .badge.off {
-  background: #3a2a1e;
+  background: rgba(224, 181, 138, 0.16);
   color: #e0b58a;
 }
 
@@ -671,15 +832,16 @@ body:has(.tabbar) .shell {
 }
 
 .account-label {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   color: var(--muted);
   font-weight: 600;
 }
 
 .account-email {
-  font-size: 1rem;
+  font-size: 1.02rem;
+  font-weight: 550;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -696,14 +858,14 @@ body:has(.tabbar) .shell {
   align-self: flex-start;
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .account-badge.owner {
-  background: var(--spruce);
+  background: var(--accent);
   color: var(--on-accent);
 }
 
@@ -726,13 +888,14 @@ body:has(.tabbar) .shell {
 
 .account-signout {
   align-self: flex-start;
-  min-height: 44px;
-  background: none;
+  min-height: 42px;
+  background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.9rem;
-  padding: 0 20px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0 18px;
   cursor: pointer;
 }
 
@@ -796,11 +959,15 @@ body:has(.tabbar) .shell {
     flex: 0 0 auto;
     flex-direction: row;
     align-items: center;
+    justify-content: flex-start;
+    min-height: 0;
     gap: 12px;
     padding: 11px 12px;
     border-radius: 12px;
     font-size: 0.95rem;
+    font-weight: 550;
     letter-spacing: 0;
+    text-transform: none;
     color: var(--muted);
   }
 
@@ -833,6 +1000,7 @@ body:has(.tabbar) .shell {
     height: 48px;
     margin: 0;
     border: none;
+    outline: none;
     border-radius: 14px;
     box-shadow: none;
     gap: 10px;
@@ -843,6 +1011,11 @@ body:has(.tabbar) .shell {
 
   .tabbar .fab:active {
     transform: scale(0.98);
+  }
+
+  .tabbar .fab:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-line);
   }
 
   .tabbar .fab svg {
@@ -882,6 +1055,10 @@ body:has(.tabbar) .shell {
     padding: 18px;
   }
 
+  .add-row-chev {
+    display: none;
+  }
+
   .wizard-inner {
     max-width: 560px;
     padding-top: calc(56px + env(safe-area-inset-top));
@@ -902,6 +1079,7 @@ body:has(.tabbar) .shell {
 
   .shell.library > .brand,
   .shell.library > .sheet-error,
+  .shell.library > .notice,
   .shell.library > .lib-search {
     grid-column: 1 / -1;
   }
@@ -931,6 +1109,7 @@ body:has(.tabbar) .shell {
 
   .shell.settings > .brand,
   .shell.settings > .sheet-error,
+  .shell.settings > .notice,
   .shell.settings > .m3-empty,
   .shell.settings > .m3-wide,
   .shell.settings > .commit-btn,

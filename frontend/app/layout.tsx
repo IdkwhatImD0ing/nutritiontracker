@@ -16,7 +16,7 @@ const archivo = Archivo({
 
 const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
-  weight: ["500", "800"],
+  weight: ["500", "700", "800"],
   variable: "--font-bricolage",
   display: "swap",
 });
@@ -99,7 +99,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#121318",
+  themeColor: "#111113",
   // globals.css defines one (dark) palette with no light counterpart, so say so
   // rather than leaving the UA to guess: this is what makes form controls,
   // scrollbars and the tap-highlight render dark instead of stock light.

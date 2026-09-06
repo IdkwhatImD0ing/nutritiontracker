@@ -1,5 +1,6 @@
 "use client";
 
+import type React from "react";
 import type { DayTotals } from "@/lib/api";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -69,7 +70,12 @@ function Donut({ label, consumed, target, color, size, loud }: DonutProps) {
           {centerSub}
         </text>
       </svg>
-      <span className="macro-label">{label}</span>
+      <span
+        className="macro-label"
+        style={{ "--dot": color } as React.CSSProperties}
+      >
+        {label}
+      </span>
     </div>
   );
 }
@@ -90,22 +96,31 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
     kcalTarget > 0 || proteinTarget > 0 || carbTarget > 0 || fatTarget > 0;
 
   const kcalFrac = kcalTarget > 0 ? kcal / kcalTarget : 0;
+  const kcalLeft = kcalTarget - kcal;
 
   return (
     <section className="tracker" aria-label="Daily tracker">
       <div>
         <div className="kcal-row">
-          <span className="label">Calories</span>
-          <span className="figures num">
-            <strong>{fmt.format(kcal)}</strong>
-            {kcalTarget > 0 ? (
-              <span className="of"> / {fmt.format(kcalTarget)} kcal</span>
-            ) : (
-              <span className="of"> kcal</span>
-            )}
-          </span>
+          <div>
+            <span className="label">Calories</span>
+            <span className="figures num">
+              <strong>{fmt.format(kcal)}</strong>
+              {kcalTarget > 0 ? (
+                <span className="of">/ {fmt.format(kcalTarget)} kcal</span>
+              ) : (
+                <span className="of">kcal</span>
+              )}
+            </span>
+          </div>
+          {kcalTarget > 0 ? (
+            <span className={`left num${kcalLeft < 0 ? " over" : ""}`}>
+              <strong>{fmt.format(Math.abs(kcalLeft))}</strong>
+              {kcalLeft < 0 ? "over" : "left"}
+            </span>
+          ) : null}
         </div>
-        <div className="kcal-bar" style={{ marginTop: 8 }}>
+        <div className="kcal-bar" style={{ marginTop: 12 }}>
           <div
             className={`fill${kcalFrac > 1 ? " over" : ""}`}
             style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}

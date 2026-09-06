@@ -1,10 +1,10 @@
 /* /experiment (§9 charts) — X5b. Chart primitives are in history/charts.css. */
 
 .exp-intro {
-  font-size: 0.84rem;
+  font-size: 0.86rem;
   color: var(--muted);
-  margin: -8px 0 0;
-  line-height: 1.45;
+  margin: -4px 0 0;
+  line-height: 1.5;
 }
 
 .exp-section {
@@ -15,15 +15,17 @@
 
 .exp-h2 {
   margin: 0;
-  font-size: 0.74rem;
+  padding: 0 2px;
+  font-size: 0.7rem;
+  font-weight: 650;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--faint);
+  letter-spacing: 0.12em;
+  color: var(--muted);
 }
 
 .exp-notice {
   background: var(--surface);
-  border: 1px dashed var(--line);
+  border: 1px dashed var(--line-strong);
   border-radius: var(--radius);
   padding: 14px 16px;
   font-size: 0.85rem;
@@ -41,15 +43,16 @@
 .exp-dupes {
   list-style: none;
   margin: 0;
-  padding: 4px 14px;
+  padding: 4px 16px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   font-size: 0.82rem;
+  box-shadow: var(--shadow-card);
 }
 
 .exp-dupes li {
-  padding: 8px 0;
+  padding: 9px 0;
   border-bottom: 1px solid var(--line);
 }
 
