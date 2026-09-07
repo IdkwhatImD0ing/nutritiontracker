@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  createLog,
-  createLogAudio,
   discardLog,
   getDiary,
   patchTimings,
   quotaRefusal,
+  streamAgent,
+  type AgentEvent,
+  type AgentTurn,
   type DayTotals,
   type FoodSearchResult,
   type LogCreateResponse,
@@ -15,6 +16,7 @@ import {
   type StagedItem,
 } from "@/lib/api";
 import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
+import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
 import type { DiaryMeals } from "./DiaryApi";
@@ -28,13 +30,18 @@ import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import type { VoiceClip } from "./useVoiceCapture";
-import VoiceSheet from "./VoiceSheet";
 import WeightCard from "./WeightCard";
 
 const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
  *  真 retry-on-open — commit-item is idempotent, so a replayed item is safe. */
 const PENDING_KEY = "usual.pending.v1";
+/** §6.4: the Agent chat survives a reload on this device (the last turns; the
+ *  logs themselves are on the server) — under the account's own key, so the
+ *  next person to sign in on a shared browser neither reads the last one's
+ *  chat nor sends its log ids as their history. */
+const chatKey = (email: string) => `tally.chat.v1:${email}`;
+const CHAT_MAX = 60;
 
 type PendingState = { logId: string; items: StagedItem[] };
 
@@ -87,16 +94,128 @@ export default function Today() {
   // zero items — the server saved (or explained) it, so confirm that instead
   // of opening an empty staging sheet.
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  // §6.4 the Agent chat (2026-09-06): the conversation lives here, not in
+  // the sheet, so closing the lane and reopening it shows the same history;
+  // the POST /api/agent stream appends to it as events land.
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  // state, not a ref: the save effect must see the LOADED chat in the same
+  // render it first saves in, or the mount's empty array overwrites storage
+  // (and a Strict Mode remount then loads that emptiness back)
+  const [chatLoaded, setChatLoaded] = useState(false);
+  // the account is known once /api/me answers; the chat loads, and saves, only then
+  const who = me?.email ?? null;
+  useEffect(() => {
+    if (!who || chatLoaded) return;
+    try {
+      const raw = localStorage.getItem(chatKey(who));
+      if (raw) {
+        const saved = JSON.parse(raw) as ChatMessage[];
+        // a reload mid-run: nothing is still running, nothing still transcribing
+        setChat(
+          saved.map((m) =>
+            m.kind === "tool" && !m.done
+              ? { ...m, done: true, output: { error: "interrupted" } }
+              : m.kind === "user" && m.pending
+                ? { ...m, pending: false, text: m.text || "(recording)" }
+                : m.kind === "agent" && m.options
+                  ? { ...m, options: undefined }
+                  : m,
+          ),
+        );
+      }
+    } catch {
+      /* storage unavailable or unreadable — start empty */
+    }
+    setChatLoaded(true);
+  }, [who, chatLoaded]);
+  useEffect(() => {
+    if (!chatLoaded || !who) return;
+    try {
+      localStorage.setItem(chatKey(who), JSON.stringify(chat.slice(-CHAT_MAX)));
+    } catch {
+      /* storage unavailable — the chat still lives for this page session */
+    }
+  }, [chat, chatLoaded, who]);
+  const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
+  // a retry of the same turn (§8.6): its bubble stays — put back if the failed
+  // attempt dropped it — and the failure note under it goes; the stream the
+  // retry re-attaches to then settles the very lines the first attempt showed
+  const resumeTurn = (userId: string, bubble: ChatMessage) =>
+    setChat((cur) => {
+      const at = cur.findIndex((m) => m.id === userId);
+      return at < 0 ? [...cur, bubble] : cur.filter((m, i) => !(i > at && m.kind === "error"));
+    });
+  const patchChat = (id: string, patch: Partial<ChatMessage>) =>
+    setChat((cur) =>
+      cur.map((m) => (m.id === id ? ({ ...m, ...patch } as ChatMessage) : m)),
+    );
+  // the result card follows its log: staged → committed / discarded / replaced
+  const markResult = (logId: string, state: "committed" | "discarded" | "replaced") =>
+    setChat((cur) =>
+      cur.map((m) =>
+        m.kind === "result" && m.log.log_id === logId ? { ...m, state } : m,
+      ),
+    );
+  // a run that ended in an error leaves no tool line spinning
+  const settleRunning = () =>
+    setChat((cur) =>
+      cur.map((m) =>
+        m.kind === "tool" && !m.done
+          ? { ...m, done: true, output: { error: "interrupted" } }
+          : m,
+      ),
+    );
+  // §6.4: the conversation the agent reads — the last turns as the chat
+  // remembers them: what was said, what was answered, and what each turn
+  // staged with its log id and status (so a correction can name its log).
+  // Built BEFORE the new utterance is pushed; the server adds that itself.
+  // `justDiscarded`: the log this send settled a pending discard for — its
+  // card still reads staged in this render, the agent must hear discarded.
+  const chatHistory = (justDiscarded: string | null = null): AgentTurn[] => {
+    const turns: AgentTurn[] = [];
+    for (const m of chat) {
+      if (m.kind === "user" && !m.pending && m.text) {
+        turns.push({ role: "user", text: m.text });
+      } else if (m.kind === "agent") {
+        turns.push({ role: "agent", text: m.text });
+      } else if (m.kind === "result") {
+        const n = m.log.items.length;
+        turns.push({
+          role: "agent",
+          text: `staged ${n} item${n === 1 ? "" : "s"}`,
+          log_id: m.log.log_id,
+          items: m.log.items.map((it) =>
+            `${it.food?.name ?? it.phrase}${
+              it.qty != null && it.serving ? ` — ${it.qty} × ${it.serving.description}` : ""
+            }`,
+          ),
+          state:
+            m.state === "replaced" || m.log.log_id === justDiscarded
+              ? "discarded"
+              : m.state,
+        });
+      }
+    }
+    return turns.slice(-12);
+  };
+  // a question's chips are for the next message only
+  const closeQuestions = () =>
+    setChat((cur) =>
+      cur.map((m) => (m.kind === "agent" && m.options ? { ...m, options: undefined } : m)),
+    );
+  // a voice bubble still waiting for its transcript has nothing to keep
+  const dropPending = (id: string) =>
+    setChat((cur) => cur.filter((m) => !(m.id === id && m.kind === "user" && m.pending)));
   // §6.4: the weight card re-reads GET /api/weights when an agent log
   // recorded a weigh-in (the response says so; the card owns the series).
   const [weightsKey, setWeightsKey] = useState(0);
   // One client uuid per log (§5 idempotent upsert): a retry of the same text
   // reuses the id so a double-submit can't create two logs.
-  const pendingRef = useRef<{ id: string; text: string } | null>(null);
+  const pendingRef = useRef<{ id: string; text: string; userId: string } | null>(null);
   // Voice twin of pendingRef: one uuid per capture attempt, keyed by the
   // clip's capture start, so a retried upload of the same clip reuses the
   // id (§5 idempotent upsert) instead of minting a fresh one per attempt.
-  const audioRef = useRef<{ id: string; capturedAt: string } | null>(null);
+  const audioRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
   // §8.1d/§13: a failed voice capture is reported on the NEXT text log as
   // capture_fallback + capture_error — the §9 voice-viability counter.
   const voiceFailRef = useRef<string | null>(null);
@@ -233,7 +352,10 @@ export default function Today() {
     return true;
   };
 
-  const flushDiscard = () => {
+  // Settles a still-undoable discard for real; returns the log it discarded
+  // so the caller can describe it truthfully (the card's state update has
+  // not rendered yet when the next send builds the chat history).
+  const flushDiscard = (): string | null => {
     if (discardTimer.current) {
       clearTimeout(discardTimer.current);
       discardTimer.current = null;
@@ -241,15 +363,19 @@ export default function Today() {
     const d = discardRef.current;
     if (d) {
       discardLog(d.log.log_id).catch(() => {});
+      markResult(d.log.log_id, "discarded");
       setDiscard(null);
+      return d.log.log_id;
     }
+    return null;
   };
 
   // §8.4: a log that staged nothing but carried a save outcome is a
   // "save as my usual …" utterance, not a meal — confirm it and stage nothing.
+  // The photo, search and barcode lanes enter here; the Agent chat has its
+  // own entry below (its answers are chat messages, not toasts).
   const enterStaging = (log: LogCreateResponse): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
-    if (log.agent?.weight) setWeightsKey((k) => k + 1);
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
       setSavedNote(
         log.saved_meal
@@ -258,101 +384,230 @@ export default function Today() {
       );
       return;
     }
-    // §6.4: the agent's one-sentence reply is the answer when nothing was
-    // staged (a weigh-in, an utterance with no food in it) — never an empty
-    // sheet. With items it shows only when a weigh-in was recorded too; a
-    // plain food log's answer is the sheet, as before.
     if (log.items.length === 0) {
-      setSavedNote(log.agent?.reply ?? "Nothing was logged — try again.");
+      setSavedNote("Nothing was logged — try again.");
       return;
     }
-    setSavedNote(log.agent?.weight ? log.agent.reply : null);
+    setSavedNote(null);
+    setStaging({ log, restore: null });
+  };
+
+  // §6.4: one POST /api/agent event → the chat. The user bubble was pushed
+  // before the request (typed text, or a pending one the transcript fills).
+  const onAgentEvent = (ev: AgentEvent, userId: string): void => {
+    switch (ev.type) {
+      case "transcript":
+        patchChat(userId, { text: ev.text, pending: false });
+        return;
+      case "tool_call":
+        // a re-attached stream (§8.6) replays the lines the first attempt
+        // already showed: the same call id is the same line, running again
+        setChat((cur) =>
+          cur.some((m) => m.kind === "tool" && m.id === ev.id)
+            ? cur.map((m) =>
+                m.kind === "tool" && m.id === ev.id ? { ...m, done: false, output: undefined } : m,
+              )
+            : [...cur, { kind: "tool", id: ev.id, name: ev.name, args: ev.args, done: false }],
+        );
+        return;
+      case "tool_result":
+        // a live web search put its line up before the query was known; the
+        // completed item brings it along with the sources
+        setChat((cur) =>
+          cur.map((m) => {
+            if (m.kind !== "tool" || m.id !== ev.id) return m;
+            const out = ev.output as Record<string, unknown> | null;
+            const query =
+              out && typeof out === "object" && typeof out.query === "string" ? out.query : null;
+            const args = query && !m.args.query ? { ...m.args, query } : m.args;
+            return { ...m, args, output: ev.output, done: true };
+          }),
+        );
+        return;
+      case "reply": {
+        const options = ev.options?.length ? ev.options : undefined;
+        setChat((cur) => {
+          // a re-attached stream replays the reply this turn already has: the
+          // bubble stays (with its chips back, if the retry had closed them)
+          const at = cur.findIndex((m) => m.id === userId);
+          const shown =
+            at < 0 ? -1 : cur.findIndex((m, i) => i > at && m.kind === "agent" && m.text === ev.text);
+          if (shown >= 0) return cur.map((m, i) => (i === shown ? ({ ...m, options } as ChatMessage) : m));
+          return [...cur, { kind: "agent", id: crypto.randomUUID(), text: ev.text, options }];
+        });
+        return;
+      }
+      default:
+        return; // `done` is the promise's result; `error` rejects it
+    }
+  };
+
+  // §6.4: the stream's `done` — the staged log opens the sheet over the chat
+  // (the answer is still the list), a weigh-in refreshes the card, and the
+  // §8.4 save outcome is said in the chat. The chat stays open throughout.
+  // `replay` (§8.6): the server answered a retry from the stored log — no
+  // tool lines or reply came with it (the reply is not stored, BACKLOG 139)
+  // — so the chat says so instead of falling silent.
+  const agentDone = (log: LogCreateResponse, replay: boolean, userId: string): void => {
+    if (demo) refreshMe(); // the attempt counted — the banner learns it
+    if (log.agent?.weight) setWeightsKey((k) => k + 1);
+    // a correction: the earlier turn's log this one replaces
+    for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
+    if (replay) {
+      // a voice bubble the replay carried no transcript for stays honest
+      setChat((cur) =>
+        cur.map((m) =>
+          m.id === userId && m.kind === "user" && m.pending
+            ? { ...m, text: "(recording sent earlier)", pending: false }
+            : m,
+        ),
+      );
+      pushChat({
+        kind: "agent",
+        id: crypto.randomUUID(),
+        text: log.items.length
+          ? "That one had already gone through — here is what it staged."
+          : "That one reached the server earlier, but its answer did not make it back here — if it asked you something, say it again.",
+      });
+    }
+    if (log.saved_meal || log.note) {
+      pushChat({
+        kind: "agent",
+        id: crypto.randomUUID(),
+        text: log.saved_meal
+          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} items`
+          : (log.note as string),
+      });
+    }
+    if (log.items.length === 0) return; // the reply bubble is the answer
+    pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged" });
+    setSavedNote(null);
     setStaging({ log, restore: null });
   };
 
   const submit = async (text: string): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
-    flushDiscard(); // a new capture settles any still-undoable discard
-    const pendingLog =
-      pendingRef.current?.text === text
-        ? pendingRef.current
-        : { id: crypto.randomUUID(), text };
+    const justDiscarded = flushDiscard(); // a new capture settles any still-undoable discard
+    const retry = pendingRef.current?.text === text ? pendingRef.current : null;
+    const pendingLog = retry ?? { id: crypto.randomUUID(), text, userId: crypto.randomUUID() };
     pendingRef.current = pendingLog;
     t0Ref.current = performance.now();
+    const history = chatHistory(justDiscarded);
+    closeQuestions();
+    const userId = pendingLog.userId;
+    if (retry) resumeTurn(userId, { kind: "user", id: userId, text });
+    else pushChat({ kind: "user", id: userId, text });
     try {
-      const log = await createLog({
-        id: pendingLog.id,
-        text,
-        captured_at: new Date().toISOString(),
-        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        // §13: a text log typed after a failed voice capture carries the
-        // failure — capture_fallback + the client-detected capture_error.
-        capture_fallback: voiceFailRef.current != null,
-        capture_error: voiceFailRef.current,
-        // §6.4: this sheet is the Agent lane — food and/or a weigh-in
-        agent: true,
-      });
+      const { log, replay } = await streamAgent(
+        {
+          kind: "text",
+          id: pendingLog.id,
+          text,
+          captured_at: new Date().toISOString(),
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          // §13: a text log typed after a failed voice capture carries the
+          // failure — capture_fallback + the client-detected capture_error.
+          capture_fallback: voiceFailRef.current != null,
+          capture_error: voiceFailRef.current,
+          history,
+        },
+        (ev) => onAgentEvent(ev, userId),
+      );
       pendingRef.current = null;
       voiceFailRef.current = null; // reported once, on the fallback log
-      setLane(null);
-      enterStaging(log);
+      if ("status" in log) return false; // capture_failure — text never is
+      agentDone(log, replay, userId);
       return true;
     } catch (e) {
       t0Ref.current = null;
-      failCapture(e, "Couldn't log that — check your connection and retry.");
+      settleRunning();
+      const quota = failCapture(e, null);
+      pushChat({
+        kind: "error",
+        id: crypto.randomUUID(),
+        text: quota
+          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+          : "Couldn't log that — check your connection and retry.",
+      });
       return false;
     } finally {
       setCaptureBusy(false);
     }
   };
 
-  // §8.1d voice path: upload the validated clip; the response enters the
-  // identical staging flow as text. staged_ms measures stop-tap → rendered
-  // (§11: "capture stop → staged" is the number staged_ms tracks).
+  // §8.1d voice path: upload the validated clip; the transcript lands in the
+  // chat as soon as the server has it, then the same stream as text.
+  // staged_ms measures stop-tap → rendered (§11: "capture stop → staged").
   const submitAudio = async (clip: VoiceClip): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
-    flushDiscard();
+    const justDiscarded = flushDiscard();
     t0Ref.current = performance.now();
     // A failure from an earlier attempt rides this clip (voice retried and
     // worked) so it is counted once, here — not stamped as a "fallback" on
     // some unrelated text log an hour later.
     const priorFailure = voiceFailRef.current;
+    const retry = audioRef.current?.capturedAt === clip.capturedAt ? audioRef.current : null;
     const attempt =
-      audioRef.current?.capturedAt === clip.capturedAt
-        ? audioRef.current
-        : { id: crypto.randomUUID(), capturedAt: clip.capturedAt };
+      retry ?? { id: crypto.randomUUID(), capturedAt: clip.capturedAt, userId: crypto.randomUUID() };
     audioRef.current = attempt;
+    const history = chatHistory(justDiscarded);
+    closeQuestions();
+    const userId = attempt.userId;
+    if (retry) resumeTurn(userId, { kind: "user", id: userId, text: "", pending: true });
+    else pushChat({ kind: "user", id: userId, text: "", pending: true });
     try {
-      const res = await createLogAudio({
-        id: attempt.id,
-        clip,
-        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        capture_error: priorFailure,
-        agent: true, // §6.4: the Agent lane
-      });
+      const { log, replay } = await streamAgent(
+        {
+          kind: "audio",
+          id: attempt.id,
+          clip,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          capture_error: priorFailure,
+          history,
+        },
+        (ev) => onAgentEvent(ev, userId),
+      );
       // The server answered (staged or capture_failure) — the attempt is
       // spent; only a failed upload keeps the id for a retry.
       audioRef.current = null;
-      if (res.kind === "capture_failure") {
-        // Server-side half of §13's silent-blob class: audio uploaded fine
+      if ("status" in log) {
+        // capture_failure — the server-side half of §13's silent-blob class:
+        // audio uploaded fine
         // but transcribed to nothing. The server recorded it on the audio
         // log; the retype that follows links to it via capture_fallback.
         t0Ref.current = null;
         voiceFailRef.current = "empty_transcript";
+        dropPending(userId);
+        pushChat({
+          kind: "error",
+          id: crypto.randomUUID(),
+          text: "I couldn't hear anything in that — try again, or type it.",
+        });
         return false;
       }
       if (voiceFailRef.current === priorFailure) voiceFailRef.current = null;
-      setLane(null);
-      enterStaging(res.log);
+      agentDone(log, replay, userId);
       return true;
     } catch (e) {
       t0Ref.current = null;
+      // what was said stays (the transcript already landed); a bubble still
+      // waiting for one goes, and no tool line is left spinning
+      settleRunning();
+      dropPending(userId);
       // The demo quota refusing the upload is not a voice failure: §13's
-      // counter stays clean, and the sheet shows the server's sentence
+      // counter stays clean, and the chat shows the server's sentence
       // instead of "type it instead" (typing meets the same wall).
-      if (!failCapture(e, null)) voiceFailRef.current = "upload_failed";
+      const quota = failCapture(e, null);
+      if (!quota) voiceFailRef.current = "upload_failed";
+      pushChat({
+        kind: "error",
+        id: crypto.randomUUID(),
+        text: quota
+          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+          : "Couldn't upload that recording — try again, or type it.",
+      });
       return false;
     } finally {
       setCaptureBusy(false);
@@ -457,8 +712,9 @@ export default function Today() {
     discardTimer.current = setTimeout(() => {
       discardTimer.current = null;
       // Undo window passed: the discard lands server-side (status:'discarded'
-      // — adherence-relevant data, §5).
+      // — adherence-relevant data, §5), and the chat's card follows.
       discardLog(entry.log.log_id).catch(() => {});
+      markResult(entry.log.log_id, "discarded");
       setDiscard(null);
     }, UNDO_MS);
   };
@@ -537,8 +793,9 @@ export default function Today() {
         />
       ) : null}
 
-      {lane === "voice" ? (
-        <VoiceSheet
+      {lane === "agent" ? (
+        <AgentChat
+          messages={chat}
           busy={captureBusy}
           error={captureError}
           onSubmit={submit}
@@ -546,7 +803,25 @@ export default function Today() {
           onVoiceFailure={(e) => {
             voiceFailRef.current = e;
           }}
-          onClose={() => setLane(null)}
+          onReview={(log) => {
+            // Inside the 6 s undo window the sheet's log is about to be
+            // discarded: Review is the undo — the timer is cancelled and the
+            // sheet comes back with its local edits, exactly as the toast's
+            // Undo does. Otherwise reopen the staged log as first answered.
+            if (discardRef.current?.log.log_id === log.log_id) {
+              undoDiscard();
+              return;
+            }
+            if (staging?.log.log_id === log.log_id) return; // already open
+            setSavedNote(null);
+            setStaging({ log, restore: null });
+          }}
+          // Escape reaches every window listener: while the staging sheet (or
+          // one of its sub-sheets) is stacked above the chat it is theirs — the
+          // chat stays, as designed
+          onClose={() => {
+            if (!staging) setLane(null);
+          }}
         />
       ) : null}
 
@@ -600,6 +875,7 @@ export default function Today() {
           onCommitted={(t, stragglers) => {
             setTotals(t);
             reloadDiary();
+            markResult(staging.log.log_id, "committed");
             setStaging(null);
             if (stragglers.length > 0) {
               updatePending({ logId: staging.log.log_id, items: stragglers });

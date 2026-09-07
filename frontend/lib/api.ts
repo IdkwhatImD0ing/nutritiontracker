@@ -33,6 +33,20 @@ export type LogCreateResponse = LogResponse &
     "saved_meal" | "note" | "agent"
   >;
 export type AgentOutcome = components["schemas"]["AgentOutcome"];
+/** §6.4 the chat window: one line of the POST /api/agent stream
+ *  (routes/agent.py) — transcript, tool_call, tool_result, reply, done, error. */
+export type AgentEvent = components["schemas"]["AgentEvent"];
+export type AgentToolCall = components["schemas"]["AgentToolCallEvent"];
+/** §6.4 one earlier turn of the chat, as the client remembers it — what the
+ *  agent reads to follow references, answers and corrections. */
+export type AgentTurn = components["schemas"]["AgentTurn"];
+export type AgentToolResult = components["schemas"]["AgentToolResultEvent"];
+/** What the stream's `done` carries: the staged log, or the voice lane's
+ *  capture failure (an empty transcript — the client prompts a retype). */
+export type AgentDone = components["schemas"]["AgentDoneEvent"]["log"];
+/** The settled stream: the `done` payload, and whether it was a stored
+ *  replay of an earlier run (§8.6 — no tool lines or reply came with it). */
+export type AgentResult = { log: AgentDone; replay: boolean };
 /** §6.4 weight tracking: one weigh-in (routes/weights.py) — kg plus the
  *  unit it was said in, which is how the card shows it back. */
 export type WeightEntry = components["schemas"]["WeightEntry"];
@@ -108,11 +122,17 @@ async function getToken(force: boolean): Promise<string | null> {
   return token;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** The Bearer scheme + the single 401 retry, for any body: JSON (the
+ *  content-type set here) or a FormData the browser labels itself. */
+async function authed(
+  path: string,
+  init: RequestInit,
+  json: boolean,
+): Promise<Response> {
   const attempt = async (forceToken: boolean) => {
     const token = await getToken(forceToken);
     const headers = new Headers(init.headers);
-    headers.set("content-type", "application/json");
+    if (json) headers.set("content-type", "application/json");
     if (token) headers.set("authorization", `Bearer ${token}`);
     return fetch(path, { ...init, headers });
   };
@@ -120,6 +140,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 401) {
     res = await attempt(true); // refresh once, then give up
   }
+  return res;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await authed(path, init, true);
   if (!res.ok) {
     throw new ApiError(res.status, await res.text().catch(() => ""));
   }
@@ -303,16 +328,123 @@ export async function selectFood(args: {
 
 /** Same Bearer scheme + single 401 retry as request(), minus the JSON
  *  content-type: the browser sets multipart/form-data with its boundary. */
-async function multipart(path: string, form: FormData): Promise<Response> {
-  const attempt = async (forceToken: boolean) => {
-    const token = await getToken(forceToken);
-    const headers = new Headers();
-    if (token) headers.set("authorization", `Bearer ${token}`);
-    return fetch(path, { method: "POST", body: form, headers });
+function multipart(path: string, form: FormData): Promise<Response> {
+  return authed(path, { method: "POST", body: form }, false);
+}
+
+/** The voice lane's form: the LogCreate fields minus `text` (the transcript
+ *  supplies it) plus the blob under `audio`. */
+function audioForm(args: {
+  id: string;
+  clip: VoiceClip;
+  tz: string;
+  capture_error?: string | null;
+  history?: AgentTurn[];
+}): FormData {
+  const { blob, mimeType, capturedAt } = args.clip;
+  const ext = mimeType.includes("mp4") ? "m4a" : "webm";
+  const form = new FormData();
+  form.set("id", args.id);
+  form.set("captured_at", capturedAt);
+  form.set("tz", args.tz);
+  if (args.capture_error) form.set("capture_error", args.capture_error);
+  if (args.history?.length) form.set("history", JSON.stringify(args.history));
+  form.set("audio", new File([blob], `clip.${ext}`, { type: mimeType }));
+  return form;
+}
+
+// ---------------------------------------------------------------------------
+// §6.4 the Agent chat — POST /api/agent, one event per line
+// ---------------------------------------------------------------------------
+
+export type AgentTextArgs = {
+  kind: "text";
+  id: string;
+  text: string;
+  captured_at: string;
+  tz: string;
+  capture_fallback?: boolean;
+  capture_error?: string | null;
+  /** the chat so far (oldest first) — the agent's memory across turns */
+  history?: AgentTurn[];
+};
+
+export type AgentAudioArgs = {
+  kind: "audio";
+  id: string;
+  clip: VoiceClip;
+  tz: string;
+  capture_error?: string | null;
+  history?: AgentTurn[];
+};
+
+/** The chat's streaming front door (routes/agent.py): the same body as
+ *  POST /api/logs — JSON for text, multipart for a voice clip — answered as
+ *  newline-delimited JSON events. `onEvent` sees every event as it lands
+ *  (the transcript, each tool call and result, the reply); the promise
+ *  settles with the `done` payload and whether it was a stored replay of an
+ *  earlier run (a same-id retry the server could not re-attach to its live
+ *  stream, §8.6). An HTTP error before the stream (the
+ *  demo quota's 429, a replayed log's 409) and the stream's own `error`
+ *  event (with the status it would have been) both reject with an ApiError,
+ *  so quotaRefusal() and `detail` work as for every other call. */
+export async function streamAgent(
+  args: AgentTextArgs | AgentAudioArgs,
+  onEvent: (ev: AgentEvent) => void,
+): Promise<AgentResult> {
+  const res =
+    args.kind === "text"
+      ? await authed(
+          "/api/agent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              id: args.id,
+              text: args.text,
+              captured_at: args.captured_at,
+              tz: args.tz,
+              capture_fallback: args.capture_fallback ?? false,
+              capture_error: args.capture_error ?? null,
+              agent: true,
+              history: args.history ?? null,
+            }),
+          },
+          true,
+        )
+      : await multipart("/api/agent", audioForm(args));
+  if (!res.ok || !res.body) {
+    throw new ApiError(res.status, await res.text().catch(() => ""));
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let done: AgentResult | null = null;
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    const ev = JSON.parse(line) as AgentEvent;
+    if (ev.type === "error") {
+      throw new ApiError(ev.status, JSON.stringify({ detail: ev.detail }));
+    }
+    onEvent(ev);
+    if (ev.type === "done") done = { log: ev.log, replay: ev.replay ?? false };
   };
-  let res = await attempt(false);
-  if (res.status === 401) res = await attempt(true);
-  return res;
+  for (;;) {
+    const { value, done: eof } = await reader.read();
+    if (eof) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl = buf.indexOf("\n");
+    while (nl >= 0) {
+      handle(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+      nl = buf.indexOf("\n");
+    }
+  }
+  buf += decoder.decode();
+  if (buf.trim()) handle(buf);
+  if (done == null) {
+    throw new ApiError(502, "the agent stream ended without a result");
+  }
+  return done;
 }
 
 export type AudioLogResult =
@@ -336,15 +468,8 @@ export async function createLogAudio(args: {
   /** §6.4: the Agent lane — the transcript runs through the front-door agent */
   agent?: boolean;
 }): Promise<AudioLogResult> {
-  const { blob, mimeType, capturedAt } = args.clip;
-  const ext = mimeType.includes("mp4") ? "m4a" : "webm";
-  const form = new FormData();
-  form.set("id", args.id);
-  form.set("captured_at", capturedAt);
-  form.set("tz", args.tz);
-  if (args.capture_error) form.set("capture_error", args.capture_error);
+  const form = audioForm(args);
   if (args.agent) form.set("agent", "true");
-  form.set("audio", new File([blob], `clip.${ext}`, { type: mimeType }));
   const res = await multipart("/api/logs", form);
   if (!res.ok) {
     throw new ApiError(res.status, await res.text().catch(() => ""));

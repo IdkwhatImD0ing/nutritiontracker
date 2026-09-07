@@ -551,7 +551,7 @@ a {
   margin: 4px 2px 0;
 }
 
-/* voice capture (M2 §8.1d / §13) — the mic lives in VoiceSheet */
+/* voice capture (M2 §8.1d / §13) — the mic lives in AgentChat's composer */
 
 /* scoped under .capture so these outrank the generic `.capture button` rule
    above — the mic is the quiet button, the send is the loud one */
@@ -2046,4 +2046,255 @@ a {
   .shell.day > .diary-empty {
     grid-column: 2;
   }
+}
+
+/* ---------- the Agent chat (§6.4, 2026-09-06) ---------- */
+
+/* A full-height sheet like staging, layered UNDER it: the staging sheet
+   (z 50, backdrop 40) opens over the chat when a run stages items, and the
+   chat is still there when it closes. Above the tab bar (30). */
+.agent-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 9, 0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  z-index: 34;
+  animation: fade 200ms ease-out;
+}
+
+.sheet.agent-sheet {
+  z-index: 35;
+}
+
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 18px 16px;
+}
+
+.chat-empty {
+  margin: auto 0;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.bubble {
+  max-width: 86%;
+  padding: 10px 14px;
+  border-radius: 18px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  border-bottom-right-radius: 6px;
+}
+
+.bubble.user.pending {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.bubble.agent {
+  align-self: flex-start;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 6px;
+}
+
+.bubble.error {
+  align-self: flex-start;
+  background: rgba(242, 107, 107, 0.12);
+  border: 1px solid rgba(242, 107, 107, 0.4);
+  color: var(--red);
+}
+
+/* a tool call: what the agent is doing, in words, the raw call one tap away */
+.tool-line {
+  align-self: flex-start;
+  max-width: 92%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--line-strong);
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.tool-line .tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tool-line .spinner {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
+.tool-line .tool-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--faint);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.tool-line .tool-text {
+  color: var(--text);
+}
+
+.tool-line .tool-result {
+  color: var(--muted);
+}
+
+.tool-line details {
+  font-size: 0.74rem;
+}
+
+.tool-line summary {
+  cursor: pointer;
+  color: var(--faint);
+  user-select: none;
+}
+
+.tool-line pre {
+  margin: 4px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+/* the staged result: how many rows, the total, and the way into the sheet */
+.result-card {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--accent-line);
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+
+.result-card .result-text {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.result-card .result-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--amber);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.result-card button {
+  flex-shrink: 0;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  border: none;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.result-card .result-state {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.chat-thinking {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.chat-thinking .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+/* the composer: the old capture bar, or the recording state inline */
+.chat-foot .capture-error,
+.chat-foot .capture-notice {
+  margin-top: 8px;
+}
+
+.chat-rec {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.chat-rec .voice-big {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+}
+
+.chat-rec .voice-big svg {
+  width: 22px;
+  height: 22px;
+}
+
+.chat-rec .voice-big::before,
+.chat-rec .voice-big::after {
+  inset: -6px;
+}
+
+.chat-rec .voice-timer {
+  font-size: 1.3rem;
+  margin: 0 0 2px;
+}
+
+.chat-rec .voice-alt {
+  margin: 0 0 0 auto;
+}
+
+/* an agent bubble with the answers to its question under it */
+.bubble-wrap {
+  align-self: flex-start;
+  max-width: 86%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bubble-wrap .bubble {
+  max-width: 100%;
+}
+
+.agent-options {
+  margin: 0 0 4px 6px;
 }

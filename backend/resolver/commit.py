@@ -457,7 +457,8 @@ async def _commit_one(
     staged_prev = res["staged"] if res is not None and isinstance(res["staged"], dict) else {}
     # §3.4a: the stored flag and confirmation are what the gate checked — the
     # committed payload records THOSE, whatever the client sent (a row the
-    # server never stored carries none: text/voice never estimate).
+    # server never stored carries none; the flag comes from the photo lane or
+    # the agent's log_estimate, §6.4).
     item = item.model_copy(
         update={
             "estimated": staged_prev.get("estimated") or "none",
@@ -465,12 +466,18 @@ async def _commit_one(
         }
     )
 
-    # 2. alias — for each item except tier-0 expansions, removed rows, and
-    # rows the user never spoke (photo/barcode/search logs: _NO_LEARN_MODES).
+    # 2. alias — for each item except tier-0 expansions, removed rows, rows
+    # the user never spoke (photo/barcode/search logs: _NO_LEARN_MODES), and —
+    # whatever the log — a row the agent sized as an estimate (§6.4): its
+    # phrase is the agent's component name, its portion a guess.
     # Learned for the ORIGINAL spoken phrase (res["phrase"]); rejected_count
     # lands on the abandoned pre-selection only when the user actually switched.
     alias_id = None
-    if tier != 0 and log.get("input_mode") not in _NO_LEARN_MODES:
+    if (
+        tier != 0
+        and log.get("input_mode") not in _NO_LEARN_MODES
+        and (staged_prev.get("estimated") or "none") == "none"
+    ):
         phrase = res["phrase"] if res is not None else item.phrase
         alias_id = await _learn_alias(
             conn,

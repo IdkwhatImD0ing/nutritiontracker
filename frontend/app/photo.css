@@ -98,7 +98,8 @@
   color: var(--on-accent);
 }
 
-/* ---------- §3.4a estimated rows (photo lane only) ---------- */
+/* ---------- §3.4a estimated rows (the photo lane, and the agent's
+   log_estimate rows, §6.4 — same flag, same confirm) ---------- */
 
 /* same amber family as needs-input/verify: attention, not error */
 .badge.estimate {

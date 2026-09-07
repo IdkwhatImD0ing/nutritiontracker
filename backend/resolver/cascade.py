@@ -98,14 +98,19 @@ FROM foods f
 WHERE f.id = %s AND f.source <> 'estimate'
 """
 
-# Words that denote a measure rather than a countable household unit (§7.3).
+# Words that denote a measure rather than a countable household unit (§7.3) —
+# including the dimensions, labels and provider unit codes a serving text may
+# lead with ("6 inch sub", "100 calorie pack", "8 FLOZ"), whose leading number
+# is not a piece count either.
 _MEASURE_WORDS = frozenset(
     {
-        "g", "gram", "grams", "kg", "kilogram", "kilograms",
-        "ml", "milliliter", "milliliters", "millilitre", "millilitres", "l", "liter", "litre",
-        "oz", "ounce", "ounces", "fl", "lb", "lbs", "pound", "pounds",
+        "g", "gram", "grams", "grm", "kg", "kilogram", "kilograms", "mg", "milligram", "milligrams",
+        "ml", "milliliter", "milliliters", "millilitre", "millilitres", "mlt",
+        "l", "liter", "liters", "litre", "litres",
+        "oz", "ounce", "ounces", "oza", "fl", "floz", "lb", "lbs", "pound", "pounds",
         "cup", "cups", "tbsp", "tablespoon", "tablespoons", "tsp", "teaspoon", "teaspoons",
         "serving", "servings", "portion", "portions",
+        "inch", "inches", "cm", "mm", "calorie", "calories", "cal", "kcal", "percent",
     }
 )
 
@@ -149,6 +154,36 @@ def _scale_macros(macros: dict, qty: float) -> dict:
         for k, v in macros.items()
         if isinstance(v, (int, float))
     }
+
+
+_LEADING_PIECES_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s+([a-z]+)")
+
+
+def _pieces_per(description: str) -> float:
+    """How many pieces one count-type serving holds: the leading number of
+    its description when the word after it is not a measure, a dimension or
+    a label ("4 large" → 4, "2 slices" → 2, "1 large" → 1, "large" → 1;
+    "12 fl oz can" → 1, the 12 measures ounces, not cans; "6 inch sub" → 1,
+    "100 calorie pack" → 1). A spoken count of pieces is divided by it —
+    FDC's cooked shrimp serving is "4 large", so 50 shrimp are 12.5 servings,
+    not 50 (BACKLOG 151; Bill, 2026-09-06: never assume a one-piece serving)."""
+    m = _LEADING_PIECES_RE.match((description or "").lower())
+    if not m or m.group(2) in _MEASURE_WORDS:
+        return 1.0
+    n = float(m.group(1))
+    return n if n > 0 else 1.0
+
+
+def _units_per(description: str, stem: str) -> float:
+    """How many of the SPOKEN unit one serving holds, for the unit-word match:
+    when the word after the leading number is that unit itself — measure or
+    not — the number counts it ("1 tbsp" of a "2 tbsp (32 g)" serving is half
+    a serving, "1 cup" of "2 cups (85 g)" too); otherwise the serving's piece
+    count ("two scoops" of "2 scoops (64 g)" → 2, "1 can" of "12 fl oz can" → 1)."""
+    m = _LEADING_PIECES_RE.match((description or "").lower())
+    if m and _unit_stem(m.group(2)) == stem and float(m.group(1)) > 0:
+        return float(m.group(1))
+    return _pieces_per(description)
 
 
 def _is_count_serving(description: str) -> bool:
@@ -284,17 +319,22 @@ async def resolve_portion(
                     )
                     return base["serving_id"], round(grams / float(base["grams"]), 4), False
                 return default_id, qty, True  # no gram-based serving to map onto
-            # fuzzy: unit word appears in a serving description
+            # fuzzy: unit word appears in a serving description — divided by
+            # how many of that unit the serving holds ("two scoops" of a "2
+            # scoops" serving, "1 tbsp" of a "2 tbsp" serving: §7.3, never a
+            # one-unit assumption)
             for s in servings:
-                tokens = re.findall(r"[a-z]+", s.get("description", "").lower())
+                desc = s.get("description", "")
+                tokens = re.findall(r"[a-z]+", desc.lower())
                 if stem in tokens or stem + "s" in tokens:
-                    return s["serving_id"], qty, False
+                    return s["serving_id"], qty / _units_per(desc, stem), False
             return default_id, qty, True  # unit didn't map — verify me
-        # qty + no unit ("two eggs"): prefer a count-type household serving
+        # qty + no unit ("two eggs", "50 shrimp"): prefer a count-type
+        # household serving, divided by the pieces it holds ("4 large")
         count_servings = [s for s in servings if _is_count_serving(s.get("description", ""))]
         if count_servings:
             base = _serving_by_id(count_servings, default_id) or count_servings[0]
-            return base["serving_id"], qty, False
+            return base["serving_id"], qty / _pieces_per(base.get("description", "")), False
         # only mass servings: never silently multiply the mass default (§7.3)
         return default_id, qty, True
 
@@ -790,28 +830,33 @@ async def resolve_items(
     parsed_items: list[ParsedItem],
     meal: Meal,
     index_ids: set[str] | None = None,
+    *,
+    start_index: int = 0,
 ) -> list[Resolution]:
     """Per-log cascade over the decomposed items with item_index allocation:
     a tier-0 expansion occupies one index per macro item (§3.1), so the items
     after it shift ("usual breakfast and a coffee" → N macro rows, then
-    coffee at index N)."""
+    coffee at index N). `start_index` is where allocation begins — the Agent
+    lane (§6.4) stages in more than one call per log, each appending after
+    the rows already there."""
     out: list[Resolution] = []
     for parsed in parsed_items:
         t0 = time.monotonic()
+        nxt = start_index + len(out)
         macro = await find_macro(_macro_keys(parsed))
         if macro is not None:
-            rows, missing = await expand_macro(macro, meal, len(out), t0)
+            rows, missing = await expand_macro(macro, meal, nxt, t0)
             if missing:
                 out.append(
                     _macro_broken_guard(
-                        macro, len(rows), missing, parsed.phrase, len(out), meal, t0
+                        macro, len(rows), missing, parsed.phrase, nxt, meal, t0
                     )
                 )
                 continue
             if rows:
                 out.extend(rows)
                 continue
-        out.append(await resolve_item(parsed, len(out), meal, index_ids, skip_tier0=True))
+        out.append(await resolve_item(parsed, nxt, meal, index_ids, skip_tier0=True))
     return out
 
 

@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 import tracing
 from routes import (
+    agent,
     aliases,
     commit,
     diary,
@@ -75,3 +76,6 @@ app.include_router(me.router)
 # Agent mode (§6.4, 2026-09-06): the weigh-in log behind the agent's log_weight
 # tool and Today's weight card.
 app.include_router(weights.router)
+# The chat window's streaming front door (§6.4, 2026-09-06): the same claim and
+# pipeline as POST /api/logs with agent=true, answered event by event.
+app.include_router(agent.router)

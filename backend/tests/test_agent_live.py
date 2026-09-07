@@ -10,6 +10,11 @@ tier-3 agent with the hosted web_search, USDA FDC, Langfuse. Three stories:
   2. food and a weight in one breath: "two eggs and a fairlife, and I'm at
      180 pounds today" → eggs (qty 2) and fairlife staged through the
      ordinary pipeline AND the weigh-in recorded.
+  4. the chat's stream and an unlabeled deli item: "I had a platter of
+     costco shrimp" through POST /api/agent → the agent researches the
+     product, finds no label, and stages its components (shrimp, cocktail
+     sauce) with estimated amounts — rows flagged estimated="portion", the
+     numbers from the database entries, the commit refused until confirmed.
   3. the retail-product web lane: "costco tonkotsu ramen" → the agent stages
      it, the client kicks tier 3, and the item resolves with real numbers —
      from FDC Branded when the product is there, else transcribed from the
@@ -250,3 +255,118 @@ def test_costco_tonkotsu_ramen_resolves_through_the_agent(client: TestClient):
             assert searches, "a web food with no web_search_call in the archived transcript"
     finally:
         _run(_cleanup(t0, [log_id]))
+
+
+# ---------------------------------------------------------------------------
+# 4: "I had a platter of costco shrimp" — the chat's stream (POST /api/agent)
+#    and an unlabeled deli item estimated from database components (§6.4,
+#    §3.4a; the chat redesign, 2026-09-06)
+# ---------------------------------------------------------------------------
+
+
+def _post_stream(client: TestClient, log_id: str, text: str, history: list[dict] | None = None) -> list[dict]:
+    t0 = time.perf_counter()
+    r = client.post(
+        "/api/agent",
+        json={"id": log_id, "text": text, "captured_at": CAPTURED_AT, "tz": TZ, "history": history},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/x-ndjson"), r.headers
+    events = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    print(
+        f"\n[agent live] {text!r}: {time.perf_counter() - t0:.1f}s "
+        f"events={[e['type'] + (':' + e['name'] if e.get('name') else '') for e in events]}"
+    )
+    return events
+
+
+def test_costco_shrimp_platter_is_estimated_from_database_components(client: TestClient):
+    t0 = _run(db.fetchone("SELECT now() AS t"))["t"]
+    log_id = str(uuid4())
+    question_ids: list[str] = []
+    try:
+        text = "I had a platter of costco shrimp"
+        events = _post_stream(client, log_id, text)
+        assert events[-1]["type"] == "done", events[-1]
+        # the agent asks before it guesses (2026-09-06) — which product, then
+        # how much of it: answer each question with its first option as the
+        # chat would, the next turn carrying the history; two rounds at most
+        history: list[dict] = []
+        question_ids: list[str] = []
+        for _round in range(2):
+            reply_ev = next(e for e in events if e["type"] == "reply")
+            if not reply_ev.get("options"):
+                break
+            print(f"[agent live] asked: {reply_ev['text']!r} options={reply_ev['options']}")
+            assert events[-1]["log"]["items"] == [], "a question must not stage anything"
+            assert events[-1]["log"]["agent"]["options"] == reply_ev["options"]
+            history += [{"role": "user", "text": text}, {"role": "agent", "text": reply_ev["text"]}]
+            question_ids.append(log_id)
+            log_id, text = str(uuid4()), reply_ev["options"][0]
+            events = _post_stream(client, log_id, text, history)
+            assert events[-1]["type"] == "done", events[-1]
+        assert not any(e.get("options") for e in events if e["type"] == "reply"), "still asking after two answers"
+        calls = [e for e in events if e["type"] == "tool_call"]
+        names = [c["name"] for c in calls]
+        # live web search: the line goes up before the query is known, the result brings it
+        for c in calls:
+            if c["name"] == "web_search" and c["args"].get("query") is None:
+                res = next((e for e in events if e["type"] == "tool_result" and e["id"] == c["id"]), None)
+                assert res is not None and res["output"].get("query"), "a live search line never settled"
+        for c in calls:
+            print(f"[agent live]   {c['name']}({json.dumps(c['args'])[:400]})")
+        for e in events:
+            if e["type"] == "tool_result" and e.get("name") == "web_search":
+                print(f"[agent live]   web_search read {e['output'].get('sources')}")
+        reply = next(e["text"] for e in events if e["type"] == "reply")
+        print(f"[agent live] reply: {reply!r}")
+
+        # the agent worked it out on its own: the platter has no label, so its
+        # components were estimated — shrimp and the cocktail sauce
+        assert "log_estimate" in names, f"the agent did not estimate: {names}"
+        est = next(c for c in calls if c["name"] == "log_estimate")
+        phrases = [it["phrase"].lower() for it in est["args"]["items"]]
+        assert any("shrimp" in p for p in phrases), phrases
+        assert any("sauce" in p for p in phrases), phrases
+        assert "kcal" not in reply.lower() and "calorie" not in reply.lower(), reply
+
+        log = events[-1]["log"]
+        items = log["items"]
+        assert len(items) >= 2, items
+        assert all(it["estimated"] == "portion" and it.get("estimate_note") for it in items), items
+        assert log["agent"]["reply"] == reply
+
+        # the searching rows through tier 3, as the sheet would kick them
+        final = []
+        for it in items:
+            if it["status"] == "searching":
+                t1 = time.perf_counter()
+                r = client.post(
+                    "/api/resolve/tier3", json={"log_id": log_id, "item_index": it["item_index"]}
+                )
+                assert r.status_code == 200, r.text
+                it = r.json()
+                print(f"[agent live] tier 3 {it['phrase']!r}: {time.perf_counter() - t1:.1f}s -> {it['status']}")
+            final.append(it)
+        for it in final:
+            m = it.get("macros") or {}
+            print(
+                f"[agent live] row {it['item_index']} {it['phrase']!r} -> {it['status']} "
+                f"food={(it.get('food') or {}).get('name')!r} qty={it.get('qty')} "
+                f"serving={(it.get('serving') or {}).get('description')!r} "
+                f"kcal={m.get('kcal')} protein={m.get('protein_g')} "
+                f"estimated={it['estimated']} note={it.get('estimate_note')!r}"
+            )
+        shrimp = next(it for it in final if "shrimp" in it["phrase"].lower())
+        assert shrimp["status"] == "resolved", shrimp
+        assert shrimp["macros"]["kcal"] > 0 and shrimp["estimated"] == "portion", shrimp  # flag survived tier 3
+        # a whole platter is a lot of shrimp — not one database serving, and not
+        # a count multiplied onto a 100 g serving either (133 × 100 g was 13,167 kcal)
+        assert shrimp["macros"]["protein_g"] >= 40, shrimp
+        assert shrimp["macros"]["kcal"] < 6000, shrimp
+        # §3.4a: nothing estimated commits unconfirmed, server-side
+        resolved = [it for it in final if it["status"] == "resolved"]
+        r = client.post(f"/api/logs/{log_id}/commit", json={"items": resolved})
+        assert r.status_code == 409 and "confirm the estimated rows first" in r.text, r.text
+    finally:
+        _run(_cleanup(t0, [log_id, *question_ids]))

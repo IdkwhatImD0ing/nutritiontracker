@@ -18,7 +18,7 @@ was written from the code as it landed, and §8 has not been walked from an empt
 | **Stack** | Next.js 16 (App Router, TS) PWA + Python FastAPI, deployed as **two Vercel Services on one origin** |
 | **Database** | Neon Postgres (`pg_trgm`, `pgvector` available) — Vercel-Marketplace-managed. Row-Level Security scopes every user-owned table to `app.user_id`; `foods` is shared |
 | **Auth** | Neon Managed Better Auth; Next holds the session cookie, the client sends a 15-min EdDSA JWT, FastAPI verifies it via JWKS. Any verified account may sign in: `ALLOWED_EMAIL` is the owner, everyone else is a demo (`GET /api/me` says which) |
-| **LLM** | OpenAI Agents SDK — `gpt-5.6-luna` (decompose), `gpt-5.6-terra` (tier-3 agent). **Always pin the full model id**, never bare `gpt-5.6` |
+| **LLM** | OpenAI Agents SDK — `gpt-5.6-luna` (decompose), `gpt-5.6-terra` (the front-door agent behind the Agent chat, and the tier-3 agent). **Always pin the full model id**, never bare `gpt-5.6` |
 | **Speech** | Deepgram `nova-3` primary, OpenAI `gpt-transcribe` fallback |
 | **Food data** | USDA FDC (generic + branded + barcodes) primary, Open Food Facts quality-gated fallback, chain restaurants only via web transcription with a stored source URL |
 | **Tracing** | Langfuse Cloud (Python SDK v4), prod/test split by `LANGFUSE_TRACING_ENVIRONMENT` |
@@ -96,8 +96,9 @@ statement as the `tally_app` role that only 002 creates, so a push first means e
 DB-touching request fails until 002 lands (fail-closed, not a leak — but an outage).
 
 Migration 003 (the weigh-in log behind agent mode — `weights`, DESIGN §4, §6.4) is
-applied the same way, by hand, after 002: `apply.py 003 --dry-run`, then `apply.py 003`,
-then `apply.py 003 --check`. Unlike 002 its absence is not an outage — the Agent lane
+applied the same way, after 002: `apply.py 003 --dry-run`, then `apply.py 003`,
+then `apply.py 003 --check`. **Applied on the shared database on 2026-09-06** (by the
+agent, at Bill's request); the notes below describe the window before that. Unlike 002 its absence is not an outage — the Agent lane
 keeps staging food and says a weight could not be saved, `GET /api/weights` answers 503
 and Today's weight card renders nothing — but apply it **before** pushing this tree all
 the same: until it lands, every rollback-harness test replays 003 inside its own
@@ -152,7 +153,8 @@ Notes that will save you an hour:
   There is no dev branch yet (BACKLOG 18) — creating one needs Console access, because the
   project is Vercel-Marketplace-managed and invisible to the Neon API token. Keep the
   rollback pattern and leave no rows behind.
-- **One DB suite at a time while a migration is pending.** Until `apply.py 003` lands,
+- **One DB suite at a time while a migration is pending** (003 landed 2026-09-06; this
+  applies again the next time a migration waits). Until `apply.py 003` lands,
   every rollback-harness test replays 003 inside its transaction, and the new table's FK
   to `logs` holds a lock on `logs` for the test's duration — two suites at once deadlock
   on it (`DeadlockDetected`, seen 2026-09-06) and production writes wait. The real-path

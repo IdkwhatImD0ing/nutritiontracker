@@ -9,7 +9,7 @@ import { loadDetector } from "./BarcodeScanner";
  *  to Today (a window event while Today is mounted, a sessionStorage handoff
  *  plus a navigation home when it isn't), and Today mounts the lane's sheet. */
 
-export const ADD_LANES = ["barcode", "photo", "search", "voice"] as const;
+export const ADD_LANES = ["barcode", "photo", "search", "agent"] as const;
 export type AddLane = (typeof ADD_LANES)[number];
 
 /** window CustomEvent<AddLane> TabBar dispatches while Today is mounted */
@@ -90,11 +90,11 @@ const ROWS = [
     Icon: SearchIcon,
   },
   {
-    // §6.4 (2026-09-06): the voice lane is the agent's front door — the lane
-    // id stays "voice" (the capture is voice-first, typing the fallback)
-    lane: "voice",
+    // §6.4 (2026-09-06): the agent's chat window — voice-first (recording
+    // starts on open), typing the fallback; it looks things up and shows you
+    lane: "agent",
     label: "Agent",
-    sub: "Say or type it — what you ate, your weight",
+    sub: "Say or type it — it looks things up and stages them",
     Icon: MicIcon,
   },
 ] as const;

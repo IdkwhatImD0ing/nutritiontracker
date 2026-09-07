@@ -16,7 +16,12 @@ The owner (auth.is_owner) is unlimited. Every other account is a demo:
   with live items, the 409 of a log that left 'staged', the 404 of an id
   that is not this tenant's — because the claim decides that before anything
   is recorded. The orphan re-run is the one spend without a fresh row; it
-  records through check_log().
+  records through check_log(). The Agent lane's clarifying question (§6.4)
+  is the one attempt handed back: the turn ran the model but staged nothing,
+  so its 'log' row becomes a 'question' row and the answer claims the day's
+  attempt — at most DEMO_QUESTION_LIMIT times a day (refund_question), so
+  ask → answer → ask is bounded model spend, not free; past the cap the
+  attempt stands and the answer meets the 429.
 - TEN model-spending re-resolutions per day (POST /api/resolve,
   /api/resolve/tier3, and the free-text branch of /api/resolve/answer),
   recorded the same way (kind='resolve'), after the request's own free
@@ -52,6 +57,7 @@ import db
 
 DEMO_LOG_LIMIT = 1  # what quota_events_log_day_key (002 §5) enforces
 DEMO_RESOLVE_LIMIT = 10
+DEMO_QUESTION_LIMIT = 3  # clarifying questions a day whose attempt is handed back
 
 
 class QuotaExceeded(HTTPException):
@@ -112,6 +118,29 @@ async def admit_log(conn) -> None:
         return
     row = await (await conn.execute(_STATUS_SQL, ("log",))).fetchone()
     raise _refusal(row, DEMO_LOG_LIMIT, "Demo accounts can log once a day")
+
+
+async def refund_question() -> None:
+    """A demo turn that only asked a clarifying question (§6.4 — no row
+    staged, nothing discarded, no weigh-in) ran the model but logged nothing:
+    hand the day's log attempt back so the answer, the next turn, can claim
+    it — by turning today's 'log' row into a 'question' row (the partial
+    unique index only counts 'log'), at most DEMO_QUESTION_LIMIT times a day.
+    The cap is what keeps ask → answer → ask from being unbounded model
+    spend; past it the row stays 'log', the attempt stands, and the answer
+    meets the 429. The turn could only have run if today's 'log' row was its
+    own (an earlier log today would have refused the claim), so the row it
+    converts is this turn's. The owner records nothing."""
+    if auth.is_owner():
+        return
+    await db.execute(
+        f"""
+        UPDATE quota_events SET kind = 'question'
+        WHERE kind = 'log' AND {_UTC_DAY}
+          AND (SELECT count(*) FROM quota_events WHERE kind = 'question' AND {_UTC_DAY}) < %s
+        """,
+        (DEMO_QUESTION_LIMIT,),
+    )
 
 
 async def check_log() -> None:

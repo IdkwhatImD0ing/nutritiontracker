@@ -148,6 +148,19 @@ class ParsedLog(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class AgentTurn(BaseModel):
+    """One earlier turn of the Agent chat (§6.4), as the client remembers it:
+    what the person said, what the agent replied, and — for a turn that
+    staged a log — the log's id, its rows in words (never macros) and where
+    it stands, so a follow-up ("actually I only had half") can name it."""
+
+    role: Literal["user", "agent"]
+    text: str
+    log_id: UUID | None = None
+    items: list[str] | None = None  # "Plain cooked shrimp — 12.5 × 4 large" …
+    state: Literal["staged", "committed", "discarded"] | None = None
+
+
 class LogCreate(BaseModel):
     id: UUID  # client-generated — the idempotency key (§8.6)
     text: str
@@ -158,6 +171,9 @@ class LogCreate(BaseModel):
     # the + sheet's Agent lane (§6.4): route the utterance through the
     # front-door agent after the §3.0 short-circuit (food and/or a weigh-in)
     agent: bool = False
+    # the chat so far (the last turns, oldest first) — what the agent reads to
+    # understand references, answers to its own question, and corrections
+    history: list[AgentTurn] | None = None
 
 
 class LogResponse(BaseModel):
