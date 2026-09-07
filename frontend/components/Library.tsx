@@ -205,7 +205,9 @@ export default function Library() {
                 disabled={opening}
                 onClick={() => openHit(r)}
               >
-                <span className="result-name">{r.label}</span>
+                <span className={`result-name${r.food_id ? " food-name" : ""}`}>
+                  {r.label}
+                </span>
                 <span className="result-sub">
                   {r.brand ? `${r.brand} · ` : ""}
                   {r.food_id ? "my foods" : (r.data_type ?? r.source)}
@@ -266,7 +268,7 @@ export default function Library() {
         {groups.map((g) => (
           <div className="m3-card" key={g.food_id}>
             <div className="m3-card-head">
-              <div className="m3-card-title">
+              <div className="m3-card-title food-name">
                 <Link href={`/library/food/${encodeURIComponent(g.food_id)}`}>
                   {g.food_name}
                 </Link>

@@ -3,20 +3,21 @@
    wherever they mount; globals.css stays the base layer (tokens, .shell,
    .chip, .stepper, .subsheet, .commit-btn, .badge are reused from there). */
 
-/* ---------- tab bar: Today · History · [+] · Library, settings icon (§7.4) ---------- */
+/* ---------- tab bar: Today · History · [+] · Library · Settings (§7.4) ---------- */
 
 .tabbar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  margin: 0 auto;
-  max-width: 480px;
   display: flex;
   align-items: stretch;
-  /* flush with the bottom edge: the surface runs under the home indicator,
-     and only the inset itself keeps the targets above it */
-  padding: 6px 10px env(safe-area-inset-bottom);
+  /* The surface spans the screen; the five targets sit in a centered 480px
+     band (a tablet used to get a floating 480px strip). Bottom: the home
+     indicator's inset where there is one, a plain 8px where there isn't
+     (Android, a desktop window) — the labels never touch the edge. Owner
+     feedback, 2026-09-06. */
+  padding: 6px max(10px, calc(50% - 240px)) max(8px, env(safe-area-inset-bottom));
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   backdrop-filter: blur(18px) saturate(140%);
@@ -62,15 +63,9 @@
   color: var(--accent);
 }
 
-.tabbar a.gear {
-  flex: 0 0 52px;
-  border-left: 1px solid var(--line);
-  border-radius: 0;
-  margin-left: 2px;
-}
-
 /* the + (owner ruling, 2026-09-02): one raised button in the middle of the
-   bar, thumb-zone, opens AddSheet — every way to log starts here */
+   bar, thumb-zone, opens AddSheet — every way to log starts here. Its slot
+   is one of five equal ones, which is what centres it. */
 .tabbar .fab-slot {
   flex: 1;
   display: flex;
@@ -479,21 +474,42 @@ body:has(.tabbar) .shell {
   text-align: center;
 }
 
-/* meal window row: name | start | end (§7.2 clock windows) */
+/* meal window row (§7.2 clock windows): the name on its own line, start and
+   end side by side under it. Two time controls and a label never fit one
+   phone-width row — the controls overflowed their boxes and the card's edge
+   (owner feedback, 2026-09-06). */
 .m3-window {
   display: grid;
-  grid-template-columns: 84px 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 8px;
   align-items: center;
   font-size: 0.88rem;
   color: var(--muted);
   text-transform: capitalize;
 }
 
+.m3-window > span,
+.m3-window select {
+  grid-column: 1 / -1;
+}
+
 .m3-window input,
 .m3-window select {
   padding: 9px 10px;
   font-size: 0.92rem;
+}
+
+/* iOS draws a time control at its own intrinsic width unless the native
+   appearance is dropped; with it dropped, the value is centered and the box
+   can collapse, hence the alignment and the floor. */
+.m3-window input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 42px;
+}
+
+.m3-window input[type="time"]::-webkit-date-and-time-value {
+  text-align: left;
 }
 
 .m3-seg {
@@ -983,7 +999,6 @@ body:has(.tabbar) .shell {
   .tabbar a.gear {
     order: 3;
     flex: 0 0 auto;
-    border-left: none;
     margin: auto 0 0;
   }
 

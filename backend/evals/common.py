@@ -60,6 +60,7 @@ def snapshot_context(ctx: AgentContext) -> dict:
         "profile_notes": ctx.profile_notes,
         "targets": ctx.targets,
         "food_index": [list(t) for t in ctx.food_index],
+        "recent_foods": [list(t) for t in ctx.recent_foods],
         "meal_names": ctx.meal_names,
     }
 
@@ -70,4 +71,6 @@ def context_from_snapshot(snap: dict) -> AgentContext:
         targets=snap.get("targets") or {},
         food_index=[(str(i), str(n), b) for i, n, b in snap.get("food_index") or []],
         meal_names=list(snap.get("meal_names") or []),
+        # snapshots collected before 2026-09-06 carry no recent list
+        recent_foods=[(str(i), str(n), b) for i, n, b in snap.get("recent_foods") or []],
     )

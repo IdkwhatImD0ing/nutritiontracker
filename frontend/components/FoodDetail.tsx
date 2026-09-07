@@ -188,7 +188,7 @@ export default function FoodDetail({ id }: { id: string }) {
       </Link>
 
       <header className="fd-head">
-        <h1>{food.display_name}</h1>
+        <h1 className="food-name">{food.display_name}</h1>
         <div className="fd-meta">
           {food.brand ? <span>{food.brand}</span> : null}
           <span className={`badge ${badge.cls}`}>{badge.label}</span>

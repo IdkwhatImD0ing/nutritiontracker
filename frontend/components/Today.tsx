@@ -553,6 +553,7 @@ export default function Today() {
       {lane === "search" ? (
         <ManualSearchSheet
           phrase=""
+          fullScreen
           busy={captureBusy}
           error={captureError}
           onSelect={searchSelect}

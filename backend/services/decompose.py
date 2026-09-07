@@ -63,7 +63,8 @@ async def decompose(text: str, ctx, *, trace=None) -> ParsedLog:
         prompt_cache_key=PROMPT_CACHE_KEY,
     )
     parsed = _drop_invalid_library_matches(
-        response.output_parsed, {index_id for index_id, _, _ in ctx.food_index}
+        response.output_parsed,
+        {index_id for index_id, _, _ in (*ctx.food_index, *ctx.recent_foods)},
     )
     if trace is not None:
         trace.update(input=text, output=parsed.model_dump())

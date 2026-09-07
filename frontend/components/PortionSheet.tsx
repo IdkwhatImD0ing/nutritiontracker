@@ -76,7 +76,7 @@ export default function PortionSheet({ item, onApply, onClose }: Props) {
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Portion">
-        <div className="subsheet-title">{item.food?.name ?? item.phrase}</div>
+        <div className="subsheet-title food-name">{item.food?.name ?? item.phrase}</div>
 
         <div className="stepper num">
           <button type="button" aria-label="Less" onClick={() => step(-0.5)}>

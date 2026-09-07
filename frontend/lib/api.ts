@@ -255,6 +255,14 @@ export async function searchFoods(
   };
 }
 
+/** GET /api/foods/recent — the foods you have logged, newest first, one per
+ *  food, capped server-side at 200: the Search sheet's "previously added"
+ *  list (owner ruling, 2026-09-06). Every hit is already cached (food_id
+ *  set), so a pick skips /api/foods/select. */
+export function recentFoods(): Promise<FoodSearchResult[]> {
+  return request("/api/foods/recent");
+}
+
 /** BACKLOG 3: resolve a not_found row to a manually searched food, recorded
  *  in item_resolutions like any other resolution. Local-cache hits (food_id
  *  set) go through /api/resolve/answer — /api/foods/select only accepts fdc

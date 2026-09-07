@@ -189,7 +189,11 @@ async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
             pass
         if not parsed.items:
             return None
-        return parsed.items[0], {index_id for index_id, _, _ in ctx.food_index}
+        # every id the prompt offered for library_match: the index and the
+        # recently logged foods (§6.1)
+        return parsed.items[0], {
+            index_id for index_id, _, _ in (*ctx.food_index, *ctx.recent_foods)
+        }
     except Exception:
         return None
 
