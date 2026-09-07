@@ -32,8 +32,13 @@
   align-items: center;
   justify-content: center;
   gap: 3px;
-  min-height: 54px;
-  padding: 4px 0;
+  /* 44px, the tap minimum, not 54: the icon+label stack is 41px, and every
+     spare pixel here stacks on top of the 34px home-indicator inset below.
+     At 54 an iPhone showed the labels 43px up in a 95px bar (owner feedback,
+     2026-09-06: "super far from the edge"); at 44 it is 38px in an 85px bar,
+     which is where a native tab bar puts them (49pt bar + 34pt inset). */
+  min-height: 44px;
+  padding: 0;
   color: var(--faint);
   text-decoration: none;
   font-size: 0.66rem;
