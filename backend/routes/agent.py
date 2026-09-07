@@ -42,6 +42,7 @@ from routes.logs import (
     CaptureFailureResponse,
     Emit,
     LogCreateResponse,
+    _drop_empty_log,
     _MultipartRoute,
     _run_pipeline,
     claim_text_log,
@@ -161,16 +162,26 @@ async def _single(event: BaseModel) -> AsyncIterator[bytes]:
 
 @dataclass
 class _LiveRun:
-    """One run's events, buffered in this process while it streams and for
-    _RUN_TTL_SECONDS after it ends. A same-id retry — a phone that lost the
-    response mid-stream and sends the same client id again (§8.6) — follows
-    this buffer instead of getting the stored replay: the transcript, the tool
-    lines and the reply it missed, then the rest live, and nothing runs twice.
-    `changed` is replaced on every append so each waiter wakes exactly once."""
+    """One run's events, buffered in this process while it streams and, when
+    it succeeded, for _RUN_TTL_SECONDS after it ends. A same-id retry — a
+    phone that lost the response mid-stream and sends the same client id
+    again (§8.6) — follows this buffer instead of getting the stored replay:
+    the transcript, the tool lines and the reply it missed, then the rest
+    live, and nothing runs twice. A run that failed leaves the table the
+    moment it ends (its followers see the error; the next same-id request
+    re-enters the claim and runs again), and one still unfinished after
+    _RUN_MAX_SECONDS is presumed dead. `changed` is replaced on every append
+    so each waiter wakes exactly once."""
 
     events: list[dict] = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
+    started_at: float = field(default_factory=time.monotonic)
     finished_at: float | None = None
+    task: asyncio.Task | None = None
+
+    @property
+    def finished(self) -> bool:
+        return self.finished_at is not None
 
     def append(self, event: dict) -> None:
         self.events.append(event)
@@ -182,22 +193,37 @@ class _LiveRun:
 
 _RUNS: dict[UUID, _LiveRun] = {}
 _RUN_TTL_SECONDS = 600.0  # a finished run stays attachable this long
+# a run with no terminal event after this is presumed dead (Fluid caps an
+# invocation at 120 s; the pipeline's own worst case is the §8.6 grace, 90 s)
+_RUN_MAX_SECONDS = 300.0
+
+
+def _interrupted(detail: str = "The agent run was interrupted — try again.") -> dict:
+    return AgentErrorEvent(status=500, detail=detail).model_dump()
 
 
 def live_run(log_id: UUID) -> _LiveRun | None:
     """The run a same-id request attaches to — streaming, or finished within
-    the TTL — from this process's table; expired entries are dropped here.
-    Another instance's run is invisible (BACKLOG 156): that retry gets the
-    stored replay."""
+    the TTL — from this process's table. Expired entries are dropped here,
+    and a run still unfinished past _RUN_MAX_SECONDS is closed with an error
+    (its followers end; the database state stands and the §8.6 orphan claim
+    takes over) and dropped too. Another instance's run is invisible
+    (BACKLOG 156): that retry gets the stored replay."""
     now = time.monotonic()
     for key, run in list(_RUNS.items()):
-        if run.finished_at is not None and now - run.finished_at > _RUN_TTL_SECONDS:
+        if run.finished:
+            if now - run.finished_at > _RUN_TTL_SECONDS:
+                del _RUNS[key]
+        elif now - run.started_at > _RUN_MAX_SECONDS:
+            run.append(_interrupted("The agent run went quiet — try again."))
             del _RUNS[key]
     return _RUNS.get(log_id)
 
 
 async def _follow(run: _LiveRun) -> AsyncIterator[bytes]:
-    """Yield the run's events from the first, then live, until done/error."""
+    """Yield the run's events from the first, then live, until done/error —
+    or until the run has been silent for _RUN_MAX_SECONDS, which ends the
+    stream with an error rather than holding the connection forever."""
     i = 0
     while True:
         # captured before the length check: an append in between is seen
@@ -210,13 +236,21 @@ async def _follow(run: _LiveRun) -> AsyncIterator[bytes]:
             if event.get("type") in ("done", "error"):
                 return
             continue
-        await waiter.wait()
+        try:
+            await asyncio.wait_for(waiter.wait(), timeout=_RUN_MAX_SECONDS)
+        except asyncio.TimeoutError:
+            yield _line(_interrupted("The agent run went quiet — try again."))
+            return
 
 
 def _start(log_id: UUID, work: Work) -> _LiveRun:
     """Run `work` as its own task, feeding the run's buffer: a client that
     disconnects mid-run drops its follower, never the staging — the log is
-    claimed and the same id re-attaches (§8.6)."""
+    claimed and the same id re-attaches (§8.6). Every ending appends a
+    terminal event, cancellation included, so no follower waits on a run
+    that is over; a failed run leaves the table and drops its itemless log
+    (as the STT and vision failures do), so the same id runs again rather
+    than replaying the failure — the demo's attempt stands."""
     run = _LiveRun()
     _RUNS[log_id] = run
 
@@ -232,11 +266,18 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
             run.append(AgentErrorEvent(status=e.status_code, detail=detail).model_dump())
         except Exception:
             log.exception("agent stream failed")
-            run.append(
-                AgentErrorEvent(status=500, detail="The agent run failed — try again.").model_dump()
-            )
+            run.append(AgentErrorEvent(status=500, detail="The agent run failed — try again.").model_dump())
+        finally:
+            if not run.finished:  # cancelled, or anything that is not an Exception
+                run.append(_interrupted())
+            if run.events[-1].get("type") == "error":
+                _RUNS.pop(log_id, None)
+                try:
+                    await _drop_empty_log(log_id)
+                except Exception:
+                    log.exception("could not drop the failed run's empty log")
 
-    asyncio.create_task(go())
+    run.task = asyncio.create_task(go())
     return run
 
 

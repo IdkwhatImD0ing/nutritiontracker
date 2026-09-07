@@ -477,10 +477,13 @@ def test_agent_stream_voice_leads_with_the_transcript(monkeypatch):
     _run(scenario())
 
 
-def test_agent_stream_reports_a_failure_as_an_error_event(monkeypatch):
+def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_again(monkeypatch):
     async def scenario():
-        async with isolated_db():
-            _stub_pipeline(monkeypatch)
+        async with isolated_db() as conn:
+            async def decompose(text, ctx):
+                return _parsed(("eggs", 2))
+
+            _stub_pipeline(monkeypatch, decompose=decompose)
 
             class Exploding:
                 @staticmethod
@@ -488,9 +491,54 @@ def test_agent_stream_reports_a_failure_as_an_error_event(monkeypatch):
                     raise RuntimeError("provider down")
 
             monkeypatch.setattr(agent_svc, "Runner", Exploding)
-            resp = await agent_routes.agent_text(LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ))
-            events = await _drain(resp)
+            body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body))
             assert [e["type"] for e in events] == ["error"]
             assert events[0]["status"] == 500 and "provider down" not in events[0]["detail"]
+            # a failed run is not kept for replay, and its itemless log is gone (§8.6):
+            # the same id runs the pipeline again instead of streaming the failure back
+            assert body.id not in agent_routes._RUNS
+            assert await _scalar(conn, "SELECT count(*) FROM logs WHERE id = %s", (body.id,)) == 0
+            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item."))
+            events = await _drain(await agent_routes.agent_text(body))
+            assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
+            assert not events[-1]["replay"] and events[-1]["log"]["items"][0]["phrase"] == "eggs"
+
+    _run(scenario())
+
+
+def test_live_runs_that_hang_or_are_cancelled_still_end(monkeypatch):
+    """A run with no terminal event is presumed dead after _RUN_MAX_SECONDS —
+    its followers get an error instead of waiting forever, and the table
+    forgets it — and a cancelled task closes its stream too."""
+    async def scenario():
+        async with isolated_db():
+            gate = asyncio.Event()
+
+            async def never(emit):
+                await gate.wait()
+                raise AssertionError("unreachable")
+
+            # 1. a follower of a silent run gives up after the deadline
+            monkeypatch.setattr(agent_routes, "_RUN_MAX_SECONDS", 0.2)
+            hung_id = uuid4()
+            run = agent_routes._start(hung_id, never)
+            events = await _drain(agent_routes._stream(agent_routes._follow(run)))
+            assert [e["type"] for e in events] == ["error"] and "went quiet" in events[0]["detail"]
+            # 2. the table closes and forgets a run that is silent past the deadline
+            run.started_at -= 1
+            assert agent_routes.live_run(hung_id) is None
+            assert run.events[-1]["type"] == "error" and hung_id not in agent_routes._RUNS
+            # 3. cancellation appends the terminal event and forgets the run
+            monkeypatch.setattr(agent_routes, "_RUN_MAX_SECONDS", 300.0)
+            cancelled_id = uuid4()
+            run2 = agent_routes._start(cancelled_id, never)
+            await asyncio.sleep(0)  # let go() start waiting
+            run2.task.cancel()
+            await asyncio.gather(run2.task, return_exceptions=True)
+            assert run2.finished and run2.events[-1]["type"] == "error"
+            assert cancelled_id not in agent_routes._RUNS
+            gate.set()
+            await asyncio.sleep(0.05)  # the hung tasks finish inside the transaction
 
     _run(scenario())
