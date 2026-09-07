@@ -418,6 +418,22 @@ async def transcribe_for_log(
     return result.text
 
 
+async def release_claim(log_id: UUID) -> None:
+    """A failed agent run hands its itemless log back for an immediate re-run
+    (§8.6): the claim stamp — `created_at`, which nothing else reads for
+    semantics — is aged past the grace, so the next same-id POST claims the
+    orphan without waiting the 90 s. Unlike _drop_empty_log this keeps the
+    row: a weigh-in the run recorded before failing points at it (FK), and
+    stands. A log with staged rows keeps its claim — the retry replays what
+    landed (BACKLOG 155)."""
+    await db.execute(
+        "UPDATE logs SET created_at = now() - make_interval(secs => %s) "
+        "WHERE id = %s AND status = 'staged' "
+        "AND NOT EXISTS (SELECT 1 FROM item_resolutions WHERE log_id = logs.id)",
+        (_RERUN_GRACE_SECONDS + 1, log_id),
+    )
+
+
 async def create_log_voice(
     audio: Annotated[UploadFile, File()],
     log_id: Annotated[UUID, Form(alias="id")],

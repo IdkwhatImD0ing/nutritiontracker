@@ -495,14 +495,47 @@ def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_aga
             events = await _drain(await agent_routes.agent_text(body))
             assert [e["type"] for e in events] == ["error"]
             assert events[0]["status"] == 500 and "provider down" not in events[0]["detail"]
-            # a failed run is not kept for replay, and its itemless log is gone (§8.6):
-            # the same id runs the pipeline again instead of streaming the failure back
+            # a failed run is not kept for replay, and its claim is released (§8.6):
+            # the row stays, its claim stamp aged past the grace, so the same id runs
+            # the pipeline again at once instead of streaming the failure back
             assert body.id not in agent_routes._RUNS
-            assert await _scalar(conn, "SELECT count(*) FROM logs WHERE id = %s", (body.id,)) == 0
+            assert await _scalar(conn, "SELECT count(*) FROM logs WHERE id = %s", (body.id,)) == 1
+            assert await _scalar(
+                conn, "SELECT created_at < now() - make_interval(secs => %s) FROM logs WHERE id = %s",
+                (logs_routes._RERUN_GRACE_SECONDS, body.id),
+            ) is True
             monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item."))
             events = await _drain(await agent_routes.agent_text(body))
             assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
             assert not events[-1]["replay"] and events[-1]["log"]["items"][0]["phrase"] == "eggs"
+
+            # a run that recorded a weigh-in and then failed: the weigh-in stands (it
+            # points at the log, which is why the row is kept, not dropped) and the
+            # retry still runs again
+            class WeighThenExplode:
+                @staticmethod
+                def run_streamed(agent, agent_input, max_turns):
+                    class S:
+                        final_output = None
+
+                        async def stream_events(self):
+                            await _invoke(agent, "log_weight", weight=180.4, unit="lb")
+                            raise RuntimeError("provider down")
+                            yield  # pragma: no cover
+
+                    return S()
+
+            monkeypatch.setattr(agent_svc, "Runner", WeighThenExplode)
+            body2 = LogCreate(id=uuid4(), text="180.4 pounds and two eggs", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body2))
+            assert [e["type"] for e in events] == ["error"]  # the bare stream yields no SDK items
+            assert await _scalar(conn, "SELECT count(*) FROM weights WHERE log_id = %s", (body2.id,)) == 1
+            monkeypatch.setattr(agent_svc, "Runner", _fake_runner(
+                [("log_food", {"text": "two eggs"}), ("log_weight", {"weight": 180.4, "unit": "lb"})], "Staged 1 item and logged 180.4 lb."))
+            events = await _drain(await agent_routes.agent_text(body2))
+            assert [e["type"] for e in events][-2:] == ["reply", "done"] and not events[-1]["replay"]
+            assert events[-1]["log"]["items"][0]["phrase"] == "eggs" and events[-1]["log"]["agent"]["weight"] is not None
+            assert await _scalar(conn, "SELECT count(*) FROM weights WHERE log_id = %s", (body2.id,)) == 1  # one row a day, replaced
 
     _run(scenario())
 
@@ -538,6 +571,18 @@ def test_live_runs_that_hang_or_are_cancelled_still_end(monkeypatch):
             await asyncio.gather(run2.task, return_exceptions=True)
             assert run2.finished and run2.events[-1]["type"] == "error"
             assert cancelled_id not in agent_routes._RUNS
+            # 4. an evicted run's task is cancelled and cleans up nothing that is no
+            # longer its own: a replacement under the same id keeps its slot
+            raced_id = uuid4()
+            old = agent_routes._start(raced_id, never)
+            await asyncio.sleep(0)
+            old.started_at -= 301
+            assert agent_routes.live_run(raced_id) is None and old.task.cancelling()
+            replacement = agent_routes._start(raced_id, never)
+            await asyncio.gather(old.task, return_exceptions=True)
+            assert old.finished and agent_routes._RUNS[raced_id] is replacement
+            replacement.task.cancel()
+            await asyncio.gather(replacement.task, return_exceptions=True)
             gate.set()
             await asyncio.sleep(0.05)  # the hung tasks finish inside the transaction
 

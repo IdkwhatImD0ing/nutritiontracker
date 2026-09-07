@@ -42,11 +42,11 @@ from routes.logs import (
     CaptureFailureResponse,
     Emit,
     LogCreateResponse,
-    _drop_empty_log,
     _MultipartRoute,
     _run_pipeline,
     claim_text_log,
     claim_voice_log,
+    release_claim,
     transcribe_for_log,
 )
 
@@ -212,11 +212,17 @@ def live_run(log_id: UUID) -> _LiveRun | None:
     now = time.monotonic()
     for key, run in list(_RUNS.items()):
         if run.finished:
-            if now - run.finished_at > _RUN_TTL_SECONDS:
+            # a failed run is never handed out (its own cleanup removes it the
+            # moment it ends; this is the belt to that brace)
+            if now - run.finished_at > _RUN_TTL_SECONDS or run.events[-1].get("type") == "error":
                 del _RUNS[key]
         elif now - run.started_at > _RUN_MAX_SECONDS:
             run.append(_interrupted("The agent run went quiet — try again."))
             del _RUNS[key]
+            if run.task is not None:
+                # a zombie must not keep writing into a log a replacement run
+                # may claim next; its cleanup below sees it no longer owns the slot
+                run.task.cancel()
     return _RUNS.get(log_id)
 
 
@@ -248,9 +254,11 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
     disconnects mid-run drops its follower, never the staging — the log is
     claimed and the same id re-attaches (§8.6). Every ending appends a
     terminal event, cancellation included, so no follower waits on a run
-    that is over; a failed run leaves the table and drops its itemless log
-    (as the STT and vision failures do), so the same id runs again rather
-    than replaying the failure — the demo's attempt stands."""
+    that is over; a failed run leaves the table and releases its claim on
+    the itemless log (routes/logs.release_claim), so the same id runs again
+    at once rather than replaying the failure — the demo's attempt stands.
+    Only the run that still owns its slot cleans up: an evicted run's slot
+    may already belong to a replacement, whose entry and log must stand."""
     run = _LiveRun()
     _RUNS[log_id] = run
 
@@ -270,12 +278,12 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
         finally:
             if not run.finished:  # cancelled, or anything that is not an Exception
                 run.append(_interrupted())
-            if run.events[-1].get("type") == "error":
-                _RUNS.pop(log_id, None)
+            if run.events[-1].get("type") == "error" and _RUNS.get(log_id) is run:
+                del _RUNS[log_id]
                 try:
-                    await _drop_empty_log(log_id)
+                    await release_claim(log_id)
                 except Exception:
-                    log.exception("could not drop the failed run's empty log")
+                    log.exception("could not release the failed run's log")
 
     run.task = asyncio.create_task(go())
     return run
