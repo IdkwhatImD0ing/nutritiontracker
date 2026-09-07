@@ -74,9 +74,14 @@ _MAX_TIER3_ATTEMPTS = 2
 # vision runs (the claim is what answers a replay and records the demo's
 # attempt, so it cannot wait for the transcript), which puts one STT call
 # (services/transcribe: 30s per provider) ahead of decompose. The agent lane
-# (§6.4) adds one short routing run (services/agent, four turns at most)
-# ahead of decompose; the same window covers it.
+# (§6.4) is a different animal — up to ten gpt-5.6-terra turns with web
+# searches ahead of decompose — so its logs get the run ceiling below: a retry
+# that finds no live run to attach to (another instance, BACKLOG 156) must
+# never claim a run that is merely still thinking and start a second one.
 _RERUN_GRACE_SECONDS = 90
+# the agent lane's grace, and routes/agent.py's presumed-dead deadline: the
+# two agree so an orphan is claimed only once no live run can still own it
+_AGENT_RERUN_GRACE_SECONDS = 300
 
 # Multipart upload bounds (Phase-3 panel): a ~10s MediaRecorder clip is tens
 # of KB; 15 MB is a few minutes of any container the client produces. Parts
@@ -342,12 +347,14 @@ async def claim_voice_log(
     captured_at: datetime,
     capture_fallback: bool,
     capture_error: str | None,
+    agent: bool = False,
 ) -> tuple[bytes, str] | LogResponse | CaptureFailureResponse:
     """The voice lane's request checks and §8.6 claim, shared by the plain
     route and the streaming one (routes/agent.py): the audio part validated
     and read, then the claim of the client id — a replay of a stored log or
     capture failure comes back as the response to send; (audio_bytes, mime)
-    means this request runs STT and the pipeline."""
+    means this request runs STT and the pipeline. `agent`: the Agent lane's
+    longer orphan grace (§6.4)."""
     mime = audio.content_type or "application/octet-stream"
     if mime.split(";")[0].strip().lower() not in AUDIO_MIME_ALLOWLIST:
         raise HTTPException(
@@ -376,7 +383,9 @@ async def claim_voice_log(
         failed = await _stored_capture_failure(log_id)
         if failed is not None:
             return failed  # the same outcome again (§5 idempotency), no STT
-        replay = await _duplicate_post_response(log_id)
+        replay = await _duplicate_post_response(
+            log_id, grace=_AGENT_RERUN_GRACE_SECONDS if agent else _RERUN_GRACE_SECONDS
+        )
         if replay is not None:
             return replay
         await quota.check_log()  # this tenant's orphan, claimed for a re-run: the next attempt
@@ -423,18 +432,20 @@ async def transcribe_for_log(
 
 
 async def release_claim(log_id: UUID) -> None:
-    """A failed agent run hands its itemless log back for an immediate re-run
-    (§8.6): the claim stamp — `created_at`, which nothing else reads for
-    semantics — is aged past the grace, so the next same-id POST claims the
-    orphan without waiting the 90 s. Unlike _drop_empty_log this keeps the
-    row: a weigh-in the run recorded before failing points at it (FK), and
-    stands. A log with staged rows keeps its claim — the retry replays what
-    landed (BACKLOG 155)."""
+    """A failed agent run hands its itemless log back for a re-run (§8.6):
+    the claim stamp — `created_at`, which nothing else reads for semantics —
+    is aged past the agent lane's grace, so the next same-id POST claims the
+    orphan without waiting it out. For the owner that is a re-run at once;
+    a demo's attempt stands (the ledger row is not refunded, §8.9), so its
+    retry meets the day's 429 like any spent attempt. Unlike _drop_empty_log
+    this keeps the row: a weigh-in the run recorded before failing points at
+    it (FK), and stands. A log with staged rows keeps its claim — the retry
+    replays what landed (BACKLOG 155)."""
     await db.execute(
         "UPDATE logs SET created_at = now() - make_interval(secs => %s) "
         "WHERE id = %s AND status = 'staged' "
         "AND NOT EXISTS (SELECT 1 FROM item_resolutions WHERE log_id = logs.id)",
-        (_RERUN_GRACE_SECONDS + 1, log_id),
+        (_AGENT_RERUN_GRACE_SECONDS + 1, log_id),
     )
 
 
@@ -451,7 +462,9 @@ async def create_log_voice(
     transcribe_ms stored; empty/near-empty transcript → capture_failure (§5).
     The LogCreate fields ride as form fields minus `text` — the transcript
     supplies it."""
-    claimed = await claim_voice_log(audio, log_id, captured_at, capture_fallback, capture_error)
+    claimed = await claim_voice_log(
+        audio, log_id, captured_at, capture_fallback, capture_error, agent=agent
+    )
     if not isinstance(claimed, tuple):
         return claimed
     audio_bytes, mime = claimed
@@ -583,7 +596,9 @@ async def claim_text_log(body: LogCreate) -> LogResponse | None:
         (body.id, "text", body.text, body.captured_at, body.capture_fallback,
          body.capture_error, None),
     ):
-        replay = await _duplicate_post_response(body.id)
+        replay = await _duplicate_post_response(
+            body.id, grace=_AGENT_RERUN_GRACE_SECONDS if body.agent else _RERUN_GRACE_SECONDS
+        )
         if replay is not None:
             return replay
         # orphaned staged log claimed (earlier attempt died mid-pipeline) →
@@ -808,6 +823,12 @@ async def _run_agent_lane(
     }
     staging = asyncio.Lock()
     history = [t.model_dump(mode="json") for t in (body.history or [])]
+    # the conversation's logs as the database has them now, not as the chat
+    # remembers them (what each turn first staged; a sheet edit, tier 3's
+    # pick or a commit from another device never reaches its copy)
+    for turn in history:
+        if turn.get("log_id"):
+            await _refresh_turn(turn)
     # the logs the conversation names — the only ones a correction may replace
     known_logs = {t["log_id"] for t in history if t.get("log_id")}
 
@@ -966,10 +987,14 @@ async def _run_agent_lane(
         discarded=[UUID(x) for x in result["discarded"]] or None,
     )
     food = result["food"]
-    if run.options and food is None and not result["items"] and result["weight"] is None:
-        # the turn only asked: a demo's one-a-day log attempt goes back, so
-        # the answer (the next turn, a new client id) can claim it (§8.9)
-        await quota.refund_log()
+    if (
+        run.options and food is None and not result["items"]
+        and result["weight"] is None and not result["discarded"]
+    ):
+        # the turn only asked — nothing staged, discarded or weighed: a demo's
+        # one-a-day log attempt goes back so the answer (the next turn, a new
+        # client id) can claim it, a capped number of times a day (§8.9)
+        await quota.refund_question()
     items = sorted(result["items"], key=lambda it: it.item_index)
     if food is None and not items:
         # nothing staged: the row stays an itemless staged log, as the §8.4
@@ -983,6 +1008,30 @@ async def _run_agent_lane(
         note=food.note if food is not None else None,
         agent=outcome,
     )
+
+
+def _item_words(it: StagedItem) -> str:
+    """A staged row as the agent reads it — the food and the amount, never
+    the numbers (the same words the chat's history uses)."""
+    amount = f" — {it.qty:g} × {it.serving.description}" if it.qty is not None and it.serving else ""
+    return f"{it.food.name if it.food else it.phrase}{amount}"
+
+
+async def _refresh_turn(turn: dict) -> None:
+    """A history turn that names a log, brought up to date from the database
+    (§6.4): its status and rows as they are now — a sheet edit, a serving
+    switch, tier 3's pick or a commit from another device never reach the
+    chat's copy — and a log RLS hides is not this tenant's (or is gone), so
+    the turn stops naming it: the conversation cannot make it discardable."""
+    log = await db.fetchone("SELECT status FROM logs WHERE id = %s", (turn["log_id"],))
+    if log is None:
+        turn["log_id"] = None
+        return
+    if log["status"] in ("staged", "committed", "discarded"):
+        turn["state"] = log["status"]
+    current = await _load_log_response(UUID(turn["log_id"]))
+    if current is not None:
+        turn["items"] = [_item_words(it) for it in current.items]
 
 
 async def _save_intent_without_items(name: str) -> tuple[SavedMealNote | None, str | None]:
@@ -1021,7 +1070,9 @@ async def _save_intent_without_items(name: str) -> tuple[SavedMealNote | None, s
     )
 
 
-async def _duplicate_post_response(log_id: UUID) -> LogResponse | None:
+async def _duplicate_post_response(
+    log_id: UUID, *, grace: int = _RERUN_GRACE_SECONDS
+) -> LogResponse | None:
     """Duplicate POST for a log id this request did not insert (§8.6 retries).
 
     Returns the response to send — the stored staging state — or None when
@@ -1029,9 +1080,10 @@ async def _duplicate_post_response(log_id: UUID) -> LogResponse | None:
     request died mid-pipeline) and the caller must re-run the pipeline.
 
     The concurrent same-id race is closed here: while another request
-    plausibly owns the row (it is younger than _RERUN_GRACE_SECONDS), a
-    duplicate never re-runs decompose/resolve — it hands back whatever is
-    persisted (possibly zero items) and the client polls GET for the rest.
+    plausibly owns the row (it is younger than `grace` — the lane's worst
+    case: _RERUN_GRACE_SECONDS, or the agent lane's run ceiling), a duplicate
+    never re-runs decompose/resolve — it hands back whatever is persisted
+    (possibly zero items) and the client polls GET for the rest.
     """
     existing = await _load_log_response(log_id)
     if existing is None:
@@ -1054,7 +1106,7 @@ async def _duplicate_post_response(log_id: UUID) -> LogResponse | None:
         WHERE id = %s AND status = 'staged'
           AND created_at <= now() - make_interval(secs => %s)
         """,
-        (log_id, _RERUN_GRACE_SECONDS),
+        (log_id, grace),
     )
     if claimed == 0:
         return existing  # a concurrent request owns the pipeline; client polls

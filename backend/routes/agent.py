@@ -38,6 +38,7 @@ import db
 from auth import require_user
 from models import AgentTurn, LogCreate, LogResponse
 from routes.logs import (
+    _AGENT_RERUN_GRACE_SECONDS,
     _MULTIPART_OPENAPI,
     CaptureFailureResponse,
     Emit,
@@ -192,13 +193,16 @@ class _LiveRun:
     moment it ends (its followers see the error; the next same-id request
     re-enters the claim and runs again), and one still unfinished after
     _RUN_MAX_SECONDS is presumed dead. `changed` is replaced on every append
-    so each waiter wakes exactly once."""
+    so each waiter wakes exactly once. `owner` is the tenant whose log it is:
+    the table sits in front of the database, so it keeps the database's rule
+    itself — another tenant never sees the run (§8.9)."""
 
     events: list[dict] = field(default_factory=list)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     started_at: float = field(default_factory=time.monotonic)
     finished_at: float | None = None
     task: asyncio.Task | None = None
+    owner: str | None = None
 
     @property
     def finished(self) -> bool:
@@ -215,8 +219,10 @@ class _LiveRun:
 _RUNS: dict[UUID, _LiveRun] = {}
 _RUN_TTL_SECONDS = 600.0  # a finished run stays attachable this long
 # a run with no terminal event after this is presumed dead (Fluid caps an
-# invocation at 120 s; the pipeline's own worst case is the §8.6 grace, 90 s)
-_RUN_MAX_SECONDS = 300.0
+# invocation at 120 s). The same span is the agent lane's §8.6 orphan grace
+# (routes/logs), so a retry on another instance claims a run's log only once
+# no live run can still own it.
+_RUN_MAX_SECONDS = float(_AGENT_RERUN_GRACE_SECONDS)
 
 
 def _interrupted(detail: str = "The agent run was interrupted — try again.") -> dict:
@@ -229,7 +235,9 @@ def live_run(log_id: UUID) -> _LiveRun | None:
     and a run still unfinished past _RUN_MAX_SECONDS is closed with an error
     (its followers end; the database state stands and the §8.6 orphan claim
     takes over) and dropped too. Another instance's run is invisible
-    (BACKLOG 156): that retry gets the stored replay."""
+    (BACKLOG 156): that retry gets the stored replay — and so is another
+    tenant's run on this one: the request falls through to the claim, whose
+    answer for a foreign id is the 404 (§8.9)."""
     now = time.monotonic()
     for key, run in list(_RUNS.items()):
         if run.finished:
@@ -244,7 +252,10 @@ def live_run(log_id: UUID) -> _LiveRun | None:
                 # a zombie must not keep writing into a log a replacement run
                 # may claim next; its cleanup below sees it no longer owns the slot
                 run.task.cancel()
-    return _RUNS.get(log_id)
+    run = _RUNS.get(log_id)
+    if run is not None and run.owner != db.current_user_id.get():
+        return None
+    return run
 
 
 async def _follow(run: _LiveRun) -> AsyncIterator[bytes]:
@@ -276,11 +287,12 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
     claimed and the same id re-attaches (§8.6). Every ending appends a
     terminal event, cancellation included, so no follower waits on a run
     that is over; a failed run leaves the table and releases its claim on
-    the itemless log (routes/logs.release_claim), so the same id runs again
-    at once rather than replaying the failure — the demo's attempt stands.
-    Only the run that still owns its slot cleans up: an evicted run's slot
-    may already belong to a replacement, whose entry and log must stand."""
-    run = _LiveRun()
+    the itemless log (routes/logs.release_claim), so the owner's same id
+    runs again at once rather than replaying the failure — a demo's attempt
+    stands (§8.9), so its retry is the day's 429. Only the run that still
+    owns its slot cleans up: an evicted run's slot may already belong to a
+    replacement, whose entry and log must stand."""
+    run = _LiveRun(owner=db.current_user_id.get())
     _RUNS[log_id] = run
 
     async def emit(event: dict) -> None:
@@ -349,7 +361,9 @@ async def agent_voice(
     live = live_run(log_id)
     if live is not None:
         return _stream(_follow(live))
-    claimed = await claim_voice_log(audio, log_id, captured_at, capture_fallback, capture_error)
+    claimed = await claim_voice_log(
+        audio, log_id, captured_at, capture_fallback, capture_error, agent=True
+    )
     if not isinstance(claimed, tuple):
         return _stream(_replay(log_id, claimed, with_text=True))
     audio_bytes, mime = claimed

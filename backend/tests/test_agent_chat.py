@@ -52,12 +52,14 @@ from openai.types.responses.response_function_web_search import (  # noqa: E402
     ActionSearchSource,
 )
 
+import db  # noqa: E402
 from models import CommitRequest, LogCreate  # noqa: E402
 from routes import agent as agent_routes  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
 from routes.photo import ConfirmEstimateRequest, confirm_estimate  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
+from services import quota  # noqa: E402
 from test_agent import NOW, TZ, _deps, _fake_runner, _invoke, _parsed  # noqa: E402
 from test_tenancy import (  # noqa: E402
     _become,
@@ -120,6 +122,12 @@ def test_log_estimate_tool_runs_once_and_refuses_bad_amounts_in_code():
         assert state2["estimate_calls"] == 0
         out = await _invoke(agent2, "log_estimate", items=[], basis=BASIS)
         assert out["error"] == "empty" and state2["estimate_calls"] == 0
+        # a count of pieces without its weight is refused too: on a food whose only
+        # serving is 100 g it would have staged as pieces × 100 g (50 shrimp → 5 kg)
+        out = await _invoke(agent2, "log_estimate",
+                            items=[{**SHRIMP, "qty": 50, "unit": None, "grams": None}], basis=BASIS)
+        assert out["error"] == "missing_grams" and "shrimp" in out["message"]
+        assert state2["estimate_calls"] == 0
 
         # the spoken meal / time words ride through, verbatim (§7.2)
         deps3 = _deps()
@@ -288,7 +296,10 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
             assert resp.agent is not None and resp.agent.discarded == [first.log_id]
             assert await _scalar(conn, "SELECT status FROM logs WHERE id = %s", (first.log_id,)) == "discarded"
             assert [it.phrase for it in resp.items] == ["eggs"]
-            assert f"Log {first.log_id} (staged): egg — 2 × 1 large" in runner.input
+            # the log's rows and status come from the database, not from the chat's copy
+            # (the row is still a searching phrase there — the chat's "1 large" is not)
+            assert f"Log {first.log_id} (staged): eggs" in runner.input
+            assert "1 large" not in runner.input
             assert 'They said: "two eggs"' in runner.input
 
             # only a log the conversation names, and only while it is still staged
@@ -317,6 +328,22 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
             resp2 = await logs_routes.create_log(
                 LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ, agent=True, history=history))
             assert resp2.agent is not None and resp2.agent.discarded is None
+
+            # a card that still says staged reports what the database says (discarded);
+            # a log this tenant cannot see — another's, or invented — is not named at all,
+            # so the conversation cannot make it discardable
+            stale = [
+                AgentTurn(role="agent", text="staged 1 item", log_id=first.log_id,
+                          items=["egg — 2 × 1 large"], state="staged"),
+                AgentTurn(role="agent", text="staged 1 item", log_id=uuid4(),
+                          items=["ghost — 1 × 1 piece"], state="staged"),
+            ]
+            runner3 = _fake_runner([], "Nothing to change.")
+            monkeypatch.setattr(agent_svc, "Runner", runner3)
+            await logs_routes.create_log(
+                LogCreate(id=uuid4(), text="hello again", captured_at=NOW, tz=TZ, agent=True, history=stale))
+            assert f"Log {first.log_id} (discarded): eggs" in runner3.input
+            assert "ghost" not in runner3.input and runner3.input.count("- Log ") == 1
 
     _run(scenario())
 
@@ -353,8 +380,10 @@ def test_a_question_turn_gives_a_demo_its_daily_log_attempt_back(monkeypatch):
             monkeypatch.setattr(agent_svc, "Runner", Asking)
             first = await logs_routes.create_log(_log("costco shrimp"))
             assert first.items == [] and first.agent.options == ["The big tray", "The small tray"]
-            # the attempt the claim recorded is gone again
+            # the attempt the claim recorded is handed back: the day's 'log' row is
+            # now a 'question' row, which the one-a-day index does not count
             assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'log'") == 0
+            assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'question'") == 1
 
             # the answer claims the day's attempt and stages
             monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged."))
@@ -366,6 +395,20 @@ def test_a_question_turn_gives_a_demo_its_daily_log_attempt_back(monkeypatch):
             # and that one is not refunded: it staged something
             with pytest.raises(HTTPException) as ei:
                 await logs_routes.create_log(_log("more eggs"))
+            assert ei.value.status_code == 429
+
+        # the cap: past DEMO_QUESTION_LIMIT questions a day the attempt stands, so
+        # ask → answer → ask is not unbounded model spend
+        async with isolated_db() as conn:
+            await _become(conn, "demo-asker-2")
+            monkeypatch.setattr(quota, "DEMO_QUESTION_LIMIT", 1)
+            monkeypatch.setattr(agent_svc, "Runner", Asking)
+            await logs_routes.create_log(_log("costco shrimp"))  # handed back: the one question
+            await logs_routes.create_log(_log("costco shrimp, again"))  # the cap: the row stays 'log'
+            assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'question'") == 1
+            assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'log'") == 1
+            with pytest.raises(HTTPException) as ei:
+                await logs_routes.create_log(_log("The big tray"))
             assert ei.value.status_code == 429
 
     _run(scenario())
@@ -697,6 +740,74 @@ def test_agent_stream_voice_leads_with_the_transcript(monkeypatch):
     _run(scenario())
 
 
+def test_a_live_run_is_its_tenants_alone(monkeypatch):
+    """The in-process table sits in front of the database, so it keeps the
+    database's rule itself (§8.9): another tenant sending the same log id
+    gets what a foreign id gets from the claim — a 404 — never the stream."""
+    async def scenario():
+        async with isolated_db() as conn:
+            async def decompose(text, ctx):
+                return _parsed(("eggs", 2))
+
+            _stub_pipeline(monkeypatch, decompose=decompose)
+            runner = _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item.")
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body))
+            assert events[-1]["type"] == "done"
+            me = db.current_user_id.get()
+            assert agent_routes._RUNS[body.id].owner == me
+
+            # the run is finished and attachable — for its owner
+            await _become(conn, "someone-else")
+            assert agent_routes.live_run(body.id) is None and body.id in agent_routes._RUNS
+            with pytest.raises(HTTPException) as ei:
+                await agent_routes.agent_text(body)
+            assert ei.value.status_code == 404 and runner.calls == 1
+
+            await _become(conn, me, is_owner=True)
+            again = await _drain(await agent_routes.agent_text(body))
+            assert again == events and runner.calls == 1
+
+    _run(scenario())
+
+
+def test_a_run_that_fails_after_staging_completes_on_the_staged_rows(monkeypatch):
+    """A model failure after log_food staged rows (a final output that did
+    not parse, a provider error on a later turn) must not read as nothing
+    logged: the rows are in the database, so the run completes on them with
+    the code-built reply and the stream ends in `done`, not `error`."""
+    async def scenario():
+        async with isolated_db():
+            async def decompose(text, ctx):
+                return _parsed(("eggs", 2))
+
+            _stub_pipeline(monkeypatch, decompose=decompose)
+
+            class StageThenExplode:
+                @staticmethod
+                def run_streamed(agent, agent_input, max_turns):
+                    class S:
+                        final_output = None
+
+                        async def stream_events(self):
+                            await _invoke(agent, "log_food", text="two eggs")
+                            raise RuntimeError("the final output did not parse")
+                            yield  # pragma: no cover
+
+                    return S()
+
+            monkeypatch.setattr(agent_svc, "Runner", StageThenExplode)
+            body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body))
+            assert [e["type"] for e in events] == ["reply", "done"]  # the bare stream yields no SDK items
+            assert events[0]["text"] == "I staged what you ate — check the list."
+            assert [it["phrase"] for it in events[1]["log"]["items"]] == ["eggs"]
+            assert events[1]["log"]["agent"]["reply"] == events[0]["text"]
+
+    _run(scenario())
+
+
 def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_again(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
@@ -722,7 +833,7 @@ def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_aga
             assert await _scalar(conn, "SELECT count(*) FROM logs WHERE id = %s", (body.id,)) == 1
             assert await _scalar(
                 conn, "SELECT created_at < now() - make_interval(secs => %s) FROM logs WHERE id = %s",
-                (logs_routes._RERUN_GRACE_SECONDS, body.id),
+                (logs_routes._AGENT_RERUN_GRACE_SECONDS, body.id),
             ) is True
             monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item."))
             events = await _drain(await agent_routes.agent_text(body))

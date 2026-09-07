@@ -135,8 +135,12 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   result: string | null;
 } {
   const a = m.args;
-  const out = (m.output ?? null) as Record<string, unknown> | null;
-  const err = out && typeof out === "object" && "error" in out ? str(out.error) : null;
+  const out =
+    m.output && typeof m.output === "object" ? (m.output as Record<string, unknown>) : null;
+  // a tool that answered an error object — or that raised: the SDK then hands
+  // the model a plain sentence, not JSON, and the line must not read as done
+  const raised = typeof m.output === "string";
+  const err = out && "error" in out ? str(out.error) : raised ? (m.output as string) : null;
   let doing: string;
   let ok: string; // the result line when the tool answered without an error
   switch (m.name) {
@@ -177,6 +181,7 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   }
   if (!m.done) return { doing, result: null };
   if (err === "interrupted") return { doing, result: "Interrupted — the run ended before this finished" };
+  if (raised) return { doing, result: "Didn't go through" };
   if (err) return { doing, result: `Didn't go through (${err})` };
   return { doing, result: ok };
 }
@@ -400,7 +405,12 @@ export default function AgentChat({
                             type="button"
                             className="chip"
                             disabled={busy}
-                            onClick={() => void onSubmit(opt)}
+                            onClick={() => {
+                              // the tap is the answer: a recording in progress
+                              // is dropped, not left running under the turn
+                              if (recording) cancel();
+                              void onSubmit(opt);
+                            }}
                           >
                             {opt}
                           </button>

@@ -98,14 +98,19 @@ FROM foods f
 WHERE f.id = %s AND f.source <> 'estimate'
 """
 
-# Words that denote a measure rather than a countable household unit (§7.3).
+# Words that denote a measure rather than a countable household unit (§7.3) —
+# including the dimensions, labels and provider unit codes a serving text may
+# lead with ("6 inch sub", "100 calorie pack", "8 FLOZ"), whose leading number
+# is not a piece count either.
 _MEASURE_WORDS = frozenset(
     {
-        "g", "gram", "grams", "kg", "kilogram", "kilograms",
-        "ml", "milliliter", "milliliters", "millilitre", "millilitres", "l", "liter", "litre",
-        "oz", "ounce", "ounces", "fl", "lb", "lbs", "pound", "pounds",
+        "g", "gram", "grams", "grm", "kg", "kilogram", "kilograms", "mg", "milligram", "milligrams",
+        "ml", "milliliter", "milliliters", "millilitre", "millilitres", "mlt",
+        "l", "liter", "liters", "litre", "litres",
+        "oz", "ounce", "ounces", "oza", "fl", "floz", "lb", "lbs", "pound", "pounds",
         "cup", "cups", "tbsp", "tablespoon", "tablespoons", "tsp", "teaspoon", "teaspoons",
         "serving", "servings", "portion", "portions",
+        "inch", "inches", "cm", "mm", "calorie", "calories", "cal", "kcal", "percent",
     }
 )
 
@@ -156,9 +161,10 @@ _LEADING_PIECES_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s+([a-z]+)")
 
 def _pieces_per(description: str) -> float:
     """How many pieces one count-type serving holds: the leading number of
-    its description when the word after it is not a measure ("4 large" → 4,
-    "2 slices" → 2, "1 large" → 1, "large" → 1; "12 fl oz can" → 1, the 12
-    measures ounces, not cans). A spoken count of pieces is divided by it —
+    its description when the word after it is not a measure, a dimension or
+    a label ("4 large" → 4, "2 slices" → 2, "1 large" → 1, "large" → 1;
+    "12 fl oz can" → 1, the 12 measures ounces, not cans; "6 inch sub" → 1,
+    "100 calorie pack" → 1). A spoken count of pieces is divided by it —
     FDC's cooked shrimp serving is "4 large", so 50 shrimp are 12.5 servings,
     not 50 (BACKLOG 151; Bill, 2026-09-06: never assume a one-piece serving)."""
     m = _LEADING_PIECES_RE.match((description or "").lower())
@@ -166,6 +172,18 @@ def _pieces_per(description: str) -> float:
         return 1.0
     n = float(m.group(1))
     return n if n > 0 else 1.0
+
+
+def _units_per(description: str, stem: str) -> float:
+    """How many of the SPOKEN unit one serving holds, for the unit-word match:
+    when the word after the leading number is that unit itself — measure or
+    not — the number counts it ("1 tbsp" of a "2 tbsp (32 g)" serving is half
+    a serving, "1 cup" of "2 cups (85 g)" too); otherwise the serving's piece
+    count ("two scoops" of "2 scoops (64 g)" → 2, "1 can" of "12 fl oz can" → 1)."""
+    m = _LEADING_PIECES_RE.match((description or "").lower())
+    if m and _unit_stem(m.group(2)) == stem and float(m.group(1)) > 0:
+        return float(m.group(1))
+    return _pieces_per(description)
 
 
 def _is_count_serving(description: str) -> bool:
@@ -302,12 +320,14 @@ async def resolve_portion(
                     return base["serving_id"], round(grams / float(base["grams"]), 4), False
                 return default_id, qty, True  # no gram-based serving to map onto
             # fuzzy: unit word appears in a serving description — divided by
-            # the pieces that serving holds ("two scoops" of a "2 scoops" serving
-            # is one serving, §7.3)
+            # how many of that unit the serving holds ("two scoops" of a "2
+            # scoops" serving, "1 tbsp" of a "2 tbsp" serving: §7.3, never a
+            # one-unit assumption)
             for s in servings:
-                tokens = re.findall(r"[a-z]+", s.get("description", "").lower())
+                desc = s.get("description", "")
+                tokens = re.findall(r"[a-z]+", desc.lower())
                 if stem in tokens or stem + "s" in tokens:
-                    return s["serving_id"], qty / _pieces_per(s.get("description", "")), False
+                    return s["serving_id"], qty / _units_per(desc, stem), False
             return default_id, qty, True  # unit didn't map — verify me
         # qty + no unit ("two eggs", "50 shrimp"): prefer a count-type
         # household serving, divided by the pieces it holds ("4 large")

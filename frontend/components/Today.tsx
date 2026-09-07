@@ -37,8 +37,10 @@ const UNDO_MS = 6_000;
  *  真 retry-on-open — commit-item is idempotent, so a replayed item is safe. */
 const PENDING_KEY = "usual.pending.v1";
 /** §6.4: the Agent chat survives a reload on this device (the last turns; the
- *  logs themselves are on the server). */
-const CHAT_KEY = "tally.chat.v1";
+ *  logs themselves are on the server) — under the account's own key, so the
+ *  next person to sign in on a shared browser neither reads the last one's
+ *  chat nor sends its log ids as their history. */
+const chatKey = (email: string) => `tally.chat.v1:${email}`;
 const CHAT_MAX = 60;
 
 type PendingState = { logId: string; items: StagedItem[] };
@@ -100,9 +102,12 @@ export default function Today() {
   // render it first saves in, or the mount's empty array overwrites storage
   // (and a Strict Mode remount then loads that emptiness back)
   const [chatLoaded, setChatLoaded] = useState(false);
+  // the account is known once /api/me answers; the chat loads, and saves, only then
+  const who = me?.email ?? null;
   useEffect(() => {
+    if (!who || chatLoaded) return;
     try {
-      const raw = localStorage.getItem(CHAT_KEY);
+      const raw = localStorage.getItem(chatKey(who));
       if (raw) {
         const saved = JSON.parse(raw) as ChatMessage[];
         // a reload mid-run: nothing is still running, nothing still transcribing
@@ -122,16 +127,24 @@ export default function Today() {
       /* storage unavailable or unreadable — start empty */
     }
     setChatLoaded(true);
-  }, []);
+  }, [who, chatLoaded]);
   useEffect(() => {
-    if (!chatLoaded) return;
+    if (!chatLoaded || !who) return;
     try {
-      localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-CHAT_MAX)));
+      localStorage.setItem(chatKey(who), JSON.stringify(chat.slice(-CHAT_MAX)));
     } catch {
       /* storage unavailable — the chat still lives for this page session */
     }
-  }, [chat, chatLoaded]);
+  }, [chat, chatLoaded, who]);
   const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
+  // a retry of the same turn (§8.6): its bubble stays — put back if the failed
+  // attempt dropped it — and the failure note under it goes; the stream the
+  // retry re-attaches to then settles the very lines the first attempt showed
+  const resumeTurn = (userId: string, bubble: ChatMessage) =>
+    setChat((cur) => {
+      const at = cur.findIndex((m) => m.id === userId);
+      return at < 0 ? [...cur, bubble] : cur.filter((m, i) => !(i > at && m.kind === "error"));
+    });
   const patchChat = (id: string, patch: Partial<ChatMessage>) =>
     setChat((cur) =>
       cur.map((m) => (m.id === id ? ({ ...m, ...patch } as ChatMessage) : m)),
@@ -198,11 +211,11 @@ export default function Today() {
   const [weightsKey, setWeightsKey] = useState(0);
   // One client uuid per log (§5 idempotent upsert): a retry of the same text
   // reuses the id so a double-submit can't create two logs.
-  const pendingRef = useRef<{ id: string; text: string } | null>(null);
+  const pendingRef = useRef<{ id: string; text: string; userId: string } | null>(null);
   // Voice twin of pendingRef: one uuid per capture attempt, keyed by the
   // clip's capture start, so a retried upload of the same clip reuses the
   // id (§5 idempotent upsert) instead of minting a fresh one per attempt.
-  const audioRef = useRef<{ id: string; capturedAt: string } | null>(null);
+  const audioRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
   // §8.1d/§13: a failed voice capture is reported on the NEXT text log as
   // capture_fallback + capture_error — the §9 voice-viability counter.
   const voiceFailRef = useRef<string | null>(null);
@@ -387,13 +400,15 @@ export default function Today() {
         patchChat(userId, { text: ev.text, pending: false });
         return;
       case "tool_call":
-        pushChat({
-          kind: "tool",
-          id: ev.id,
-          name: ev.name,
-          args: ev.args,
-          done: false,
-        });
+        // a re-attached stream (§8.6) replays the lines the first attempt
+        // already showed: the same call id is the same line, running again
+        setChat((cur) =>
+          cur.some((m) => m.kind === "tool" && m.id === ev.id)
+            ? cur.map((m) =>
+                m.kind === "tool" && m.id === ev.id ? { ...m, done: false, output: undefined } : m,
+              )
+            : [...cur, { kind: "tool", id: ev.id, name: ev.name, args: ev.args, done: false }],
+        );
         return;
       case "tool_result":
         // a live web search put its line up before the query was known; the
@@ -409,14 +424,19 @@ export default function Today() {
           }),
         );
         return;
-      case "reply":
-        pushChat({
-          kind: "agent",
-          id: crypto.randomUUID(),
-          text: ev.text,
-          options: ev.options?.length ? ev.options : undefined,
+      case "reply": {
+        const options = ev.options?.length ? ev.options : undefined;
+        setChat((cur) => {
+          // a re-attached stream replays the reply this turn already has: the
+          // bubble stays (with its chips back, if the retry had closed them)
+          const at = cur.findIndex((m) => m.id === userId);
+          const shown =
+            at < 0 ? -1 : cur.findIndex((m, i) => i > at && m.kind === "agent" && m.text === ev.text);
+          if (shown >= 0) return cur.map((m, i) => (i === shown ? ({ ...m, options } as ChatMessage) : m));
+          return [...cur, { kind: "agent", id: crypto.randomUUID(), text: ev.text, options }];
         });
         return;
+      }
       default:
         return; // `done` is the promise's result; `error` rejects it
     }
@@ -447,7 +467,7 @@ export default function Today() {
         id: crypto.randomUUID(),
         text: log.items.length
           ? "That one had already gone through — here is what it staged."
-          : "That one had already gone through earlier; there is nothing more to stage from it.",
+          : "That one reached the server earlier, but its answer did not make it back here — if it asked you something, say it again.",
       });
     }
     if (log.saved_meal || log.note) {
@@ -469,16 +489,15 @@ export default function Today() {
     setCaptureBusy(true);
     setCaptureError(null);
     const justDiscarded = flushDiscard(); // a new capture settles any still-undoable discard
-    const pendingLog =
-      pendingRef.current?.text === text
-        ? pendingRef.current
-        : { id: crypto.randomUUID(), text };
+    const retry = pendingRef.current?.text === text ? pendingRef.current : null;
+    const pendingLog = retry ?? { id: crypto.randomUUID(), text, userId: crypto.randomUUID() };
     pendingRef.current = pendingLog;
     t0Ref.current = performance.now();
     const history = chatHistory(justDiscarded);
     closeQuestions();
-    const userId = crypto.randomUUID();
-    pushChat({ kind: "user", id: userId, text });
+    const userId = pendingLog.userId;
+    if (retry) resumeTurn(userId, { kind: "user", id: userId, text });
+    else pushChat({ kind: "user", id: userId, text });
     try {
       const { log, replay } = await streamAgent(
         {
@@ -529,15 +548,15 @@ export default function Today() {
     // worked) so it is counted once, here — not stamped as a "fallback" on
     // some unrelated text log an hour later.
     const priorFailure = voiceFailRef.current;
+    const retry = audioRef.current?.capturedAt === clip.capturedAt ? audioRef.current : null;
     const attempt =
-      audioRef.current?.capturedAt === clip.capturedAt
-        ? audioRef.current
-        : { id: crypto.randomUUID(), capturedAt: clip.capturedAt };
+      retry ?? { id: crypto.randomUUID(), capturedAt: clip.capturedAt, userId: crypto.randomUUID() };
     audioRef.current = attempt;
     const history = chatHistory(justDiscarded);
     closeQuestions();
-    const userId = crypto.randomUUID();
-    pushChat({ kind: "user", id: userId, text: "", pending: true });
+    const userId = attempt.userId;
+    if (retry) resumeTurn(userId, { kind: "user", id: userId, text: "", pending: true });
+    else pushChat({ kind: "user", id: userId, text: "", pending: true });
     try {
       const { log, replay } = await streamAgent(
         {
@@ -797,7 +816,12 @@ export default function Today() {
             setSavedNote(null);
             setStaging({ log, restore: null });
           }}
-          onClose={() => setLane(null)}
+          // Escape reaches every window listener: while the staging sheet (or
+          // one of its sub-sheets) is stacked above the chat it is theirs — the
+          // chat stays, as designed
+          onClose={() => {
+            if (!staging) setLane(null);
+          }}
         />
       ) : null}
 

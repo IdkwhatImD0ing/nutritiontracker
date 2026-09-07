@@ -597,6 +597,28 @@ def test_portion_spoken_qty_and_count_without_unit():
         assert cascade._pieces_per("1 bottle (414 ml)") == 1.0
         assert cascade._pieces_per("large") == 1.0
         assert cascade._pieces_per("") == 1.0
+        # a leading dimension, label or provider unit code is not a piece count either
+        for desc in ("6 inch sub", "8 inch tortilla (49 g)", "12 inch pizza", "100 calorie pack (21 g)",
+                     "8 FLOZ (240 ml)", "8 OZA", "2 LITERS (2000 ml)"):
+            assert cascade._pieces_per(desc) == 1.0, desc
+
+        # the unit-word match divides by how many of the SPOKEN unit the serving holds —
+        # a measure word too: "1 tbsp" of a "2 tbsp (32 g)" serving is half of it
+        assert cascade._units_per("2 tbsp (32 g)", "tbsp") == 2.0
+        assert cascade._units_per("2 cups (85 g)", "cup") == 2.0
+        assert cascade._units_per("2 scoops (64 g)", "scoop") == 2.0
+        assert cascade._units_per("12 fl oz can", "can") == 1.0
+        peanut_butter = {
+            **egg,
+            "servings": [
+                HUNDRED_G,
+                {"serving_id": "srv-2tbsp", "description": "2 tbsp (32 g)", "grams": 32,
+                 "macros": {"kcal": 190, "protein_g": 7, "carb_g": 8, "fat_g": 16}},
+            ],
+            "food_default_serving_id": "srv-2tbsp",
+        }
+        sid, qty, verify = await cascade.resolve_portion(peanut_butter, 1, "tbsp")
+        assert (sid, qty, verify) == ("srv-2tbsp", 0.5, False)
 
         # qty + no unit but ONLY mass servings → never silently multiplied: verify-me
         mass_only = {

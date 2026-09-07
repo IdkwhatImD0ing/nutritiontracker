@@ -31,6 +31,7 @@ this used to be ran on luna (§8.10). Escalation is one constant, as before.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable, Literal
@@ -38,6 +39,8 @@ from typing import Any, Awaitable, Callable, Literal
 from agents import Agent, MaxTurnsExceeded, ModelSettings, Runner, WebSearchTool, function_tool
 from agents.items import ToolCallItem, ToolCallOutputItem
 from pydantic import BaseModel
+
+log = logging.getLogger(__name__)
 
 MODEL = "gpt-5.6-terra"  # pinned tier id — never the bare gpt-5.6 alias (§6)
 MAX_TURNS = 10  # a search or two, up to three logging tools, the answer
@@ -281,6 +284,16 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
                 "error": "invalid_qty",
                 "message": f"every amount must be above zero: {bad}",
             })
+        # a count without its weight would be sized as pieces × the food's
+        # mass default when the food has no count-type serving (50 shrimp ×
+        # 100 g): refused here, before anything is staged
+        uncounted = [it.phrase for it in items if it.unit is None and not (it.grams and it.grams > 0)]
+        if uncounted:
+            return json.dumps({
+                "error": "missing_grams",
+                "message": "a count of pieces needs its total weight in `grams` "
+                           f"(pieces × a typical piece weight): {uncounted}",
+            })
         items = items[:MAX_ESTIMATE_ITEMS]
         state["estimate_calls"] += 1
         try:
@@ -490,6 +503,16 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
     except MaxTurnsExceeded:
         # the tools' effects stand; the reply is built from them
         max_turns_hit = True
+        reply = _fallback_reply(state)
+        options = None
+    except Exception:
+        if not (state["food_calls"] or state["estimate_calls"]):
+            raise  # nothing staged: the route reports the failure and frees the claim
+        # the model failed after its tools staged rows (a final output that
+        # did not parse, a provider error on a later turn): the rows are in
+        # the database and must be shown, so the run completes on them —
+        # an error here would tell the user nothing was logged
+        log.exception("agent run failed after staging; completing on the staged rows")
         reply = _fallback_reply(state)
         options = None
     if emit is not None:
