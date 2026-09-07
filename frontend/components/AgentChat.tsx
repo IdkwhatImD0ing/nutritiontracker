@@ -126,7 +126,8 @@ function host(url: string): string {
 
 /** A tool line in words: what the agent is doing, then what came back. The
  *  raw call and result stay one tap away under it (the point of the window
- *  is seeing the work). */
+ *  is seeing the work). A run that ended before the tool answered leaves the
+ *  line settled as interrupted, never spinning. */
 function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   doing: string;
   result: string | null;
@@ -134,6 +135,8 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   const a = m.args;
   const out = (m.output ?? null) as Record<string, unknown> | null;
   const err = out && typeof out === "object" && "error" in out ? str(out.error) : null;
+  let doing: string;
+  let ok: string; // the result line when the tool answered without an error
   switch (m.name) {
     case "web_search": {
       const sources = out && Array.isArray(out.sources) ? (out.sources as string[]) : [];
@@ -141,23 +144,15 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       const hosts = [...new Set(sources.map(host))];
       const shown = hosts.slice(0, 5).join(", ");
       const more = hosts.length > 5 ? ` +${hosts.length - 5} more` : "";
-      return {
-        doing: `Searching the web: “${str(a.query)}”`,
-        result: !m.done ? null : hosts.length ? `Read ${shown}${more}` : "Done",
-      };
+      doing = `Searching the web: “${str(a.query)}”`;
+      ok = hosts.length ? `Read ${shown}${more}` : "Done";
+      break;
     }
     case "log_food": {
       const n = out ? count(out.items) : null;
-      return {
-        doing: `Looking up “${str(a.text)}”`,
-        result: !m.done
-          ? null
-          : err
-            ? `Couldn't stage that (${err})`
-            : n === 0
-              ? "Nothing to stage"
-              : `Staged ${n} item${n === 1 ? "" : "s"}`,
-      };
+      doing = `Looking up “${str(a.text)}”`;
+      ok = n == null ? "Done" : n === 0 ? "Nothing to stage" : `Staged ${n} item${n === 1 ? "" : "s"}`;
+      break;
     }
     case "log_estimate": {
       const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
@@ -165,23 +160,22 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
         (it) => `${str(it.qty)}${it.unit ? ` ${str(it.unit)}` : ""} ${str(it.phrase)}`,
       );
       const n = out ? count(out.items) : null;
-      return {
-        doing: `Estimating: ${parts.join(", ")}`,
-        result: !m.done
-          ? null
-          : err
-            ? `Couldn't stage that (${err})`
-            : `Staged ${n ?? items.length} estimated row${n === 1 ? "" : "s"} — confirm them in the list`,
-      };
+      doing = `Estimating: ${parts.join(", ")}`;
+      ok = `Staged ${n ?? items.length} estimated row${n === 1 ? "" : "s"} — confirm them in the list`;
+      break;
     }
     case "log_weight":
-      return {
-        doing: `Logging weight: ${str(a.weight)} ${str(a.unit)}`,
-        result: !m.done ? null : err ? `Not saved (${err})` : "Saved",
-      };
+      doing = `Logging weight: ${str(a.weight)} ${str(a.unit)}`;
+      ok = "Saved";
+      break;
     default:
-      return { doing: m.name, result: m.done ? "Done" : null };
+      doing = m.name;
+      ok = "Done";
   }
+  if (!m.done) return { doing, result: null };
+  if (err === "interrupted") return { doing, result: "Interrupted — the run ended before this finished" };
+  if (err) return { doing, result: `Didn't go through (${err})` };
+  return { doing, result: ok };
 }
 
 function ToolLine({ m }: { m: Extract<ChatMessage, { kind: "tool" }> }) {

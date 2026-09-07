@@ -13,8 +13,11 @@ transaction (isolated_db) against the live database.
    "portion" with the note, after log_food's rows (item indexes never
    collide); a flagged row commits only once confirmed and learns no alias.
 3. routes/agent: POST /api/agent streams tool_call → tool_result → reply →
-   done as NDJSON; the voice variant leads with the transcript; the same-id
-   replay is a single done; a failure inside the stream is an error event.
+   done as NDJSON; the voice variant leads with the transcript; a same-id
+   retry re-attaches to the live run's stream (nothing runs twice), and once
+   the run has aged out it gets the stored state as one done marked replay
+   (the voice replay leads with the transcript the row kept); a failure
+   inside the stream is an error event.
 
 Run:  cd backend && uv run --with pytest pytest tests/test_agent_chat.py -q
 """
@@ -372,12 +375,51 @@ def test_agent_stream_orders_tool_events_reply_and_done(monkeypatch):
             assert [(it["phrase"], it["qty"]) for it in done["items"]] == [("eggs", 2.0)]
             assert await _scalar(conn, "SELECT count(*) FROM item_resolutions WHERE log_id = %s", (body.id,)) == 1
 
-            # the same id again: the stored staging state as one `done`, no second run
+            # the same id again while the run is fresh in this process: the whole
+            # stream again — transcript-less here, tool lines, reply, done — no second run
             resp2 = await agent_routes.agent_text(body)
             events2 = await _drain(resp2)
-            assert [e["type"] for e in events2] == ["done"]
-            assert [it["phrase"] for it in events2[0]["log"]["items"]] == ["eggs"]
+            assert events2 == events and not events2[-1].get("replay")
             assert runner.calls == 1
+
+            # once the run has aged out of the table (another instance, or later):
+            # the stored staging state as one `done`, marked a replay — still no run
+            agent_routes._RUNS[body.id].finished_at -= agent_routes._RUN_TTL_SECONDS + 1
+            resp3 = await agent_routes.agent_text(body)
+            events3 = await _drain(resp3)
+            assert [e["type"] for e in events3] == ["done"] and events3[0]["replay"] is True
+            assert [it["phrase"] for it in events3[0]["log"]["items"]] == ["eggs"]
+            assert runner.calls == 1 and body.id not in agent_routes._RUNS
+
+    _run(scenario())
+
+
+def test_agent_stream_retry_attaches_to_the_live_run(monkeypatch):
+    """A phone that lost the response mid-run sends the same id again (§8.6):
+    while the run is live it follows the same stream — the events it missed,
+    then the rest as they happen — and nothing runs twice."""
+    async def scenario():
+        async with isolated_db():
+            async def decompose(text, ctx):
+                await asyncio.sleep(0.6)  # the run is still going when the retry lands
+                return _parsed(("eggs", 2))
+
+            _stub_pipeline(monkeypatch, decompose=decompose)
+            runner = _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item.")
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)
+
+            first = await agent_routes.agent_text(body)
+            assert body.id in agent_routes._RUNS and agent_routes._RUNS[body.id].finished_at is None
+            second = await agent_routes.agent_text(body)  # attaches: no claim, no second run
+            events1, events2 = await asyncio.gather(_drain(first), _drain(second))
+            assert [e["type"] for e in events1] == ["tool_call", "tool_result", "reply", "done"]
+            assert events2 == events1
+            assert runner.calls == 1
+            assert agent_routes._RUNS[body.id].finished_at is not None
+            # a late follower after the end gets the buffer, done included
+            events3 = await _drain(await agent_routes.agent_text(body))
+            assert events3 == events1 and runner.calls == 1
 
     _run(scenario())
 
@@ -406,6 +448,24 @@ def test_agent_stream_voice_leads_with_the_transcript(monkeypatch):
             assert [e["type"] for e in events] == ["transcript", "tool_call", "tool_result", "reply", "done"]
             assert events[0]["text"] == "two eggs"
             assert events[-1]["log"]["items"][0]["phrase"] == "eggs"
+
+            # the same id from another instance (the run is not in this table): the
+            # stored replay leads with the transcript the row kept, so the chat's
+            # pending bubble fills, then `done` marked a replay
+            log_id = uuid4()
+            resp = await agent_routes.agent_voice(
+                audio=UploadFile(BytesIO(b"opus-bytes"), filename="clip.webm",
+                                 headers=Headers({"content-type": "audio/webm;codecs=opus"})),
+                log_id=log_id, captured_at=NOW, tz=TZ,
+            )
+            await _drain(resp)
+            agent_routes._RUNS.pop(log_id)
+            again = UploadFile(BytesIO(b"opus-bytes"), filename="clip.webm",
+                               headers=Headers({"content-type": "audio/webm;codecs=opus"}))
+            events = await _drain(await agent_routes.agent_voice(audio=again, log_id=log_id, captured_at=NOW, tz=TZ))
+            assert [e["type"] for e in events] == ["transcript", "done"]
+            assert events[0]["text"] == "two eggs" and events[1]["replay"] is True
+            assert events[1]["log"]["items"][0]["phrase"] == "eggs"
 
             # a silent blob is the §5 capture failure, as one `done`
             empty = UploadFile(BytesIO(b""), filename="clip.webm", headers=Headers({"content-type": "audio/webm"}))

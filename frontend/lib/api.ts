@@ -41,6 +41,9 @@ export type AgentToolResult = components["schemas"]["AgentToolResultEvent"];
 /** What the stream's `done` carries: the staged log, or the voice lane's
  *  capture failure (an empty transcript — the client prompts a retype). */
 export type AgentDone = components["schemas"]["AgentDoneEvent"]["log"];
+/** The settled stream: the `done` payload, and whether it was a stored
+ *  replay of an earlier run (§8.6 — no tool lines or reply came with it). */
+export type AgentResult = { log: AgentDone; replay: boolean };
 /** §6.4 weight tracking: one weigh-in (routes/weights.py) — kg plus the
  *  unit it was said in, which is how the card shows it back. */
 export type WeightEntry = components["schemas"]["WeightEntry"];
@@ -371,14 +374,16 @@ export type AgentAudioArgs = {
  *  POST /api/logs — JSON for text, multipart for a voice clip — answered as
  *  newline-delimited JSON events. `onEvent` sees every event as it lands
  *  (the transcript, each tool call and result, the reply); the promise
- *  settles with the `done` payload. An HTTP error before the stream (the
+ *  settles with the `done` payload and whether it was a stored replay of an
+ *  earlier run (a same-id retry the server could not re-attach to its live
+ *  stream, §8.6). An HTTP error before the stream (the
  *  demo quota's 429, a replayed log's 409) and the stream's own `error`
  *  event (with the status it would have been) both reject with an ApiError,
  *  so quotaRefusal() and `detail` work as for every other call. */
 export async function streamAgent(
   args: AgentTextArgs | AgentAudioArgs,
   onEvent: (ev: AgentEvent) => void,
-): Promise<AgentDone> {
+): Promise<AgentResult> {
   const res =
     args.kind === "text"
       ? await authed(
@@ -404,7 +409,7 @@ export async function streamAgent(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  let done: AgentDone | null = null;
+  let done: AgentResult | null = null;
   const handle = (line: string) => {
     if (!line.trim()) return;
     const ev = JSON.parse(line) as AgentEvent;
@@ -412,7 +417,7 @@ export async function streamAgent(
       throw new ApiError(ev.status, JSON.stringify({ detail: ev.detail }));
     }
     onEvent(ev);
-    if (ev.type === "done") done = ev.log;
+    if (ev.type === "done") done = { log: ev.log, replay: ev.replay ?? false };
   };
   for (;;) {
     const { value, done: eof } = await reader.read();

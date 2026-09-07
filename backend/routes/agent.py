@@ -10,7 +10,11 @@ the LogCreateResponse POST /api/logs would have answered, or the voice lane's
 capture_failure). A failure after the stream has started rides it as an
 `error` event carrying the HTTP status it would have been; everything before
 the first byte — the claim's 404/409, the quota's 429, a bad audio part — is
-the plain HTTP error it always was. A same-id replay is a single `done`.
+the plain HTTP error it always was. A same-id retry (§8.6) re-attaches to the
+run it lost while this process still has it — streaming, or finished within
+ten minutes — and gets the buffered transcript, tool lines and reply, then the
+rest live; a retry that finds no run to attach to (another instance, later)
+gets the stored answer as a single `done` marked `replay`.
 
 `agent` is implied: every log through here runs the front-door agent.
 """
@@ -20,6 +24,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, AsyncIterator, Awaitable, Callable, Literal, Union
 from uuid import UUID
@@ -28,6 +34,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, RootModel
 
+import db
 from auth import require_user
 from models import LogCreate, LogResponse
 from routes.logs import (
@@ -84,10 +91,14 @@ class AgentReplyEvent(BaseModel):
 
 
 class AgentDoneEvent(BaseModel):
-    """The last event of a successful run: what POST /api/logs would have answered."""
+    """The last event of a successful run: what POST /api/logs would have
+    answered. `replay` (§8.6): a same-id retry answered from the stored log
+    rather than a run this request made or attached to — no tool lines and no
+    reply came with it (the reply is not stored, BACKLOG 139)."""
 
     type: Literal["done"] = "done"
     log: LogCreateResponse | CaptureFailureResponse
+    replay: bool = False
 
 
 class AgentErrorEvent(BaseModel):
@@ -143,37 +154,103 @@ async def _single(event: BaseModel) -> AsyncIterator[bytes]:
     yield _line(event)
 
 
-async def _events(work: Work) -> AsyncIterator[bytes]:
-    """Run `work` with an emit callback and yield its events as NDJSON lines,
-    ending with `done` or `error`. The work runs as its own task: a client
-    that disconnects mid-run cancels this generator, never the staging — the
-    log is claimed and the client reopens it (§8.6)."""
-    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+# ---------------------------------------------------------------------------
+# Live runs — a same-id retry re-attaches to the stream it lost (§8.6)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _LiveRun:
+    """One run's events, buffered in this process while it streams and for
+    _RUN_TTL_SECONDS after it ends. A same-id retry — a phone that lost the
+    response mid-stream and sends the same client id again (§8.6) — follows
+    this buffer instead of getting the stored replay: the transcript, the tool
+    lines and the reply it missed, then the rest live, and nothing runs twice.
+    `changed` is replaced on every append so each waiter wakes exactly once."""
+
+    events: list[dict] = field(default_factory=list)
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+    finished_at: float | None = None
+
+    def append(self, event: dict) -> None:
+        self.events.append(event)
+        if event.get("type") in ("done", "error"):
+            self.finished_at = time.monotonic()
+        waiters, self.changed = self.changed, asyncio.Event()
+        waiters.set()
+
+
+_RUNS: dict[UUID, _LiveRun] = {}
+_RUN_TTL_SECONDS = 600.0  # a finished run stays attachable this long
+
+
+def live_run(log_id: UUID) -> _LiveRun | None:
+    """The run a same-id request attaches to — streaming, or finished within
+    the TTL — from this process's table; expired entries are dropped here.
+    Another instance's run is invisible (BACKLOG 156): that retry gets the
+    stored replay."""
+    now = time.monotonic()
+    for key, run in list(_RUNS.items()):
+        if run.finished_at is not None and now - run.finished_at > _RUN_TTL_SECONDS:
+            del _RUNS[key]
+    return _RUNS.get(log_id)
+
+
+async def _follow(run: _LiveRun) -> AsyncIterator[bytes]:
+    """Yield the run's events from the first, then live, until done/error."""
+    i = 0
+    while True:
+        # captured before the length check: an append in between is seen
+        # either way (in the buffer now, or through the waiter it set)
+        waiter = run.changed
+        if i < len(run.events):
+            event = run.events[i]
+            i += 1
+            yield _line(event)
+            if event.get("type") in ("done", "error"):
+                return
+            continue
+        await waiter.wait()
+
+
+def _start(log_id: UUID, work: Work) -> _LiveRun:
+    """Run `work` as its own task, feeding the run's buffer: a client that
+    disconnects mid-run drops its follower, never the staging — the log is
+    claimed and the same id re-attaches (§8.6)."""
+    run = _LiveRun()
+    _RUNS[log_id] = run
 
     async def emit(event: dict) -> None:
-        await queue.put(event)
+        run.append(event)
 
-    async def run() -> None:
+    async def go() -> None:
         try:
             result = await work(emit)
-            await queue.put(AgentDoneEvent(log=result).model_dump(mode="json"))
+            run.append(AgentDoneEvent(log=result).model_dump(mode="json"))
         except HTTPException as e:
             detail = e.detail if isinstance(e.detail, str) else json.dumps(e.detail, default=str)
-            await queue.put(AgentErrorEvent(status=e.status_code, detail=detail).model_dump())
+            run.append(AgentErrorEvent(status=e.status_code, detail=detail).model_dump())
         except Exception:
             log.exception("agent stream failed")
-            await queue.put(
+            run.append(
                 AgentErrorEvent(status=500, detail="The agent run failed — try again.").model_dump()
             )
-        finally:
-            await queue.put(None)
 
-    asyncio.create_task(run())
-    while True:
-        event = await queue.get()
-        if event is None:
-            break
-        yield _line(event)
+    asyncio.create_task(go())
+    return run
+
+
+async def _replay(log_id: UUID, stored, *, with_text: bool) -> AsyncIterator[bytes]:
+    """The stored answer to a same-id retry that found no run to attach to
+    (§8.6): for the voice lane, the transcript the row kept first (so the
+    chat's pending bubble fills), then `done` marked a replay — no tool lines,
+    no reply (BACKLOG 139)."""
+    if with_text and not isinstance(stored, CaptureFailureResponse):
+        row = await db.fetchone("SELECT raw_input FROM logs WHERE id = %s", (log_id,))
+        text = ((row["raw_input"] if row else None) or "").strip()
+        if text:
+            yield _line(AgentTranscriptEvent(text=text))
+    yield _line(AgentDoneEvent(log=_as_create(stored), replay=True))
 
 
 def _stream(body: AsyncIterator[bytes]) -> NDJSONResponse:
@@ -193,11 +270,15 @@ async def agent_voice(
     capture_fallback: Annotated[bool, Form()] = False,
     capture_error: Annotated[str | None, Form()] = None,
 ) -> NDJSONResponse:
-    """Audio: the claim before the stream (its errors are plain HTTP), then
-    transcribe → `transcript` → the agent's events → `done`."""
+    """Audio: a same-id retry re-attaches to its live run; else the claim
+    before the stream (its errors are plain HTTP), then transcribe →
+    `transcript` → the agent's events → `done`."""
+    live = live_run(log_id)
+    if live is not None:
+        return _stream(_follow(live))
     claimed = await claim_voice_log(audio, log_id, captured_at, capture_fallback, capture_error)
     if not isinstance(claimed, tuple):
-        return _stream(_single(AgentDoneEvent(log=_as_create(claimed))))
+        return _stream(_replay(log_id, claimed, with_text=True))
     audio_bytes, mime = claimed
 
     async def work(emit: Emit):
@@ -211,7 +292,7 @@ async def agent_voice(
         )
         return await _run_pipeline(body, emit)
 
-    return _stream(_events(work))
+    return _stream(_follow(_start(log_id, work)))
 
 
 router.add_api_route(
@@ -237,15 +318,19 @@ router.add_api_route(
     openapi_extra=_MULTIPART_OPENAPI,
 )
 async def agent_text(body: LogCreate) -> NDJSONResponse:
-    """Text: the claim before the stream, then the agent's events → `done`.
-    The multipart form (audio + the same fields) is the other content type
-    on this path, as for POST /api/logs."""
+    """Text: a same-id retry re-attaches to its live run; else the claim
+    before the stream, then the agent's events → `done`. The multipart form
+    (audio + the same fields) is the other content type on this path, as for
+    POST /api/logs."""
     body = body.model_copy(update={"agent": True})
+    live = live_run(body.id)
+    if live is not None:
+        return _stream(_follow(live))
     replay = await claim_text_log(body)
     if replay is not None:
-        return _stream(_single(AgentDoneEvent(log=_as_create(replay))))
+        return _stream(_replay(body.id, replay, with_text=False))
 
     async def work(emit: Emit):
         return await _run_pipeline(body, emit)
 
-    return _stream(_events(work))
+    return _stream(_follow(_start(body.id, work)))

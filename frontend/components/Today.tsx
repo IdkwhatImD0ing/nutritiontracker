@@ -103,6 +103,18 @@ export default function Today() {
         m.kind === "result" && m.log.log_id === logId ? { ...m, state } : m,
       ),
     );
+  // a run that ended in an error leaves no tool line spinning
+  const settleRunning = () =>
+    setChat((cur) =>
+      cur.map((m) =>
+        m.kind === "tool" && !m.done
+          ? { ...m, done: true, output: { error: "interrupted" } }
+          : m,
+      ),
+    );
+  // a voice bubble still waiting for its transcript has nothing to keep
+  const dropPending = (id: string) =>
+    setChat((cur) => cur.filter((m) => !(m.id === id && m.kind === "user" && m.pending)));
   // §6.4: the weight card re-reads GET /api/weights when an agent log
   // recorded a weigh-in (the response says so; the card owns the series).
   const [weightsKey, setWeightsKey] = useState(0);
@@ -314,9 +326,29 @@ export default function Today() {
   // §6.4: the stream's `done` — the staged log opens the sheet over the chat
   // (the answer is still the list), a weigh-in refreshes the card, and the
   // §8.4 save outcome is said in the chat. The chat stays open throughout.
-  const agentDone = (log: LogCreateResponse): void => {
+  // `replay` (§8.6): the server answered a retry from the stored log — no
+  // tool lines or reply came with it (the reply is not stored, BACKLOG 139)
+  // — so the chat says so instead of falling silent.
+  const agentDone = (log: LogCreateResponse, replay: boolean, userId: string): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.agent?.weight) setWeightsKey((k) => k + 1);
+    if (replay) {
+      // a voice bubble the replay carried no transcript for stays honest
+      setChat((cur) =>
+        cur.map((m) =>
+          m.id === userId && m.kind === "user" && m.pending
+            ? { ...m, text: "(recording sent earlier)", pending: false }
+            : m,
+        ),
+      );
+      pushChat({
+        kind: "agent",
+        id: crypto.randomUUID(),
+        text: log.items.length
+          ? "That one had already gone through — here is what it staged."
+          : "That one had already gone through earlier; there is nothing more to stage from it.",
+      });
+    }
     if (log.saved_meal || log.note) {
       pushChat({
         kind: "agent",
@@ -345,7 +377,7 @@ export default function Today() {
     const userId = crypto.randomUUID();
     pushChat({ kind: "user", id: userId, text });
     try {
-      const log = await streamAgent(
+      const { log, replay } = await streamAgent(
         {
           kind: "text",
           id: pendingLog.id,
@@ -362,10 +394,11 @@ export default function Today() {
       pendingRef.current = null;
       voiceFailRef.current = null; // reported once, on the fallback log
       if ("status" in log) return false; // capture_failure — text never is
-      agentDone(log);
+      agentDone(log, replay, userId);
       return true;
     } catch (e) {
       t0Ref.current = null;
+      settleRunning();
       const quota = failCapture(e, null);
       pushChat({
         kind: "error",
@@ -400,7 +433,7 @@ export default function Today() {
     const userId = crypto.randomUUID();
     pushChat({ kind: "user", id: userId, text: "", pending: true });
     try {
-      const log = await streamAgent(
+      const { log, replay } = await streamAgent(
         {
           kind: "audio",
           id: attempt.id,
@@ -420,7 +453,7 @@ export default function Today() {
         // log; the retype that follows links to it via capture_fallback.
         t0Ref.current = null;
         voiceFailRef.current = "empty_transcript";
-        setChat((cur) => cur.filter((m) => m.id !== userId));
+        dropPending(userId);
         pushChat({
           kind: "error",
           id: crypto.randomUUID(),
@@ -429,11 +462,14 @@ export default function Today() {
         return false;
       }
       if (voiceFailRef.current === priorFailure) voiceFailRef.current = null;
-      agentDone(log);
+      agentDone(log, replay, userId);
       return true;
     } catch (e) {
       t0Ref.current = null;
-      setChat((cur) => cur.filter((m) => m.id !== userId));
+      // what was said stays (the transcript already landed); a bubble still
+      // waiting for one goes, and no tool line is left spinning
+      settleRunning();
+      dropPending(userId);
       // The demo quota refusing the upload is not a voice failure: §13's
       // counter stays clean, and the chat shows the server's sentence
       // instead of "type it instead" (typing meets the same wall).

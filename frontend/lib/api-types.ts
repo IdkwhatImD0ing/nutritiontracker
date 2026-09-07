@@ -597,9 +597,10 @@ export interface paths {
         put?: never;
         /**
          * Agent Text
-         * @description Text: the claim before the stream, then the agent's events → `done`.
-         *     The multipart form (audio + the same fields) is the other content type
-         *     on this path, as for POST /api/logs.
+         * @description Text: a same-id retry re-attaches to its live run; else the claim
+         *     before the stream, then the agent's events → `done`. The multipart form
+         *     (audio + the same fields) is the other content type on this path, as for
+         *     POST /api/logs.
          */
         post: operations["agent_text_api_agent_post"];
         delete?: never;
@@ -624,7 +625,10 @@ export interface components {
         };
         /**
          * AgentDoneEvent
-         * @description The last event of a successful run: what POST /api/logs would have answered.
+         * @description The last event of a successful run: what POST /api/logs would have
+         *     answered. `replay` (§8.6): a same-id retry answered from the stored log
+         *     rather than a run this request made or attached to — no tool lines and no
+         *     reply came with it (the reply is not stored, BACKLOG 139).
          */
         AgentDoneEvent: {
             /**
@@ -634,6 +638,11 @@ export interface components {
             type: "done";
             /** Log */
             log: components["schemas"]["LogCreateResponse"] | components["schemas"]["CaptureFailureResponse"];
+            /**
+             * Replay
+             * @default false
+             */
+            replay: boolean;
         };
         /**
          * AgentErrorEvent
