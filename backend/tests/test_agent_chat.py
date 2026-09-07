@@ -72,8 +72,8 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-SHRIMP = {"phrase": "shrimp, cooked", "qty": 400, "unit": "g", "note": "~50 shrimp at ~8 g each"}
-SAUCE = {"phrase": "cocktail sauce", "qty": 60, "unit": "g", "note": "the small tub in the tray"}
+SHRIMP = {"phrase": "shrimp, cooked", "qty": 400, "unit": "g", "grams": None, "note": "~50 shrimp at ~8 g each"}
+SAUCE = {"phrase": "cocktail sauce", "qty": 60, "unit": "g", "grams": None, "note": "the small tub in the tray"}
 BASIS = "the whole 2 lb Costco shrimp platter, sauce included"
 
 
@@ -169,8 +169,28 @@ def test_wire_events_translate_function_calls_outputs_and_web_search():
     assert out == [
         {"type": "tool_call", "id": "ws_1", "name": "web_search", "args": {"query": "costco shrimp platter"}},
         {"type": "tool_result", "id": "ws_1", "name": "web_search",
-         "output": {"sources": ["https://www.costco.com/shrimp-platter"]}},
+         "output": {"query": "costco shrimp platter", "sources": ["https://www.costco.com/shrimp-platter"]}},
     ]
+
+    # live: the raw in-progress event puts the line up first (query unknown), the
+    # completed item then settles it — only the result, carrying the query
+    live = SimpleNamespace(type="raw_response_event",
+                           data=SimpleNamespace(type="response.web_search_call.in_progress", item_id="ws_7"))
+    assert agent_svc.wire_events(live, names) == [
+        {"type": "tool_call", "id": "ws_7", "name": "web_search", "args": {"query": None}}]
+    searching = SimpleNamespace(type="raw_response_event",
+                                data=SimpleNamespace(type="response.web_search_call.searching", item_id="ws_7"))
+    assert agent_svc.wire_events(searching, names) == []  # already up
+    done_item = ResponseFunctionWebSearch(
+        id="ws_7", status="completed", type="web_search_call",
+        action=ActionSearch(type="search", query="kirkland shrimp platter weight",
+                            sources=[ActionSearchSource(type="url", url="https://www.costco.com/x")]),
+    )
+    assert agent_svc.wire_events(ev("tool_called", ToolCallItem(raw_item=done_item, agent=agent)), names) == [
+        {"type": "tool_result", "id": "ws_7", "name": "web_search",
+         "output": {"query": "kirkland shrimp platter weight", "sources": ["https://www.costco.com/x"]}}]
+    other = SimpleNamespace(type="raw_response_event", data=SimpleNamespace(type="response.output_text.delta"))
+    assert agent_svc.wire_events(other, names) == []
 
     # a search that consulted nothing still resolves its line: the result
     # arrives with the call, sources empty
@@ -180,7 +200,7 @@ def test_wire_events_translate_function_calls_outputs_and_web_search():
     )
     out = agent_svc.wire_events(ev("tool_called", ToolCallItem(raw_item=quiet, agent=agent)), names)
     assert [e["type"] for e in out] == ["tool_call", "tool_result"]
-    assert out[1]["output"] == {"sources": []}
+    assert out[1]["output"] == {"query": "nothing found", "sources": []}
 
     # anything else on the stream is not the chat's business
     assert agent_svc.wire_events(SimpleNamespace(type="raw_response_event"), names) == []
@@ -192,6 +212,110 @@ def test_wire_events_translate_function_calls_outputs_and_web_search():
     )
     (only,) = agent_svc.wire_events(ev("tool_output", big), names)
     assert only["output"]["truncated"] is True and len(only["output"]["summary"]) < 5_000
+
+
+def test_a_clarifying_question_rides_the_reply_and_discard_replaces_a_staged_log(monkeypatch):
+    async def scenario():
+        # no tool call, the question in the reply, its answers as options
+        class Asking:
+            @staticmethod
+            def run_streamed(agent, agent_input, max_turns):
+                class S:
+                    final_output = agent_svc.AgentReply(
+                        reply="Which Costco shrimp — the 3.75 lb party platter, the 1.5 lb tray, or the frozen ring?",
+                        options=[" the 3.75 lb party platter ", "the 1.5 lb tray", "the frozen ring", "", "something else", "too many"],
+                    )
+
+                    async def stream_events(self):
+                        return
+                        yield  # pragma: no cover
+
+                    def to_input_list(self):
+                        return []
+
+                return S()
+
+        monkeypatch.setattr(agent_svc, "Runner", Asking)
+        seen: list[dict] = []
+
+        async def emit(ev):
+            seen.append(ev)
+
+        deps = _deps()
+        run = await agent_svc.run_agent("I had a platter of costco shrimp", deps, emit)
+        assert run.options == ["the 3.75 lb party platter", "the 1.5 lb tray", "the frozen ring", "something else"]  # trimmed, blanks out, four at most
+        assert seen == [{"type": "reply", "text": run.reply, "options": run.options}]
+        assert run.food_calls == 0 and run.estimate_calls == 0 and deps.calls["food"] == []
+
+        # discard_log goes through the route's effect; without one it says so
+        agent = agent_svc.build_agent(deps, {})
+        out = await _invoke(agent, "discard_log", log_id=" 11111111-1111-1111-1111-111111111111 ")
+        assert out == {"log_id": "11111111-1111-1111-1111-111111111111", "status": "discarded"}
+        assert deps.calls["discard"] == ["11111111-1111-1111-1111-111111111111"]
+        bare = agent_svc.build_agent(_deps(discard_log=None), {})
+        assert (await _invoke(bare, "discard_log", log_id="x"))["error"] == "unavailable"
+
+    _run(scenario())
+
+
+def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch):
+    async def scenario():
+        async with isolated_db() as conn:
+            async def decompose(text, ctx):
+                return _parsed(("eggs", 2))
+
+            _stub_pipeline(monkeypatch, decompose=decompose)
+            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged 2 eggs."))
+            first = await logs_routes.create_log(_log("two eggs"))
+            assert first.agent is not None and first.agent.discarded is None and first.agent.options is None
+
+            from models import AgentTurn
+            history = [
+                AgentTurn(role="user", text="two eggs"),
+                AgentTurn(role="agent", text="Staged 2 eggs."),
+                AgentTurn(role="agent", text="staged 1 item", log_id=first.log_id,
+                          items=["egg — 2 × 1 large"], state="staged"),
+            ]
+            # the correction: discard the earlier log (named by the conversation), stage anew
+            runner = _fake_runner(
+                [("discard_log", {"log_id": str(first.log_id)}), ("log_food", {"text": "one egg"})],
+                "Made it one egg.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(id=uuid4(), text="actually just one egg", captured_at=NOW, tz=TZ, agent=True, history=history)
+            resp = await logs_routes.create_log(body)
+            assert resp.agent is not None and resp.agent.discarded == [first.log_id]
+            assert await _scalar(conn, "SELECT status FROM logs WHERE id = %s", (first.log_id,)) == "discarded"
+            assert [it.phrase for it in resp.items] == ["eggs"]
+            assert f"Log {first.log_id} (staged): egg — 2 × 1 large" in runner.input
+            assert 'They said: "two eggs"' in runner.input
+
+            # only a log the conversation names, and only while it is still staged
+            class Refusals:
+                @staticmethod
+                def run_streamed(agent, agent_input, max_turns):
+                    class S:
+                        final_output = agent_svc.AgentReply(reply="Nothing to change.", options=None)
+
+                        async def stream_events(self):
+                            out = await _invoke(agent, "discard_log", log_id=str(uuid4()))
+                            assert out["error"] == "unknown_log"
+                            out = await _invoke(agent, "discard_log", log_id=str(first.log_id))
+                            assert out["error"] == "not_staged" and out["status"] == "discarded"
+                            return
+                            yield  # pragma: no cover
+
+                        def to_input_list(self):
+                            return []
+
+                    return S()
+
+            monkeypatch.setattr(agent_svc, "Runner", Refusals)
+            resp2 = await logs_routes.create_log(
+                LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ, agent=True, history=history))
+            assert resp2.agent is not None and resp2.agent.discarded is None
+
+    _run(scenario())
 
 
 def test_run_agent_emits_tool_calls_results_then_the_reply(monkeypatch):
@@ -310,6 +434,49 @@ def test_estimate_rows_honor_the_spoken_meal_and_time(monkeypatch):
     _run(scenario())
 
 
+def test_a_counted_estimate_is_sized_by_weight_when_the_food_has_no_count_serving(monkeypatch):
+    """133 shrimp on a food whose only serving is 100 g must not become 133 ×
+    100 g: the count's `grams` size it (resolved rows here; searching rows
+    hand tier 3 the weight). A food with a count serving keeps the count."""
+    async def scenario():
+        async with isolated_db() as conn:
+            from psycopg.types.json import Json
+            hundred = {"serving_id": "s100", "description": "100 g", "grams": 100,
+                       "macros": {"kcal": 99, "protein_g": 24, "carb_g": 0.2, "fat_g": 0.3}}
+            shrimp_id = str(await _scalar(conn, """
+                INSERT INTO foods (source, source_id, name, display_name, food_type, servings,
+                                   default_serving_id, payload)
+                VALUES ('fdc', %s, 'shrimp, cooked', 'plain cooked shrimp', 'generic', %s, 's100', '{}'::jsonb)
+                RETURNING id""", (uuid4().hex, Json([hundred]))))
+            await conn.execute(
+                "INSERT INTO aliases (alias_norm, food_id, origin) VALUES ('shrimp cooked', %s, 'tier3')",
+                (shrimp_id,))
+            egg_id = await insert_food(conn)          # its serving is "1 egg": count-type
+            await insert_alias(conn, egg_id)          # 'two eggs' → tier 1
+            _stub_pipeline(monkeypatch)
+            runner = _fake_runner([("log_estimate", {"items": [
+                {"phrase": "shrimp cooked", "qty": 133, "unit": None, "grams": 1701, "note": "the whole 3.75 lb tray"},
+                {"phrase": "two eggs", "qty": 2, "unit": None, "grams": 100, "note": "two eggs"},
+                {"phrase": "cocktail sauce from mars", "qty": 40, "unit": None, "grams": 320, "note": "eight cups"},
+            ], "basis": "a platter"})], "Staged an estimate.")
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            resp = await logs_routes.create_log(_log("a platter of shrimp, two eggs, sauce"))
+            shrimp, eggs, sauce = resp.items
+            # mass-only food: sized by weight, macros from the food's own 100 g numbers
+            assert shrimp.status == "resolved" and shrimp.serving.description == "100 g"
+            assert shrimp.qty == 17.01 and shrimp.macros.kcal == round(99 * 17.01, 2)
+            assert shrimp.estimated == "portion" and shrimp.confidence == "medium"
+            # a count serving keeps the count
+            assert eggs.status == "resolved" and eggs.serving.description == "1 egg" and eggs.qty == 2
+            # a searching row hands tier 3 the weight, not the piece count
+            assert sauce.status == "searching" and sauce.qty == 320
+            stored = await _scalar(conn, "SELECT staged FROM item_resolutions WHERE log_id = %s AND item_index = 2", (resp.log_id,))
+            assert (stored["spoken_qty"], stored["spoken_unit"]) == (320, "g")
+            assert stored["estimate_note"] == "eight cups" and stored["estimated"] == "portion"
+
+    _run(scenario())
+
+
 def test_flagged_estimate_row_commits_only_once_confirmed_and_learns_no_alias(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
@@ -317,7 +484,7 @@ def test_flagged_estimate_row_commits_only_once_confirmed_and_learns_no_alias(mo
             await insert_alias(conn, food_id)  # 'two eggs' → tier 1 for the component phrase
             _stub_pipeline(monkeypatch)  # no decompose: the estimate is the only staging
             runner = _fake_runner(
-                [("log_estimate", {"items": [{"phrase": "two eggs", "qty": 2, "unit": None, "note": "a guess"}],
+                [("log_estimate", {"items": [{"phrase": "two eggs", "qty": 2, "unit": None, "grams": 100, "note": "a guess"}],
                                    "basis": "a homemade plate"})],
                 "Staged an estimate.",
             )

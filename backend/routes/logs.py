@@ -35,7 +35,7 @@ from starlette.routing import Match
 import auth
 import db
 from auth import require_user
-from models import LogCreate, LogResponse, Meal, ParsedItem, StagedItem
+from models import LogCreate, LogResponse, Macros, Meal, ParsedItem, ServingRef, StagedItem
 from resolver import cascade
 from resolver import commit as commit_tx
 from resolver.norm import norm
@@ -112,12 +112,16 @@ class LogPollResponse(LogResponse):
 
 class AgentOutcome(BaseModel):
     """What the agent lane did with the utterance (§6.4): its one-sentence
-    reply, and the weigh-in it recorded, if any. Staged items ride the
-    LogResponse as on any other log. Assembled from what the tools did,
-    never from what the model said."""
+    reply, the weigh-in it recorded, if any, the answers it offers when the
+    reply is a clarifying question (`options`, tappable in the chat), and the
+    earlier staged logs it discarded because this turn replaces them
+    (`discarded`). Staged items ride the LogResponse as on any other log.
+    Assembled from what the tools did, never from what the model said."""
 
     reply: str
     weight: weights_route.WeightEntry | None = None
+    options: list[str] | None = None
+    discarded: list[UUID] | None = None
 
 
 class LogCreateResponse(LogResponse):
@@ -702,6 +706,35 @@ def _flag_estimate(item: StagedItem, it: EstimateItem) -> StagedItem:
     return item.model_copy(update=update)
 
 
+def _size_by_weight(item: StagedItem, grams: float) -> StagedItem:
+    """A counted component whose food has no count-type serving — the cached
+    shrimp record carries only "100 g" — is sized by the estimated weight
+    instead of pieces × the mass default (133 shrimp would have been 133 ×
+    100 g): a gram-based serving (the 100 g row first, as the photo lane's
+    est_grams path picks it), macros recomputed from the food's own numbers."""
+    by_grams = [s for s in (item.servings or []) if s.grams and s.grams > 0]
+    if not by_grams:
+        return item
+    base = next((s for s in by_grams if s.grams == 100), None) or max(
+        by_grams, key=lambda s: not cascade._is_count_serving(s.description)
+    )
+    qty = round(grams / float(base.grams), 4)
+    raw = base.macros or {}
+    macros = (
+        Macros(**cascade._scale_macros(raw, qty))
+        if all(k in raw for k in cascade._CORE_MACROS)
+        else None
+    )
+    return item.model_copy(
+        update={
+            "serving": ServingRef(id=base.serving_id, description=base.description),
+            "qty": qty,
+            "macros": macros,
+            "confidence": "medium" if macros is not None else "low",
+        }
+    )
+
+
 async def _stage_estimate(
     body: LogCreate,
     meal: Meal,
@@ -731,6 +764,19 @@ async def _stage_estimate(
         for i, it in enumerate(items)
     ]
     for r, it in zip(resolutions, items):
+        counted = it.unit is None and it.grams is not None and it.grams > 0
+        if counted and r.staged.status == "searching":
+            # tier 3 sizes by weight: a count needs a count-type serving the
+            # food it picks may not have (the count stays in the note)
+            r.staged = r.staged.model_copy(update={"qty": float(it.grams)})
+            r.unit = "g"
+        elif (
+            counted
+            and r.staged.status == "resolved"
+            and r.staged.serving is not None
+            and not cascade._is_count_serving(r.staged.serving.description)
+        ):
+            r.staged = _size_by_weight(r.staged, float(it.grams))
         r.staged = _flag_estimate(r.staged, it)
     await _persist(
         body.id, resolutions, row_meal, short_circuit=False,
@@ -758,9 +804,35 @@ async def _run_agent_lane(
     tracing.init_tracing()
     result: dict = {
         "items": [], "food": None, "weight": None, "basis": None,
-        "estimate_meal": None, "next_index": 0,
+        "estimate_meal": None, "next_index": 0, "discarded": [],
     }
     staging = asyncio.Lock()
+    history = [t.model_dump(mode="json") for t in (body.history or [])]
+    # the logs the conversation names — the only ones a correction may replace
+    known_logs = {t["log_id"] for t in history if t.get("log_id")}
+
+    async def discard_staged(log_id: str) -> dict:
+        """§6.4 corrections: the earlier turn's log this turn replaces — only
+        a log from this conversation, only while it is still staged. A
+        committed one is in the diary: the tool says so and nothing is
+        restaged (the diary's own edit is the correction path)."""
+        if log_id not in known_logs:
+            return {"error": "unknown_log",
+                    "message": "only a log from this conversation can be replaced"}
+        updated = await db.execute(
+            "UPDATE logs SET status = 'discarded' WHERE id = %s AND status = 'staged'",
+            (log_id,),
+        )
+        if updated:
+            result["discarded"].append(log_id)
+            return {"log_id": log_id, "status": "discarded"}
+        row = await db.fetchone("SELECT status FROM logs WHERE id = %s", (log_id,))
+        status = row["status"] if row else "unknown"
+        return {
+            "error": "not_staged", "log_id": log_id, "status": status,
+            "message": f"that log is {status}, not staged — do not restage it; if it is "
+                       "committed, say it is in the diary and can be edited there",
+        }
 
     def summary(items: list[StagedItem]) -> list[dict]:
         # what was staged, for the model — never the numbers: the reply must
@@ -846,6 +918,8 @@ async def _run_agent_lane(
         stage_food=stage_food,
         stage_estimate=stage_estimate,
         record_weight=record_weight,
+        discard_log=discard_staged,
+        history=history,
         now_local=now_local,
         unit_pref=unit_pref,
         last_weight=(
@@ -870,6 +944,9 @@ async def _run_agent_lane(
                 "estimate_calls": run.estimate_calls,
                 "estimate_basis": result["basis"],
                 "weight": run.weight,
+                "options": run.options,
+                "discarded": result["discarded"],
+                "history_turns": len(history),
                 "max_turns_hit": run.max_turns_hit,
             },
         )
@@ -878,7 +955,10 @@ async def _run_agent_lane(
     except Exception:
         pass
 
-    outcome = AgentOutcome(reply=run.reply, weight=result["weight"])
+    outcome = AgentOutcome(
+        reply=run.reply, weight=result["weight"], options=run.options,
+        discarded=[UUID(x) for x in result["discarded"]] or None,
+    )
     food = result["food"]
     items = sorted(result["items"], key=lambda it: it.item_index)
     if food is None and not items:

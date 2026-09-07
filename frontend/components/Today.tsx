@@ -8,6 +8,7 @@ import {
   quotaRefusal,
   streamAgent,
   type AgentEvent,
+  type AgentTurn,
   type DayTotals,
   type FoodSearchResult,
   type LogCreateResponse,
@@ -35,6 +36,10 @@ const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
  *  真 retry-on-open — commit-item is idempotent, so a replayed item is safe. */
 const PENDING_KEY = "usual.pending.v1";
+/** §6.4: the Agent chat survives a reload on this device (the last turns; the
+ *  logs themselves are on the server). */
+const CHAT_KEY = "tally.chat.v1";
+const CHAT_MAX = 60;
 
 type PendingState = { logId: string; items: StagedItem[] };
 
@@ -91,13 +96,45 @@ export default function Today() {
   // the sheet, so closing the lane and reopening it shows the same history;
   // the POST /api/agent stream appends to it as events land.
   const [chat, setChat] = useState<ChatMessage[]>([]);
+  const chatLoaded = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CHAT_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as ChatMessage[];
+        // a reload mid-run: nothing is still running, nothing still transcribing
+        setChat(
+          saved.map((m) =>
+            m.kind === "tool" && !m.done
+              ? { ...m, done: true, output: { error: "interrupted" } }
+              : m.kind === "user" && m.pending
+                ? { ...m, pending: false, text: m.text || "(recording)" }
+                : m.kind === "agent" && m.options
+                  ? { ...m, options: undefined }
+                  : m,
+          ),
+        );
+      }
+    } catch {
+      /* storage unavailable or unreadable — start empty */
+    }
+    chatLoaded.current = true;
+  }, []);
+  useEffect(() => {
+    if (!chatLoaded.current) return;
+    try {
+      localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-CHAT_MAX)));
+    } catch {
+      /* storage unavailable — the chat still lives for this page session */
+    }
+  }, [chat]);
   const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
   const patchChat = (id: string, patch: Partial<ChatMessage>) =>
     setChat((cur) =>
       cur.map((m) => (m.id === id ? ({ ...m, ...patch } as ChatMessage) : m)),
     );
-  // the result card follows its log: staged → committed / discarded
-  const markResult = (logId: string, state: "committed" | "discarded") =>
+  // the result card follows its log: staged → committed / discarded / replaced
+  const markResult = (logId: string, state: "committed" | "discarded" | "replaced") =>
     setChat((cur) =>
       cur.map((m) =>
         m.kind === "result" && m.log.log_id === logId ? { ...m, state } : m,
@@ -111,6 +148,39 @@ export default function Today() {
           ? { ...m, done: true, output: { error: "interrupted" } }
           : m,
       ),
+    );
+  // §6.4: the conversation the agent reads — the last turns as the chat
+  // remembers them: what was said, what was answered, and what each turn
+  // staged with its log id and status (so a correction can name its log).
+  // Built BEFORE the new utterance is pushed; the server adds that itself.
+  const chatHistory = (): AgentTurn[] => {
+    const turns: AgentTurn[] = [];
+    for (const m of chat) {
+      if (m.kind === "user" && !m.pending && m.text) {
+        turns.push({ role: "user", text: m.text });
+      } else if (m.kind === "agent") {
+        turns.push({ role: "agent", text: m.text });
+      } else if (m.kind === "result") {
+        const n = m.log.items.length;
+        turns.push({
+          role: "agent",
+          text: `staged ${n} item${n === 1 ? "" : "s"}`,
+          log_id: m.log.log_id,
+          items: m.log.items.map((it) =>
+            `${it.food?.name ?? it.phrase}${
+              it.qty != null && it.serving ? ` — ${it.qty} × ${it.serving.description}` : ""
+            }`,
+          ),
+          state: m.state === "replaced" ? "discarded" : m.state,
+        });
+      }
+    }
+    return turns.slice(-12);
+  };
+  // a question's chips are for the next message only
+  const closeQuestions = () =>
+    setChat((cur) =>
+      cur.map((m) => (m.kind === "agent" && m.options ? { ...m, options: undefined } : m)),
     );
   // a voice bubble still waiting for its transcript has nothing to keep
   const dropPending = (id: string) =>
@@ -313,10 +383,26 @@ export default function Today() {
         });
         return;
       case "tool_result":
-        patchChat(ev.id, { output: ev.output, done: true });
+        // a live web search put its line up before the query was known; the
+        // completed item brings it along with the sources
+        setChat((cur) =>
+          cur.map((m) => {
+            if (m.kind !== "tool" || m.id !== ev.id) return m;
+            const out = ev.output as Record<string, unknown> | null;
+            const query =
+              out && typeof out === "object" && typeof out.query === "string" ? out.query : null;
+            const args = query && !m.args.query ? { ...m.args, query } : m.args;
+            return { ...m, args, output: ev.output, done: true };
+          }),
+        );
         return;
       case "reply":
-        pushChat({ kind: "agent", id: crypto.randomUUID(), text: ev.text });
+        pushChat({
+          kind: "agent",
+          id: crypto.randomUUID(),
+          text: ev.text,
+          options: ev.options?.length ? ev.options : undefined,
+        });
         return;
       default:
         return; // `done` is the promise's result; `error` rejects it
@@ -332,6 +418,8 @@ export default function Today() {
   const agentDone = (log: LogCreateResponse, replay: boolean, userId: string): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.agent?.weight) setWeightsKey((k) => k + 1);
+    // a correction: the earlier turn's log this one replaces
+    for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
     if (replay) {
       // a voice bubble the replay carried no transcript for stays honest
       setChat((cur) =>
@@ -374,6 +462,8 @@ export default function Today() {
         : { id: crypto.randomUUID(), text };
     pendingRef.current = pendingLog;
     t0Ref.current = performance.now();
+    const history = chatHistory();
+    closeQuestions();
     const userId = crypto.randomUUID();
     pushChat({ kind: "user", id: userId, text });
     try {
@@ -388,6 +478,7 @@ export default function Today() {
           // failure — capture_fallback + the client-detected capture_error.
           capture_fallback: voiceFailRef.current != null,
           capture_error: voiceFailRef.current,
+          history,
         },
         (ev) => onAgentEvent(ev, userId),
       );
@@ -430,6 +521,8 @@ export default function Today() {
         ? audioRef.current
         : { id: crypto.randomUUID(), capturedAt: clip.capturedAt };
     audioRef.current = attempt;
+    const history = chatHistory();
+    closeQuestions();
     const userId = crypto.randomUUID();
     pushChat({ kind: "user", id: userId, text: "", pending: true });
     try {
@@ -440,6 +533,7 @@ export default function Today() {
           clip,
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
           capture_error: priorFailure,
+          history,
         },
         (ev) => onAgentEvent(ev, userId),
       );

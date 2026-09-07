@@ -264,11 +264,11 @@ def test_costco_tonkotsu_ramen_resolves_through_the_agent(client: TestClient):
 # ---------------------------------------------------------------------------
 
 
-def _post_stream(client: TestClient, log_id: str, text: str) -> list[dict]:
+def _post_stream(client: TestClient, log_id: str, text: str, history: list[dict] | None = None) -> list[dict]:
     t0 = time.perf_counter()
     r = client.post(
         "/api/agent",
-        json={"id": log_id, "text": text, "captured_at": CAPTURED_AT, "tz": TZ},
+        json={"id": log_id, "text": text, "captured_at": CAPTURED_AT, "tz": TZ, "history": history},
     )
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("application/x-ndjson"), r.headers
@@ -283,11 +283,36 @@ def _post_stream(client: TestClient, log_id: str, text: str) -> list[dict]:
 def test_costco_shrimp_platter_is_estimated_from_database_components(client: TestClient):
     t0 = _run(db.fetchone("SELECT now() AS t"))["t"]
     log_id = str(uuid4())
+    question_ids: list[str] = []
     try:
-        events = _post_stream(client, log_id, "I had a platter of costco shrimp")
+        text = "I had a platter of costco shrimp"
+        events = _post_stream(client, log_id, text)
         assert events[-1]["type"] == "done", events[-1]
+        # the agent asks before it guesses (2026-09-06) — which product, then
+        # how much of it: answer each question with its first option as the
+        # chat would, the next turn carrying the history; two rounds at most
+        history: list[dict] = []
+        question_ids: list[str] = []
+        for _round in range(2):
+            reply_ev = next(e for e in events if e["type"] == "reply")
+            if not reply_ev.get("options"):
+                break
+            print(f"[agent live] asked: {reply_ev['text']!r} options={reply_ev['options']}")
+            assert events[-1]["log"]["items"] == [], "a question must not stage anything"
+            assert events[-1]["log"]["agent"]["options"] == reply_ev["options"]
+            history += [{"role": "user", "text": text}, {"role": "agent", "text": reply_ev["text"]}]
+            question_ids.append(log_id)
+            log_id, text = str(uuid4()), reply_ev["options"][0]
+            events = _post_stream(client, log_id, text, history)
+            assert events[-1]["type"] == "done", events[-1]
+        assert not any(e.get("options") for e in events if e["type"] == "reply"), "still asking after two answers"
         calls = [e for e in events if e["type"] == "tool_call"]
         names = [c["name"] for c in calls]
+        # live web search: the line goes up before the query is known, the result brings it
+        for c in calls:
+            if c["name"] == "web_search" and c["args"].get("query") is None:
+                res = next((e for e in events if e["type"] == "tool_result" and e["id"] == c["id"]), None)
+                assert res is not None and res["output"].get("query"), "a live search line never settled"
         for c in calls:
             print(f"[agent live]   {c['name']}({json.dumps(c['args'])[:400]})")
         for e in events:
@@ -335,11 +360,13 @@ def test_costco_shrimp_platter_is_estimated_from_database_components(client: Tes
         shrimp = next(it for it in final if "shrimp" in it["phrase"].lower())
         assert shrimp["status"] == "resolved", shrimp
         assert shrimp["macros"]["kcal"] > 0 and shrimp["estimated"] == "portion", shrimp  # flag survived tier 3
-        # a whole platter is a lot of shrimp — not one database serving
+        # a whole platter is a lot of shrimp — not one database serving, and not
+        # a count multiplied onto a 100 g serving either (133 × 100 g was 13,167 kcal)
         assert shrimp["macros"]["protein_g"] >= 40, shrimp
+        assert shrimp["macros"]["kcal"] < 6000, shrimp
         # §3.4a: nothing estimated commits unconfirmed, server-side
         resolved = [it for it in final if it["status"] == "resolved"]
         r = client.post(f"/api/logs/{log_id}/commit", json={"items": resolved})
         assert r.status_code == 409 and "confirm the estimated rows first" in r.text, r.text
     finally:
-        _run(_cleanup(t0, [log_id]))
+        _run(_cleanup(t0, [log_id, *question_ids]))

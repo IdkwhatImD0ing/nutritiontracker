@@ -96,10 +96,15 @@ def _deps(**over) -> agent_svc.AgentDeps:
         calls["weight"].append((value, unit, day))
         return {"day": day.isoformat(), "weight": value, "unit": unit}
 
+    async def discard_log(log_id: str) -> dict:
+        calls.setdefault("discard", []).append(log_id)
+        return {"log_id": log_id, "status": "discarded"}
+
     kw = dict(
         stage_food=stage_food,
         stage_estimate=stage_estimate,
         record_weight=record_weight,
+        discard_log=discard_log,
         now_local=NOW.astimezone(ZoneInfo(TZ)),
         unit_pref="lb",
     )
@@ -144,7 +149,7 @@ class _FakeStream:
                     output=out, agent=self._agent,
                 ),
             )
-        self.final_output = agent_svc.AgentReply(reply=self._reply)
+        self.final_output = agent_svc.AgentReply(reply=self._reply, options=None)
 
     def to_input_list(self):
         return [{"type": "message", "role": "assistant", "content": self._reply}]
@@ -259,7 +264,20 @@ def test_agent_input_carries_the_context_block():
     assert "Last weigh-in: 181 lb on 2026-09-02" in text
     assert "Profile notes: trains at 6pm" in text
     assert text.endswith('Utterance: "I weigh 180"')
+    assert "Earlier in this conversation: nothing" in text
     assert "Last weigh-in: none yet" in agent_svc.agent_input("x", _deps())
+    # the conversation rides in: what they said, what we replied, each staged log
+    deps = _deps(history=[
+        {"role": "user", "text": "a platter of costco shrimp"},
+        {"role": "agent", "text": "Which one?", "log_id": None, "items": None, "state": None},
+        {"role": "agent", "text": "staged 2 items", "log_id": "11111111-1111-1111-1111-111111111111",
+         "items": ["Plain cooked shrimp — 12.5 × 4 large", "cocktail sauce — 3.4 × 100 g"], "state": "staged"},
+    ])
+    text = agent_svc.agent_input("actually only half", deps)
+    assert 'They said: "a platter of costco shrimp"' in text
+    assert 'You replied: "Which one?"' in text
+    assert "Log 11111111-1111-1111-1111-111111111111 (staged): Plain cooked shrimp — 12.5 × 4 large; cocktail sauce" in text
+    assert text.index("Earlier in this conversation") < text.index('Utterance: "actually only half"')
 
 
 def test_run_agent_reports_tool_state_and_survives_max_turns(monkeypatch):

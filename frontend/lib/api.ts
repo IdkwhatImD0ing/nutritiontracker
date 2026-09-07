@@ -37,6 +37,9 @@ export type AgentOutcome = components["schemas"]["AgentOutcome"];
  *  (routes/agent.py) — transcript, tool_call, tool_result, reply, done, error. */
 export type AgentEvent = components["schemas"]["AgentEvent"];
 export type AgentToolCall = components["schemas"]["AgentToolCallEvent"];
+/** §6.4 one earlier turn of the chat, as the client remembers it — what the
+ *  agent reads to follow references, answers and corrections. */
+export type AgentTurn = components["schemas"]["AgentTurn"];
 export type AgentToolResult = components["schemas"]["AgentToolResultEvent"];
 /** What the stream's `done` carries: the staged log, or the voice lane's
  *  capture failure (an empty transcript — the client prompts a retype). */
@@ -336,6 +339,7 @@ function audioForm(args: {
   clip: VoiceClip;
   tz: string;
   capture_error?: string | null;
+  history?: AgentTurn[];
 }): FormData {
   const { blob, mimeType, capturedAt } = args.clip;
   const ext = mimeType.includes("mp4") ? "m4a" : "webm";
@@ -344,6 +348,7 @@ function audioForm(args: {
   form.set("captured_at", capturedAt);
   form.set("tz", args.tz);
   if (args.capture_error) form.set("capture_error", args.capture_error);
+  if (args.history?.length) form.set("history", JSON.stringify(args.history));
   form.set("audio", new File([blob], `clip.${ext}`, { type: mimeType }));
   return form;
 }
@@ -360,6 +365,8 @@ export type AgentTextArgs = {
   tz: string;
   capture_fallback?: boolean;
   capture_error?: string | null;
+  /** the chat so far (oldest first) — the agent's memory across turns */
+  history?: AgentTurn[];
 };
 
 export type AgentAudioArgs = {
@@ -368,6 +375,7 @@ export type AgentAudioArgs = {
   clip: VoiceClip;
   tz: string;
   capture_error?: string | null;
+  history?: AgentTurn[];
 };
 
 /** The chat's streaming front door (routes/agent.py): the same body as
@@ -398,6 +406,7 @@ export async function streamAgent(
               capture_fallback: args.capture_fallback ?? false,
               capture_error: args.capture_error ?? null,
               agent: true,
+              history: args.history ?? null,
             }),
           },
           true,

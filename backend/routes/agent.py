@@ -32,11 +32,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, TypeAdapter, ValidationError
 
 import db
 from auth import require_user
-from models import LogCreate, LogResponse
+from models import AgentTurn, LogCreate, LogResponse
 from routes.logs import (
     _MULTIPART_OPENAPI,
     CaptureFailureResponse,
@@ -52,6 +52,23 @@ from routes.logs import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_user)])
+
+_TURNS = TypeAdapter(list[AgentTurn])
+# the multipart form documented on the JSON operation, plus the chat's history
+_AGENT_MULTIPART_OPENAPI = json.loads(json.dumps(_MULTIPART_OPENAPI))
+_AGENT_MULTIPART_OPENAPI["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"][
+    "history"
+] = {"type": "string", "description": "JSON array of AgentTurn — the chat so far (§6.4)"}
+
+
+def _parse_history(raw: str | None) -> list[AgentTurn] | None:
+    """The voice form's `history` field: a JSON array of AgentTurn, or 422."""
+    if not raw:
+        return None
+    try:
+        return _TURNS.validate_json(raw)
+    except ValidationError as e:
+        raise HTTPException(422, f"history: {e.errors()[0].get('msg', 'invalid')}")
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +104,12 @@ class AgentToolResultEvent(BaseModel):
 
 
 class AgentReplyEvent(BaseModel):
+    """The agent's reply — or its clarifying question, when `options` carries
+    the 2–4 answers the chat offers as chips (§6.4)."""
+
     type: Literal["reply"] = "reply"
     text: str
+    options: list[str] | None = None
 
 
 class AgentDoneEvent(BaseModel):
@@ -318,10 +339,13 @@ async def agent_voice(
     tz: Annotated[str, Form()],
     capture_fallback: Annotated[bool, Form()] = False,
     capture_error: Annotated[str | None, Form()] = None,
+    history: Annotated[str | None, Form()] = None,
 ) -> NDJSONResponse:
     """Audio: a same-id retry re-attaches to its live run; else the claim
     before the stream (its errors are plain HTTP), then transcribe →
-    `transcript` → the agent's events → `done`."""
+    `transcript` → the agent's events → `done`. `history` is the chat so far
+    as a JSON array of AgentTurn (the JSON route takes it as a field)."""
+    turns = _parse_history(history)
     live = live_run(log_id)
     if live is not None:
         return _stream(_follow(live))
@@ -338,6 +362,7 @@ async def agent_voice(
         body = LogCreate(
             id=log_id, text=text, captured_at=captured_at, tz=tz,
             capture_fallback=capture_fallback, capture_error=capture_error, agent=True,
+            history=turns,
         )
         return await _run_pipeline(body, emit)
 
@@ -364,7 +389,7 @@ router.add_api_route(
                            "ending with `done` or `error`.",
         }
     },
-    openapi_extra=_MULTIPART_OPENAPI,
+    openapi_extra=_AGENT_MULTIPART_OPENAPI,
 )
 async def agent_text(body: LogCreate) -> NDJSONResponse:
     """Text: a same-id retry re-attaches to its live run; else the claim

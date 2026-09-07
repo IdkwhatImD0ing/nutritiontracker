@@ -23,12 +23,14 @@ export type ChatMessage =
       output?: unknown;
       done: boolean;
     }
-  | { kind: "agent"; id: string; text: string }
+  /** `options`: the agent asked a clarifying question — tappable answers */
+  | { kind: "agent"; id: string; text: string; options?: string[] }
   | {
       kind: "result";
       id: string;
       log: LogCreateResponse;
-      state: "staged" | "committed" | "discarded";
+      /** replaced: a later turn corrected it and staged a new log */
+      state: "staged" | "committed" | "discarded" | "replaced";
     }
   | { kind: "error"; id: string; text: string };
 
@@ -144,7 +146,8 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       const hosts = [...new Set(sources.map(host))];
       const shown = hosts.slice(0, 5).join(", ");
       const more = hosts.length > 5 ? ` +${hosts.length - 5} more` : "";
-      doing = `Searching the web: “${str(a.query)}”`;
+      // live: the line is up before the query is known (the completed item brings it)
+      doing = a.query ? `Searching the web: “${str(a.query)}”` : "Searching the web…";
       ok = hosts.length ? `Read ${shown}${more}` : "Done";
       break;
     }
@@ -228,7 +231,11 @@ function ResultCard({
         </button>
       ) : (
         <span className="result-state">
-          {m.state === "committed" ? "Committed ✓" : "Discarded"}
+          {m.state === "committed"
+            ? "Committed ✓"
+            : m.state === "replaced"
+              ? "Replaced"
+              : "Discarded"}
         </span>
       )}
     </div>
@@ -383,8 +390,23 @@ export default function AgentChat({
                 return <ToolLine key={m.id} m={m} />;
               case "agent":
                 return (
-                  <div key={m.id} className="bubble agent">
-                    {m.text}
+                  <div key={m.id} className="bubble-wrap">
+                    <div className="bubble agent">{m.text}</div>
+                    {m.options?.length ? (
+                      <div className="chips agent-options" role="group" aria-label="Answers">
+                        {m.options.map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            className="chip"
+                            disabled={busy}
+                            onClick={() => void onSubmit(opt)}
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 );
               case "result":

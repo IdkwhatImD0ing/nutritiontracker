@@ -2281,3 +2281,20 @@ a {
 .chat-rec .voice-alt {
   margin: 0 0 0 auto;
 }
+
+/* an agent bubble with the answers to its question under it */
+.bubble-wrap {
+  align-self: flex-start;
+  max-width: 86%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bubble-wrap .bubble {
+  max-width: 100%;
+}
+
+.agent-options {
+  margin: 0 0 4px 6px;
+}

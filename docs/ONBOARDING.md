@@ -96,8 +96,9 @@ statement as the `tally_app` role that only 002 creates, so a push first means e
 DB-touching request fails until 002 lands (fail-closed, not a leak — but an outage).
 
 Migration 003 (the weigh-in log behind agent mode — `weights`, DESIGN §4, §6.4) is
-applied the same way, by hand, after 002: `apply.py 003 --dry-run`, then `apply.py 003`,
-then `apply.py 003 --check`. Unlike 002 its absence is not an outage — the Agent lane
+applied the same way, after 002: `apply.py 003 --dry-run`, then `apply.py 003`,
+then `apply.py 003 --check`. **Applied on the shared database on 2026-09-06** (by the
+agent, at Bill's request); the notes below describe the window before that. Unlike 002 its absence is not an outage — the Agent lane
 keeps staging food and says a weight could not be saved, `GET /api/weights` answers 503
 and Today's weight card renders nothing — but apply it **before** pushing this tree all
 the same: until it lands, every rollback-harness test replays 003 inside its own
@@ -152,7 +153,8 @@ Notes that will save you an hour:
   There is no dev branch yet (BACKLOG 18) — creating one needs Console access, because the
   project is Vercel-Marketplace-managed and invisible to the Neon API token. Keep the
   rollback pattern and leave no rows behind.
-- **One DB suite at a time while a migration is pending.** Until `apply.py 003` lands,
+- **One DB suite at a time while a migration is pending** (003 landed 2026-09-06; this
+  applies again the next time a migration waits). Until `apply.py 003` lands,
   every rollback-harness test replays 003 inside its transaction, and the new table's FK
   to `logs` holds a lock on `logs` for the test's duration — two suites at once deadlock
   on it (`DeadlockDetected`, seen 2026-09-06) and production writes wait. The real-path

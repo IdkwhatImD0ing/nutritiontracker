@@ -31,7 +31,7 @@ this used to be ran on luna (§8.10). Escalation is one constant, as before.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable, Literal
 
@@ -51,9 +51,14 @@ MealName = Literal["breakfast", "lunch", "dinner", "snack"]
 
 INSTRUCTIONS = """\
 You are Tally's agent: the front door for ONE spoken or typed utterance from a
-person logging their nutrition. You act only through your tools, then answer
-in one or two short sentences. You never state calories or macros — the
-database supplies those and the staged list shows them.
+person logging their nutrition. The conversation so far may ride in with it —
+what they said in earlier turns, what you replied, what each turn staged (with
+its log id) and whether that log is still staged, committed, or discarded. Use
+it to understand references ("the same again", "make that two"), to take the
+answer to a question you asked, and to handle corrections. You act only
+through your tools, then answer in one or two short sentences. You never
+state calories or macros — the database supplies those and the staged list
+shows them.
 
 Tools:
 - log_food(text): stages what they ate or drank through the food pipeline,
@@ -70,11 +75,13 @@ Tools:
   not a chain publishing nutrition, a homemade dish, "some of" a shared tray.
   Break it into plain component foods the databases DO have ("shrimp,
   cooked", "cocktail sauce", "white rice, cooked") and estimate the AMOUNT of
-  each. Give amounts by WEIGHT ("g" or "oz") whenever the food is something
-  weighed — convert a piece count with a typical piece weight and put the
-  count in the item's note ("~50 shrimp at ~8 g each"); use a bare count (unit
-  null) only for foods whose serving is one piece (an egg, a slice, a cookie).
-  Each row is staged flagged as an estimate for the person to confirm or
+  each. Give a countable food as a COUNT of pieces (unit null — "50 shrimp";
+  the database serving's own piece count is handled) WITH its total weight in
+  `grams` (pieces × a typical piece weight), so it can be sized either way;
+  anything else by weight ("g" or "oz") or the measure it comes in ("cup",
+  "tbsp"), `grams` null. Say how you arrived at the amount in the item's note
+  ("~50 shrimp, the whole 3.75 lb tray"). Each row is staged flagged as an
+  estimate for the person to confirm or
   adjust; the numbers come from the database entry of each component, never
   from you. `basis` is one sentence on how you sized the whole thing (the
   product's stated weight or piece count, what comes with it). When the
@@ -90,6 +97,14 @@ Tools:
   size an estimate. Never carry nutrition numbers from a web page into
   anything: you pass foods and amounts; the databases supply the numbers. One
   or two searches at most.
+- discard_log(log_id): for a CORRECTION — the person changes what an earlier
+  turn of this conversation staged ("actually I only had half", "make that two
+  eggs", "no, the small tray"). Call it with that turn's log id (from the
+  conversation) while the log is still staged, then stage the corrected version
+  with log_food / log_estimate as if said fresh. A log that is already
+  committed cannot be replaced: do not restage — say it is in the diary and can
+  be edited there. Never stage a duplicate of something the conversation shows
+  as staged or committed.
 - log_weight(weight, unit, days_ago): records a body weight the person stated
   as a NUMBER ("I weigh 180", "180.4 pounds this morning", "82 kilos
   yesterday"). `unit` is the unit they said; when none was said, use their
@@ -107,6 +122,20 @@ How to decide:
   already know them, then log_estimate with the components and amounts. When
   the person names the whole thing ("a platter"), size the whole thing and
   say so in `basis`; when they name a part, size that part.
+- ASK before you stage when the utterance leaves open something the numbers
+  hinge on and nothing in the conversation settles it: which product ("costco
+  shrimp" is a 3.75 lb service-deli party platter, a ~1.5 lb refrigerated
+  cocktail tray and a 32 oz frozen ring), how much of it ("a platter" — all of
+  it, or a share?), or which of several very different foods a word could
+  mean. Then call NO tool: put the question in `reply` and 2–4 short answers in
+  `options` (the likeliest first; the last may be "something else"). Ask about
+  ONE thing per turn — the one the numbers hinge on most — and make the
+  options complete answers to that one thing; if a second thing is still open
+  after the answer, ask it then. Do not ask about what the databases resolve on their own
+  (variants of a labeled product — log_food handles those), and never ask what
+  the person already said, or answered in an earlier turn.
+- When the utterance answers your last question (the conversation shows it),
+  proceed with what it settles; do not ask again.
 - An utterance can hold several of these (call each tool it needs, each at
   most once) or none — a question, a greeting, noise means no tool call.
 
@@ -115,6 +144,7 @@ words, confirming what the tools reported — and, for an estimate, what you
 assumed, so they can correct it. Use only numbers the tool results gave you
 (counts and amounts are fine; calories and macros never). Never mention tool
 names. If a tool reported an error, say plainly what could not be done.
+`options` is null unless `reply` is a clarifying question.
 """
 
 # Appended for a non-owner run (§8.9): the hosted web_search is billed per
@@ -132,11 +162,18 @@ class EstimateItem(BaseModel):
     phrase: str  # a plain, database-searchable food name ("shrimp, cooked")
     qty: float  # the estimated amount, > 0
     unit: str | None  # "g", "oz", "cup", "tbsp" … — or null for a count of pieces
+    # for a count: the estimated total weight in grams (pieces × a typical
+    # piece weight), so a food without a count-type serving is sized by weight
+    # instead of pieces × 100 g; null for an item given by weight or measure
+    grams: float | None
     note: str  # one short clause on how the amount was sized ("~50 shrimp at ~8 g each")
 
 
 class AgentReply(BaseModel):
     reply: str
+    # 2–4 short answers when `reply` is a clarifying question (the chat shows
+    # them as chips); null otherwise. Required-but-nullable for strict mode.
+    options: list[str] | None
 
 
 Emit = Callable[[dict], Awaitable[None]]
@@ -161,6 +198,10 @@ class AgentDeps:
     last_weight: dict | None = None  # {"day", "weight", "unit"} of the newest weigh-in
     profile_notes: str = ""
     web_lane: bool = True  # False for a demo account (§8.9): no hosted web_search
+    # a staged log from this conversation this turn replaces → its new status
+    discard_log: Callable[[str], Awaitable[dict]] | None = None
+    # the chat so far, oldest first: models.AgentTurn as dicts
+    history: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -173,6 +214,7 @@ class AgentRun:
     weight: dict | None
     transcript: list
     max_turns_hit: bool = False
+    options: list[str] | None = None  # the clarifying question's answers, when the reply is one
 
 
 def _tool_error(ctx, error: Exception) -> str:
@@ -218,8 +260,8 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         when_hint: str | None = None,
     ) -> str:
         """Stage the component foods of something with NO nutrition label,
-        each with the amount you estimate (by weight where the food is
-        weighed; the piece count in its note). Every row is flagged as an
+        each with the amount you estimate (a count of pieces with its total
+        `grams`, or a weight/measure). Every row is flagged as an
         estimate for the user to confirm. `basis`: one sentence on how you
         sized it. `meal_hint` / `when_hint`: the meal word and the time phrase
         the user said, verbatim, when they said one. At most once per
@@ -262,7 +304,17 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         state["weight"] = entry
         return json.dumps(entry, default=str)
 
-    tools: list = [log_food, log_estimate, log_weight]
+    @function_tool(failure_error_function=_tool_error)
+    async def discard_log(log_id: str) -> str:
+        """Discard a still-staged log from an earlier turn of this
+        conversation because this turn corrects it (then stage the corrected
+        version). Only a log id the conversation names; a committed log cannot
+        be replaced — say it is in the diary."""
+        if deps.discard_log is None:
+            return json.dumps({"error": "unavailable", "message": "nothing to replace here"})
+        return json.dumps(await deps.discard_log(log_id.strip()), default=str)
+
+    tools: list = [log_food, log_estimate, log_weight, discard_log]
     if deps.web_lane:
         # unpinned: this search identifies a product and its size, never a
         # page to transcribe numbers from (tier 3's pinned lane does that)
@@ -279,9 +331,27 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
     )
 
 
+def _history_block(turns: list[dict]) -> str:
+    """The conversation so far, in words the model can act on: what they
+    said, what we replied, and each staged log with its id, its rows and
+    its status — so a correction can name the log it replaces."""
+    if not turns:
+        return "Earlier in this conversation: nothing — this is the first turn."
+    lines = ["Earlier in this conversation (oldest first):"]
+    for t in turns:
+        if t.get("role") == "user":
+            lines.append(f'- They said: "{t.get("text", "")}"')
+        elif t.get("log_id"):
+            items = "; ".join(t.get("items") or []) or "nothing"
+            lines.append(f"- Log {t['log_id']} ({t.get('state') or 'staged'}): {items}")
+        else:
+            lines.append(f'- You replied: "{t.get("text", "")}"')
+    return "\n".join(lines)
+
+
 def agent_input(text: str, deps: AgentDeps) -> str:
     """The per-run block: local time, the unit to assume, the last weigh-in,
-    the profile notes (§6.1), then the utterance."""
+    the profile notes (§6.1), the conversation so far, then the utterance."""
     if deps.last_weight:
         lw = deps.last_weight
         last = f"{lw['weight']:g} {lw['unit']} on {lw['day']}"
@@ -292,6 +362,7 @@ def agent_input(text: str, deps: AgentDeps) -> str:
         f"Usual weight unit: {deps.unit_pref}\n"
         f"Last weigh-in: {last}\n"
         f"Profile notes: {deps.profile_notes or '(none)'}\n\n"
+        f"{_history_block(deps.history)}\n\n"
         f'Utterance: "{text}"'
     )
 
@@ -331,9 +402,23 @@ def _parse_output(output: Any) -> Any:
 def wire_events(event: Any, names: dict[str, str]) -> list[dict]:
     """Translate one SDK stream event into the chat's events (zero, one or
     two). `names` maps call ids to tool names across the run, so a result can
-    say which tool it belongs to. Hosted web_search has no separate output
-    event: its call and its result (the consulted sources, possibly none)
-    arrive together, so the chat's line never waits on one."""
+    say which tool it belongs to. The hosted web_search is live: the raw
+    Responses event that says a search is in progress puts its line on screen
+    at once (query unknown yet), and the SDK's completed item — which arrives
+    when the model turn ends — settles it with the query and the sources it
+    consulted (possibly none), so the line never waits on a separate output."""
+    if getattr(event, "type", None) == "raw_response_event":
+        data = getattr(event, "data", None)
+        if getattr(data, "type", None) in (
+            "response.web_search_call.in_progress", "response.web_search_call.searching",
+        ):
+            item_id = str(getattr(data, "item_id", "") or "")
+            if not item_id or item_id in names:
+                return []
+            names[item_id] = "web_search"
+            return [{"type": "tool_call", "id": item_id, "name": "web_search",
+                     "args": {"query": None}}]
+        return []
     if getattr(event, "type", None) != "run_item_stream_event":
         return []
     item = event.item
@@ -347,12 +432,16 @@ def wire_events(event: Any, names: dict[str, str]) -> list[dict]:
                 getattr(s, "url", None) for s in (getattr(action, "sources", None) or [])
             ]
             call_id = str(getattr(raw, "id", "") or "")
+            already_live = call_id in names  # the raw event put the line up already
             names[call_id] = "web_search"
+            result = {"type": "tool_result", "id": call_id, "name": "web_search",
+                      "output": {"query": query, "sources": [s for s in sources if s]}}
+            if already_live:
+                return [result]
             return [
                 {"type": "tool_call", "id": call_id, "name": "web_search",
                  "args": {"query": query}},
-                {"type": "tool_result", "id": call_id, "name": "web_search",
-                 "output": {"sources": [s for s in sources if s]}},
+                result,
             ]
         if kind == "function_call":
             name = item.tool_name or "tool"
@@ -382,6 +471,7 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
     agent = build_agent(deps, state)
     transcript: list = []
     max_turns_hit = False
+    options: list[str] | None = None
     names: dict[str, str] = {}
     try:
         result = Runner.run_streamed(agent, agent_input(text, deps), max_turns=MAX_TURNS)
@@ -392,13 +482,19 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
                 await emit(ev)
         final = result.final_output
         reply = (getattr(final, "reply", "") or "").strip() or _fallback_reply(state)
+        raw_options = getattr(final, "options", None) or []
+        options = [o.strip() for o in raw_options if isinstance(o, str) and o.strip()][:4] or None
         transcript = result.to_input_list()
     except MaxTurnsExceeded:
         # the tools' effects stand; the reply is built from them
         max_turns_hit = True
         reply = _fallback_reply(state)
+        options = None
     if emit is not None:
-        await emit({"type": "reply", "text": reply})
+        event: dict = {"type": "reply", "text": reply}
+        if options:
+            event["options"] = options
+        await emit(event)
     return AgentRun(
         reply=reply,
         food_calls=state["food_calls"],
@@ -406,4 +502,5 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
         weight=state["weight"],
         transcript=transcript,
         max_turns_hit=max_turns_hit,
+        options=options,
     )

@@ -161,7 +161,8 @@ def _vision_portion(item: StagedItem, v: VisionItem) -> tuple[ServingOption, flo
             current = next(
                 (s for s in counts if item.serving and s.serving_id == item.serving.id), None
             )
-            return current or counts[0], count
+            base = current or counts[0]
+            return base, count / cascade._pieces_per(base.description)  # "4 large" holds four
     grams = _grams(v)
     if grams is not None:
         by_grams = [s for s in servings if s.grams and s.grams > 0]

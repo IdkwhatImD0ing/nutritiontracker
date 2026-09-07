@@ -667,16 +667,26 @@ export interface components {
         /**
          * AgentOutcome
          * @description What the agent lane did with the utterance (§6.4): its one-sentence
-         *     reply, and the weigh-in it recorded, if any. Staged items ride the
-         *     LogResponse as on any other log. Assembled from what the tools did,
-         *     never from what the model said.
+         *     reply, the weigh-in it recorded, if any, the answers it offers when the
+         *     reply is a clarifying question (`options`, tappable in the chat), and the
+         *     earlier staged logs it discarded because this turn replaces them
+         *     (`discarded`). Staged items ride the LogResponse as on any other log.
+         *     Assembled from what the tools did, never from what the model said.
          */
         AgentOutcome: {
             /** Reply */
             reply: string;
             weight?: components["schemas"]["WeightEntry"] | null;
+            /** Options */
+            options?: string[] | null;
+            /** Discarded */
+            discarded?: string[] | null;
         };
-        /** AgentReplyEvent */
+        /**
+         * AgentReplyEvent
+         * @description The agent's reply — or its clarifying question, when `options` carries
+         *     the 2–4 answers the chat offers as chips (§6.4).
+         */
         AgentReplyEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -685,6 +695,8 @@ export interface components {
             type: "reply";
             /** Text */
             text: string;
+            /** Options */
+            options?: string[] | null;
         };
         /**
          * AgentToolCallEvent
@@ -736,6 +748,28 @@ export interface components {
             type: "transcript";
             /** Text */
             text: string;
+        };
+        /**
+         * AgentTurn
+         * @description One earlier turn of the Agent chat (§6.4), as the client remembers it:
+         *     what the person said, what the agent replied, and — for a turn that
+         *     staged a log — the log's id, its rows in words (never macros) and where
+         *     it stands, so a follow-up ("actually I only had half") can name it.
+         */
+        AgentTurn: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "agent";
+            /** Text */
+            text: string;
+            /** Log Id */
+            log_id?: string | null;
+            /** Items */
+            items?: string[] | null;
+            /** State */
+            state?: ("staged" | "committed" | "discarded") | null;
         };
         /** AliasDeleteResponse */
         AliasDeleteResponse: {
@@ -1418,6 +1452,8 @@ export interface components {
              * @default false
              */
             agent: boolean;
+            /** History */
+            history?: components["schemas"]["AgentTurn"][] | null;
         };
         /**
          * LogCreateResponse
@@ -3320,6 +3356,8 @@ export interface operations {
                     capture_error?: string;
                     /** @default false */
                     agent?: boolean;
+                    /** @description JSON array of AgentTurn — the chat so far (§6.4) */
+                    history?: string;
                 };
             };
         };

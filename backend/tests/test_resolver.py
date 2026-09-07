@@ -557,6 +557,12 @@ def test_portion_spoken_qty_and_count_without_unit():
         sid, qty, verify = await cascade.resolve_portion(row, 2, "scoops")
         assert (sid, qty, verify) == ("srv-scoop", 2, False)
 
+        # …divided by the pieces the serving holds: "two scoops" of a "2 scoops
+        # (64 g)" serving is ONE serving (BACKLOG 151 — never a one-piece assumption)
+        two_scoops = {**row, "servings": [{**SCOOP, "description": "2 scoops (64 g)", "grams": 62}, HUNDRED_G]}
+        sid, qty, verify = await cascade.resolve_portion(two_scoops, 2, "scoops")
+        assert (sid, qty, verify) == ("srv-scoop", 1, False)
+
         # qty + no unit → prefers the count-type household serving
         egg = {
             "servings": [
@@ -570,6 +576,27 @@ def test_portion_spoken_qty_and_count_without_unit():
         }
         sid, qty, verify = await cascade.resolve_portion(egg, 2, None)
         assert (sid, qty, verify) == ("srv-large", 2, False)
+
+        # a count serving that holds several pieces: FDC's cooked shrimp is
+        # "4 large", so 50 shrimp are 12.5 servings, not 50 (BACKLOG 151)
+        shrimp = {
+            **egg,
+            "servings": [
+                HUNDRED_G,
+                {"serving_id": "srv-4large", "description": "4 large", "grams": 22,
+                 "macros": {"kcal": 22, "protein_g": 5, "carb_g": 0, "fat_g": 0.3}},
+            ],
+            "food_default_serving_id": "srv-4large",
+        }
+        sid, qty, verify = await cascade.resolve_portion(shrimp, 50, None)
+        assert (sid, qty, verify) == ("srv-4large", 12.5, False)
+        # the leading number of a measure is not a piece count: "12 fl oz can"
+        assert cascade._pieces_per("12 fl oz can") == 1.0
+        assert cascade._pieces_per("4 large") == 4.0
+        assert cascade._pieces_per("2 slices") == 2.0
+        assert cascade._pieces_per("1 bottle (414 ml)") == 1.0
+        assert cascade._pieces_per("large") == 1.0
+        assert cascade._pieces_per("") == 1.0
 
         # qty + no unit but ONLY mass servings → never silently multiplied: verify-me
         mass_only = {

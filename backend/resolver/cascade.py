@@ -151,6 +151,23 @@ def _scale_macros(macros: dict, qty: float) -> dict:
     }
 
 
+_LEADING_PIECES_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s+([a-z]+)")
+
+
+def _pieces_per(description: str) -> float:
+    """How many pieces one count-type serving holds: the leading number of
+    its description when the word after it is not a measure ("4 large" → 4,
+    "2 slices" → 2, "1 large" → 1, "large" → 1; "12 fl oz can" → 1, the 12
+    measures ounces, not cans). A spoken count of pieces is divided by it —
+    FDC's cooked shrimp serving is "4 large", so 50 shrimp are 12.5 servings,
+    not 50 (BACKLOG 151; Bill, 2026-09-06: never assume a one-piece serving)."""
+    m = _LEADING_PIECES_RE.match((description or "").lower())
+    if not m or m.group(2) in _MEASURE_WORDS:
+        return 1.0
+    n = float(m.group(1))
+    return n if n > 0 else 1.0
+
+
 def _is_count_serving(description: str) -> bool:
     """True when a serving describes a countable household unit ("1 large",
     "1 bottle (414 ml)"), not a bare mass/volume measure ("100 g")."""
@@ -284,17 +301,20 @@ async def resolve_portion(
                     )
                     return base["serving_id"], round(grams / float(base["grams"]), 4), False
                 return default_id, qty, True  # no gram-based serving to map onto
-            # fuzzy: unit word appears in a serving description
+            # fuzzy: unit word appears in a serving description — divided by
+            # the pieces that serving holds ("two scoops" of a "2 scoops" serving
+            # is one serving, §7.3)
             for s in servings:
                 tokens = re.findall(r"[a-z]+", s.get("description", "").lower())
                 if stem in tokens or stem + "s" in tokens:
-                    return s["serving_id"], qty, False
+                    return s["serving_id"], qty / _pieces_per(s.get("description", "")), False
             return default_id, qty, True  # unit didn't map — verify me
-        # qty + no unit ("two eggs"): prefer a count-type household serving
+        # qty + no unit ("two eggs", "50 shrimp"): prefer a count-type
+        # household serving, divided by the pieces it holds ("4 large")
         count_servings = [s for s in servings if _is_count_serving(s.get("description", ""))]
         if count_servings:
             base = _serving_by_id(count_servings, default_id) or count_servings[0]
-            return base["serving_id"], qty, False
+            return base["serving_id"], qty / _pieces_per(base.get("description", "")), False
         # only mass servings: never silently multiply the mass default (§7.3)
         return default_id, qty, True
 
