@@ -47,6 +47,7 @@ MAX_ESTIMATE_ITEMS = 8
 _MAX_WIRE_OUTPUT_CHARS = 4_000
 
 Unit = Literal["kg", "lb"]
+MealName = Literal["breakfast", "lunch", "dinner", "snack"]
 
 INSTRUCTIONS = """\
 You are Tally's agent: the front door for ONE spoken or typed utterance from a
@@ -76,8 +77,12 @@ Tools:
   Each row is staged flagged as an estimate for the person to confirm or
   adjust; the numbers come from the database entry of each component, never
   from you. `basis` is one sentence on how you sized the whole thing (the
-  product's stated weight or piece count, what comes with it). Call it AT
-  MOST ONCE, with all such items in one call. Never for a packaged product, a
+  product's stated weight or piece count, what comes with it). When the
+  person said which meal or when ("for breakfast", "yesterday at lunch",
+  "this morning", "last night"), pass the meal word as `meal_hint` and the
+  time phrase as `when_hint`, exactly as said — the same words log_food keeps
+  verbatim — so the rows land on the right day and meal. Call it AT MOST
+  ONCE, with all such items in one call. Never for a packaged product, a
   chain menu item or a plain whole food — those go to log_food.
 - web_search: research a product you need to understand before logging it —
   what it is, what it contains, how much it weighs, how many pieces, what
@@ -143,8 +148,11 @@ class AgentDeps:
 
     # the food part of the utterance → a summary of what was staged (no macros)
     stage_food: Callable[[str], Awaitable[dict]]
-    # (component items, basis) → a summary of the flagged rows staged (no macros)
-    stage_estimate: Callable[[list[EstimateItem], str], Awaitable[dict]]
+    # (component items, basis, meal_hint, when_hint) → a summary of the
+    # flagged rows staged (no macros)
+    stage_estimate: Callable[
+        [list[EstimateItem], str, MealName | None, str | None], Awaitable[dict]
+    ]
     # (weight as spoken, unit, local day) → the stored entry + the change since
     # the previous one; raises ValueError when the value is out of range
     record_weight: Callable[[float, Unit, date], Awaitable[dict]]
@@ -203,12 +211,19 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         return json.dumps(out, default=str)
 
     @function_tool(failure_error_function=_tool_error)
-    async def log_estimate(items: list[EstimateItem], basis: str) -> str:
+    async def log_estimate(
+        items: list[EstimateItem],
+        basis: str,
+        meal_hint: MealName | None = None,
+        when_hint: str | None = None,
+    ) -> str:
         """Stage the component foods of something with NO nutrition label,
         each with the amount you estimate (by weight where the food is
         weighed; the piece count in its note). Every row is flagged as an
         estimate for the user to confirm. `basis`: one sentence on how you
-        sized it. At most once per utterance."""
+        sized it. `meal_hint` / `when_hint`: the meal word and the time phrase
+        the user said, verbatim, when they said one. At most once per
+        utterance."""
         if state["estimate_calls"] >= 1:
             return json.dumps({
                 "error": "already_called",
@@ -225,7 +240,9 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         items = items[:MAX_ESTIMATE_ITEMS]
         state["estimate_calls"] += 1
         try:
-            out = await deps.stage_estimate(items, basis.strip())
+            out = await deps.stage_estimate(
+                items, basis.strip(), meal_hint, (when_hint or "").strip() or None
+            )
         except Exception:
             state["estimate_calls"] -= 1
             raise
@@ -315,7 +332,8 @@ def wire_events(event: Any, names: dict[str, str]) -> list[dict]:
     """Translate one SDK stream event into the chat's events (zero, one or
     two). `names` maps call ids to tool names across the run, so a result can
     say which tool it belongs to. Hosted web_search has no separate output
-    event: its call and its consulted sources arrive together."""
+    event: its call and its result (the consulted sources, possibly none)
+    arrive together, so the chat's line never waits on one."""
     if getattr(event, "type", None) != "run_item_stream_event":
         return []
     item = event.item
@@ -330,16 +348,12 @@ def wire_events(event: Any, names: dict[str, str]) -> list[dict]:
             ]
             call_id = str(getattr(raw, "id", "") or "")
             names[call_id] = "web_search"
-            out: list[dict] = [
+            return [
                 {"type": "tool_call", "id": call_id, "name": "web_search",
                  "args": {"query": query}},
+                {"type": "tool_result", "id": call_id, "name": "web_search",
+                 "output": {"sources": [s for s in sources if s]}},
             ]
-            if sources:
-                out.append({
-                    "type": "tool_result", "id": call_id, "name": "web_search",
-                    "output": {"sources": [s for s in sources if s]},
-                })
-            return out
         if kind == "function_call":
             name = item.tool_name or "tool"
             call_id = str(item.call_id or "")

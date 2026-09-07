@@ -687,21 +687,39 @@ def _flag_estimate(item: StagedItem, it: EstimateItem) -> StagedItem:
 
 
 async def _stage_estimate(
-    log_id: UUID, meal: Meal, items: list[EstimateItem], *, start_index: int
+    body: LogCreate,
+    meal: Meal,
+    items: list[EstimateItem],
+    *,
+    start_index: int,
+    meal_hint: str | None = None,
+    when_hint: str | None = None,
 ) -> list[StagedItem]:
     """§6.4 log_estimate: the components of an unlabeled dish through the
     identical tiers 1–3 (tier 0 skipped — a saved-meal trigger is something
     you say), each row flagged estimated="portion": it renders as a guess and
     cannot commit unconfirmed (§3.4a), and it learns nothing (the flag —
     LEARNABLE_ROWS_SQL on the read side, commit's alias gate on the write
-    side). The numbers are the database's; only the amount is the agent's."""
+    side). The numbers are the database's; only the amount is the agent's.
+    The spoken meal and time words ride in as the agent's `meal_hint` /
+    `when_hint` and go through the same §7.2 interpreter as decompose's, so
+    "yesterday I had a platter…" lands on yesterday's diary, not today's."""
+    when = interpret_when_hint(when_hint, body.captured_at, body.tz)
+    try:
+        spoken_meal = Meal(meal_hint) if meal_hint else None
+    except ValueError:
+        spoken_meal = None
+    row_meal = spoken_meal or when.meal or meal  # an explicit meal word outranks the shift
     resolutions = [
-        await cascade.resolve_item(_estimate_parsed(it), start_index + i, meal, skip_tier0=True)
+        await cascade.resolve_item(_estimate_parsed(it), start_index + i, row_meal, skip_tier0=True)
         for i, it in enumerate(items)
     ]
     for r, it in zip(resolutions, items):
         r.staged = _flag_estimate(r.staged, it)
-    await _persist(log_id, resolutions, meal, short_circuit=False)
+    await _persist(
+        body.id, resolutions, row_meal, short_circuit=False,
+        logged_at=when.logged_at, when_hint_note=when.note,
+    )
     return [r.staged for r in resolutions]
 
 
@@ -722,7 +740,10 @@ async def _run_agent_lane(
     from services import agent as agent_svc
 
     tracing.init_tracing()
-    result: dict = {"items": [], "food": None, "weight": None, "basis": None, "next_index": 0}
+    result: dict = {
+        "items": [], "food": None, "weight": None, "basis": None,
+        "estimate_meal": None, "next_index": 0,
+    }
     staging = asyncio.Lock()
 
     def summary(items: list[StagedItem]) -> list[dict]:
@@ -753,18 +774,24 @@ async def _run_agent_lane(
             "note": staged.note,
         }
 
-    async def stage_estimate(items: list[EstimateItem], basis: str) -> dict:
+    async def stage_estimate(
+        items: list[EstimateItem], basis: str, meal_hint: str | None, when_hint: str | None
+    ) -> dict:
         async with staging:
-            # the meal a spoken hint moved the log to, when log_food ran first
-            row_meal = result["food"].meal if result["food"] is not None else meal
+            # with no hint of its own, the meal log_food's hints moved the log
+            # to (when it ran first), else the clock's
+            fallback = result["food"].meal if result["food"] is not None else meal
             rows = await _stage_estimate(
-                body.id, row_meal, items, start_index=result["next_index"]
+                body, fallback, items, start_index=result["next_index"],
+                meal_hint=meal_hint, when_hint=when_hint,
             )
             result["next_index"] += len(rows)
             result["items"].extend(rows)
             result["basis"] = basis
+            if rows:
+                result["estimate_meal"] = rows[0].meal
         return {
-            "meal": row_meal.value,
+            "meal": (rows[0].meal if rows else fallback).value,
             "basis": basis,
             "items": summary(rows),
             "note": "Each row is flagged as an estimate; the user confirms or adjusts it in the list.",
@@ -844,7 +871,7 @@ async def _run_agent_lane(
         return LogCreateResponse(log_id=body.id, meal=meal, items=[], agent=outcome)
     return LogCreateResponse(
         log_id=body.id,
-        meal=food.meal if food is not None else meal,
+        meal=food.meal if food is not None else (result["estimate_meal"] or meal),
         items=items,
         saved_meal=food.saved_meal if food is not None else None,
         note=food.note if food is not None else None,

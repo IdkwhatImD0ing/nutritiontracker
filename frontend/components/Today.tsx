@@ -642,6 +642,15 @@ export default function Today() {
             voiceFailRef.current = e;
           }}
           onReview={(log) => {
+            // Inside the 6 s undo window the sheet's log is about to be
+            // discarded: Review is the undo — the timer is cancelled and the
+            // sheet comes back with its local edits, exactly as the toast's
+            // Undo does. Otherwise reopen the staged log as first answered.
+            if (discardRef.current?.log.log_id === log.log_id) {
+              undoDiscard();
+              return;
+            }
+            if (staging?.log.log_id === log.log_id) return; // already open
             setSavedNote(null);
             setStaging({ log, restore: null });
           }}

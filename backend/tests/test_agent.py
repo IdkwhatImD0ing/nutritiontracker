@@ -87,9 +87,9 @@ def _deps(**over) -> agent_svc.AgentDeps:
         calls["food"].append(text)
         return {"meal": "breakfast", "items": [{"phrase": "eggs", "status": "searching"}]}
 
-    async def stage_estimate(items, basis: str) -> dict:
-        calls["estimate"].append(([it.model_dump() for it in items], basis))
-        return {"meal": "lunch", "basis": basis,
+    async def stage_estimate(items, basis: str, meal_hint=None, when_hint=None) -> dict:
+        calls["estimate"].append(([it.model_dump() for it in items], basis, meal_hint, when_hint))
+        return {"meal": meal_hint or "lunch", "basis": basis,
                 "items": [{"phrase": it.phrase, "status": "searching"} for it in items]}
 
     async def record_weight(value: float, unit: str, day: date) -> dict:

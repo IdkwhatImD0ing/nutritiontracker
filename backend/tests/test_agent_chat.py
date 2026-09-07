@@ -24,11 +24,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 BACKEND = Path(__file__).resolve().parents[1]
 if str(BACKEND) not in sys.path:
@@ -99,8 +100,9 @@ def test_log_estimate_tool_runs_once_and_refuses_bad_amounts_in_code():
         out = await _invoke(agent, "log_estimate", items=[SHRIMP, SAUCE], basis=BASIS)
         assert out["basis"] == BASIS and [i["phrase"] for i in out["items"]] == ["shrimp, cooked", "cocktail sauce"]
         assert state["estimate_calls"] == 1
-        (items, basis), = deps.calls["estimate"]
+        (items, basis, meal_hint, when_hint), = deps.calls["estimate"]
         assert basis == BASIS and items[0]["qty"] == 400 and items[0]["unit"] == "g"
+        assert meal_hint is None and when_hint is None  # none spoken, none passed
 
         # once per utterance — a second call stages nothing again
         out = await _invoke(agent, "log_estimate", items=[SAUCE], basis="again")
@@ -114,6 +116,14 @@ def test_log_estimate_tool_runs_once_and_refuses_bad_amounts_in_code():
         assert state2["estimate_calls"] == 0
         out = await _invoke(agent2, "log_estimate", items=[], basis=BASIS)
         assert out["error"] == "empty" and state2["estimate_calls"] == 0
+
+        # the spoken meal / time words ride through, verbatim (§7.2)
+        deps3 = _deps()
+        agent3 = agent_svc.build_agent(deps3, {})
+        out = await _invoke(agent3, "log_estimate", items=[SAUCE], basis=BASIS,
+                            meal_hint="breakfast", when_hint=" yesterday morning ")
+        assert out["meal"] == "breakfast"
+        assert deps3.calls["estimate"][0][2:] == ("breakfast", "yesterday morning")
 
         # a demo account's agent has no web lane (§8.9)
         demo = agent_svc.build_agent(_deps(web_lane=False), {})
@@ -158,6 +168,16 @@ def test_wire_events_translate_function_calls_outputs_and_web_search():
         {"type": "tool_result", "id": "ws_1", "name": "web_search",
          "output": {"sources": ["https://www.costco.com/shrimp-platter"]}},
     ]
+
+    # a search that consulted nothing still resolves its line: the result
+    # arrives with the call, sources empty
+    quiet = ResponseFunctionWebSearch(
+        id="ws_2", status="completed", type="web_search_call",
+        action=ActionSearch(type="search", query="nothing found", sources=None),
+    )
+    out = agent_svc.wire_events(ev("tool_called", ToolCallItem(raw_item=quiet, agent=agent)), names)
+    assert [e["type"] for e in out] == ["tool_call", "tool_result"]
+    assert out[1]["output"] == {"sources": []}
 
     # anything else on the stream is not the chat's business
     assert agent_svc.wire_events(SimpleNamespace(type="raw_response_event"), names) == []
@@ -242,6 +262,47 @@ def test_agent_lane_estimate_rows_are_flagged_and_indexed_after_the_food(monkeyp
             # log_food's timing survives the second staging call on the same log
             log = await (await conn.execute("SELECT decompose_ms FROM logs WHERE id = %s", (body.id,))).fetchone()
             assert log["decompose_ms"] is not None
+
+    _run(scenario())
+
+
+def test_estimate_rows_honor_the_spoken_meal_and_time(monkeypatch):
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)  # the estimate is the only staging
+            runner = _fake_runner(
+                [("log_estimate", {"items": [SHRIMP], "basis": BASIS,
+                                   "meal_hint": None, "when_hint": "yesterday lunch"})],
+                "Staged an estimate for yesterday's lunch.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = _log("yesterday at lunch I had a platter of costco shrimp")  # 08:30 → breakfast by the clock
+            resp = await logs_routes.create_log(body)
+            (row,) = resp.items
+            # §7.2: the when-hint moves the meal and the diary day; captured_at is untouched
+            assert row.meal.value == "lunch" and resp.meal.value == "lunch"
+            stored = await (await conn.execute(
+                "SELECT staged, (SELECT captured_at FROM logs WHERE id = %s) AS captured_at "
+                "FROM item_resolutions WHERE log_id = %s", (body.id, body.id),
+            )).fetchone()
+            logged_at = datetime.fromisoformat(stored["staged"]["logged_at"])
+            local = logged_at.astimezone(ZoneInfo(TZ))
+            assert (local.date(), local.hour, local.minute) == ((NOW.astimezone(ZoneInfo(TZ)) - timedelta(days=1)).date(), 12, 30)
+            assert stored["captured_at"] == NOW
+            assert stored["staged"]["estimated"] == "portion"
+
+            # an explicit meal word outranks the shift's meal; an unknown when-hint is noted, not guessed
+            runner2 = _fake_runner(
+                [("log_estimate", {"items": [SAUCE], "basis": BASIS,
+                                   "meal_hint": "dinner", "when_hint": "a while ago"})],
+                "Staged.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner2)
+            body2 = _log("a while ago for dinner, some cocktail sauce from the deli")
+            resp2 = await logs_routes.create_log(body2)
+            assert resp2.items[0].meal.value == "dinner" and resp2.meal.value == "dinner"
+            staged2 = await _scalar(conn, "SELECT staged FROM item_resolutions WHERE log_id = %s", (body2.id,))
+            assert "logged_at" not in staged2 and "not recognized" in staged2["when_hint_note"]
 
     _run(scenario())
 
