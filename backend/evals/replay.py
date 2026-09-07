@@ -2,7 +2,7 @@
 
 Each dataset item goes through the SAME code path as POST /api/logs
 (routes/logs.py): cascade.short_circuit_all -> services.decompose.decompose
-(inside a tracing.generation, as production wraps it) -> cascade.resolve_items
+(which records its own FireTrace run, as in production) -> cascade.resolve_items
 (tiers 1–2), then the staged row this dataset item is about is picked out of
 the resulting list — a tier-0 macro expands into N rows, so item_index no
 longer lines up (§3.1). Tier 3 (services.tier3.run_tier3) is opt-in (--tier3)
@@ -159,7 +159,6 @@ async def stage(
 ) -> dict:
     """routes/logs.py's create path for one dataset item, returning the staged
     row for `phrase` as a plain dict (the experiment output)."""
-    import tracing
     from services.decompose import decompose
 
     # §3.0 whole-utterance short-circuit: meal macro (tier 0, N rows) before
@@ -172,9 +171,7 @@ async def stage(
             picked.staged if picked else None, path="short_circuit", rows=len(sc)
         )
 
-    async with tracing.generation("decompose") as gen:  # §10, as logs.py wraps it
-        parsed = await decompose(utterance, ctx)
-        gen.update(input=utterance, output=parsed.model_dump(mode="json"))
+    parsed = await decompose(utterance, ctx)  # its FireTrace run rides inside (§10)
     if parsed.meal_hint is not None:
         meal = parsed.meal_hint
 

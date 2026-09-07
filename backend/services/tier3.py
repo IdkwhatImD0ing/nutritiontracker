@@ -1364,29 +1364,31 @@ async def run_tier3(
     trace_id: str | None = None
     transcript: list | None = None
     out: Tier3Result
-    try:
-        async with tracing.generation("tier3") as gen:
-            trace_id = getattr(gen, "trace_id", None)
-            try:
-                result = await Runner.run(agent, agent_input, max_turns=MAX_TURNS)
-                out = result.final_output_as(Tier3Result)
-                transcript = result.to_input_list()
-            except MaxTurnsExceeded:
-                # Deterministic failure — retrying identically would burn another
-                # 6-turn run; fall through to the manual-search escape hatch.
-                out = Tier3Result(
-                    status="not_found",
-                    source=None,
-                    source_id=None,
-                    serving_id=None,
-                    display_name=None,
-                    confidence="low",
-                    alternates=[],
-                    question=None,
-                )
-            gen.update(input=agent_input, output=out.model_dump(mode="json"))
-    finally:
-        tracing.flush()
+    # §10: the run's step in the route's trace (a trace of its own from the
+    # evals); the SDK's agent, model-turn and tool spans nest under it
+    async with tracing.run(
+        "tier3", input=agent_input, attributes={"phrase": phrase, "item_index": item_index}
+    ) as span:
+        trace_id = span.trace_id
+        try:
+            result = await Runner.run(agent, agent_input, max_turns=MAX_TURNS)
+            out = result.final_output_as(Tier3Result)
+            transcript = result.to_input_list()
+        except MaxTurnsExceeded:
+            # Deterministic failure — retrying identically would burn another
+            # 6-turn run; fall through to the manual-search escape hatch.
+            out = Tier3Result(
+                status="not_found",
+                source=None,
+                source_id=None,
+                serving_id=None,
+                display_name=None,
+                confidence="low",
+                alternates=[],
+                question=None,
+            )
+            span.set(attributes={"max_turns_hit": True})
+        span.set(output=out.model_dump(mode="json"))
 
     # §3.4/§9: what the hosted web_search consulted, and how many search
     # actions it ran — each one is a billed network call, counted like any other.

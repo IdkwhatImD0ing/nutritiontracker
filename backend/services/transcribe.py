@@ -16,6 +16,9 @@ automatically. Any 4xx is a hard TranscriptionError (a bad request will not
 get better on a different vendor). A provider whose API key is not configured
 is "unavailable" the same way (fail over, never crash); when no provider is
 left the error names every reason, so the route's 503 says why.
+
+Each call records one FireTrace span (tracing.run: the provider and model
+that produced the text, the transcript, the wall time, any failover).
 """
 
 from __future__ import annotations
@@ -27,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+
+import tracing
 
 DEEPGRAM_URL = "https://api.deepgram.com/v1/listen"
 DEEPGRAM_MODEL = "nova-3"
@@ -274,18 +279,26 @@ async def transcribe(audio_bytes: bytes, mime: str) -> Transcription:
     keyterms = await build_keyterms()  # fetched once, shared across failover
     t0 = time.monotonic()
     failures: list[str] = []
-    for name in order:
-        try:
-            text = await _run_provider(name, audio_bytes, mime, keyterms)
-        except ProviderUnavailable as e:
-            failures.append(str(e))
-            continue
-        return Transcription(
-            text=text,
-            transcribe_ms=int((time.monotonic() - t0) * 1000),
-            provider=name,
+    async with tracing.run(
+        "transcribe", kind="custom",
+        input={"mime": mime, "bytes": len(audio_bytes)},
+        attributes={"keyterms": len(keyterms)},
+    ) as span:
+        for name in order:
+            try:
+                text = await _run_provider(name, audio_bytes, mime, keyterms)
+            except ProviderUnavailable as e:
+                failures.append(str(e))
+                continue
+            transcribe_ms = int((time.monotonic() - t0) * 1000)
+            span.set(
+                provider=name,
+                model=DEEPGRAM_MODEL if name == "deepgram" else OPENAI_STT_MODEL,
+                output={"text": text, "transcribe_ms": transcribe_ms},
+                attributes={"failed_over": failures} if failures else None,
+            )
+            return Transcription(text=text, transcribe_ms=transcribe_ms, provider=name)
+        # every provider declined — say why for each, in the order they were tried
+        raise TranscriptionError(
+            "no transcription provider available: " + "; ".join(failures)
         )
-    # every provider declined — say why for each, in the order they were tried
-    raise TranscriptionError(
-        "no transcription provider available: " + "; ".join(failures)
-    )

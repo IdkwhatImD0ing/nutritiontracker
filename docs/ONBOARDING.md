@@ -21,7 +21,7 @@ was written from the code as it landed, and §8 has not been walked from an empt
 | **LLM** | OpenAI Agents SDK — `gpt-5.6-luna` (decompose), `gpt-5.6-terra` (the front-door agent behind the Agent chat, and the tier-3 agent). **Always pin the full model id**, never bare `gpt-5.6` |
 | **Speech** | Deepgram `nova-3` primary, OpenAI `gpt-transcribe` fallback |
 | **Food data** | USDA FDC (generic + branded + barcodes) primary, Open Food Facts quality-gated fallback, chain restaurants only via web transcription with a stored source URL |
-| **Tracing** | Langfuse Cloud (Python SDK v4), prod/test split by `LANGFUSE_TRACING_ENVIRONMENT` |
+| **Tracing** | FireTrace (self-hosted; `backend/tracing.py` POSTs one trace per model/agent run, stdlib only). `FIRETRACE_API_KEY` decides the environment — one key per Vercel scope. Langfuse survives only in the eval harness |
 | **Types** | Defined **once** in pydantic → OpenAPI → generated TypeScript. Never hand-edit `frontend/lib/api-types.ts` |
 
 **Read [DESIGN.md](DESIGN.md) before changing behavior.** It is the authoritative spec, not a
@@ -72,9 +72,9 @@ committed — keep it that way. `.env.example` lists the canonical variable name
 ### What you just pulled
 
 `DATABASE_URL`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_COOKIE_SECRET`, `OPENAI_API_KEY`,
-`DEEPGRAM_API_KEY`, `FDC_API_KEY`, `OFF_USER_AGENT`, `LANGFUSE_PUBLIC_KEY`,
-`LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT`, plus the
-Neon-managed `POSTGRES_*`/`PG*` set.
+`DEEPGRAM_API_KEY`, `FDC_API_KEY`, `OFF_USER_AGENT`, `FIRETRACE_API_KEY` (a development
+key — the key decides the environment; unset, tracing is simply off), the `LANGFUSE_*`
+set (the eval harness only, §6), plus the Neon-managed `POSTGRES_*`/`PG*` set.
 
 Two deliberate omissions:
 
@@ -255,7 +255,7 @@ backend/
   main.py              FastAPI app; every router is registered here
   models.py            pydantic contracts — the single source of truth for API types
   auth.py              JWT verification, owner-vs-demo, Origin check
-  db.py  tracing.py    connection; binds tally_app + app.user_id per transaction; Langfuse setup
+  db.py  tracing.py    connection; binds tally_app + app.user_id per transaction; the FireTrace tracer (§10)
   migrations/          001_init.sql, 002_multiuser.sql, 003_weights.sql, apply.py (`--dry-run` verifies + rolls back)
   resolver/
     cascade.py         the resolver cascade: tier 0 → 1 → 2 → 3, and macro expansion
@@ -270,7 +270,8 @@ backend/
     quota.py           demo quota: one log a day, ten paid re-resolutions (§5 of DESIGN)
   sources/             fdc.py (USDA), web.py (restaurant transcription lane)
   routes/              one module per API surface (me.py: GET /api/me; weights.py: the weigh-in log)
-  evals/               Langfuse dataset collection + replay harness (runs as the owner)
+  evals/               Langfuse dataset collection + replay harness (runs as the owner; `uv run --group evals`,
+                       parked on Langfuse until FireTrace has datasets — docs/FIRETRACE_FEEDBACK.md)
   tests/               pytest; `-m live` marks the ones that spend money; tenancy_harness.py
                        binds every isolated_db to a tenant
 frontend/
@@ -383,7 +384,8 @@ person. DESIGN §0.5 has the *why* for each.
 | OpenAI | an API key with access to the GPT-5.6 family and the web search tool | `OPENAI_API_KEY` |
 | Deepgram | an API key — or set `STT_PROVIDER=openai` and skip it; OpenAI transcribe is the fallback either way | `DEEPGRAM_API_KEY` |
 | USDA FDC | free key: https://fdc.nal.usda.gov/api-key-signup | `FDC_API_KEY` |
-| Langfuse | a free Hobby project. `backend/tracing.py` builds the client at startup; how the SDK behaves with no keys is unverified and a project takes two minutes, so treat the keys as required | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT=development` |
+| FireTrace | a project on your FireTrace deployment, one write key per environment (the key decides which). Unset, tracing is off and nothing else changes | `FIRETRACE_API_KEY` |
+| Langfuse | only the eval harness (`backend/evals`, `uv run --group evals`), until FireTrace has datasets (docs/FIRETRACE_FEEDBACK.md) | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT=test` |
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |
 
 `OFF_USER_AGENT` is read by `backend/sources/off.py`, the barcode miss-fallback (DESIGN
@@ -458,10 +460,10 @@ any address may sign up and gets a demo account (8.5).
 2. Set every variable from 8.1 in the project's **Production** environment, plus
    `APP_ORIGIN=https://<your domain>` (pins the Origin check on state-changing requests;
    unset, `backend/auth.py` derives the allowed origin from Vercel's own URL variables —
-   see `_allowed_origins`), `LANGFUSE_TRACING_ENVIRONMENT=production` and `ALLOWED_EMAIL`
+   see `_allowed_origins`), a production `FIRETRACE_API_KEY` (the key decides the environment) and `ALLOWED_EMAIL`
    (the backend's owner check; one project's env serves both services). Do the same for
    **Preview** with
-   `LANGFUSE_TRACING_ENVIRONMENT=preview` if you use previews.
+   a preview `FIRETRACE_API_KEY` if you use previews.
 3. `vercel deploy --yes` for a preview; promote it, or connect the GitHub repo so pushes to
    `main` deploy production (that is how the owner's project works — §5 rule 7).
 4. Sign in on the deployed origin. If Neon Auth refuses the deployed domain, look for a

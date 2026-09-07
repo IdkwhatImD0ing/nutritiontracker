@@ -13,6 +13,7 @@ import asyncio
 import sys
 import time
 import types
+from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,11 +40,7 @@ from psycopg.types.json import Json
 
 
 def _build_tracing_stub() -> types.ModuleType:
-    mod = types.ModuleType("tracing")
-    mod.init_tracing = lambda: None
-    mod.flush = lambda: None
-    mod.score_commit = lambda trace_id, name, value, comment=None: None
-    return mod
+    return make_tracing_stub()
 
 
 @pytest.fixture(scope="module", autouse=True)

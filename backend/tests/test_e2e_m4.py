@@ -29,6 +29,7 @@ import asyncio
 import sys
 import time
 import types
+from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from io import BytesIO
@@ -67,22 +68,7 @@ async def _vision_dispatch(image, mime):
 
 @pytest.fixture(scope="module", autouse=True)
 def _stubs():
-    tracing_mod = types.ModuleType("tracing")
-
-    class _Gen:
-        trace_id = "trace-e2e-m4"
-
-        def update(self, **kw):
-            pass
-
-    @asynccontextmanager
-    async def generation(name):
-        yield _Gen()
-
-    tracing_mod.init_tracing = lambda: None
-    tracing_mod.generation = generation
-    tracing_mod.flush = lambda: None
-    tracing_mod.score_commit = lambda *a, **kw: None
+    tracing_mod = make_tracing_stub("trace-e2e-m4")
 
     vision_mod = types.ModuleType("services.vision")
     vision_mod.analyze = _vision_dispatch

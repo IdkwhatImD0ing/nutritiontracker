@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
+from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -46,22 +47,7 @@ def _build_stubs() -> dict:
 
     auth_mod.require_user = require_user
 
-    tracing_mod = types.ModuleType("tracing")
-
-    class _Gen:
-        trace_id = "trace-test"
-
-        def update(self, **kw):
-            pass
-
-    @asynccontextmanager
-    async def generation(name):
-        yield _Gen()
-
-    tracing_mod.init_tracing = lambda: None
-    tracing_mod.generation = generation
-    tracing_mod.flush = lambda: None
-    tracing_mod.score_commit = lambda *a, **kw: None
+    tracing_mod = make_tracing_stub("trace-test")
 
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []

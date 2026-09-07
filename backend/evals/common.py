@@ -17,7 +17,11 @@ REPLAY_ENVIRONMENT = "test"  # DESIGN.md §10: experiment runs are test traces b
 
 
 def setup_langfuse(environment: str | None = None) -> Langfuse:
-    """Initialize tracing (tracing.init_tracing reads .env) and return the client.
+    """Read .env (tracing.init_tracing), build the Langfuse client the harness
+    records to, and return it. The app itself traces to FireTrace (§10); the
+    harness stays on Langfuse for its datasets and experiment runs, which
+    FireTrace does not have yet (docs/FIRETRACE_FEEDBACK.md) — hence the
+    opt-in `evals` dependency group in pyproject.toml.
 
     `environment` overrides LANGFUSE_TRACING_ENVIRONMENT *before* the first
     init — the SDK's resource manager pins the environment at first init per
@@ -30,7 +34,11 @@ def setup_langfuse(environment: str | None = None) -> Langfuse:
         os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = environment
     import tracing
 
-    tracing.init_tracing()
+    tracing.init_tracing()  # .env, incl. the LANGFUSE_* keys the client reads
+    Langfuse(
+        base_url=os.environ.get("LANGFUSE_BASE_URL"),
+        environment=os.environ.get("LANGFUSE_TRACING_ENVIRONMENT"),
+    )
     return get_client()
 
 

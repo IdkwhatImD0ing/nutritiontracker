@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import types
+from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,10 +34,7 @@ from psycopg.rows import dict_row
 
 @pytest.fixture(scope="module", autouse=True)
 def _tracing_stub():
-    mod = types.ModuleType("tracing")
-    mod.init_tracing = lambda: None
-    mod.flush = lambda: None
-    mod.score_commit = lambda *a, **kw: None
+    mod = make_tracing_stub()
     saved = sys.modules.get("tracing")
     sys.modules["tracing"] = mod
     try:

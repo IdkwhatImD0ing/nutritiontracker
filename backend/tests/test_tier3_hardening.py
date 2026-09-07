@@ -571,25 +571,26 @@ def _fake_runner(transcript, *, pin="mcdonalds.com", fetch=None, url=CALC_URL):
 
 @asynccontextmanager
 async def _offline_run(runner):
-    """run_tier3 with no OpenAI and no Langfuse — only the (rolled-back) DB."""
+    """run_tier3 with no OpenAI and no FireTrace — only the (rolled-back) DB."""
 
-    class _Gen:
+    class _Run:
         trace_id = "trace-offline"
+        span_id = "span-offline"
 
-        def update(self, **kw):
-            pass
+        def set(self, **kw):
+            return self
 
     @asynccontextmanager
-    async def generation(name):
-        yield _Gen()
+    async def run(name, **kw):
+        yield _Run()
 
     tr = tier3.tracing
-    orig = (tier3.Runner, tr.init_tracing, tr.generation, tr.flush)
-    tier3.Runner, tr.init_tracing, tr.generation, tr.flush = runner, lambda: None, generation, lambda: None
+    orig = (tier3.Runner, tr.init_tracing, tr.run, tr.flush)
+    tier3.Runner, tr.init_tracing, tr.run, tr.flush = runner, lambda: None, run, lambda: None
     try:
         yield
     finally:
-        tier3.Runner, tr.init_tracing, tr.generation, tr.flush = orig
+        tier3.Runner, tr.init_tracing, tr.run, tr.flush = orig
 
 
 def test_run_tier3_drops_web_food_without_real_evidence():

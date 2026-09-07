@@ -16,6 +16,7 @@ import asyncio
 import inspect
 import sys
 import types
+from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,22 +42,7 @@ from psycopg.types.json import Json
 
 
 def _build_stubs() -> dict:
-    tracing_mod = types.ModuleType("tracing")
-
-    class _Gen:
-        trace_id = "trace-test"
-
-        def update(self, **kw):
-            pass
-
-    @asynccontextmanager
-    async def generation(name):
-        yield _Gen()
-
-    tracing_mod.init_tracing = lambda: None
-    tracing_mod.generation = generation
-    tracing_mod.flush = lambda: None
-    tracing_mod.score_commit = lambda *a, **kw: None
+    tracing_mod = make_tracing_stub("trace-test")
 
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []

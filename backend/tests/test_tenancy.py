@@ -245,8 +245,8 @@ def _stub_pipeline(monkeypatch, *, decompose=None, vision=None) -> None:
     from services import decompose as decompose_mod
 
     @asynccontextmanager
-    async def generation(name):
-        yield SimpleNamespace(trace_id="trace-test", update=lambda **kw: None)
+    async def run(name, **kw):
+        yield SimpleNamespace(trace_id="trace-test", span_id="span-test", set=lambda **kw: None)
 
     async def build_agent_context():
         return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
@@ -255,7 +255,8 @@ def _stub_pipeline(monkeypatch, *, decompose=None, vision=None) -> None:
         raise AssertionError("no model call expected here")
 
     monkeypatch.setattr(tracing, "init_tracing", lambda: None)
-    monkeypatch.setattr(tracing, "generation", generation)
+    monkeypatch.setattr(tracing, "run", run)
+    monkeypatch.setattr(tracing, "current_trace_id", lambda: "trace-test")
     monkeypatch.setattr(tracing, "flush", lambda: None)
     monkeypatch.setattr(context, "build_agent_context", build_agent_context)
     monkeypatch.setattr(decompose_mod, "decompose", decompose or refuse)
