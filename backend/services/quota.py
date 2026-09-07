@@ -114,6 +114,20 @@ async def admit_log(conn) -> None:
     raise _refusal(row, DEMO_LOG_LIMIT, "Demo accounts can log once a day")
 
 
+async def refund_log() -> None:
+    """A demo turn that only asked a clarifying question (§6.4 — no row
+    staged, no weigh-in) spent nothing: give the day's log attempt back so
+    the answer, the next turn, can claim it. The unique index keeps one 'log'
+    row per day, and the turn could only have run if that row was its own
+    (an earlier log today would have refused the claim), so deleting today's
+    row is deleting this turn's. The owner records nothing."""
+    if auth.is_owner():
+        return
+    await db.execute(
+        f"DELETE FROM quota_events WHERE kind = 'log' AND {_UTC_DAY}"
+    )
+
+
 async def check_log() -> None:
     """admit_log in a transaction of its own: for the one spend that claims
     no fresh row — this tenant's orphaned staged log, re-run under its own

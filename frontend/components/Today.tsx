@@ -96,7 +96,10 @@ export default function Today() {
   // the sheet, so closing the lane and reopening it shows the same history;
   // the POST /api/agent stream appends to it as events land.
   const [chat, setChat] = useState<ChatMessage[]>([]);
-  const chatLoaded = useRef(false);
+  // state, not a ref: the save effect must see the LOADED chat in the same
+  // render it first saves in, or the mount's empty array overwrites storage
+  // (and a Strict Mode remount then loads that emptiness back)
+  const [chatLoaded, setChatLoaded] = useState(false);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(CHAT_KEY);
@@ -118,16 +121,16 @@ export default function Today() {
     } catch {
       /* storage unavailable or unreadable — start empty */
     }
-    chatLoaded.current = true;
+    setChatLoaded(true);
   }, []);
   useEffect(() => {
-    if (!chatLoaded.current) return;
+    if (!chatLoaded) return;
     try {
       localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-CHAT_MAX)));
     } catch {
       /* storage unavailable — the chat still lives for this page session */
     }
-  }, [chat]);
+  }, [chat, chatLoaded]);
   const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
   const patchChat = (id: string, patch: Partial<ChatMessage>) =>
     setChat((cur) =>
@@ -153,7 +156,9 @@ export default function Today() {
   // remembers them: what was said, what was answered, and what each turn
   // staged with its log id and status (so a correction can name its log).
   // Built BEFORE the new utterance is pushed; the server adds that itself.
-  const chatHistory = (): AgentTurn[] => {
+  // `justDiscarded`: the log this send settled a pending discard for — its
+  // card still reads staged in this render, the agent must hear discarded.
+  const chatHistory = (justDiscarded: string | null = null): AgentTurn[] => {
     const turns: AgentTurn[] = [];
     for (const m of chat) {
       if (m.kind === "user" && !m.pending && m.text) {
@@ -171,7 +176,10 @@ export default function Today() {
               it.qty != null && it.serving ? ` — ${it.qty} × ${it.serving.description}` : ""
             }`,
           ),
-          state: m.state === "replaced" ? "discarded" : m.state,
+          state:
+            m.state === "replaced" || m.log.log_id === justDiscarded
+              ? "discarded"
+              : m.state,
         });
       }
     }
@@ -331,7 +339,10 @@ export default function Today() {
     return true;
   };
 
-  const flushDiscard = () => {
+  // Settles a still-undoable discard for real; returns the log it discarded
+  // so the caller can describe it truthfully (the card's state update has
+  // not rendered yet when the next send builds the chat history).
+  const flushDiscard = (): string | null => {
     if (discardTimer.current) {
       clearTimeout(discardTimer.current);
       discardTimer.current = null;
@@ -341,7 +352,9 @@ export default function Today() {
       discardLog(d.log.log_id).catch(() => {});
       markResult(d.log.log_id, "discarded");
       setDiscard(null);
+      return d.log.log_id;
     }
+    return null;
   };
 
   // §8.4: a log that staged nothing but carried a save outcome is a
@@ -455,14 +468,14 @@ export default function Today() {
   const submit = async (text: string): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
-    flushDiscard(); // a new capture settles any still-undoable discard
+    const justDiscarded = flushDiscard(); // a new capture settles any still-undoable discard
     const pendingLog =
       pendingRef.current?.text === text
         ? pendingRef.current
         : { id: crypto.randomUUID(), text };
     pendingRef.current = pendingLog;
     t0Ref.current = performance.now();
-    const history = chatHistory();
+    const history = chatHistory(justDiscarded);
     closeQuestions();
     const userId = crypto.randomUUID();
     pushChat({ kind: "user", id: userId, text });
@@ -510,7 +523,7 @@ export default function Today() {
   const submitAudio = async (clip: VoiceClip): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
-    flushDiscard();
+    const justDiscarded = flushDiscard();
     t0Ref.current = performance.now();
     // A failure from an earlier attempt rides this clip (voice retried and
     // worked) so it is counted once, here — not stamped as a "fallback" on
@@ -521,7 +534,7 @@ export default function Today() {
         ? audioRef.current
         : { id: crypto.randomUUID(), capturedAt: clip.capturedAt };
     audioRef.current = attempt;
-    const history = chatHistory();
+    const history = chatHistory(justDiscarded);
     closeQuestions();
     const userId = crypto.randomUUID();
     pushChat({ kind: "user", id: userId, text: "", pending: true });

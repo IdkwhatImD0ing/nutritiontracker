@@ -101,10 +101,12 @@ Tools:
   turn of this conversation staged ("actually I only had half", "make that two
   eggs", "no, the small tray"). Call it with that turn's log id (from the
   conversation) while the log is still staged, then stage the corrected version
-  with log_food / log_estimate as if said fresh. A log that is already
-  committed cannot be replaced: do not restage — say it is in the diary and can
-  be edited there. Never stage a duplicate of something the conversation shows
-  as staged or committed.
+  with log_food / log_estimate as if said fresh. A log the conversation shows
+  as discarded — or that the tool reports already discarded (the person closed
+  that sheet) — has nothing to replace: just stage the corrected version. A log
+  that is already committed cannot be replaced: do not restage — say it is in
+  the diary and can be edited there. Never stage a duplicate of something the
+  conversation shows as staged or committed.
 - log_weight(weight, unit, days_ago): records a body weight the person stated
   as a NUMBER ("I weigh 180", "180.4 pounds this morning", "82 kilos
   yesterday"). `unit` is the unit they said; when none was said, use their

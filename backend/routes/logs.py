@@ -828,6 +828,12 @@ async def _run_agent_lane(
             return {"log_id": log_id, "status": "discarded"}
         row = await db.fetchone("SELECT status FROM logs WHERE id = %s", (log_id,))
         status = row["status"] if row else "unknown"
+        if status == "discarded":
+            # the person dismissed that sheet already (or an earlier turn
+            # replaced it): nothing to replace — the correction is a fresh log
+            return {"log_id": log_id, "status": "discarded", "already": True,
+                    "message": "already discarded — nothing to replace; stage the "
+                               "corrected version as if said fresh"}
         return {
             "error": "not_staged", "log_id": log_id, "status": status,
             "message": f"that log is {status}, not staged — do not restage it; if it is "
@@ -960,6 +966,10 @@ async def _run_agent_lane(
         discarded=[UUID(x) for x in result["discarded"]] or None,
     )
     food = result["food"]
+    if run.options and food is None and not result["items"] and result["weight"] is None:
+        # the turn only asked: a demo's one-a-day log attempt goes back, so
+        # the answer (the next turn, a new client id) can claim it (§8.9)
+        await quota.refund_log()
     items = sorted(result["items"], key=lambda it: it.item_index)
     if food is None and not items:
         # nothing staged: the row stays an itemless staged log, as the §8.4

@@ -60,6 +60,7 @@ from routes.photo import ConfirmEstimateRequest, confirm_estimate  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
 from test_agent import NOW, TZ, _deps, _fake_runner, _invoke, _parsed  # noqa: E402
 from test_tenancy import (  # noqa: E402
+    _become,
     _scalar,
     _stub_pipeline,
     insert_alias,
@@ -301,7 +302,9 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
                             out = await _invoke(agent, "discard_log", log_id=str(uuid4()))
                             assert out["error"] == "unknown_log"
                             out = await _invoke(agent, "discard_log", log_id=str(first.log_id))
-                            assert out["error"] == "not_staged" and out["status"] == "discarded"
+                            # already discarded (the earlier turn did it): nothing to replace,
+                            # not a refusal — the correction is staged afresh
+                            assert "error" not in out and out["status"] == "discarded" and out["already"] is True
                             return
                             yield  # pragma: no cover
 
@@ -314,6 +317,56 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
             resp2 = await logs_routes.create_log(
                 LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ, agent=True, history=history))
             assert resp2.agent is not None and resp2.agent.discarded is None
+
+    _run(scenario())
+
+
+def test_a_question_turn_gives_a_demo_its_daily_log_attempt_back(monkeypatch):
+    """A clarifying question is a full turn with its own client id, so it took
+    the §8.6 claim and the demo's one-a-day log attempt; the answer, the next
+    turn, would have been 429. The attempt goes back when nothing was staged
+    or weighed (§8.9)."""
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "demo-asker")  # a demo account: one log a day
+            async def decompose(text, ctx):
+                return _parsed(("eggs", 2))
+
+            _stub_pipeline(monkeypatch, decompose=decompose)
+
+            class Asking:
+                @staticmethod
+                def run_streamed(agent, agent_input, max_turns):
+                    class S:
+                        final_output = agent_svc.AgentReply(
+                            reply="Which one?", options=["The big tray", "The small tray"])
+
+                        async def stream_events(self):
+                            return
+                            yield  # pragma: no cover
+
+                        def to_input_list(self):
+                            return []
+
+                    return S()
+
+            monkeypatch.setattr(agent_svc, "Runner", Asking)
+            first = await logs_routes.create_log(_log("costco shrimp"))
+            assert first.items == [] and first.agent.options == ["The big tray", "The small tray"]
+            # the attempt the claim recorded is gone again
+            assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'log'") == 0
+
+            # the answer claims the day's attempt and stages
+            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged."))
+            second = await logs_routes.create_log(LogCreate(
+                id=uuid4(), text="The big tray", captured_at=NOW, tz=TZ, agent=True,
+                history=[{"role": "user", "text": "costco shrimp"}, {"role": "agent", "text": "Which one?"}]))
+            assert [it.phrase for it in second.items] == ["eggs"] and second.agent.options is None
+            assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'log'") == 1
+            # and that one is not refunded: it staged something
+            with pytest.raises(HTTPException) as ei:
+                await logs_routes.create_log(_log("more eggs"))
+            assert ei.value.status_code == 429
 
     _run(scenario())
 
