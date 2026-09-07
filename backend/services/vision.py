@@ -2,8 +2,9 @@
 
 gpt-5.6-luna via the plain openai client's Responses API, the way
 services/decompose.py does it: one-shot structured extraction (strict schema
-through responses.parse), a stable prompt_cache_key, tracing left to the
-caller (routes/photo.py wraps the call in a generation span).
+through responses.parse), a stable prompt_cache_key, and its own FireTrace
+span (tracing.run: kind llm, the model, the token usage — the image itself is
+never recorded, only its type and size).
 
 The model identifies the foods in one plate photo and estimates how much of
 each is visible — phrase, count or grams, confidence, and a user-facing note.
@@ -30,6 +31,7 @@ from typing import Literal
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+import tracing
 from models import Meal
 
 MODEL = "gpt-5.6-luna"  # pinned tier id — never the bare gpt-5.6 alias (§6)
@@ -108,28 +110,34 @@ async def analyze(image: bytes, mime: str) -> VisionResult:
     bytes and capped the size) → the foods seen and their portion estimates.
     `mime` is the sniffed image type — it becomes the data URL's media type."""
     data_url = f"data:{mime};base64,{base64.b64encode(image).decode('ascii')}"
-    response = await _get_client().responses.parse(
-        model=MODEL,
-        input=[
-            {
-                "role": "developer",
-                "content": [{"type": "input_text", "text": INSTRUCTIONS}],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Identify the foods in this photo and estimate each portion.",
-                    },
-                    {"type": "input_image", "image_url": data_url, "detail": "auto"},
-                ],
-            },
-        ],
-        text_format=VisionResult,
-        # Sizing a portion from scale cues benefits from a little thinking;
-        # decompose's effort "none" is for pure text extraction.
-        reasoning={"effort": "low"},
-        prompt_cache_key=PROMPT_CACHE_KEY,
-    )
+    async with tracing.run(
+        "vision", kind="llm", provider="openai", model=MODEL,
+        input={"mime": mime, "bytes": len(image)},  # what was sent, never the image
+        attributes={"prompt_cache_key": PROMPT_CACHE_KEY},
+    ) as span:
+        response = await _get_client().responses.parse(
+            model=MODEL,
+            input=[
+                {
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": INSTRUCTIONS}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Identify the foods in this photo and estimate each portion.",
+                        },
+                        {"type": "input_image", "image_url": data_url, "detail": "auto"},
+                    ],
+                },
+            ],
+            text_format=VisionResult,
+            # Sizing a portion from scale cues benefits from a little thinking;
+            # decompose's effort "none" is for pure text extraction.
+            reasoning={"effort": "low"},
+            prompt_cache_key=PROMPT_CACHE_KEY,
+        )
+        span.set(output=response.output_parsed, usage=response.usage)
     return response.output_parsed

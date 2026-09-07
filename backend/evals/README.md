@@ -1,5 +1,14 @@
 # evals — the correction → replay loop (DESIGN.md §10, §12 M3)
 
+**Parked on Langfuse (2026-09-06).** The app now traces to FireTrace, which has no
+datasets or experiment runs yet, so this harness keeps its Langfuse dependency behind
+the opt-in `evals` group (`uv sync --group evals`, then the commands below) and the
+`LANGFUSE_*` keys. Two consequences until FireTrace grows the API asked for in
+[docs/FIRETRACE_FEEDBACK.md](../../docs/FIRETRACE_FEEDBACK.md): `collect` finds no
+corrections newer than the switch (the `user_edited` scores land in FireTrace now),
+and every decompose / tier-3 call replay makes also records a FireTrace trace of its
+own (in the environment of whatever `FIRETRACE_API_KEY` is set).
+
 Three commands, all from `backend/`:
 
 ```sh
@@ -40,7 +49,7 @@ as long as the score itself is still queryable.
   saved-meal utterance replays as its N tier-0 rows — then picks the row this
   dataset item is about by phrase, then expected food, then position
   (a tier-0 expansion shifts every later `item_index`). Decompose is a real
-  `gpt-5.6-luna` call, wrapped in the same `tracing.generation` as production.
+  `gpt-5.6-luna` call, recording its own FireTrace run as in production.
   The item's context snapshot is reused so a prompt change is the only variable.
 - `--tier3` also runs `services.tier3.run_tier3` on rows that stage as
   `searching`. That path needs a staged row, so replay inserts a scratch

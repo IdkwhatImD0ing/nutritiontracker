@@ -51,7 +51,7 @@ writes the entries, and learns the alias and portion for next time.
 - OpenAI Agents SDK — `gpt-5.6-luna` parses utterances and reads photos, `gpt-5.6-terra` runs the food-search agent
 - Deepgram Nova-3 for speech, OpenAI transcribe as the fallback
 - USDA FoodData Central for all food data; Open Food Facts as the quality-gated barcode fallback; chain restaurants via cited transcription of the chain's own page
-- Langfuse for traces, commit-time scores and the correction → replay eval loop
+- FireTrace (self-hosted) for traces and commit-time scores; Langfuse only for the correction → replay eval harness, until FireTrace has datasets
 - API types defined once in pydantic and generated to TypeScript from the OpenAPI schema
 
 ## Try it

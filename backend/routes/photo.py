@@ -47,6 +47,7 @@ from resolver.commit import KEEP_LOG_KEYS_SQL
 from routes.logs import (
     LogCreateResponse,
     _drop_empty_log,
+    cascade_summary,
     _duplicate_post_response,
     _persist,
     claim_log,
@@ -267,6 +268,29 @@ async def create_log_photo(
     if sniffed is None:
         raise HTTPException(415, "not a JPEG, PNG or WebP image")
 
+    import tracing  # lazy: stubbed in route tests
+
+    # §10: one trace per run, the log id as its session — the image itself is
+    # never recorded, only its type and size
+    async with tracing.run(
+        "photo", session_id=str(log_id), tags=["lane:photo"],
+        input={"mime": sniffed, "bytes": len(image_bytes)},
+    ) as trace:
+        response = await _stage_photo(image_bytes, sniffed, log_id, captured_at, meal_hint, tz)
+        trace.set(output=response)
+        return response
+
+
+async def _stage_photo(
+    image_bytes: bytes,
+    sniffed: str,
+    log_id: UUID,
+    captured_at: datetime,
+    meal_hint: Meal | None,
+    tz: str | None,
+) -> LogCreateResponse:
+    """The claim, vision, the cascade and staging — the handler's body, inside
+    the run's trace."""
     # §8.6 + the demo quota (routes/logs.claim_log): the claim of the client
     # id answers a stored log — a replay, a foreign id's 404 — before vision,
     # and records the attempt with the row: after the free upload checks,
@@ -292,16 +316,8 @@ async def create_log_photo(
 
     tracing.init_tracing()
     t0 = time.monotonic()
-    trace_id: str | None = None
     try:
-        async with tracing.generation("vision") as gen:
-            seen = await vision.analyze(image_bytes, sniffed)
-            # the trace records what was sent, never the image itself
-            gen.update(
-                input={"mime": sniffed, "bytes": len(image_bytes)},
-                output=seen.model_dump(mode="json"),
-            )
-            trace_id = gen.trace_id
+        seen = await vision.analyze(image_bytes, sniffed)  # its span rides in this trace (§10)
     except OpenAIError as e:
         await _drop_empty_log(log_id)
         # the client's degrade path is voice/text, not a fake empty plate
@@ -311,11 +327,7 @@ async def create_log_photo(
     except Exception:
         await _drop_empty_log(log_id)  # any other failure: same retry path
         raise
-    finally:
-        try:
-            tracing.flush()  # serverless flush rule (§10)
-        except Exception:
-            pass
+    trace_id = tracing.current_trace_id()
     vision_ms = int((time.monotonic() - t0) * 1000)
 
     await db.execute("UPDATE logs SET raw_input = %s WHERE id = %s", (_summary(seen), log_id))
@@ -323,10 +335,14 @@ async def create_log_photo(
 
     # One row per item vision saw, same index order — tier 0 skipped: a
     # saved-meal trigger is something you SAY; the plate is its foods.
-    resolutions = [
-        await cascade.resolve_item(_parsed_item(v), i, meal, skip_tier0=True)
-        for i, v in enumerate(seen.items)
-    ]
+    async with tracing.run(
+        "cascade", kind="retriever", input=[v.phrase for v in seen.items]
+    ) as lookup:
+        resolutions = [
+            await cascade.resolve_item(_parsed_item(v), i, meal, skip_tier0=True)
+            for i, v in enumerate(seen.items)
+        ]
+        lookup.set(output=cascade_summary(resolutions))
     for r, v in zip(resolutions, seen.items):
         r.staged = _flag(r.staged, v)
     await _persist(

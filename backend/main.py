@@ -1,9 +1,10 @@
 """FastAPI app assembly (DESIGN.md §2, §5, §10).
 
 Routers own their routes and apply auth.require_user router-wide; /api/health
-is the single unauthenticated route. Tracing initializes at startup and flushes
-at shutdown; the AI routes (logs, resolve/tier3, commit scoring) each flush
-before returning per the §10 serverless rule. The demo quota's 429
+is the single unauthenticated route. Tracing (FireTrace, §10) initializes at
+startup; each AI route records one trace, sent after its response has gone
+out (tracing.FlushMiddleware holds the invocation open for it, bounded), and
+shutdown drains whatever is still in flight. The demo quota's 429
 (services/quota.py) gets its own handler so the body carries
 {detail, resets_at, used, limit} — the shape frontend/lib/api.ts reads.
 """
@@ -39,13 +40,17 @@ async def lifespan(app: FastAPI):
     tracing.init_tracing()
     yield
     try:
-        tracing.flush()
+        tracing.flush()  # queued commit scores, if any
+        await tracing.drain()  # sends still in flight (bounded)
     except Exception:
         pass
 
 
 app = FastAPI(title="Tally API", lifespan=lifespan)
 app.add_exception_handler(quota.QuotaExceeded, quota.exception_handler)
+# §10: after each response has gone out, wait (bounded) for that request's
+# trace sends — the client never waits, and a serverless freeze cannot lose one
+app.add_middleware(tracing.FlushMiddleware)
 
 
 @app.get("/api/health")

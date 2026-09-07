@@ -369,16 +369,28 @@ async def agent_voice(
     audio_bytes, mime = claimed
 
     async def work(emit: Emit):
-        text = await transcribe_for_log(log_id, audio_bytes, mime, capture_error)
-        if not isinstance(text, str):
-            return text  # capture_failure — the client prompts a retype (§5)
-        await emit(AgentTranscriptEvent(text=text).model_dump())
-        body = LogCreate(
-            id=log_id, text=text, captured_at=captured_at, tz=tz,
-            capture_fallback=capture_fallback, capture_error=capture_error, agent=True,
-            history=turns,
-        )
-        return await _run_pipeline(body, emit)
+        import tracing  # lazy: stubbed in route tests
+
+        # §10: one trace per run (the log id as its session), STT first; the
+        # send follows the stream's end, never a chunk of it
+        async with tracing.run(
+            "agent-chat", session_id=str(log_id), tags=["lane:agent", "lane:voice"],
+            input={"mime": mime, "bytes": len(audio_bytes)},
+        ) as trace:
+            text = await transcribe_for_log(log_id, audio_bytes, mime, capture_error)
+            if not isinstance(text, str):
+                trace.set(output=text)
+                return text  # capture_failure — the client prompts a retype (§5)
+            trace.set(input=text)
+            await emit(AgentTranscriptEvent(text=text).model_dump())
+            body = LogCreate(
+                id=log_id, text=text, captured_at=captured_at, tz=tz,
+                capture_fallback=capture_fallback, capture_error=capture_error, agent=True,
+                history=turns,
+            )
+            response = await _run_pipeline(body, emit)
+            trace.set(output=response)
+            return response
 
     return _stream(_follow(_start(log_id, work)))
 
@@ -419,6 +431,13 @@ async def agent_text(body: LogCreate) -> NDJSONResponse:
         return _stream(_replay(body.id, replay, with_text=False))
 
     async def work(emit: Emit):
-        return await _run_pipeline(body, emit)
+        import tracing  # lazy: stubbed in route tests
+
+        async with tracing.run(
+            "agent-chat", input=body.text, session_id=str(body.id), tags=["lane:agent"]
+        ) as trace:
+            response = await _run_pipeline(body, emit)
+            trace.set(output=response)
+            return response
 
     return _stream(_follow(_start(body.id, work)))

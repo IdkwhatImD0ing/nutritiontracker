@@ -31,6 +31,7 @@ from resolver import cascade
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from resolver.norm import norm
 from routes import photo
+from routes.logs import cascade_summary
 from services import quota, tier3
 from sources import fdc
 
@@ -138,6 +139,17 @@ def _as_written(row, item: StagedItem) -> StagedItem:
 
 @router.post("/api/resolve/tier3", response_model=StagedItem)
 async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
+    import tracing  # lazy: stubbed in route tests
+
+    # §10: one trace per run, the log id as its session; the agent's turns
+    # and tool calls nest under tier3's span
+    async with tracing.run("resolve.tier3", session_id=str(body.log_id), input=body) as trace:
+        item = await _kick_tier3(body)
+        trace.set(output=item)
+        return item
+
+
+async def _kick_tier3(body: Tier3KickRequest) -> StagedItem:
     row = await _item_row(body.log_id, body.item_index)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown log item")
@@ -174,19 +186,11 @@ async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
     outage, empty parse) degrades to tiers 1/2a: /api/resolve keeps working
     without the model. Returns (parsed item, inlined index ids) or None."""
     try:
-        import tracing
         from services.context import build_agent_context
         from services.decompose import decompose
 
-        tracing.init_tracing()
         ctx = await build_agent_context()
-        async with tracing.generation("decompose") as gen:
-            parsed = await decompose(phrase, ctx)
-            gen.update(input=phrase, output=parsed.model_dump(mode="json"))
-        try:
-            tracing.flush()  # serverless flush rule (§10)
-        except Exception:
-            pass
+        parsed = await decompose(phrase, ctx)  # its span rides in this run's trace (§10)
         if not parsed.items:
             return None
         # every id the prompt offered for library_match: the index and the
@@ -200,6 +204,18 @@ async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
 
 @router.post("/api/resolve", response_model=StagedItem)
 async def resolve_item(body: ResolveRequest) -> StagedItem:
+    import tracing  # lazy: stubbed in route tests
+
+    # §10: one trace per run (nothing is sent when no model ran — an alias hit)
+    async with tracing.run("resolve", session_id=str(body.log_id), input=body) as trace:
+        item = await _resolve(body)
+        trace.set(output=item)
+        return item
+
+
+async def _resolve(body: ResolveRequest) -> StagedItem:
+    import tracing
+
     t0 = time.perf_counter()
     prev = await _item_row(body.log_id, body.item_index)
     if prev is not None:
@@ -305,7 +321,9 @@ async def resolve_item(body: ResolveRequest) -> StagedItem:
     # (spoken qty AND unit, incl. the count-without-unit rule) as staging;
     # BACKLOG 24: `parsed` now carries the micro-call's library_match/state/
     # brand, validated against the inlined index ids (§3.3 2b).
-    res = await cascade.resolve_item(parsed, body.item_index, meal, index_ids)
+    async with tracing.run("cascade", kind="retriever", input=[parsed.phrase]) as lookup:
+        res = await cascade.resolve_item(parsed, body.item_index, meal, index_ids)
+        lookup.set(output=cascade_summary([res]))
     if res.staged.status == "searching":
         return await _run_tier3(str(body.log_id), body.item_index)
     if res.staged.status != "resolved":
@@ -459,6 +477,17 @@ async def _answer_state_toggle(
 
 @router.post("/api/resolve/answer", response_model=StagedItem)
 async def answer_question(body: AnswerRequest) -> StagedItem:
+    import tracing  # lazy: stubbed in route tests
+
+    # §10: one trace per run — only the free-text re-kick runs a model, so
+    # an id-bearing or cooked/raw answer records nothing
+    async with tracing.run("resolve.answer", session_id=str(body.log_id), input=body) as trace:
+        item = await _answer(body)
+        trace.set(output=item)
+        return item
+
+
+async def _answer(body: AnswerRequest) -> StagedItem:
     row = await _item_row(body.log_id, body.item_index)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown log item")

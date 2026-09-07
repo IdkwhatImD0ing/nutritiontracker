@@ -49,6 +49,20 @@ if TYPE_CHECKING:  # the service is imported lazily at call time (route tests st
 # routes/agent.py's stream callback: one wire event (a dict) per call
 Emit = Callable[[dict], Awaitable[None]]
 
+
+def cascade_summary(resolutions: list[cascade.Resolution]) -> list[dict]:
+    """What the cascade's retriever span records per row (§10): the phrase,
+    the outcome and the tier — never the macros."""
+    return [
+        {
+            "phrase": r.staged.phrase,
+            "status": r.staged.status,
+            "tier": r.staged.tier,
+            "food": r.staged.food.name if r.staged.food else None,
+        }
+        for r in resolutions
+    ]
+
 router = APIRouter(dependencies=[Depends(require_user)])
 
 _DEFAULT_WINDOWS = {
@@ -462,25 +476,37 @@ async def create_log_voice(
     transcribe_ms stored; empty/near-empty transcript → capture_failure (§5).
     The LogCreate fields ride as form fields minus `text` — the transcript
     supplies it."""
-    claimed = await claim_voice_log(
-        audio, log_id, captured_at, capture_fallback, capture_error, agent=agent
-    )
-    if not isinstance(claimed, tuple):
-        return claimed
-    audio_bytes, mime = claimed
-    text = await transcribe_for_log(log_id, audio_bytes, mime, capture_error)
-    if not isinstance(text, str):
-        return text
-    body = LogCreate(
-        id=log_id,
-        text=text,
-        captured_at=captured_at,
-        tz=tz,
-        capture_fallback=capture_fallback,
-        capture_error=capture_error,
-        agent=agent,
-    )
-    return await _run_pipeline(body)
+    import tracing  # lazy: stubbed in route tests
+
+    # §10: one trace per run, the log id as its session (STT is its first span)
+    async with tracing.run(
+        "log", session_id=str(log_id),
+        tags=["lane:voice", "lane:agent"] if agent else ["lane:voice"],
+    ) as trace:
+        claimed = await claim_voice_log(
+            audio, log_id, captured_at, capture_fallback, capture_error, agent=agent
+        )
+        if not isinstance(claimed, tuple):
+            return claimed
+        audio_bytes, mime = claimed
+        trace.set(input={"mime": mime, "bytes": len(audio_bytes)})
+        text = await transcribe_for_log(log_id, audio_bytes, mime, capture_error)
+        if not isinstance(text, str):
+            trace.set(output=text)
+            return text
+        trace.set(input=text)
+        body = LogCreate(
+            id=log_id,
+            text=text,
+            captured_at=captured_at,
+            tz=tz,
+            capture_fallback=capture_fallback,
+            capture_error=capture_error,
+            agent=agent,
+        )
+        response = await _run_pipeline(body)
+        trace.set(output=response)
+        return response
 
 
 # Registered before the JSON route: the router tries routes in order, and this
@@ -526,7 +552,17 @@ async def create_log_endpoint(body: LogCreate) -> LogCreateResponse:
     """§5: JSON body (text path) — or multipart with an audio blob + the same
     fields (voice path, create_log_voice above), which is the only way to get
     the capture_failure response."""
-    return await create_log(body)
+    import tracing  # lazy: stubbed in route tests
+
+    # §10: one trace per run, the log id as its session; nothing is sent
+    # unless a model ran (a §3.0 short-circuit or a §8.6 replay records nothing)
+    async with tracing.run(
+        "log", input=body.text, session_id=str(body.id),
+        tags=["lane:agent" if body.agent else "lane:text"],
+    ) as trace:
+        response = await create_log(body)
+        trace.set(output=response)
+        return response
 
 
 async def _capture_failure(
@@ -642,7 +678,7 @@ async def _stage_from_text(
     `text`: the whole utterance, or the food part the agent handed over.
     `start_index`: where the rows' item_index allocation begins — the agent
     lane may already have staged rows on this log (§6.4)."""
-    # decompose (gpt-5.6-luna) wrapped in a tracing generation (§10)
+    # decompose (gpt-5.6-luna) records its own span in this run's trace (§10)
     import tracing
     from services.context import build_agent_context
     from services.decompose import decompose
@@ -650,16 +686,9 @@ async def _stage_from_text(
     tracing.init_tracing()
     ctx = await build_agent_context()
     t0 = time.monotonic()
-    trace_id: str | None = None
-    async with tracing.generation("decompose") as gen:
-        parsed = await decompose(text, ctx)
-        gen.update(input=text, output=parsed.model_dump(mode="json"))
-        trace_id = gen.trace_id
+    parsed = await decompose(text, ctx)
+    trace_id = tracing.current_trace_id()
     decompose_ms = int((time.monotonic() - t0) * 1000)
-    try:
-        tracing.flush()  # serverless flush rule (§10)
-    except Exception:
-        pass
 
     # §7.2 (BACKLOG 26): when_hint shifts logged_at/meal deterministically.
     # An explicit spoken meal_hint outranks the when-derived meal; the date
@@ -678,7 +707,11 @@ async def _stage_from_text(
 
     # Per-log cascade (§3.1): a tier-0 expansion occupies one item_index per
     # macro item, so "usual breakfast and a coffee" → N macro rows, then coffee.
-    resolutions = await cascade.resolve_items(parsed.items, meal, start_index=start_index)
+    async with tracing.run(
+        "cascade", kind="retriever", input=[it.phrase for it in parsed.items]
+    ) as lookup:
+        resolutions = await cascade.resolve_items(parsed.items, meal, start_index=start_index)
+        lookup.set(output=cascade_summary(resolutions))
     await _persist(
         body.id, resolutions, meal,
         short_circuit=False, decompose_ms=decompose_ms, trace_id=trace_id,
@@ -774,10 +807,16 @@ async def _stage_estimate(
     except ValueError:
         spoken_meal = None
     row_meal = spoken_meal or when.meal or meal  # an explicit meal word outranks the shift
-    resolutions = [
-        await cascade.resolve_item(_estimate_parsed(it), start_index + i, row_meal, skip_tier0=True)
-        for i, it in enumerate(items)
-    ]
+    import tracing
+
+    async with tracing.run(
+        "cascade", kind="retriever", input=[it.phrase for it in items]
+    ) as lookup:
+        resolutions = [
+            await cascade.resolve_item(_estimate_parsed(it), start_index + i, row_meal, skip_tier0=True)
+            for i, it in enumerate(items)
+        ]
+        lookup.set(output=cascade_summary(resolutions))
     for r, it in zip(resolutions, items):
         counted = it.unit is None and it.grams is not None and it.grams > 0
         if counted and r.staged.status == "searching":
@@ -961,10 +1000,14 @@ async def _run_agent_lane(
         profile_notes=settings.get("profile_notes") or "",
         web_lane=auth.is_owner(),  # §8.9: the hosted search is billed — the owner's
     )
-    async with tracing.generation("agent") as gen:
+    # §10: the agent's step in this run's trace — the SDK's model turns and
+    # tool calls nest under it, decompose and the cascade under log_food
+    async with tracing.run(
+        "agent", kind="agent", provider="openai", model=agent_svc.MODEL, input=body.text,
+        attributes={"web_lane": deps.web_lane},
+    ) as gen:
         run = await agent_svc.run_agent(body.text, deps, emit)
-        gen.update(
-            input=body.text,
+        gen.set(
             output={
                 "reply": run.reply,
                 "food_calls": run.food_calls,
@@ -977,10 +1020,6 @@ async def _run_agent_lane(
                 "max_turns_hit": run.max_turns_hit,
             },
         )
-    try:
-        tracing.flush()  # serverless flush rule (§10)
-    except Exception:
-        pass
 
     outcome = AgentOutcome(
         reply=run.reply, weight=result["weight"], options=run.options,

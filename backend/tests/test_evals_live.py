@@ -40,6 +40,10 @@ if str(BACKEND) not in sys.path:
 # test traces). tracing._load_env uses setdefault, so this wins over .env.
 os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = "test"
 
+# the harness is parked on Langfuse (DESIGN §10, docs/FIRETRACE_FEEDBACK.md):
+# without the `evals` dependency group there is nothing to test here
+pytest.importorskip("langfuse", reason="needs the `evals` dependency group (uv sync --group evals)")
+
 from evals.common import setup_langfuse  # noqa: E402
 from evals.replay import replay  # noqa: E402
 from langfuse.api import NotFoundError  # noqa: E402

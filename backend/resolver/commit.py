@@ -801,7 +801,8 @@ def _post_scores(log: dict, scores: list[dict]) -> None:
     Best-effort — tracing failure must never fail a commit.
 
     BACKLOG 16: batched — tracing.score_commit is queue-only; exactly ONE
-    blocking flush per commit (§11 budget), not one per score."""
+    flush per commit (§11 budget), not one per score. The flush hands the
+    batch to FireTrace's background sender (§10) — it never blocks."""
     if not scores:
         return
     try:
@@ -828,6 +829,6 @@ def _post_scores(log: dict, scores: list[dict]) -> None:
                     )
                 posted = True
         if posted:
-            tracing.flush()  # the one blocking flush per commit (§10 serverless rule)
+            tracing.flush()  # the one flush per commit — a background send (§10)
     except Exception:
         pass

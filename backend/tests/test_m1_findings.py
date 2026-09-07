@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
+from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -45,10 +46,7 @@ from psycopg.types.json import Json
 
 @pytest.fixture(scope="module", autouse=True)
 def _tracing_stub():
-    stub = types.ModuleType("tracing")
-    stub.init_tracing = lambda: None
-    stub.flush = lambda: None
-    stub.score_commit = lambda trace_id, name, value, comment=None: None
+    stub = make_tracing_stub()
     saved = sys.modules.get("tracing")
     sys.modules["tracing"] = stub
     try:
