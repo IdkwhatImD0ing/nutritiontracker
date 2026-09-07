@@ -2,12 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  createLog,
-  createLogAudio,
   discardLog,
   getDiary,
   patchTimings,
   quotaRefusal,
+  streamAgent,
+  type AgentEvent,
   type DayTotals,
   type FoodSearchResult,
   type LogCreateResponse,
@@ -15,6 +15,7 @@ import {
   type StagedItem,
 } from "@/lib/api";
 import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
+import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
 import type { DiaryMeals } from "./DiaryApi";
@@ -28,7 +29,6 @@ import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import type { VoiceClip } from "./useVoiceCapture";
-import VoiceSheet from "./VoiceSheet";
 import WeightCard from "./WeightCard";
 
 const UNDO_MS = 6_000;
@@ -87,6 +87,22 @@ export default function Today() {
   // zero items — the server saved (or explained) it, so confirm that instead
   // of opening an empty staging sheet.
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  // §6.4 the Agent chat (2026-09-06): the conversation lives here, not in
+  // the sheet, so closing the lane and reopening it shows the same history;
+  // the POST /api/agent stream appends to it as events land.
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
+  const patchChat = (id: string, patch: Partial<ChatMessage>) =>
+    setChat((cur) =>
+      cur.map((m) => (m.id === id ? ({ ...m, ...patch } as ChatMessage) : m)),
+    );
+  // the result card follows its log: staged → committed / discarded
+  const markResult = (logId: string, state: "committed" | "discarded") =>
+    setChat((cur) =>
+      cur.map((m) =>
+        m.kind === "result" && m.log.log_id === logId ? { ...m, state } : m,
+      ),
+    );
   // §6.4: the weight card re-reads GET /api/weights when an agent log
   // recorded a weigh-in (the response says so; the card owns the series).
   const [weightsKey, setWeightsKey] = useState(0);
@@ -241,15 +257,17 @@ export default function Today() {
     const d = discardRef.current;
     if (d) {
       discardLog(d.log.log_id).catch(() => {});
+      markResult(d.log.log_id, "discarded");
       setDiscard(null);
     }
   };
 
   // §8.4: a log that staged nothing but carried a save outcome is a
   // "save as my usual …" utterance, not a meal — confirm it and stage nothing.
+  // The photo, search and barcode lanes enter here; the Agent chat has its
+  // own entry below (its answers are chat messages, not toasts).
   const enterStaging = (log: LogCreateResponse): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
-    if (log.agent?.weight) setWeightsKey((k) => k + 1);
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
       setSavedNote(
         log.saved_meal
@@ -258,15 +276,59 @@ export default function Today() {
       );
       return;
     }
-    // §6.4: the agent's one-sentence reply is the answer when nothing was
-    // staged (a weigh-in, an utterance with no food in it) — never an empty
-    // sheet. With items it shows only when a weigh-in was recorded too; a
-    // plain food log's answer is the sheet, as before.
     if (log.items.length === 0) {
-      setSavedNote(log.agent?.reply ?? "Nothing was logged — try again.");
+      setSavedNote("Nothing was logged — try again.");
       return;
     }
-    setSavedNote(log.agent?.weight ? log.agent.reply : null);
+    setSavedNote(null);
+    setStaging({ log, restore: null });
+  };
+
+  // §6.4: one POST /api/agent event → the chat. The user bubble was pushed
+  // before the request (typed text, or a pending one the transcript fills).
+  const onAgentEvent = (ev: AgentEvent, userId: string): void => {
+    switch (ev.type) {
+      case "transcript":
+        patchChat(userId, { text: ev.text, pending: false });
+        return;
+      case "tool_call":
+        pushChat({
+          kind: "tool",
+          id: ev.id,
+          name: ev.name,
+          args: ev.args,
+          done: false,
+        });
+        return;
+      case "tool_result":
+        patchChat(ev.id, { output: ev.output, done: true });
+        return;
+      case "reply":
+        pushChat({ kind: "agent", id: crypto.randomUUID(), text: ev.text });
+        return;
+      default:
+        return; // `done` is the promise's result; `error` rejects it
+    }
+  };
+
+  // §6.4: the stream's `done` — the staged log opens the sheet over the chat
+  // (the answer is still the list), a weigh-in refreshes the card, and the
+  // §8.4 save outcome is said in the chat. The chat stays open throughout.
+  const agentDone = (log: LogCreateResponse): void => {
+    if (demo) refreshMe(); // the attempt counted — the banner learns it
+    if (log.agent?.weight) setWeightsKey((k) => k + 1);
+    if (log.saved_meal || log.note) {
+      pushChat({
+        kind: "agent",
+        id: crypto.randomUUID(),
+        text: log.saved_meal
+          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} items`
+          : (log.note as string),
+      });
+    }
+    if (log.items.length === 0) return; // the reply bubble is the answer
+    pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged" });
+    setSavedNote(null);
     setStaging({ log, restore: null });
   };
 
@@ -280,36 +342,47 @@ export default function Today() {
         : { id: crypto.randomUUID(), text };
     pendingRef.current = pendingLog;
     t0Ref.current = performance.now();
+    const userId = crypto.randomUUID();
+    pushChat({ kind: "user", id: userId, text });
     try {
-      const log = await createLog({
-        id: pendingLog.id,
-        text,
-        captured_at: new Date().toISOString(),
-        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        // §13: a text log typed after a failed voice capture carries the
-        // failure — capture_fallback + the client-detected capture_error.
-        capture_fallback: voiceFailRef.current != null,
-        capture_error: voiceFailRef.current,
-        // §6.4: this sheet is the Agent lane — food and/or a weigh-in
-        agent: true,
-      });
+      const log = await streamAgent(
+        {
+          kind: "text",
+          id: pendingLog.id,
+          text,
+          captured_at: new Date().toISOString(),
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          // §13: a text log typed after a failed voice capture carries the
+          // failure — capture_fallback + the client-detected capture_error.
+          capture_fallback: voiceFailRef.current != null,
+          capture_error: voiceFailRef.current,
+        },
+        (ev) => onAgentEvent(ev, userId),
+      );
       pendingRef.current = null;
       voiceFailRef.current = null; // reported once, on the fallback log
-      setLane(null);
-      enterStaging(log);
+      if ("status" in log) return false; // capture_failure — text never is
+      agentDone(log);
       return true;
     } catch (e) {
       t0Ref.current = null;
-      failCapture(e, "Couldn't log that — check your connection and retry.");
+      const quota = failCapture(e, null);
+      pushChat({
+        kind: "error",
+        id: crypto.randomUUID(),
+        text: quota
+          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+          : "Couldn't log that — check your connection and retry.",
+      });
       return false;
     } finally {
       setCaptureBusy(false);
     }
   };
 
-  // §8.1d voice path: upload the validated clip; the response enters the
-  // identical staging flow as text. staged_ms measures stop-tap → rendered
-  // (§11: "capture stop → staged" is the number staged_ms tracks).
+  // §8.1d voice path: upload the validated clip; the transcript lands in the
+  // chat as soon as the server has it, then the same stream as text.
+  // staged_ms measures stop-tap → rendered (§11: "capture stop → staged").
   const submitAudio = async (clip: VoiceClip): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
@@ -324,35 +397,55 @@ export default function Today() {
         ? audioRef.current
         : { id: crypto.randomUUID(), capturedAt: clip.capturedAt };
     audioRef.current = attempt;
+    const userId = crypto.randomUUID();
+    pushChat({ kind: "user", id: userId, text: "", pending: true });
     try {
-      const res = await createLogAudio({
-        id: attempt.id,
-        clip,
-        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        capture_error: priorFailure,
-        agent: true, // §6.4: the Agent lane
-      });
+      const log = await streamAgent(
+        {
+          kind: "audio",
+          id: attempt.id,
+          clip,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          capture_error: priorFailure,
+        },
+        (ev) => onAgentEvent(ev, userId),
+      );
       // The server answered (staged or capture_failure) — the attempt is
       // spent; only a failed upload keeps the id for a retry.
       audioRef.current = null;
-      if (res.kind === "capture_failure") {
-        // Server-side half of §13's silent-blob class: audio uploaded fine
+      if ("status" in log) {
+        // capture_failure — the server-side half of §13's silent-blob class:
+        // audio uploaded fine
         // but transcribed to nothing. The server recorded it on the audio
         // log; the retype that follows links to it via capture_fallback.
         t0Ref.current = null;
         voiceFailRef.current = "empty_transcript";
+        setChat((cur) => cur.filter((m) => m.id !== userId));
+        pushChat({
+          kind: "error",
+          id: crypto.randomUUID(),
+          text: "I couldn't hear anything in that — try again, or type it.",
+        });
         return false;
       }
       if (voiceFailRef.current === priorFailure) voiceFailRef.current = null;
-      setLane(null);
-      enterStaging(res.log);
+      agentDone(log);
       return true;
     } catch (e) {
       t0Ref.current = null;
+      setChat((cur) => cur.filter((m) => m.id !== userId));
       // The demo quota refusing the upload is not a voice failure: §13's
-      // counter stays clean, and the sheet shows the server's sentence
+      // counter stays clean, and the chat shows the server's sentence
       // instead of "type it instead" (typing meets the same wall).
-      if (!failCapture(e, null)) voiceFailRef.current = "upload_failed";
+      const quota = failCapture(e, null);
+      if (!quota) voiceFailRef.current = "upload_failed";
+      pushChat({
+        kind: "error",
+        id: crypto.randomUUID(),
+        text: quota
+          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+          : "Couldn't upload that recording — try again, or type it.",
+      });
       return false;
     } finally {
       setCaptureBusy(false);
@@ -457,8 +550,9 @@ export default function Today() {
     discardTimer.current = setTimeout(() => {
       discardTimer.current = null;
       // Undo window passed: the discard lands server-side (status:'discarded'
-      // — adherence-relevant data, §5).
+      // — adherence-relevant data, §5), and the chat's card follows.
       discardLog(entry.log.log_id).catch(() => {});
+      markResult(entry.log.log_id, "discarded");
       setDiscard(null);
     }, UNDO_MS);
   };
@@ -537,14 +631,19 @@ export default function Today() {
         />
       ) : null}
 
-      {lane === "voice" ? (
-        <VoiceSheet
+      {lane === "agent" ? (
+        <AgentChat
+          messages={chat}
           busy={captureBusy}
           error={captureError}
           onSubmit={submit}
           onSubmitAudio={submitAudio}
           onVoiceFailure={(e) => {
             voiceFailRef.current = e;
+          }}
+          onReview={(log) => {
+            setSavedNote(null);
+            setStaging({ log, restore: null });
           }}
           onClose={() => setLane(null)}
         />
@@ -599,6 +698,7 @@ export default function Today() {
           onCommitted={(t, stragglers) => {
             setTotals(t);
             reloadDiary();
+            markResult(staging.log.log_id, "committed");
             setStaging(null);
             if (stragglers.length > 0) {
               updatePending({ logId: staging.log.log_id, items: stragglers });

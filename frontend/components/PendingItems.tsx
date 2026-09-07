@@ -208,7 +208,7 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
       {unconfirmed.map((u) => (
         <div key={u.item_index} className="pending-pill confirm" role="status">
           <span>
-            &ldquo;{u.phrase}&rdquo; — portion estimated from the photo
+            &ldquo;{u.phrase}&rdquo; — portion estimated
           </span>
           <button
             type="button"

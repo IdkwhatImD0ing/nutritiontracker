@@ -562,6 +562,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Text
+         * @description Text: the claim before the stream, then the agent's events → `done`.
+         *     The multipart form (audio + the same fields) is the other content type
+         *     on this path, as for POST /api/logs.
+         */
+        post: operations["agent_text_api_agent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -577,6 +599,39 @@ export interface components {
             days_logged: number;
         };
         /**
+         * AgentDoneEvent
+         * @description The last event of a successful run: what POST /api/logs would have answered.
+         */
+        AgentDoneEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "done";
+            /** Log */
+            log: components["schemas"]["LogCreateResponse"] | components["schemas"]["CaptureFailureResponse"];
+        };
+        /**
+         * AgentErrorEvent
+         * @description The last event of a failed run, with the HTTP status it would have been.
+         */
+        AgentErrorEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+            /** Status */
+            status: number;
+            /** Detail */
+            detail: string;
+        };
+        /**
+         * AgentEvent
+         * @description One line of the POST /api/agent stream.
+         */
+        AgentEvent: components["schemas"]["AgentTranscriptEvent"] | components["schemas"]["AgentToolCallEvent"] | components["schemas"]["AgentToolResultEvent"] | components["schemas"]["AgentReplyEvent"] | components["schemas"]["AgentDoneEvent"] | components["schemas"]["AgentErrorEvent"];
+        /**
          * AgentOutcome
          * @description What the agent lane did with the utterance (§6.4): its one-sentence
          *     reply, and the weigh-in it recorded, if any. Staged items ride the
@@ -587,6 +642,67 @@ export interface components {
             /** Reply */
             reply: string;
             weight?: components["schemas"]["WeightEntry"] | null;
+        };
+        /** AgentReplyEvent */
+        AgentReplyEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "reply";
+            /** Text */
+            text: string;
+        };
+        /**
+         * AgentToolCallEvent
+         * @description The agent called a tool: `name` (log_food, log_estimate, log_weight,
+         *     web_search) with `args` as the model passed them.
+         */
+        AgentToolCallEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_call";
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Args */
+            args: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * AgentToolResultEvent
+         * @description What the tool answered (sanitized: never macros — the staged list shows
+         *     those). For web_search: the sources it consulted.
+         */
+        AgentToolResultEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_result";
+            /** Id */
+            id: string;
+            /** Name */
+            name?: string | null;
+            /** Output */
+            output?: unknown;
+        };
+        /**
+         * AgentTranscriptEvent
+         * @description The spoken utterance as transcribed — the chat's user bubble (voice only).
+         */
+        AgentTranscriptEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "transcript";
+            /** Text */
+            text: string;
         };
         /** AliasDeleteResponse */
         AliasDeleteResponse: {
@@ -3115,6 +3231,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WeightEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_text_api_agent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LogCreate"];
+                "multipart/form-data": {
+                    /** Format: binary */
+                    audio: string;
+                    /** Format: uuid */
+                    id: string;
+                    /** Format: date-time */
+                    captured_at: string;
+                    tz: string;
+                    /** @default false */
+                    capture_fallback?: boolean;
+                    capture_error?: string;
+                    /** @default false */
+                    agent?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description A stream of newline-delimited JSON events, one AgentEvent per line, ending with `done` or `error`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["AgentEvent"];
                 };
             };
             /** @description Validation Error */

@@ -207,14 +207,15 @@ export default function StagedRow({
         </p>
       ) : null}
 
-      {/* §3.4a photo lane: say what is a guess, in the row, whatever the
-          expansion state — a portion read off the photo, or a whole food no
-          database matched (unresolved: what the photo saw, no numbers). */}
+      {/* §3.4a: say what is a guess, in the row, whatever the expansion
+          state — a portion read off the photo or sized by the agent (§6.4;
+          the note says which and how), or a whole food no database matched
+          (unresolved: what the photo saw, no numbers). */}
       {estimated ? (
         <p className="estimate-note">
           {est.estimated === "unresolved"
             ? `${est.note ? `${est.note} · ` : ""}No database match, so no numbers — search to pick a food`
-            : `Portion estimated from the photo${est.note ? ` · ${est.note}` : ""}`}
+            : `Portion estimated${est.note ? ` · ${est.note}` : ""}`}
         </p>
       ) : null}
 

@@ -790,28 +790,33 @@ async def resolve_items(
     parsed_items: list[ParsedItem],
     meal: Meal,
     index_ids: set[str] | None = None,
+    *,
+    start_index: int = 0,
 ) -> list[Resolution]:
     """Per-log cascade over the decomposed items with item_index allocation:
     a tier-0 expansion occupies one index per macro item (§3.1), so the items
     after it shift ("usual breakfast and a coffee" → N macro rows, then
-    coffee at index N)."""
+    coffee at index N). `start_index` is where allocation begins — the Agent
+    lane (§6.4) stages in more than one call per log, each appending after
+    the rows already there."""
     out: list[Resolution] = []
     for parsed in parsed_items:
         t0 = time.monotonic()
+        nxt = start_index + len(out)
         macro = await find_macro(_macro_keys(parsed))
         if macro is not None:
-            rows, missing = await expand_macro(macro, meal, len(out), t0)
+            rows, missing = await expand_macro(macro, meal, nxt, t0)
             if missing:
                 out.append(
                     _macro_broken_guard(
-                        macro, len(rows), missing, parsed.phrase, len(out), meal, t0
+                        macro, len(rows), missing, parsed.phrase, nxt, meal, t0
                     )
                 )
                 continue
             if rows:
                 out.extend(rows)
                 continue
-        out.append(await resolve_item(parsed, len(out), meal, index_ids, skip_tier0=True))
+        out.append(await resolve_item(parsed, nxt, meal, index_ids, skip_tier0=True))
     return out
 
 

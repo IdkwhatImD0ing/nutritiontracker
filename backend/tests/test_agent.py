@@ -8,7 +8,8 @@ while the table is not there yet (tenancy_harness), so nothing persists.
 
 1. services/agent: log_weight converts and refuses in code, log_food runs
    once per utterance, the fallback reply is built from tool-side state,
-   run_agent reports what the tools did.
+   run_agent reports what the tools did. (The estimate tool, the wire events
+   and the streaming route are test_agent_chat.py's.)
 2. routes/weights: kg storage, one row per day updated in place,
    settings.body.weight_kg follows the newest weigh-in only, RLS keeps
    tenants apart; GET / PUT /api/weights.
@@ -28,6 +29,7 @@ import json
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -79,11 +81,16 @@ async def _invoke(agent, name: str, **kwargs) -> dict:
 
 
 def _deps(**over) -> agent_svc.AgentDeps:
-    calls: dict = {"food": [], "weight": []}
+    calls: dict = {"food": [], "estimate": [], "weight": []}
 
     async def stage_food(text: str) -> dict:
         calls["food"].append(text)
         return {"meal": "breakfast", "items": [{"phrase": "eggs", "status": "searching"}]}
+
+    async def stage_estimate(items, basis: str) -> dict:
+        calls["estimate"].append(([it.model_dump() for it in items], basis))
+        return {"meal": "lunch", "basis": basis,
+                "items": [{"phrase": it.phrase, "status": "searching"} for it in items]}
 
     async def record_weight(value: float, unit: str, day: date) -> dict:
         calls["weight"].append((value, unit, day))
@@ -91,6 +98,7 @@ def _deps(**over) -> agent_svc.AgentDeps:
 
     kw = dict(
         stage_food=stage_food,
+        stage_estimate=stage_estimate,
         record_weight=record_weight,
         now_local=NOW.astimezone(ZoneInfo(TZ)),
         unit_pref="lb",
@@ -101,39 +109,66 @@ def _deps(**over) -> agent_svc.AgentDeps:
     return deps
 
 
-class _FakeRun:
-    def __init__(self, reply: str):
-        self._reply = reply
+class _FakeStream:
+    """What Runner.run_streamed hands back: the run happens while its events
+    are iterated. Each planned tool call is driven through the REAL tool
+    closure and surfaces as the SDK's tool_called / tool_output events, built
+    from the SDK's own item classes so services/agent.wire_events sees the
+    real shapes."""
 
-    def final_output_as(self, cls):
-        return cls(reply=self._reply)
+    def __init__(self, agent, plan, reply):
+        self._agent, self._plan, self._reply = agent, plan, reply
+        self.final_output = None
+
+    async def stream_events(self):
+        from agents.items import ToolCallItem, ToolCallOutputItem
+        from openai.types.responses import ResponseFunctionToolCall
+
+        for n, (name, kwargs) in enumerate(self._plan):
+            call_id = f"call_{n + 1}"
+            raw = ResponseFunctionToolCall(
+                id=f"fc_{n + 1}", call_id=call_id, name=name,
+                arguments=json.dumps(kwargs), type="function_call",
+            )
+            yield SimpleNamespace(
+                type="run_item_stream_event", name="tool_called",
+                item=ToolCallItem(raw_item=raw, agent=self._agent),
+            )
+            args = json.dumps(kwargs)
+            out = await _tool(self._agent, name).on_invoke_tool(_ctx(name, args), args)
+            assert "error" not in json.loads(out), out
+            yield SimpleNamespace(
+                type="run_item_stream_event", name="tool_output",
+                item=ToolCallOutputItem(
+                    raw_item={"type": "function_call_output", "call_id": call_id, "output": out},
+                    output=out, agent=self._agent,
+                ),
+            )
+        self.final_output = agent_svc.AgentReply(reply=self._reply)
 
     def to_input_list(self):
         return [{"type": "message", "role": "assistant", "content": self._reply}]
 
 
 def _fake_runner(plan: list[tuple[str, dict]], reply: str):
-    """A Runner whose run() drives the REAL tool closures in `plan` order and
-    answers with `reply` — what a model turn would do, minus the model."""
+    """A Runner whose run_streamed() drives the REAL tool closures in `plan`
+    order and answers with `reply` — what a model turn would do, minus the model."""
 
     class FakeRunner:
         calls = 0
 
         @staticmethod
-        async def run(agent, agent_input, max_turns):
+        def run_streamed(agent, agent_input, max_turns):
             FakeRunner.calls += 1
             FakeRunner.input = agent_input
-            for name, kwargs in plan:
-                out = await _invoke(agent, name, **kwargs)
-                assert "error" not in out, out
-            return _FakeRun(reply)
+            return _FakeStream(agent, plan, reply)
 
     return FakeRunner
 
 
 class _RefusingRunner:
     @staticmethod
-    async def run(agent, agent_input, max_turns):
+    def run_streamed(agent, agent_input, max_turns):
         raise AssertionError("the agent must not run here")
 
 
@@ -239,17 +274,28 @@ def test_run_agent_reports_tool_state_and_survives_max_turns(monkeypatch):
         assert runner.input.endswith('Utterance: "I weigh 180.4 pounds"')
 
         # max turns: whatever the tools did stands, the reply is built in code
+        class _LoopingStream:
+            def __init__(self, agent):
+                self._agent = agent
+
+            async def stream_events(self):
+                await _invoke(self._agent, "log_food", text="two eggs")
+                raise MaxTurnsExceeded("max turns")
+                yield  # pragma: no cover — makes this an async generator
+
         class Looping:
             @staticmethod
-            async def run(agent, agent_input, max_turns):
-                await _invoke(agent, "log_food", text="two eggs")
-                raise MaxTurnsExceeded("max turns")
+            def run_streamed(agent, agent_input, max_turns):
+                return _LoopingStream(agent)
 
         monkeypatch.setattr(agent_svc, "Runner", Looping)
         run = await agent_svc.run_agent("two eggs", deps)
         assert run.max_turns_hit and run.food_calls == 1 and run.weight is None
         assert run.reply == "I staged what you ate — check the list."
         assert agent_svc._fallback_reply({}) == "I couldn't work that one out — try again, or type it."
+        assert agent_svc._fallback_reply({"estimate_calls": 1, "weight": {"x": 1}}) == (
+            "I staged an estimate for you to check and logged your weight — check the list."
+        )
 
     _run(scenario())
 

@@ -8,17 +8,21 @@ capture_failure status — never an empty staged log.
 Agent mode (§6.4, 2026-09-06): `agent: true` (JSON field / form field) routes
 the utterance through services/agent.py after the §3.0 short-circuit — the
 agent hands the food part to the unchanged decompose → cascade → staging
-pipeline (_stage_from_text) and a spoken weight to routes/weights; the
-response reports what it did under `agent`.
+pipeline (_stage_from_text), an unlabeled dish's components to
+_stage_estimate (flagged rows, §3.4a) and a spoken weight to routes/weights;
+the response reports what it did under `agent`. routes/agent.py streams the
+same pipeline event by event for the chat window; the claim, transcription
+and pipeline helpers here are shared with it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Awaitable, Callable, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -31,13 +35,19 @@ from starlette.routing import Match
 import auth
 import db
 from auth import require_user
-from models import LogCreate, LogResponse, Meal, StagedItem
+from models import LogCreate, LogResponse, Meal, ParsedItem, StagedItem
 from resolver import cascade
 from resolver import commit as commit_tx
 from resolver.norm import norm
 from routes import weights as weights_route
 from routes.commit import SavedMealNote
 from services import quota
+
+if TYPE_CHECKING:  # the service is imported lazily at call time (route tests stub it)
+    from services.agent import EstimateItem
+
+# routes/agent.py's stream callback: one wire event (a dict) per call
+Emit = Callable[[dict], Awaitable[None]]
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -322,19 +332,18 @@ async def _drop_empty_log(log_id: UUID) -> None:
     )
 
 
-async def create_log_voice(
-    audio: Annotated[UploadFile, File()],
-    log_id: Annotated[UUID, Form(alias="id")],
-    captured_at: Annotated[datetime, Form()],
-    tz: Annotated[str, Form()],
-    capture_fallback: Annotated[bool, Form()] = False,
-    capture_error: Annotated[str | None, Form()] = None,
-    agent: Annotated[bool, Form()] = False,
-) -> LogCreateResponse | CaptureFailureResponse:
-    """Audio → transcribe (§8.1) → the identical pipeline. input_mode='voice',
-    transcribe_ms stored; empty/near-empty transcript → capture_failure (§5).
-    The LogCreate fields ride as form fields minus `text` — the transcript
-    supplies it."""
+async def claim_voice_log(
+    audio: UploadFile,
+    log_id: UUID,
+    captured_at: datetime,
+    capture_fallback: bool,
+    capture_error: str | None,
+) -> tuple[bytes, str] | LogResponse | CaptureFailureResponse:
+    """The voice lane's request checks and §8.6 claim, shared by the plain
+    route and the streaming one (routes/agent.py): the audio part validated
+    and read, then the claim of the client id — a replay of a stored log or
+    capture failure comes back as the response to send; (audio_bytes, mime)
+    means this request runs STT and the pipeline."""
     mime = audio.content_type or "application/octet-stream"
     if mime.split(";")[0].strip().lower() not in AUDIO_MIME_ALLOWLIST:
         raise HTTPException(
@@ -367,7 +376,17 @@ async def create_log_voice(
         if replay is not None:
             return replay
         await quota.check_log()  # this tenant's orphan, claimed for a re-run: the next attempt
+    return audio_bytes, mime
 
+
+async def transcribe_for_log(
+    log_id: UUID, audio_bytes: bytes, mime: str, capture_error: str | None
+) -> str | CaptureFailureResponse:
+    """STT for a claimed voice log: the transcript, stored on the row with
+    its timing — or the §5 capture_failure (a silent blob, an empty
+    transcript), recorded the same way. Every provider declining is the 503
+    whose detail says why; the itemless row goes with it so the same-id retry
+    runs STT again instead of replaying an empty log."""
     # §13's silent-blob failure, caught server-side: a zero-byte blob is a
     # capture failure before any STT spend.
     if not audio_bytes:
@@ -396,9 +415,32 @@ async def create_log_voice(
         "UPDATE logs SET raw_input = %s, transcribe_ms = %s WHERE id = %s",
         (result.text, result.transcribe_ms, log_id),
     )
+    return result.text
+
+
+async def create_log_voice(
+    audio: Annotated[UploadFile, File()],
+    log_id: Annotated[UUID, Form(alias="id")],
+    captured_at: Annotated[datetime, Form()],
+    tz: Annotated[str, Form()],
+    capture_fallback: Annotated[bool, Form()] = False,
+    capture_error: Annotated[str | None, Form()] = None,
+    agent: Annotated[bool, Form()] = False,
+) -> LogCreateResponse | CaptureFailureResponse:
+    """Audio → transcribe (§8.1) → the identical pipeline. input_mode='voice',
+    transcribe_ms stored; empty/near-empty transcript → capture_failure (§5).
+    The LogCreate fields ride as form fields minus `text` — the transcript
+    supplies it."""
+    claimed = await claim_voice_log(audio, log_id, captured_at, capture_fallback, capture_error)
+    if not isinstance(claimed, tuple):
+        return claimed
+    audio_bytes, mime = claimed
+    text = await transcribe_for_log(log_id, audio_bytes, mime, capture_error)
+    if not isinstance(text, str):
+        return text
     body = LogCreate(
         id=log_id,
-        text=result.text,
+        text=text,
         captured_at=captured_at,
         tz=tz,
         capture_fallback=capture_fallback,
@@ -509,7 +551,9 @@ async def _stored_capture_failure(log_id: UUID) -> CaptureFailureResponse | None
     )
 
 
-async def create_log(body: LogCreate) -> LogCreateResponse:
+async def claim_text_log(body: LogCreate) -> LogResponse | None:
+    """The text lane's §8.6 claim, shared with routes/agent.py: None when
+    this request owns the row and runs the pipeline; else the replay to send."""
     # Idempotent claim by client id (§5, §8.6), the demo's attempt with it: a
     # concurrent double-drain or retry cannot create two logs — and only the
     # request that actually inserted the row (or claimed an orphan, below)
@@ -525,13 +569,21 @@ async def create_log(body: LogCreate) -> LogCreateResponse:
         # orphaned staged log claimed (earlier attempt died mid-pipeline) →
         # re-run: for a demo, the next attempt
         await quota.check_log()
+    return None
+
+
+async def create_log(body: LogCreate) -> LogCreateResponse:
+    replay = await claim_text_log(body)
+    if replay is not None:
+        return replay
     return await _run_pipeline(body)
 
 
-async def _run_pipeline(body: LogCreate) -> LogCreateResponse:
+async def _run_pipeline(body: LogCreate, emit: Emit | None = None) -> LogCreateResponse:
     """§3.0 short-circuit, else — through the agent when the log asks for it
     (§6.4) — decompose → the per-log cascade → _persist, on a log row this
-    request owns (a fresh claim, or a claimed orphan)."""
+    request owns (a fresh claim, or a claimed orphan). `emit` streams the
+    agent's events to the chat (routes/agent.py); None runs silently."""
     meal = await infer_meal(body.captured_at, body.tz)
 
     # §3.0 whole-utterance short-circuit — the LLM leaves the hot path entirely.
@@ -544,13 +596,17 @@ async def _run_pipeline(body: LogCreate) -> LogCreateResponse:
         return LogCreateResponse(log_id=body.id, meal=meal, items=[r.staged for r in sc])
 
     if body.agent:
-        return await _run_agent_lane(body, meal)
+        return await _run_agent_lane(body, meal, emit)
     return await _stage_from_text(body, meal, body.text)
 
 
-async def _stage_from_text(body: LogCreate, meal: Meal, text: str) -> LogCreateResponse:
+async def _stage_from_text(
+    body: LogCreate, meal: Meal, text: str, *, start_index: int = 0
+) -> LogCreateResponse:
     """decompose → when/meal hints → the per-log cascade → _persist, for
-    `text`: the whole utterance, or the food part the agent handed over."""
+    `text`: the whole utterance, or the food part the agent handed over.
+    `start_index`: where the rows' item_index allocation begins — the agent
+    lane may already have staged rows on this log (§6.4)."""
     # decompose (gpt-5.6-luna) wrapped in a tracing generation (§10)
     import tracing
     from services.context import build_agent_context
@@ -587,7 +643,7 @@ async def _stage_from_text(body: LogCreate, meal: Meal, text: str) -> LogCreateR
 
     # Per-log cascade (§3.1): a tier-0 expansion occupies one item_index per
     # macro item, so "usual breakfast and a coffee" → N macro rows, then coffee.
-    resolutions = await cascade.resolve_items(parsed.items, meal)
+    resolutions = await cascade.resolve_items(parsed.items, meal, start_index=start_index)
     await _persist(
         body.id, resolutions, meal,
         short_circuit=False, decompose_ms=decompose_ms, trace_id=trace_id,
@@ -600,38 +656,118 @@ async def _stage_from_text(body: LogCreate, meal: Meal, text: str) -> LogCreateR
     )
 
 
-async def _run_agent_lane(body: LogCreate, meal: Meal) -> LogCreateResponse:
-    """§6.4: the front-door agent. Its two effects are closures over this
-    log: the food part of the utterance goes through _stage_from_text
-    exactly as a plain log would, a spoken weight through
-    routes/weights.record_weight under this log's id. The response is
-    assembled from what those closures recorded — the model contributes the
-    one-sentence reply and nothing else."""
+def _estimate_parsed(it: EstimateItem) -> ParsedItem:
+    """The cascade's input for one agent-sized component: the amount rides the
+    §7.3 spoken-quantity channel, as the photo lane's does; nothing else is
+    invented (no state, brand, library or meal match)."""
+    return ParsedItem(
+        phrase=it.phrase.strip(),
+        phrase_kind="food",
+        qty=float(it.qty),
+        unit=(it.unit or "").strip() or None,
+        state=None,
+        brand=None,
+        library_match=None,
+        meal_ref=None,
+    )
+
+
+def _flag_estimate(item: StagedItem, it: EstimateItem) -> StagedItem:
+    """§3.4a on an agent-sized row: the flag and the user-facing note, and a
+    confidence never above medium — the amount is a guess whatever the food
+    match. A searching row keeps the amount in spoken_qty/unit for tier 3
+    (_persist), and KEEP_LOG_KEYS_SQL carries the flag through its rewrite."""
+    update: dict = {
+        "estimated": "portion",
+        "estimate_note": it.note.strip() or "amount estimated by the agent",
+    }
+    if item.status == "resolved" and item.confidence == "high":
+        update["confidence"] = "medium"
+    return item.model_copy(update=update)
+
+
+async def _stage_estimate(
+    log_id: UUID, meal: Meal, items: list[EstimateItem], *, start_index: int
+) -> list[StagedItem]:
+    """§6.4 log_estimate: the components of an unlabeled dish through the
+    identical tiers 1–3 (tier 0 skipped — a saved-meal trigger is something
+    you say), each row flagged estimated="portion": it renders as a guess and
+    cannot commit unconfirmed (§3.4a), and it learns nothing (the flag —
+    LEARNABLE_ROWS_SQL on the read side, commit's alias gate on the write
+    side). The numbers are the database's; only the amount is the agent's."""
+    resolutions = [
+        await cascade.resolve_item(_estimate_parsed(it), start_index + i, meal, skip_tier0=True)
+        for i, it in enumerate(items)
+    ]
+    for r, it in zip(resolutions, items):
+        r.staged = _flag_estimate(r.staged, it)
+    await _persist(log_id, resolutions, meal, short_circuit=False)
+    return [r.staged for r in resolutions]
+
+
+async def _run_agent_lane(
+    body: LogCreate, meal: Meal, emit: Emit | None = None
+) -> LogCreateResponse:
+    """§6.4: the front-door agent. Its effects are closures over this log:
+    the food part of the utterance goes through _stage_from_text exactly as
+    a plain log would, an unlabeled dish's components through
+    _stage_estimate (flagged rows), a spoken weight through
+    routes/weights.record_weight under this log's id. The two staging
+    closures append to one log, so they allocate item indexes in turn (one
+    lock — the SDK may run tool calls concurrently) and the response merges
+    their rows. The response is assembled from what those closures recorded
+    — the model contributes the reply and nothing else. `emit` streams the
+    run's events to the chat window (routes/agent.py)."""
     import tracing
     from services import agent as agent_svc
 
     tracing.init_tracing()
-    result: dict = {"staged": None, "weight": None}
+    result: dict = {"items": [], "food": None, "weight": None, "basis": None, "next_index": 0}
+    staging = asyncio.Lock()
 
-    async def stage_food(text: str) -> dict:
-        staged = await _stage_from_text(body, meal, text)
-        result["staged"] = staged
+    def summary(items: list[StagedItem]) -> list[dict]:
         # what was staged, for the model — never the numbers: the reply must
         # not state macros, the sheet does
+        return [
+            {
+                "phrase": it.phrase,
+                "status": it.status,
+                "food": it.food.name if it.food else None,
+                "qty": it.qty,
+                "serving": it.serving.description if it.serving else None,
+                **({"estimate_note": it.estimate_note} if it.estimate_note else {}),
+            }
+            for it in items
+        ]
+
+    async def stage_food(text: str) -> dict:
+        async with staging:
+            staged = await _stage_from_text(body, meal, text, start_index=result["next_index"])
+            result["next_index"] += len(staged.items)
+            result["items"].extend(staged.items)
+            result["food"] = staged
         return {
             "meal": staged.meal.value,
-            "items": [
-                {
-                    "phrase": it.phrase,
-                    "status": it.status,
-                    "food": it.food.name if it.food else None,
-                    "qty": it.qty,
-                    "serving": it.serving.description if it.serving else None,
-                }
-                for it in staged.items
-            ],
+            "items": summary(staged.items),
             "saved_meal": staged.saved_meal.name if staged.saved_meal else None,
             "note": staged.note,
+        }
+
+    async def stage_estimate(items: list[EstimateItem], basis: str) -> dict:
+        async with staging:
+            # the meal a spoken hint moved the log to, when log_food ran first
+            row_meal = result["food"].meal if result["food"] is not None else meal
+            rows = await _stage_estimate(
+                body.id, row_meal, items, start_index=result["next_index"]
+            )
+            result["next_index"] += len(rows)
+            result["items"].extend(rows)
+            result["basis"] = basis
+        return {
+            "meal": row_meal.value,
+            "basis": basis,
+            "items": summary(rows),
+            "note": "Each row is flagged as an estimate; the user confirms or adjusts it in the list.",
         }
 
     async def record_weight(value: float, unit: str, day) -> dict:
@@ -665,6 +801,7 @@ async def _run_agent_lane(body: LogCreate, meal: Meal) -> LogCreateResponse:
         now_local = body.captured_at.astimezone(timezone.utc)
     deps = agent_svc.AgentDeps(
         stage_food=stage_food,
+        stage_estimate=stage_estimate,
         record_weight=record_weight,
         now_local=now_local,
         unit_pref=unit_pref,
@@ -678,14 +815,17 @@ async def _run_agent_lane(body: LogCreate, meal: Meal) -> LogCreateResponse:
             else None
         ),
         profile_notes=settings.get("profile_notes") or "",
+        web_lane=auth.is_owner(),  # §8.9: the hosted search is billed — the owner's
     )
     async with tracing.generation("agent") as gen:
-        run = await agent_svc.run_agent(body.text, deps)
+        run = await agent_svc.run_agent(body.text, deps, emit)
         gen.update(
             input=body.text,
             output={
                 "reply": run.reply,
                 "food_calls": run.food_calls,
+                "estimate_calls": run.estimate_calls,
+                "estimate_basis": result["basis"],
                 "weight": run.weight,
                 "max_turns_hit": run.max_turns_hit,
             },
@@ -696,12 +836,20 @@ async def _run_agent_lane(body: LogCreate, meal: Meal) -> LogCreateResponse:
         pass
 
     outcome = AgentOutcome(reply=run.reply, weight=result["weight"])
-    staged = result["staged"]
-    if staged is None:
+    food = result["food"]
+    items = sorted(result["items"], key=lambda it: it.item_index)
+    if food is None and not items:
         # nothing staged: the row stays an itemless staged log, as the §8.4
         # save-intent path leaves it — nothing counts it (§9)
         return LogCreateResponse(log_id=body.id, meal=meal, items=[], agent=outcome)
-    return staged.model_copy(update={"agent": outcome})
+    return LogCreateResponse(
+        log_id=body.id,
+        meal=food.meal if food is not None else meal,
+        items=items,
+        saved_meal=food.saved_meal if food is not None else None,
+        note=food.note if food is not None else None,
+        agent=outcome,
+    )
 
 
 async def _save_intent_without_items(name: str) -> tuple[SavedMealNote | None, str | None]:
@@ -806,8 +954,9 @@ async def _persist(
     async with db.tx() as conn:
         await conn.execute(
             """
-            UPDATE logs SET short_circuit = %s, meal_inferred = %s, decompose_ms = %s,
-                            trace_id = %s
+            UPDATE logs SET short_circuit = %s, meal_inferred = %s,
+                            decompose_ms = coalesce(%s, decompose_ms),
+                            trace_id = coalesce(%s, trace_id)
             WHERE id = %s
             """,
             (short_circuit, meal.value, decompose_ms, trace_id, log_id),
