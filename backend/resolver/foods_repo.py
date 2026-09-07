@@ -65,3 +65,30 @@ async def persist_food(food: dict) -> str:
         ),
     )
     return str(row["id"])
+
+
+# The foods this account has committed, newest first, one row per food. RLS
+# scopes `entries` to the caller; the photo lane's numberless placeholders are
+# never offered (they cannot be picked — routes/quick R1). Owner ruling,
+# 2026-09-06: the Search lane lists these under its bar, and the decompose
+# context carries them (§6.1) — barcode, search and photo rows learn no alias
+# (§3.5), so the alias-built food index never sees them.
+RECENT_FOODS_CAP = 200
+
+_RECENT_FOODS_SQL = """
+SELECT f.id::text AS id, f.source, f.source_id, f.display_name, f.brand
+FROM (
+  SELECT food_id, max(created_at) AS last_at, max(logged_at) AS last_logged
+  FROM entries GROUP BY food_id
+) e
+JOIN foods f ON f.id = e.food_id
+WHERE f.source <> 'estimate'
+ORDER BY e.last_at DESC, e.last_logged DESC
+LIMIT %s
+"""
+
+
+async def recent_foods(limit: int = RECENT_FOODS_CAP) -> list[dict]:
+    """(id, source, source_id, display_name, brand) per food, newest commit
+    first, at most RECENT_FOODS_CAP rows."""
+    return await db.fetchall(_RECENT_FOODS_SQL, (max(1, min(int(limit), RECENT_FOODS_CAP)),))

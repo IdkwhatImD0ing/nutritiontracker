@@ -74,7 +74,7 @@ def _build_stubs() -> dict:
     ctx_mod = types.ModuleType("services.context")
 
     async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[])
+        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
 
     ctx_mod.build_agent_context = build_agent_context
 

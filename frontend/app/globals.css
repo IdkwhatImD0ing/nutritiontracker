@@ -1010,12 +1010,14 @@ a {
   min-width: 0;
 }
 
+/* The name wraps (owner feedback, 2026-09-06 — a scanned carton's full label
+   used to vanish under the kcal figure behind an ellipsis); overflow-wrap
+   keeps one unbroken token from pushing the kcal column out. */
 .row-name {
   font-size: 0.98rem;
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
   letter-spacing: -0.01em;
 }
 
@@ -1253,11 +1255,20 @@ a {
   padding: 0;
   font: inherit;
   color: inherit;
+  text-align: left; /* a wrapped name's lines start flush, not centred (button UA default) */
   cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dotted;
   text-decoration-color: var(--faint);
   text-underline-offset: 3px;
+}
+
+/* A cached food's display name is stored lowercase (the adapters' trigram
+   target — "fairlife 2% reduced fat ultra-filtered milk"); it reads as a
+   title wherever it is shown (owner feedback, 2026-09-06). Applied to names
+   only, never to a raw provider description or a UI label. */
+.food-name {
+  text-transform: capitalize;
 }
 
 /* expanded stats */
@@ -1590,6 +1601,37 @@ a {
 .search-results .result-sub {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+/* the "Previously added" heading over the recent-foods list */
+.search-label {
+  font-size: 0.7rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin: 2px 2px 0;
+}
+
+/* The + sheet's Search lane (owner ruling, 2026-09-06): the whole screen,
+   not a 78dvh sub-sheet — a list you scroll with the keyboard up. Same
+   .sheet chrome as staging; the body keeps the sub-sheet's column rhythm. */
+.sheet.search-sheet {
+  height: 100dvh;
+  border: none;
+  border-radius: 0;
+}
+
+.search-sheet .sheet-head {
+  padding-top: calc(14px + env(safe-area-inset-top));
+}
+
+.search-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 14px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
 /* barcode scanner (the + sheet's Scan barcode lane) */
@@ -1948,6 +1990,17 @@ a {
 
   .sheet-foot {
     padding-bottom: 14px;
+  }
+
+  /* the Search lane is a centered modal here, like every other sheet */
+  .sheet.search-sheet {
+    height: min(86dvh, 860px);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+  }
+
+  .search-sheet .sheet-head {
+    padding-top: 16px;
   }
 
   .toast {

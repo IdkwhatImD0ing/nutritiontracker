@@ -163,6 +163,30 @@ async def search_foods(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/foods/recent
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/foods/recent", response_model=list[FoodHit])
+async def list_recent_foods() -> list[FoodHit]:
+    """The foods this account has logged, newest first, one per food, capped
+    at foods_repo.RECENT_FOODS_CAP (200) — the Search lane's "previously
+    added" list (§7.4). Every hit is already cached (food_id set), so a pick
+    goes straight to /api/logs/from-food. Declared before /api/foods/{food_id}
+    so the literal path wins."""
+    return [
+        FoodHit(
+            source=r["source"],
+            source_id=r["source_id"],
+            label=r["display_name"],
+            brand=r["brand"],
+            food_id=r["id"],
+        )
+        for r in await foods_repo.recent_foods()
+    ]
+
+
+# ---------------------------------------------------------------------------
 # POST /api/foods/select
 # ---------------------------------------------------------------------------
 

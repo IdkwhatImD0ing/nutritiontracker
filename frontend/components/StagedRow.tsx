@@ -115,7 +115,7 @@ export default function StagedRow({
             {editable ? (
               <button
                 type="button"
-                className="name-btn"
+                className="name-btn food-name"
                 aria-label={`Edit food for ${name}`}
                 onClick={(e) => {
                   e.stopPropagation();
