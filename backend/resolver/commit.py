@@ -298,10 +298,17 @@ async def commit_log(
                 )
 
         # 4. meal macro intent: create/update the macro from the committed items
-        intent = save_intent or _staged_save_intent(res_rows)
+        # (decompose's save_intent, or the agent's stamp — which may carry
+        # the trigger phrases the person said, §6.4)
+        intent = (
+            {"name": save_intent.name, "trigger_phrases": None}
+            if save_intent is not None
+            else _staged_save_intent(res_rows)
+        )
         if intent is not None and committed:
             meal = await save_meal_macro(
-                conn, name=intent.name, trigger_phrases=None, items=committed
+                conn, name=intent["name"], trigger_phrases=intent["trigger_phrases"],
+                items=committed,
             )
 
         await conn.execute(
@@ -694,14 +701,20 @@ class MealInvalid(Exception):
     """A macro write that cannot be stored as given (routes map to 422)."""
 
 
-def _staged_save_intent(res_rows: dict) -> SaveIntent | None:
-    """decompose's save_intent, persisted on the staged jsonb by logs.py
-    (extra key `save_intent: {name}`) — first row that carries one."""
+def _staged_save_intent(res_rows: dict) -> dict | None:
+    """The save_intent persisted on the staged jsonb — decompose's, written
+    by logs.py _persist (`{name}`), or the agent's stamp (`{name,
+    trigger_phrases}`, logs.py _stamp_save_intent) — first row that carries
+    one, as `{"name", "trigger_phrases"}`."""
     for r in res_rows.values():
         staged = r["staged"]
         intent = staged.get("save_intent") if isinstance(staged, dict) else None
         if isinstance(intent, dict) and (intent.get("name") or "").strip():
-            return SaveIntent(name=intent["name"].strip())
+            triggers = intent.get("trigger_phrases")
+            return {
+                "name": intent["name"].strip(),
+                "trigger_phrases": triggers if isinstance(triggers, list) else None,
+            }
     return None
 
 

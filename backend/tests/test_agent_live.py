@@ -370,3 +370,123 @@ def test_costco_shrimp_platter_is_estimated_from_database_components(client: Tes
         assert r.status_code == 409 and "confirm the estimated rows first" in r.text, r.text
     finally:
         _run(_cleanup(t0, [log_id, *question_ids]))
+
+
+# ---------------------------------------------------------------------------
+# 5: saved meals through the agent — save what was logged, extend it by words,
+#    rename it (§8.4 via §6.4; Bill's ruling 2026-09-07: the agent can do what
+#    the UI can)
+# ---------------------------------------------------------------------------
+
+
+def _tool_calls(events: list[dict]) -> list[str]:
+    return [e["name"] for e in events if e["type"] == "tool_call"]
+
+
+def _log_and_commit(client: TestClient, log_id: str, text: str) -> list[dict]:
+    """Stage `text` through the agent, resolve every row as the sheet would
+    (the tier-3 kick, the first id-bearing answer to a question), commit the
+    resolved rows — and return them. A synthetic tenant has no aliases, so
+    the commit is also what teaches it the phrase (§3.5)."""
+    body = _post(client, log_id, text)
+    assert body["items"], body
+    for it in body["items"]:
+        if it["status"] == "searching":
+            r = client.post("/api/resolve/tier3", json={"log_id": log_id, "item_index": it["item_index"]})
+            assert r.status_code == 200, r.text
+            it = r.json()
+        if it["status"] == "needs_input" and it.get("question"):
+            opt = next((o for o in it["question"]["options"] if o.get("source") and o.get("source_id")), None)
+            assert opt is not None, it["question"]
+            r = client.post(
+                "/api/resolve/answer",
+                json={"log_id": log_id, "item_index": it["item_index"],
+                      "answer": {"label": opt["label"], "source": opt["source"], "source_id": opt["source_id"]}},
+            )
+            assert r.status_code == 200, r.text
+    r = client.get(f"/api/logs/{log_id}")
+    assert r.status_code == 200, r.text
+    resolved = [it for it in r.json()["items"] if it["status"] == "resolved"]
+    assert resolved, r.json()
+    r = client.post(f"/api/logs/{log_id}/commit", json={"items": resolved})
+    assert r.status_code == 200, r.text
+    return resolved
+
+
+def test_the_agent_saves_extends_and_renames_a_meal(client: TestClient):
+    t0 = _run(db.fetchone("SELECT now() AS t"))["t"]
+    l0, l1, l2, l3, l4 = (str(uuid4()) for _ in range(5))
+    tag = uuid4().hex[:6]
+    name, renamed = f"test brekkie {tag}", f"weekday brekkie {tag}"
+
+    def macro() -> dict | None:
+        return _run(db.fetchone(
+            "SELECT name, trigger_phrases, items, is_active FROM meal_macros "
+            "WHERE lower(name) LIKE %s ORDER BY updated_at DESC LIMIT 1",
+            (f"%{tag}",),
+        ))
+
+    try:
+        # a banana logged once, so this tenant knows the word (the tool's own
+        # advice for a food the databases do not know yet); then the meal's
+        # source: two eggs, logged and committed
+        banana = _log_and_commit(client, l0, "a banana")
+        resolved = _log_and_commit(client, l1, "two eggs")
+        history = [
+            {"role": "user", "text": "two eggs"},
+            {"role": "agent", "text": "Staged the eggs.", "log_id": l1, "state": "committed",
+             "items": [f"{it['food']['name']} — {it['qty']} × {it['serving']['description']}"
+                       for it in resolved]},
+        ]
+
+        # 1. "save that as …": the log the conversation names, saved now
+        events = _post_stream(client, l2, f"save that as {name}", history)
+        assert "save_meal" in _tool_calls(events), events
+        done = next(e for e in events if e["type"] == "done")["log"]
+        assert done["items"] == [] and done["saved_meal"], done
+        assert done["saved_meal"]["name"].lower() == name, done["saved_meal"]
+        assert done["saved_meal"]["item_count"] == len(resolved)
+        row = macro()
+        assert row is not None and row["is_active"], row
+        assert [(i["food_id"], i["serving_id"]) for i in row["items"]] == [
+            (it["food"]["id"], it["serving"]["id"]) for it in resolved
+        ], row
+        print(f"[agent live] saved {row['name']!r} triggers={row['trigger_phrases']} items={row['items']}")
+
+        # 2. extend by words and change a quantity in one breath
+        events = _post_stream(client, l3, f"add a banana to {name} and make the eggs 3")
+        calls = _tool_calls(events)
+        assert "save_meal" in calls and "update_meal" in calls, calls
+        results = [e for e in events if e["type"] == "tool_result"]
+        print(f"[agent live] meal tool results: {[(e['name'], e['output']) for e in results]}")
+        row = macro()
+        assert len(row["items"]) == len(resolved) + 1, row
+        egg_id = resolved[0]["food"]["id"]
+        assert [float(i["qty"]) for i in row["items"] if i["food_id"] == egg_id] == [3.0], row
+        assert banana[0]["food"]["id"] in [i["food_id"] for i in row["items"]], row
+        print(f"[agent live] extended: {row['items']}")
+
+        # 3. rename — and the reply never states nutrition numbers
+        events = _post_stream(client, l4, f"rename {name} to {renamed}")
+        assert "update_meal" in _tool_calls(events), events
+        row = macro()
+        assert row["name"].lower() == renamed, row
+        reply = next(e for e in events if e["type"] == "reply")["text"]
+        assert "kcal" not in reply.lower() and "calorie" not in reply.lower(), reply
+    finally:
+        _run(db.execute("DELETE FROM meal_macros WHERE lower(name) LIKE %s", (f"%{tag}",)))
+        # the aliases the two commits taught this tenant — after the rows that
+        # reference them (item_resolutions.alias_id) are gone
+        learned = [r["food_id"] for r in _run(db.fetchall(
+            "SELECT DISTINCT food_id FROM entries WHERE log_id = ANY(%s::uuid[])", ([l0, l1],)
+        ))]
+        _run(_cleanup(t0, [l0, l1, l2, l3, l4]))
+        # a run that died inside its own cleanup leaves this tenant rows on the
+        # dead date, still referencing the aliases: sweep them first
+        stale = [str(r["id"]) for r in _run(db.fetchall(
+            "SELECT id FROM logs WHERE captured_at::date = %s", (LOCAL_DAY,)
+        ))]
+        if stale:
+            _run(_cleanup(t0, stale))
+        if learned:
+            _run(db.execute("DELETE FROM aliases WHERE food_id = ANY(%s::uuid[])", (learned,)))

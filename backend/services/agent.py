@@ -13,7 +13,10 @@ plain component foods the databases carry and estimates the AMOUNT of each,
 after a hosted `web_search` or two to learn what the product is and how big.
 The numbers still come only from the database entry of each component; the
 amount is flagged `estimated="portion"` (the photo lane's flag, §3.4a) and the
-row must be confirmed before it commits. The tools are its only effects, and
+row must be confirmed before it commits. Since 2026-09-07 it also keeps the
+saved meals (§8.4) — `save_meal` / `update_meal`, the Library's own writes
+behind two more callbacks — because the agent can do whatever the UI can
+(Bill's ruling). The tools are its only effects, and
 the route reports what the tools actually did — never what the model says it
 did: `AgentRun` is assembled from tool-side state; the reply is the only model
 text that reaches the client.
@@ -116,8 +119,35 @@ Tools:
   usual unit from the context. `days_ago` is 0 for today, 1 for yesterday.
   A weight that was not spoken as a number is not a weight — "I'm down two
   pounds" states none; do not call the tool.
+- save_meal(name, trigger_phrases, log_id, items): saves a named meal — their
+  "usual breakfast" — so saying its name logs it again, or puts more into one
+  that exists (the saved meals are listed in the context). The items come from
+  ONE source. A log: `log_id` when they point at a turn of this conversation
+  ("save the lunch one as…"); null when they mean what was just logged — this
+  turn's log, else the newest log in the conversation, else the last committed
+  one. A log that is still staged is saved when they commit it; a committed
+  one is saved now; a log REPLACES what a meal of that name held. Or `items`:
+  foods in words ("make a meal called protein snack: a scoop of whey and a
+  banana", "add a banana to my usual breakfast") — plain food names with the
+  amount as said, looked up in the databases like log_food's — ADDED to the
+  meal of that name, or making a new one. A food the databases do not know
+  yet comes back unresolved: say so, and that logging it once makes it known.
+  More than 8 foods at once: the extras come back in `dropped` — name them
+  and say they were not added. `trigger_phrases`: other ways they said they
+  will call it, verbatim; null = the name.
+- update_meal(name, new_name, trigger_phrases, is_active, set_qty, remove):
+  changes a saved meal that exists: rename, replace its trigger phrases, set
+  an item's quantity or remove an item — the item by its food name as the
+  saved-meals list shows it — deactivate (`is_active` false: their "delete";
+  it stays in Library as inactive and the diary keeps its context) or
+  reactivate. Pass only what they asked to change; the rest null.
 
 How to decide:
+- Saving, naming, or changing a saved meal → save_meal / update_meal, never
+  log_food. LOGGING a saved meal ("my usual breakfast") is log_food, like any
+  food. Food and a save in one breath ("two eggs and toast, save that as my
+  usual breakfast") → log_food first, its text verbatim as always, then
+  save_meal once log_food has returned.
 - Plain foods, packaged products with a Nutrition Facts label, chain-restaurant
   items → log_food, verbatim. Unsure whether a product carries a label? One
   web_search settles it.
@@ -148,7 +178,8 @@ Then answer with `reply`: one or two short sentences for the person, in plain
 words, confirming what the tools reported — and, for an estimate, what you
 assumed, so they can correct it. Use only numbers the tool results gave you
 (counts and amounts are fine; calories and macros never). Never mention tool
-names. If a tool reported an error, say plainly what could not be done.
+names. Plain text only — no markdown, the chat shows it verbatim. If a tool
+reported an error, say plainly what could not be done.
 `options` is null unless `reply` is a clarifying question.
 """
 
@@ -172,6 +203,22 @@ class EstimateItem(BaseModel):
     # instead of pieces × 100 g; null for an item given by weight or measure
     grams: float | None
     note: str  # one short clause on how the amount was sized ("~50 shrimp at ~8 g each")
+
+
+class MealFood(BaseModel):
+    """A food in words, for save_meal.items — looked up through the same
+    tiers log_estimate's components take; nothing is logged."""
+
+    phrase: str  # a plain, database-searchable food name ("eggs", "whey")
+    qty: float | None  # the amount as said; null = the usual portion, once
+    unit: str | None  # "scoop", "cup", "g", "oz" … — null for a count of pieces
+
+
+class MealQty(BaseModel):
+    """One item's new quantity, for update_meal.set_qty."""
+
+    food: str  # the item's food name as the saved-meals list shows it
+    qty: float  # > 0
 
 
 class AgentReply(BaseModel):
@@ -207,6 +254,13 @@ class AgentDeps:
     discard_log: Callable[[str], Awaitable[dict]] | None = None
     # the chat so far, oldest first: models.AgentTurn as dicts
     history: list[dict] = field(default_factory=list)
+    # §8.4 through the agent: (name, trigger_phrases, log_id, items) → the
+    # meal as saved, or that it saves when the log commits; (name, new_name,
+    # trigger_phrases, is_active, set_qty, remove) → the meal as it is now
+    save_meal: Callable[..., Awaitable[dict]] | None = None
+    update_meal: Callable[..., Awaitable[dict]] | None = None
+    # the saved meals as they stand, one line each (name, items, triggers)
+    saved_meals: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -220,6 +274,7 @@ class AgentRun:
     transcript: list
     max_turns_hit: bool = False
     options: list[str] | None = None  # the clarifying question's answers, when the reply is one
+    meal_calls: int = 0  # save_meal / update_meal calls that wrote (or stamped) something
 
 
 def _tool_error(ctx, error: Exception) -> str:
@@ -234,6 +289,7 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
     state.setdefault("food_calls", 0)
     state.setdefault("estimate_calls", 0)
     state.setdefault("weight", None)
+    state.setdefault("meal_calls", 0)
 
     @function_tool(failure_error_function=_tool_error)
     async def log_food(text: str) -> str:
@@ -255,6 +311,7 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         except Exception:
             state["food_calls"] -= 1
             raise  # failure_error_function tells the model, without the internals
+        state["food_done"] = True  # save_meal may now take this turn's log as its target
         return json.dumps(out, default=str)
 
     @function_tool(failure_error_function=_tool_error)
@@ -303,6 +360,7 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         except Exception:
             state["estimate_calls"] -= 1
             raise
+        state["estimate_done"] = True  # save_meal may now take this turn's log as its target
         return json.dumps(out, default=str)
 
     @function_tool(failure_error_function=_tool_error)
@@ -329,7 +387,112 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
             return json.dumps({"error": "unavailable", "message": "nothing to replace here"})
         return json.dumps(await deps.discard_log(log_id.strip()), default=str)
 
-    tools: list = [log_food, log_estimate, log_weight, discard_log]
+    @function_tool(failure_error_function=_tool_error)
+    async def save_meal(
+        name: str,
+        trigger_phrases: list[str] | None = None,
+        log_id: str | None = None,
+        items: list[MealFood] | None = None,
+    ) -> str:
+        """Save a named meal so saying its name logs it again, or put more
+        into one that exists. From ONE source: `items` (foods in words, the
+        amount as said — added to the meal of that name, or a new meal) or a
+        log (`log_id` from the conversation; null = this turn's log, else the
+        newest in the conversation, else the last committed one; its rows
+        REPLACE the meal's). A staged log is saved when they commit it.
+        `trigger_phrases`: other ways they will say it, verbatim; null = the
+        name."""
+        name = name.strip()
+        if not name:
+            return json.dumps({"error": "invalid_name", "message": "a saved meal needs a name"})
+        if items is not None and not items:
+            # an empty list is a source that named nothing — never a silent
+            # fall-through to the log ladder (which would save an unrelated log)
+            return json.dumps({
+                "error": "no_items",
+                "message": "no foods were listed — name them, or leave items out to save a log",
+            })
+        log_id = (log_id or "").strip() or None
+        if log_id is not None and items is not None:
+            return json.dumps({
+                "error": "choose_one",
+                "message": "the items come from a log OR from the foods listed — not both",
+            })
+        bad = [it.phrase for it in items or [] if it.qty is not None and not (it.qty > 0)]
+        if bad:
+            return json.dumps({
+                "error": "invalid_qty",
+                "message": f"every amount must be above zero: {bad}",
+            })
+        # over the cap the extras are dropped — reported, never silently
+        dropped = [it.phrase for it in items[MAX_ESTIMATE_ITEMS:]] if items else []
+        if items is not None:
+            items = items[:MAX_ESTIMATE_ITEMS]
+        if log_id is None and items is None and (
+            (state["food_calls"] and not state.get("food_done"))
+            or (state["estimate_calls"] and not state.get("estimate_done"))
+        ):
+            # the SDK runs one turn's tool calls concurrently: "this turn's
+            # log" does not exist until log_food / log_estimate has returned
+            return json.dumps({
+                "error": "food_in_flight",
+                "message": "this turn's food is still being staged — call save_meal "
+                           "again once that tool has returned",
+            })
+        if deps.save_meal is None:
+            return json.dumps({"error": "unavailable", "message": "saved meals cannot be changed here"})
+        triggers = [t.strip() for t in trigger_phrases or [] if t.strip()] or None
+        out = await deps.save_meal(name, triggers, log_id, items)
+        if "error" not in out:
+            if dropped:
+                out["dropped"] = dropped
+            state["meal_calls"] += 1
+            state["meal_note"] = (
+                f"'{name}' will be saved when you commit" if out.get("pending") else f"saved '{name}'"
+            )
+        return json.dumps(out, default=str)
+
+    @function_tool(failure_error_function=_tool_error)
+    async def update_meal(
+        name: str,
+        new_name: str | None = None,
+        trigger_phrases: list[str] | None = None,
+        is_active: bool | None = None,
+        set_qty: list[MealQty] | None = None,
+        remove: list[str] | None = None,
+    ) -> str:
+        """Change a saved meal that exists: rename (`new_name`), replace its
+        trigger phrases, set an item's quantity or remove an item (the item's
+        food name as the saved-meals list shows it), deactivate (`is_active`
+        false — their "delete": it stays inactive, the diary keeps its
+        context) or reactivate. Only what they asked to change; the rest
+        null."""
+        name = name.strip()
+        if not name:
+            return json.dumps({"error": "invalid_name", "message": "which saved meal?"})
+        new_name = (new_name or "").strip() or None
+        if (
+            new_name is None and trigger_phrases is None and is_active is None
+            and not set_qty and not remove
+        ):
+            return json.dumps({"error": "nothing_to_change", "message": "say what to change"})
+        bad = [c.food for c in set_qty or [] if not (c.qty > 0)]
+        if bad:
+            return json.dumps({
+                "error": "invalid_qty",
+                "message": f"every quantity must be above zero: {bad}",
+            })
+        if deps.update_meal is None:
+            return json.dumps({"error": "unavailable", "message": "saved meals cannot be changed here"})
+        out = await deps.update_meal(
+            name, new_name, trigger_phrases, is_active, set_qty or None, remove or None
+        )
+        if "error" not in out:
+            state["meal_calls"] += 1
+            state["meal_note"] = f"updated '{out.get('meal') or name}'"
+        return json.dumps(out, default=str)
+
+    tools: list = [log_food, log_estimate, log_weight, discard_log, save_meal, update_meal]
     if deps.web_lane:
         # unpinned: this search identifies a product and its size, never a
         # page to transcribe numbers from (tier 3's pinned lane does that)
@@ -372,11 +535,13 @@ def agent_input(text: str, deps: AgentDeps) -> str:
         last = f"{lw['weight']:g} {lw['unit']} on {lw['day']}"
     else:
         last = "none yet"
+    meals = "\n".join(f"- {line}" for line in deps.saved_meals) or "(none yet)"
     return (
         f"Now (the user's local time): {deps.now_local.strftime('%Y-%m-%d %H:%M, %A')}\n"
         f"Usual weight unit: {deps.unit_pref}\n"
         f"Last weigh-in: {last}\n"
-        f"Profile notes: {deps.profile_notes or '(none)'}\n\n"
+        f"Profile notes: {deps.profile_notes or '(none)'}\n"
+        f"Saved meals (name: items — say: trigger phrases):\n{meals}\n\n"
         f"{_history_block(deps.history)}\n\n"
         f'Utterance: "{text}"'
     )
@@ -392,6 +557,8 @@ def _fallback_reply(state: dict) -> str:
         parts.append("staged an estimate for you to check")
     if state.get("weight"):
         parts.append("logged your weight")
+    if state.get("meal_note"):
+        parts.append(state["meal_note"])
     if not parts:
         return "I couldn't work that one out — try again, or type it."
     return "I " + " and ".join(parts) + " — check the list."
@@ -528,4 +695,5 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
         transcript=transcript,
         max_turns_hit=max_turns_hit,
         options=options,
+        meal_calls=state["meal_calls"],
     )

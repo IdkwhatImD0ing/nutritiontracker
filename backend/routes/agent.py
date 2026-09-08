@@ -86,7 +86,8 @@ class AgentTranscriptEvent(BaseModel):
 
 class AgentToolCallEvent(BaseModel):
     """The agent called a tool: `name` (log_food, log_estimate, log_weight,
-    web_search) with `args` as the model passed them."""
+    discard_log, save_meal, update_meal, web_search) with `args` as the
+    model passed them."""
 
     type: Literal["tool_call"] = "tool_call"
     id: str

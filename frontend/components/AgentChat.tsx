@@ -175,6 +175,32 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       doing = `Logging weight: ${str(a.weight)} ${str(a.unit)}`;
       ok = "Saved";
       break;
+    case "save_meal": {
+      // §8.4 through the agent: saved now (a committed log, or foods in
+      // words), or stamped on a staged log and saved when it commits
+      const n = out ? count(out.items) : null;
+      const left = out ? (count(out.unresolved) ?? 0) : 0;
+      const meal = str(out?.meal ?? a.name);
+      doing = `Saving meal “${str(a.name)}”`;
+      ok = out?.pending
+        ? `Will save “${meal}” when you commit`
+        : `Saved “${meal}” · ${n ?? "?"} item${n === 1 ? "" : "s"}` +
+          (left ? ` — ${left} need${left === 1 ? "s" : ""} a first log` : "");
+      break;
+    }
+    case "update_meal": {
+      // the stored state, from the result — the args are what was asked for,
+      // and a rename rides along with them (the name below is the new one)
+      const meal = str(out?.meal ?? a.name);
+      doing = `Updating meal “${str(a.name)}”`;
+      ok =
+        out?.is_active === false
+          ? `Deactivated “${meal}”`
+          : a.is_active === true && out?.is_active === true
+            ? `Reactivated “${meal}”`
+            : `Updated “${meal}”`;
+      break;
+    }
     default:
       doing = m.name;
       ok = "Done";
