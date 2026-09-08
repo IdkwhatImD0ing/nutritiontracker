@@ -142,3 +142,28 @@
   border-color: var(--red);
   color: #fff;
 }
+
+/* The row's serving picker (§3.5 post-commit portion edit). The opener sits
+   on its own line above the qty stepper; .diary-edit is a stretch column, so
+   it has to say it does not want the full width. */
+.diary-change-serving {
+  align-self: flex-start;
+  font-size: 0.76rem;
+  text-align: left;
+}
+
+/* A branded food can carry a dozen servings; cap the list so the qty stepper
+   and the actions stay on screen under it. */
+.diary-servings {
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.diary-servings button {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.diary-servings button:disabled {
+  cursor: default;
+}

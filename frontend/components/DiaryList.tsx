@@ -5,7 +5,7 @@ import { ApiError, type DayTotals, type Meal } from "@/lib/api";
 import "@/app/history/diary.css";
 import {
   deleteEntry,
-  patchEntryQty,
+  patchEntry,
   type DiaryEntry,
   type DiaryMeals,
 } from "./DiaryApi";
@@ -168,8 +168,14 @@ export default function DiaryList({
     setError(null);
     try {
       await fn();
-    } catch {
-      setError("Couldn't save that change — try again.");
+    } catch (e) {
+      // A refused portion says why (a serving with partial macros is a 422
+      // naming it, §4 invariant) — show the server's sentence, not a generic
+      // one, the way every other lane does.
+      setError(
+        (e instanceof ApiError && e.status === 422 && e.detail) ||
+          "Couldn't save that change — try again.",
+      );
     } finally {
       setBusy(null);
     }
@@ -200,12 +206,13 @@ export default function DiaryList({
               expanded={expanded === e.id}
               busy={busy === e.id}
               onToggle={() => setExpanded((cur) => (cur === e.id ? null : e.id))}
-              onQty={(qty) =>
+              onSave={(patch) =>
                 run(e.id, async () => {
-                  const res = await patchEntryQty(e.id, qty);
+                  const res = await patchEntry(e.id, patch);
                   // routes/entries.py builds its DiaryEntry without the
                   // source/citation/estimate fields — keep the ones already
-                  // rendered
+                  // rendered (`grams` it does send, and a serving change
+                  // moves it, so that one comes from the response)
                   onPatched(
                     {
                       ...res.entry,

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { StagedServing } from "@/lib/api";
 import type { DiaryEntry } from "./DiaryApi";
+import { getFood } from "./LibraryApi";
 import "@/app/photo.css"; // .badge.estimate
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -28,8 +30,9 @@ type Props = {
   expanded: boolean;
   busy: boolean;
   onToggle: () => void;
-  /** qty edit → PATCH /api/entries/:id {qty} (parent owns the request) */
-  onQty: (qty: number) => void;
+  /** portion edit → PATCH /api/entries/:id {qty, serving_id?} (parent owns
+   *  the request); `serving_id` is sent only when the serving itself moved */
+  onSave: (patch: { qty: number; serving_id?: string }) => void;
   onDelete: () => void;
 };
 
@@ -37,18 +40,44 @@ type Props = {
  *  the headline number is calories; tapping expands to protein/carbs/fat,
  *  then every micro the snapshot carries; web-sourced rows show the
  *  citation as a visible, clickable link (§3.4a); photo-portion rows carry
- *  an "estimate" badge (M4); qty is editable and the row is deletable (§5
- *  `/api/entries/:id`). */
+ *  an "estimate" badge (M4); the portion — qty, and which serving it counts,
+ *  behind "Change serving" — is editable and the row is deletable (§5
+ *  `/api/entries/:id`). The serving list costs a GET /api/foods/:id whose
+ *  FoodDetail carries the whole provider payload, so it is fetched on that
+ *  tap and not on the expand: expanding a row is how the micros are read,
+ *  and most rows are read rather than corrected. */
 export default function DiaryEntryRow({
   entry,
   expanded,
   busy,
   onToggle,
-  onQty,
+  onSave,
   onDelete,
 }: Props) {
   const [qtyText, setQtyText] = useState<string | null>(null);
+  const [servingId, setServingId] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [servings, setServings] = useState<StagedServing[] | null>(null);
+  const [servingsFailed, setServingsFailed] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // The food's servings, fetched on the first "Change serving" and never
+  // again for this row (a foods row's serving list does not change under us).
+  const foodId = entry.food.id;
+  useEffect(() => {
+    if (!picking || servings || servingsFailed) return;
+    let cancelled = false;
+    getFood(foodId)
+      .then((f) => {
+        if (!cancelled) setServings(f.servings);
+      })
+      .catch(() => {
+        if (!cancelled) setServingsFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [picking, foodId, servings, servingsFailed]);
 
   const m = entry.macros;
   // BACKLOG 28: the macros jsonb carries a `base_*` sidecar on qty-edited
@@ -64,7 +93,15 @@ export default function DiaryEntryRow({
   const draft = qtyText ?? fmt2.format(entry.qty);
   const draftNum = Number(draft);
   const draftValid = Number.isFinite(draftNum) && draftNum > 0;
-  const dirty = draftValid && Math.abs(draftNum - entry.qty) > 1e-9;
+  // Only list servings when there is something to pick between.
+  const choices = servings && servings.length > 1 ? servings : null;
+  const chosenId = servingId ?? entry.serving.id;
+  const chosenDesc =
+    choices?.find((s) => s.serving_id === chosenId)?.description ??
+    entry.serving.description;
+  const servingMoved = chosenId !== entry.serving.id;
+  const dirty =
+    draftValid && (Math.abs(draftNum - entry.qty) > 1e-9 || servingMoved);
 
   const step = (delta: number) => {
     const next = Math.max(0.25, Math.round((draftNum + delta) * 100) / 100);
@@ -161,7 +198,52 @@ export default function DiaryEntryRow({
           </div>
 
           <div className="diary-edit">
-            <span className="k">Qty · {entry.serving.description}</span>
+            {picking ? (
+              <>
+                {choices ? (
+                  <div className="serving-list diary-servings">
+                    {choices.map((s) => (
+                      <button
+                        key={s.serving_id}
+                        type="button"
+                        className={
+                          s.serving_id === chosenId ? "active" : undefined
+                        }
+                        disabled={busy}
+                        onClick={() => setServingId(s.serving_id)}
+                      >
+                        {s.description}
+                      </button>
+                    ))}
+                  </div>
+                ) : servingsFailed ? (
+                  // the retry re-arms the fetch: `picking` is still true, so
+                  // clearing the flag is all the effect needs
+                  <button
+                    type="button"
+                    className="m3-link-btn diary-change-serving"
+                    onClick={() => setServingsFailed(false)}
+                  >
+                    Couldn’t load this food’s servings — retry
+                  </button>
+                ) : (
+                  <span className="k">
+                    {servings
+                      ? "This food has only the one serving."
+                      : "Loading servings…"}
+                  </span>
+                )}
+              </>
+            ) : (
+              <button
+                type="button"
+                className="m3-link-btn diary-change-serving"
+                onClick={() => setPicking(true)}
+              >
+                Change serving
+              </button>
+            )}
+            <span className="k">Qty · {chosenDesc}</span>
             <div className="stepper diary-stepper">
               <button
                 type="button"
@@ -194,12 +276,19 @@ export default function DiaryEntryRow({
                 className="diary-save"
                 disabled={busy || !dirty}
                 onClick={() => {
-                  onQty(draftNum);
+                  onSave({
+                    qty: draftNum,
+                    ...(servingMoved ? { serving_id: chosenId } : {}),
+                  });
+                  // back to tracking the entry: the parent hands the patched
+                  // one down, and a refused edit must not leave the row
+                  // showing a portion the server rejected
                   setQtyText(null);
+                  setServingId(null);
                 }}
               >
                 {busy ? <span className="spinner" /> : null}
-                Save qty
+                Save portion
               </button>
               {confirmDelete ? (
                 <>

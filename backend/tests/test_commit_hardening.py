@@ -346,9 +346,10 @@ def test_qty_patch_scales_snapshot_exactly_cache_untouched():
             assert resp.entry.macros.protein_g == 50
             assert resp.entry.macros.carb_g == 6
             assert resp.entry.macros.fat_g == 3
+            assert resp.entry.grams == 62  # 31 x 2, on the wire as well as in the row
             row = await db.fetchone("SELECT * FROM entries WHERE id = %s", (entry["id"],))
             assert row["macros"] == {"kcal": 240, "protein_g": 50, "carb_g": 6, "fat_g": 3}
-            assert float(row["grams"]) == 62  # 31 x 2
+            assert float(row["grams"]) == 62
             res = await db.fetchone(
                 "SELECT final_qty, was_edited FROM item_resolutions WHERE log_id = %s",
                 (entry["log_id"],),
@@ -370,6 +371,9 @@ def test_serving_patch_rederives_and_guards():
             resp = await patch_entry(entry["id"], EntryPatch(serving_id="srv-100g"))
             assert resp.entry.serving.id == "srv-100g"
             assert resp.entry.macros.kcal == 387  # re-derived from the cache
+            # the diary row renders the gram weight, so the response carries
+            # the moved one rather than leaving the client's stale value up
+            assert resp.entry.grams == 100
             row = await db.fetchone("SELECT * FROM entries WHERE id = %s", (entry["id"],))
             assert float(row["grams"]) == 100
 
