@@ -36,12 +36,6 @@ const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
  *  真 retry-on-open — commit-item is idempotent, so a replayed item is safe. */
 const PENDING_KEY = "usual.pending.v1";
-/** §6.4: the Agent chat survives a reload on this device (the last turns; the
- *  logs themselves are on the server) — under the account's own key, so the
- *  next person to sign in on a shared browser neither reads the last one's
- *  chat nor sends its log ids as their history. */
-const chatKey = (email: string) => `tally.chat.v1:${email}`;
-const CHAT_MAX = 60;
 
 type PendingState = { logId: string; items: StagedItem[] };
 
@@ -95,47 +89,24 @@ export default function Today() {
   // of opening an empty staging sheet.
   const [savedNote, setSavedNote] = useState<string | null>(null);
   // §6.4 the Agent chat (2026-09-06): the conversation lives here, not in
-  // the sheet, so closing the lane and reopening it shows the same history;
-  // the POST /api/agent stream appends to it as events land.
+  // the sheet, so the staging sheet stacked over the chat leaves it intact;
+  // the POST /api/agent stream appends to it as events land. Every opening
+  // of the lane is a NEW conversation (Bill, 2026-09-08): pickLane clears
+  // it, and nothing is kept on the device between openings.
   const [chat, setChat] = useState<ChatMessage[]>([]);
-  // state, not a ref: the save effect must see the LOADED chat in the same
-  // render it first saves in, or the mount's empty array overwrites storage
-  // (and a Strict Mode remount then loads that emptiness back)
-  const [chatLoaded, setChatLoaded] = useState(false);
-  // the account is known once /api/me answers; the chat loads, and saves, only then
-  const who = me?.email ?? null;
+  // Devices that ran the 2026-09-06 builds still hold that chat — under
+  // `tally.chat.v1`, or `tally.chat.v1:<email>` once the key went
+  // per-account. Nothing reads either any more, so drop them here: "the
+  // previous conversation is cleared" includes the stored one.
   useEffect(() => {
-    if (!who || chatLoaded) return;
     try {
-      const raw = localStorage.getItem(chatKey(who));
-      if (raw) {
-        const saved = JSON.parse(raw) as ChatMessage[];
-        // a reload mid-run: nothing is still running, nothing still transcribing
-        setChat(
-          saved.map((m) =>
-            m.kind === "tool" && !m.done
-              ? { ...m, done: true, output: { error: "interrupted" } }
-              : m.kind === "user" && m.pending
-                ? { ...m, pending: false, text: m.text || "(recording)" }
-                : m.kind === "agent" && m.options
-                  ? { ...m, options: undefined }
-                  : m,
-          ),
-        );
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith("tally.chat.")) localStorage.removeItem(k);
       }
     } catch {
-      /* storage unavailable or unreadable — start empty */
+      /* storage unavailable — there is nothing to clean */
     }
-    setChatLoaded(true);
-  }, [who, chatLoaded]);
-  useEffect(() => {
-    if (!chatLoaded || !who) return;
-    try {
-      localStorage.setItem(chatKey(who), JSON.stringify(chat.slice(-CHAT_MAX)));
-    } catch {
-      /* storage unavailable — the chat still lives for this page session */
-    }
-  }, [chat, chatLoaded, who]);
+  }, []);
   const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
   // a retry of the same turn (§8.6): its bubble stays — put back if the failed
   // attempt dropped it — and the failure note under it goes; the stream the
@@ -271,6 +242,11 @@ export default function Today() {
 
   const pickLane = (next: AddLane) => {
     setCaptureError(null);
+    // §6.4: opening the Agent lane starts a new conversation (Bill,
+    // 2026-09-08) — the previous one is cleared here, on open, rather than
+    // on close, so a run still streaming into the chat is not cut off by
+    // the sheet closing.
+    if (next === "agent") setChat([]);
     if (next === "photo") {
       setLane(null);
       flushDiscard(); // a new capture settles any still-undoable discard
