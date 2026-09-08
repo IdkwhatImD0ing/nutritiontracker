@@ -66,6 +66,12 @@ BANANA = {
     "grams": 118,
     "macros": {"kcal": 105, "protein_g": 1.3, "carb_g": 27, "fat_g": 0.4},
 }
+HUNDRED_G = {
+    "serving_id": "srv-100g",
+    "description": "100 g",
+    "grams": 100,
+    "macros": {"kcal": 99, "protein_g": 24, "carb_g": 0.2, "fat_g": 0.3},
+}
 
 
 def _run(coro):
@@ -138,8 +144,16 @@ def test_meal_tools_refuse_bad_input_in_code():
         assert out["error"] == "choose_one"
         out = await _call(agent, "save_meal", name="x", items=[dict(egg, qty=0)])
         assert out["error"] == "invalid_qty" and deps.calls["meal"] == []
-        # log_food claimed this turn and not back yet: this turn's log is not a
-        # target — the model is told to come back once log_food has returned
+        # an empty list named a source that holds nothing — never a silent
+        # fall-through to the log ladder
+        out = await _call(agent, "save_meal", name="x", items=[])
+        assert out["error"] == "no_items" and deps.calls["meal"] == []
+        # a staging tool claimed this turn and is not back yet: this turn's log
+        # is not a target — the model is told to come back once it has returned
+        state["estimate_calls"] = 1
+        out = await _call(agent, "save_meal", name="x")
+        assert out["error"] == "food_in_flight" and deps.calls["meal"] == []
+        state["estimate_done"] = True
         state["food_calls"] = 1
         out = await _call(agent, "save_meal", name="x")
         assert out["error"] == "food_in_flight" and deps.calls["meal"] == []
@@ -158,9 +172,12 @@ def test_meal_tools_refuse_bad_input_in_code():
         assert "error" not in out
         assert deps.calls["update"] == [("x", "y", None, None, None, ["oats"])]
         assert state["meal_calls"] == 3 and state["meal_note"] == "updated 'y'"
-        # max turns: the reply is built from what the tools did (food_calls was
-        # claimed above, so the food part is in it too)
-        assert agent_svc._fallback_reply(state) == "I staged what you ate and updated 'y' — check the list."
+        # max turns: the reply is built from what the tools did (the food and
+        # estimate calls were claimed above, so they are in it too)
+        assert agent_svc._fallback_reply(state) == (
+            "I staged what you ate and staged an estimate for you to check "
+            "and updated 'y' — check the list."
+        )
 
         # a staged target: saved at commit — the note says so
         async def pending(name, triggers, log_id, items):
@@ -285,6 +302,74 @@ def test_save_meal_from_a_conversation_log_and_the_fallbacks(monkeypatch):
             ))
             assert resp4.saved_meal is None and resp4.note is None
             assert (await _macro(conn, latest))["name"] == latest
+
+    _run(scenario())
+
+
+def test_save_in_an_estimate_only_turn_stamps_this_turns_log(monkeypatch):
+    """log_estimate stages rows without ever setting result["food"] — the save
+    must still find this turn's log, not fall through to the last committed
+    one and save an unrelated meal under the name."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)  # log_estimate never calls decompose
+            tag = uuid4().hex[:6]
+            shrimp = await insert_named_food(conn, f"shrimp {tag}", [HUNDRED_G])
+            await insert_named_alias(conn, norm(f"shrimp {tag}"), shrimp)
+            # the decoy the fall-through would have saved instead
+            egg = await insert_food(conn)
+            decoy = await insert_log(conn, status="committed")
+            await insert_entry(conn, decoy, egg)
+
+            name = f"Platter {tag}"
+            item = {"phrase": f"shrimp {tag}", "qty": 400, "unit": "g",
+                    "grams": None, "note": "the whole tray"}
+            runner = _fake_runner(
+                [("log_estimate", {"items": [item], "basis": "the whole 3 lb tray"}),
+                 ("save_meal", {"name": name})],
+                "Staged the platter — it saves when you commit.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = _log(f"a platter of shrimp, save that as {name}", agent=True)
+            resp = await logs_routes.create_log(body)
+
+            assert [it.estimated for it in resp.items] == ["portion"]
+            # this turn's log, stamped — not the decoy, saved outright
+            assert resp.saved_meal is None
+            assert resp.note == f"'{name}' will be saved when you commit."
+            assert await _macro(conn, name) is None
+            stamped = await (await conn.execute(
+                "SELECT staged->'save_intent'->>'name' AS n FROM item_resolutions "
+                "WHERE log_id = %s", (body.id,),
+            )).fetchall()
+            assert [r["n"] for r in stamped] == [name]
+
+    _run(scenario())
+
+
+def test_a_committed_log_with_nothing_in_it_is_not_a_name_collision(monkeypatch):
+    """routes/meals.meal_from_log answers 409 for an empty log too — reporting
+    that as duplicate_name would send the agent to rename a meal that is fine."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            empty = await insert_log(conn, status="committed")  # committed, no entries
+            history = [_turn("committed 0 items", empty, "committed", [])]
+
+            async def probe(agent):
+                out = await _call(agent, "save_meal", name="ghost", log_id=str(empty))
+                assert out["error"] == "empty_log", out
+                assert "no committed items" in out["message"], out
+
+            monkeypatch.setattr(agent_svc, "Runner", _probe_runner(probe))
+            resp = await logs_routes.create_log(LogCreate(
+                id=uuid4(), text="save that as ghost", captured_at=NOW, tz=TZ,
+                agent=True, history=history,
+            ))
+            assert resp.saved_meal is None
+            assert await _macro(conn, "ghost") is None
 
     _run(scenario())
 

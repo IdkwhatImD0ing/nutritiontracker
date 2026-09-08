@@ -188,10 +188,19 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
           (left ? ` — ${left} need${left === 1 ? "s" : ""} a first log` : "");
       break;
     }
-    case "update_meal":
+    case "update_meal": {
+      // the stored state, from the result — the args are what was asked for,
+      // and a rename rides along with them (the name below is the new one)
+      const meal = str(out?.meal ?? a.name);
       doing = `Updating meal “${str(a.name)}”`;
-      ok = a.is_active === false ? "Deactivated" : a.is_active === true ? "Reactivated" : "Updated";
+      ok =
+        out?.is_active === false
+          ? `Deactivated “${meal}”`
+          : a.is_active === true && out?.is_active === true
+            ? `Reactivated “${meal}”`
+            : `Updated “${meal}”`;
       break;
+    }
     default:
       doing = m.name;
       ok = "Done";

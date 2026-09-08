@@ -132,8 +132,9 @@ Tools:
   amount as said, looked up in the databases like log_food's — ADDED to the
   meal of that name, or making a new one. A food the databases do not know
   yet comes back unresolved: say so, and that logging it once makes it known.
-  `trigger_phrases`: other ways they said they will call it, verbatim; null =
-  the name.
+  More than 8 foods at once: the extras come back in `dropped` — name them
+  and say they were not added. `trigger_phrases`: other ways they said they
+  will call it, verbatim; null = the name.
 - update_meal(name, new_name, trigger_phrases, is_active, set_qty, remove):
   changes a saved meal that exists: rename, replace its trigger phrases, set
   an item's quantity or remove an item — the item by its food name as the
@@ -359,6 +360,7 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         except Exception:
             state["estimate_calls"] -= 1
             raise
+        state["estimate_done"] = True  # save_meal may now take this turn's log as its target
         return json.dumps(out, default=str)
 
     @function_tool(failure_error_function=_tool_error)
@@ -403,7 +405,13 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         name = name.strip()
         if not name:
             return json.dumps({"error": "invalid_name", "message": "a saved meal needs a name"})
-        items = items or None
+        if items is not None and not items:
+            # an empty list is a source that named nothing — never a silent
+            # fall-through to the log ladder (which would save an unrelated log)
+            return json.dumps({
+                "error": "no_items",
+                "message": "no foods were listed — name them, or leave items out to save a log",
+            })
         log_id = (log_id or "").strip() or None
         if log_id is not None and items is not None:
             return json.dumps({
@@ -416,21 +424,28 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
                 "error": "invalid_qty",
                 "message": f"every amount must be above zero: {bad}",
             })
+        # over the cap the extras are dropped — reported, never silently
+        dropped = [it.phrase for it in items[MAX_ESTIMATE_ITEMS:]] if items else []
         if items is not None:
             items = items[:MAX_ESTIMATE_ITEMS]
-        if log_id is None and items is None and state["food_calls"] and not state.get("food_done"):
+        if log_id is None and items is None and (
+            (state["food_calls"] and not state.get("food_done"))
+            or (state["estimate_calls"] and not state.get("estimate_done"))
+        ):
             # the SDK runs one turn's tool calls concurrently: "this turn's
-            # log" does not exist until log_food has returned
+            # log" does not exist until log_food / log_estimate has returned
             return json.dumps({
                 "error": "food_in_flight",
-                "message": "log_food is still staging this turn's food — call save_meal "
-                           "again once it has returned",
+                "message": "this turn's food is still being staged — call save_meal "
+                           "again once that tool has returned",
             })
         if deps.save_meal is None:
             return json.dumps({"error": "unavailable", "message": "saved meals cannot be changed here"})
         triggers = [t.strip() for t in trigger_phrases or [] if t.strip()] or None
         out = await deps.save_meal(name, triggers, log_id, items)
         if "error" not in out:
+            if dropped:
+                out["dropped"] = dropped
             state["meal_calls"] += 1
             state["meal_note"] = (
                 f"'{name}' will be saved when you commit" if out.get("pending") else f"saved '{name}'"
