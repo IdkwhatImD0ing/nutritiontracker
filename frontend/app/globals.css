@@ -1221,23 +1221,45 @@ a {
   align-self: center;
 }
 
-/* the portion is a tap target (§7.1 portion sheet) */
+/* The portion is a tap target (§7.1 portion sheet) — and has to look like
+   one. As an underlined 0.8rem label it read as a stated fact, not a
+   control: a scanned or searched food defaults to qty 1, which renders as a
+   bare "1 container (227 g)" with no "1 ×" prefix, so the one place quantity
+   is set before commit was invisible (Bill, 2026-09-08). A bordered pill
+   with a trailing chevron says "this opens something". */
 
 .portion-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.78rem;
   color: var(--sage);
-  text-decoration: underline;
-  text-decoration-color: var(--faint);
-  text-underline-offset: 3px;
   cursor: pointer;
+  vertical-align: middle;
+}
+
+.portion-btn::after {
+  content: "›";
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--faint);
+}
+
+.portion-btn:hover {
+  border-color: var(--line-strong);
 }
 
 .portion-btn.verify {
   color: var(--amber);
-  text-decoration-color: var(--amber);
+  border-color: var(--amber);
+}
+
+.portion-btn.verify::after {
+  color: var(--amber);
 }
 
 .manual-hint {
