@@ -146,7 +146,9 @@ export default function StagedRow({
             ) : null}
           </div>
           <div className="row-sub">
-            {item.food?.brand ? `${item.food.brand} · ` : ""}
+            {/* the middot separates two text runs; before the portion pill it
+                would dangle, so the pill's own border does the separating */}
+            {item.food?.brand ? `${item.food.brand}${portion ? " " : " · "}` : ""}
             {portion ? (
               <button
                 type="button"

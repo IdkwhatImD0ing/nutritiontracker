@@ -227,6 +227,10 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
             qty=qty,
             macros=Macros(**macros),
             logged_at=entry["logged_at"],
+            # the gram weight moved with the edit (a serving change re-derives
+            # it, a qty change scales it) — the diary row renders it, so send
+            # the new one rather than leaving the client's stale value up
+            grams=grams,
         ),
         totals=await compute_day_totals(await local_date(entry["logged_at"])),
     )
