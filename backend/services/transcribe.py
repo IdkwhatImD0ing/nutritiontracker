@@ -285,6 +285,9 @@ async def transcribe(audio_bytes: bytes, mime: str) -> Transcription:
         attributes={"keyterms": len(keyterms)},
     ) as span:
         for name in order:
+            # recorded before the attempt: an outage of every provider still
+            # names the last one tried, and the trace is kept
+            span.set(provider=name, model=DEEPGRAM_MODEL if name == "deepgram" else OPENAI_STT_MODEL)
             try:
                 text = await _run_provider(name, audio_bytes, mime, keyterms)
             except ProviderUnavailable as e:
@@ -292,8 +295,6 @@ async def transcribe(audio_bytes: bytes, mime: str) -> Transcription:
                 continue
             transcribe_ms = int((time.monotonic() - t0) * 1000)
             span.set(
-                provider=name,
-                model=DEEPGRAM_MODEL if name == "deepgram" else OPENAI_STT_MODEL,
                 output={"text": text, "transcribe_ms": transcribe_ms},
                 attributes={"failed_over": failures} if failures else None,
             )

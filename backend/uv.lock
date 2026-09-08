@@ -661,6 +661,48 @@ wheels = [
 ]
 
 [[package]]
+name = "openinference-instrumentation"
+version = "0.1.61"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/eb/15/a0e849bca3994fe503ce695dfc2da844ef51ca400813f1d171cd39538286/openinference_instrumentation-0.1.61.tar.gz", hash = "sha256:eb5aaad5b377cad7f3454b87b1a00444a8ae3be03e00ded350499bd99f98fbf4", size = 43268, upload-time = "2026-09-04T20:16:12.351Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/35/f1e9968eaf99f3097a57e55734a7494d4124663a1da2547acc5fa26d3dd2/openinference_instrumentation-0.1.61-py3-none-any.whl", hash = "sha256:e5b52563e2fffbe95da6979369b085aeaa22ec429e8b0350d991c373b148a3cb", size = 50962, upload-time = "2026-09-04T20:16:10.69Z" },
+]
+
+[[package]]
+name = "openinference-instrumentation-openai-agents"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bc/1a/374d28cd72b6ca7e2c83158470a1d99436daa4a8a723366dc0c9873249bf/openinference_instrumentation_openai_agents-2.2.1.tar.gz", hash = "sha256:1b4d0042a690289b5f87a7aff57259b0095bd1377efd59617990d09e403ecac8", size = 32125, upload-time = "2026-09-04T20:16:13.936Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/6e/c86240792a62c38e1ecbd4574a097bb6ef1209a99892b301843fa6d9c60e/openinference_instrumentation_openai_agents-2.2.1-py3-none-any.whl", hash = "sha256:637224823343f245fff31b4b5a1f0de404aa9ccc054d0d9cd5ce739740822437", size = 35219, upload-time = "2026-09-04T20:16:12.66Z" },
+]
+
+[[package]]
+name = "openinference-semantic-conventions"
+version = "0.1.35"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/cd/1c26841447249b9fc402e342b9b3c042f8916b5abb485b8eb4e63ea6397c/openinference_semantic_conventions-0.1.35.tar.gz", hash = "sha256:b64864a5961fee7bf37d2e11491499baab223fac18efe671065dede55ccd5a3a", size = 14262, upload-time = "2026-09-04T20:16:04.645Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/34/434cedb6f39b14e6eb8f203c33e97cee3907fc7f994d7c3cfcfbd4575787/openinference_semantic_conventions-0.1.35-py3-none-any.whl", hash = "sha256:a418df584fb3ec41d4214ac44562908f596df042c382d1445fafb26df2834cb2", size = 11484, upload-time = "2026-09-04T20:16:03.668Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.44.0"
 source = { registry = "https://pypi.org/simple" }
@@ -700,6 +742,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1a/87/95e2a5aaa795b4e2260d74e16df2d5541deb2ea9de010bcd615f4dee2654/opentelemetry_exporter_otlp_proto_http-1.44.0.tar.gz", hash = "sha256:c633d7270ad6b57cd4cfbe8b0007a9e2e7c0cb50bd6c50fe2a7b245f721a09d8", size = 25806, upload-time = "2026-07-16T15:25:39.162Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cd/d0/fdeb1a98d8d3a6205f5f297c51b4a9bfe65126ab60339669bbe3dd54c2e2/opentelemetry_exporter_otlp_proto_http-1.44.0-py3-none-any.whl", hash = "sha256:838592fce774c1c8bb7b9a0a7facbfa82e17be5a8a4e94cef10cb84ae026bae3", size = 21850, upload-time = "2026-07-16T15:25:20.006Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation"
+version = "0.65b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "packaging" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/91/3c58961cb0360cd60509064734f0be4275383c8681d73c580a40ca83ddce/opentelemetry_instrumentation-0.65b0.tar.gz", hash = "sha256:071d9d9eced9bd6460444ec3b0c77229870ed05a881c22c84fdede58e4eed09b", size = 42689, upload-time = "2026-07-16T15:25:50.275Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/7b/85eab1215f72adf0e68d3dc4a679b9bff993fa679ff34cd8dd378e2659fd/opentelemetry_instrumentation-0.65b0-py3-none-any.whl", hash = "sha256:ea967a72b9939b5fcfdad572753b4306c59dcb99e3f382d95dae04286805e137", size = 36717, upload-time = "2026-07-16T15:24:51.424Z" },
 ]
 
 [[package]]
@@ -1145,6 +1202,7 @@ dev = [
 ]
 evals = [
     { name = "langfuse" },
+    { name = "openinference-instrumentation-openai-agents" },
 ]
 
 [package.metadata]
@@ -1161,7 +1219,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "uvicorn" }]
-evals = [{ name = "langfuse", specifier = ">=4.7.0" }]
+evals = [
+    { name = "langfuse", specifier = ">=4.7.0" },
+    { name = "openinference-instrumentation-openai-agents" },
+]
 
 [[package]]
 name = "truststore"

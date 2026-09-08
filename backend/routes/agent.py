@@ -300,6 +300,8 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
         run.append(event)
 
     async def go() -> None:
+        import tracing  # lazy: stubbed in route tests
+
         try:
             result = await work(emit)
             run.append(AgentDoneEvent(log=result).model_dump(mode="json"))
@@ -318,6 +320,9 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
                     await release_claim(log_id)
                 except Exception:
                     log.exception("could not release the failed run's log")
+            # §10: the request's middleware may have returned already (a
+            # disconnect, the silence timeout) — this task waits for its own send
+            await tracing.drain_pending()
 
     run.task = asyncio.create_task(go())
     return run

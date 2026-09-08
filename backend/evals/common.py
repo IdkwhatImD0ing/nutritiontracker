@@ -39,6 +39,12 @@ def setup_langfuse(environment: str | None = None) -> Langfuse:
         base_url=os.environ.get("LANGFUSE_BASE_URL"),
         environment=os.environ.get("LANGFUSE_TRACING_ENVIRONMENT"),
     )
+    # the openai-agents turns and tool calls into the experiment's traces, as
+    # the app's tracer did before it moved to FireTrace (idempotent: a second
+    # call only warns)
+    from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
+
+    OpenAIAgentsInstrumentor().instrument()
     return get_client()
 
 

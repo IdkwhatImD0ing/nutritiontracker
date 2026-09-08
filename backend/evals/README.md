@@ -14,13 +14,13 @@ Three commands, all from `backend/`:
 ```sh
 # 1. Curate: production traces the user corrected at commit (score user_edited=1)
 #    → Langfuse dataset 'usual-corrections' (idempotent; re-run any time)
-uv run python -m evals.collect --environment production --days 30
+uv run --group evals python -m evals.collect --environment production --days 30
 
 # 2. Change something — a prompt in prompts/, a ranking rule in resolver/cascade.py, ...
 
 # 3. Replay: the dataset through the SAME decompose + resolver cascade as production,
 #    recorded as a dataset run (experiment) under environment=test
-uv run python -m evals.replay --dataset usual-corrections --limit 50
+uv run --group evals python -m evals.replay --dataset usual-corrections --limit 50
 ```
 
 Then open the dataset in Langfuse → *Runs* and compare `match_rate` across runs.
