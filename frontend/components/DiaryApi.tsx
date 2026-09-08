@@ -19,9 +19,10 @@ export type WebSource = components["schemas"]["WebSource"];
 /** §3.4a: the diary renders a web-transcribed food's citation as a visible,
  *  clickable link. routes/diary.py emits `web_source` {url, title}, `source`
  *  ('fdc' | 'off' | 'web') and `grams` on each entry (routes/entries.py's
- *  PATCH response leaves them null), plus (M4) `estimated`: "portion" on a
- *  row whose amount was read off a photo and confirmed before commit — an
- *  "unresolved" row never commits. All generated from /openapi.json. */
+ *  PATCH response carries `grams` but leaves the other two null), plus (M4)
+ *  `estimated`: "portion" on a row whose amount was read off a photo and
+ *  confirmed before commit — an "unresolved" row never commits. All
+ *  generated from /openapi.json. */
 export type DiaryEntry = components["schemas"]["DiaryEntry"];
 
 export type DiaryMeals = Record<string, DiaryEntry[]>;
@@ -68,14 +69,15 @@ export type EntryPatchResponse = {
   totals: DayTotals;
 };
 
-/** §3.5: a qty-only PATCH scales the stored snapshot (BACKLOG 28 base). */
-export function patchEntryQty(
+/** §3.5: a qty-only PATCH scales the stored snapshot (BACKLOG 28 base); a
+ *  `serving_id` re-derives it from the foods cache and resets that base. */
+export function patchEntry(
   entryId: string,
-  qty: number,
+  patch: { qty?: number; serving_id?: string },
 ): Promise<EntryPatchResponse> {
   return apiRequest(`/api/entries/${entryId}`, {
     method: "PATCH",
-    body: JSON.stringify({ qty }),
+    body: JSON.stringify(patch),
   });
 }
 
