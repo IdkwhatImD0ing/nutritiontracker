@@ -22,7 +22,7 @@ used: v4 stamps every experiment span with the fixed environment
 §10's production/test split - the same primitives are wired by hand instead.
 
 Usage (from backend/):
-  uv run python -m evals.replay --dataset usual-corrections --limit N [--tier3] [--run-name NAME]
+  uv run --group evals python -m evals.replay --dataset usual-corrections --limit N [--tier3] [--run-name NAME]
 """
 
 from __future__ import annotations

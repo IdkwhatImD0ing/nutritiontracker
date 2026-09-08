@@ -17,7 +17,7 @@ The context snapshot is taken at collection time (production traces record the
 utterance, not the inlined food index), so collect soon after the correction.
 
 Usage (from backend/):
-  uv run python -m evals.collect [--environment production] [--days 30] [--limit 200] [--dry-run]
+  uv run --group evals python -m evals.collect [--environment production] [--days 30] [--limit 200] [--dry-run]
 """
 
 from __future__ import annotations

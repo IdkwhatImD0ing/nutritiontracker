@@ -439,12 +439,14 @@ def test_delete_entry():
 
 
 # ---------------------------------------------------------------------------
-# 4. BACKLOG 16 — one Langfuse flush per commit; wall-time before/after.
-#    LIVE: commits for real (production DB until the dev branch exists) and
-#    posts real scores to Langfuse on a synthetic trace id; self-cleans.
+# 4. BACKLOG 16 — one flush per commit; wall-time before/after.
+#    LIVE: commits for real (production DB until the dev branch exists); the
+#    real tracing module queues the scores but its sender is stubbed, so
+#    nothing is posted for the synthetic trace id; self-cleans.
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live
 @pytest.mark.usefixtures("needs_002")  # real commit path: alias learning targets 002's constraint
 def test_commit_timing_live_batched_flush():
     saved_stub = sys.modules.pop("tracing")  # the real module, for real flushes
@@ -454,6 +456,8 @@ def test_commit_timing_live_batched_flush():
         import tracing as real_tracing
 
         sys.modules["tracing"] = real_tracing
+        saved_send = real_tracing._send
+        real_tracing._send = lambda *a: {"status": 201, "body": {}}  # no network
 
         async def run():
             nonlocal food_id
@@ -519,4 +523,5 @@ def test_commit_timing_live_batched_flush():
 
         asyncio.run(run())
     finally:
+        real_tracing._send = saved_send
         sys.modules["tracing"] = saved_stub

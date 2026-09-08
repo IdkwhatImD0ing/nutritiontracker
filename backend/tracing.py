@@ -55,6 +55,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -200,20 +201,28 @@ _SCRUB: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"([?&](?:api[_-]?key|key|token|secret|access_token)=)[^&\s]+", re.I), r"\1[REDACTED]"),
     (re.compile(r"data:[\w.+/-]+;base64,[A-Za-z0-9+/=]+"), "[DATA_URL]"),
     (re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{200,}={0,2}(?![A-Za-z0-9+/=])"), "[BINARY]"),
-    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[EMAIL]"),
-    # 10+ digits with separators, digit-boundary guarded: "180.4 pounds" and
-    # "2 eggs" survive, "(555) 123-4567" does not
-    (re.compile(r"(?<![\d.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\d.])"), "[PHONE]"),
-    # services/agent.agent_input: free text the person wrote about themselves
-    (re.compile(r"(Profile notes:)[^\n]*"), r"\1 [REDACTED]"),
+    # anchored at a boundary and bounded, so a long run of word characters is
+    # scanned once, not quadratically
+    (re.compile(r"(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+"), "[EMAIL]"),
+    # written phone numbers: separators required between the groups, so a
+    # bare digit run — a UPC/EAN barcode, an id — survives; "180.4 pounds"
+    # and "2 eggs" do too
+    (re.compile(r"(?<![\d.])(?:\+?\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?![\d.])"), "[PHONE]"),
+    # services/agent.agent_input: free text the person wrote about themselves,
+    # possibly several lines — up to the prompt's next section
+    (re.compile(r"(Profile notes:)[\s\S]*?(?=\n\nEarlier in this conversation|\n\nUtterance:|\Z)"),
+     r"\1 [REDACTED]"),
 )
 
 
 def _scrub(text: str) -> str:
+    extra = len(text) - _MAX_STRING
+    if extra > 0:  # clip first: the patterns never scan an unbounded string
+        text = text[:_MAX_STRING]
     for pattern, repl in _SCRUB:
         text = pattern.sub(repl, text)
-    if len(text) > _MAX_STRING:
-        text = text[:_MAX_STRING] + f"…[+{len(text) - _MAX_STRING} chars]"
+    if extra > 0:
+        text += f"…[+{extra} chars]"
     return text
 
 
@@ -327,6 +336,7 @@ class _Trace:
     sdk_map: dict[str, str] = field(default_factory=dict)  # openai-agents span id → ours
     all_spans: dict[str, _Span] = field(default_factory=dict)
     dropped: int = 0
+    finished: bool = False  # payload built: later span updates are too late
 
     def add_span(self, *, parent_id: str | None, **fields: Any) -> _Span:
         span_id = secrets.token_hex(8)
@@ -418,9 +428,10 @@ def current_run() -> Run | None:
 
 
 def current_trace_id() -> str | None:
-    """The id of the trace this request is recording (for logs.trace_id)."""
+    """The id of the trace this request is recording (for logs.trace_id) —
+    None when tracing is off, so nothing points at a trace that never was."""
     r = _current.get()
-    return r.trace.id if r is not None else None
+    return r.trace.id if r is not None and api_key() else None
 
 
 def _bind_user(trace: _Trace) -> None:
@@ -517,6 +528,12 @@ def _payload(trace: _Trace) -> bytes:
     spans = trace.spans
     root = spans[0]
     ended = max((s.ended_at for s in spans if s.ended_at), default=_now())
+    for s in spans:
+        if s.ended_at is None:  # still open at root exit: a cancelled agent run
+            s.ended_at = ended
+            if s.status == "unset":
+                s.status = "error"
+            s.attributes["unfinished"] = True
     lead = next((s for s in spans if s.kind in ("llm", "agent") and s.model), None) or next(
         (s for s in spans if s.model), None
     )
@@ -574,7 +591,10 @@ def _payload(trace: _Trace) -> bytes:
 
 def _finish(trace: _Trace) -> asyncio.Future | None:
     """Root run over: build, then hand to the sender. Never raises."""
+    trace.finished = True
     try:
+        if not api_key():
+            return None
         if not any(s.model or s.kind in ("llm", "agent") for s in trace.spans):
             log.debug("firetrace: %s ran no model; nothing recorded", trace.name)
             return None
@@ -646,8 +666,10 @@ def _send(what: str, url: str, body: bytes) -> dict | None:
                 log.info("firetrace: %s got HTTP %s; retrying in %.0fs", what, e.code, delay)
                 time.sleep(delay)
                 continue
-            # any other 4xx: the payload (or the id, or the key) is wrong — fix it, don't retry
-            (log.info if e.code == 404 else log.warning)(
+            # any other 4xx: the payload (or the id, or the key) is wrong — fix
+            # it, don't retry. A 404 on a score is a trace that was never
+            # stored: a pre-FireTrace id, or a send that failed.
+            log.warning(
                 "firetrace: %s rejected: HTTP %s %s — %s (requestId %s)",
                 what, e.code, code, message, request_id,
             )
@@ -675,17 +697,27 @@ def _send(what: str, url: str, body: bytes) -> dict | None:
 
 _pending: ContextVar[list[asyncio.Future] | None] = ContextVar("firetrace_pending", default=None)
 _inflight: set[asyncio.Future] = set()
+# our own pool: a send blocks its thread through the retries, and the loop's
+# default executor is what getaddrinfo (every new outbound connection) uses
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="firetrace")
 
 
 def _schedule(what: str, url: str, body: bytes) -> asyncio.Future | None:
     """Run the send off the event loop. Registered with the request's pending
-    list (FlushMiddleware) and the process-wide set (lifespan drain)."""
+    list (FlushMiddleware) and the process-wide set (lifespan drain). Never
+    raises — it runs from run()'s finally."""
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:  # no loop (a sync script): a plain thread
-        threading.Thread(target=_send, args=(what, url, body), name="firetrace-send", daemon=True).start()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no loop (a sync script): a plain thread
+            threading.Thread(
+                target=_send, args=(what, url, body), name="firetrace-send", daemon=True
+            ).start()
+            return None
+        fut = loop.run_in_executor(_executor, _send, what, url, body)
+    except Exception as e:  # the executor or the interpreter is shutting down
+        log.warning("firetrace: %s not scheduled (%s)", what, type(e).__name__)
         return None
-    fut = loop.run_in_executor(None, _send, what, url, body)
     _inflight.add(fut)
     fut.add_done_callback(_inflight.discard)
     pending = _pending.get()
@@ -704,10 +736,19 @@ async def drain(futures: Iterable[asyncio.Future] | None = None, timeout: float 
         log.warning("firetrace: %d send(s) still in flight after %.0fs", len(still), timeout)
 
 
+async def drain_pending(timeout: float = _DRAIN_S) -> None:
+    """Wait for the sends scheduled in this context. For a task that outlives
+    its request (the chat route's run after a disconnect): the middleware may
+    already have returned, so the task waits for its own send before it ends."""
+    pending = _pending.get()
+    if pending:
+        await drain(pending, timeout)
+
+
 class FlushMiddleware:
-    """Pure ASGI: after the response has fully gone out, wait (bounded) for the
-    sends this request scheduled — the chat route's background task inherits
-    the request context, so its send counts too. The client never waits."""
+    """Pure ASGI: once the response has gone out — or the app has raised —
+    wait (bounded) for the sends this request scheduled. The client never
+    waits; a 500's error trace is awaited before the error propagates."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -722,8 +763,8 @@ class FlushMiddleware:
         finally:
             pending = _pending.get() or []
             _pending.reset(token)
-        if pending:
-            await drain(pending)
+            if pending:
+                await drain(pending)
 
 
 # ---------------------------------------------------------------------------
@@ -884,6 +925,8 @@ def _sdk_span_end(live: dict, span: Any) -> None:
     if entry is None:
         return
     trace, ours = entry
+    if trace.finished:  # sent already, marked unfinished there (a cancelled run)
+        return
     ours.ended_at = _iso(span.ended_at)
     error = getattr(span, "error", None)
     if error:

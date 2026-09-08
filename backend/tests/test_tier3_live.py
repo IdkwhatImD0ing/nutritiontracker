@@ -21,9 +21,10 @@ import re
 import sys
 import time
 import types
+
+from tracing_stub import make_tracing_stub
 import unicodedata
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from pathlib import Path
 from uuid import uuid4
 
@@ -353,18 +354,7 @@ resolver_pkg.foods_repo = foods_repo_stub
 # tracing + auth stubs (no-op, interface-shaped)
 # ---------------------------------------------------------------------------
 
-tracing_stub = types.ModuleType("tracing")
-tracing_stub.init_tracing = lambda: None
-tracing_stub.flush = lambda: None
-tracing_stub.score_commit = lambda trace_id, name, value, comment=None: None
-
-
-@asynccontextmanager
-async def _generation(name):
-    yield SimpleNamespace(trace_id=f"test-{uuid4().hex}", update=lambda **kw: None)
-
-
-tracing_stub.generation = _generation
+tracing_stub = make_tracing_stub(f"test-{uuid4().hex}")
 
 auth_stub = types.ModuleType("auth")
 

@@ -36,6 +36,9 @@ def make_tracing_stub(trace_id: str = "trace-test", scored: list | None = None) 
     async def drain(*args, **kwargs) -> None:
         return None
 
+    async def drain_pending(*args, **kwargs) -> None:
+        return None
+
     def score_commit(trace_id_, name, value, comment=None) -> None:
         if scored is not None:
             scored.append((trace_id_, name, value))
@@ -47,5 +50,6 @@ def make_tracing_stub(trace_id: str = "trace-test", scored: list | None = None) 
     mod.flush = lambda: None
     mod.score_commit = score_commit
     mod.drain = drain
+    mod.drain_pending = drain_pending
     mod.FlushMiddleware = _Middleware
     return mod

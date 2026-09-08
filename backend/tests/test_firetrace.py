@@ -103,12 +103,25 @@ def test_root_and_nested_runs_form_one_trace(sent):
     assert tracing.current_trace_id() is None  # the context is reset after the run
 
 
-def test_current_trace_id_inside_a_run():
+def test_current_trace_id_inside_a_run(sent):
     async def flow():
         async with tracing.run("log") as root:
             assert tracing.current_trace_id() == root.trace_id
             async with tracing.run("inner"):
                 assert tracing.current_trace_id() == root.trace_id
+
+    asyncio.run(flow())
+
+
+def test_no_key_means_no_trace_id_and_no_payload(monkeypatch):
+    monkeypatch.delenv(tracing.KEY_ENV, raising=False)
+    monkeypatch.setattr(tracing, "_env_loaded", True)  # don't fall back to .env
+    monkeypatch.setattr(tracing, "_payload", lambda trace: (_ for _ in ()).throw(AssertionError("built")))
+
+    async def flow():
+        async with tracing.run("log", kind="llm", model="m") as root:
+            assert tracing.current_trace_id() is None  # nothing will point at a trace that never was
+        assert root.sent is None
 
     asyncio.run(flow())
 
@@ -206,10 +219,29 @@ def test_redaction():
     assert r["url"] == "https://api.nal.usda.gov/fdc/v1/foods/search?api_key=[REDACTED]&query=egg"
     assert r["img"] == "[DATA_URL]"
     assert "has diabetes" not in r["prompt"] and 'Utterance: "two eggs"' in r["prompt"]
+    notes = tracing._scrub(
+        "Last weigh-in: none yet\nProfile notes: lactose intolerant\nHIV meds at 8pm\n\n"
+        "trying to conceive\n\nEarlier in this conversation: nothing\n\nUtterance: \"eggs\""
+    )
+    assert "HIV" not in notes and "conceive" not in notes and "Earlier in this conversation" in notes
+    # identifiers are not phone numbers: barcodes and all-digit uuid groups survive
+    assert tracing._scrub("source=off source_id=3038350013941 upc 041331092609") == (
+        "source=off source_id=3038350013941 upc 041331092609"
+    )
+    assert tracing._scrub("call 555-123-4567 or +1 555 123 4567") == "call [PHONE] or [PHONE]"
     # the run's own content survives: quantities, weights, prices
     assert r["food"] == "180.4 pounds this morning, 2 eggs and 3.75 lb of shrimp, 1,200 calories"
     assert r["nan"] == "nan" and r["blob"] == "[10 bytes]"
     assert isinstance(r["model"], str)
+
+
+def test_scrub_clips_before_it_scans():
+    import time
+
+    t0 = time.perf_counter()
+    out = tracing._scrub("a_" * 50_000)  # no '@' anywhere: the e-mail rule used to backtrack
+    assert time.perf_counter() - t0 < 0.5
+    assert len(out) < 4_100 and out.endswith("chars]")
 
 
 def test_redaction_unwraps_models_and_caps_sizes():
@@ -316,7 +348,42 @@ def test_flush_middleware_waits_for_the_request_sends():
         assert fut.done() and len(messages) == 2
         assert tracing._pending.get() is None
 
+        # an unhandled error: the error trace's send is awaited before it propagates
+        fut2 = loop.create_future()
+        loop.call_later(0.05, fut2.set_result, {"status": 201})
+
+        async def failing(scope, receive, send):
+            tracing._pending.get().append(fut2)
+            raise RuntimeError("db down")
+
+        with pytest.raises(RuntimeError):
+            await tracing.FlushMiddleware(failing)({"type": "http"}, receive, send)
+        assert fut2.done() and tracing._pending.get() is None
+
     asyncio.run(flow())
+
+
+def test_sdk_span_still_open_at_root_exit_is_marked_unfinished(sent):
+    from agents.tracing.span_data import FunctionSpanData
+
+    sdk_span = SimpleNamespace(
+        span_id="span_late", parent_id=None, error=None,
+        span_data=FunctionSpanData(name="log_food", input=None, output=None),
+        started_at="2026-09-06T21:00:00.000000+00:00", ended_at=None,
+    )
+    live: dict = {}
+
+    async def flow():
+        async with tracing.run("log", kind="llm", model="m"):
+            tracing._sdk_span_start(live, sdk_span)  # never ends inside the run: cancelled
+
+    asyncio.run(flow())
+    sdk_span.ended_at = "2026-09-06T21:00:09.000000+00:00"
+    tracing._sdk_span_end(live, sdk_span)  # too late: the trace is sent
+    t = sent[0][2]["trace"]
+    tool = next(s for s in t["spans"] if s["name"] == "log_food")
+    assert tool["status"] == "error" and tool["attributes"]["unfinished"] is True
+    assert tool["endedAt"] == t["endedAt"]
 
 
 def test_agents_sdk_spans_nest_under_the_current_run(sent):
@@ -326,8 +393,7 @@ def test_agents_sdk_spans_nest_under_the_current_run(sent):
     from agents import Agent, Runner, function_tool
     from agents.items import ModelResponse
     from agents.models.interface import Model
-    from agents.tracing import set_trace_processors
-    from agents.tracing.processors import default_processor
+    from agents.tracing import get_trace_provider, set_trace_processors
     from agents.usage import Usage
     from openai.types.responses import (
         ResponseFunctionToolCall,
@@ -367,7 +433,10 @@ def test_agents_sdk_spans_nest_under_the_current_run(sent):
         return json.dumps({"items": 1})
 
     agent = Agent(name="fake-agent", instructions="call the tool", model=FakeModel(), tools=[log_food])
-    set_trace_processors([tracing._AgentsProcessor()])  # ours alone: no export to OpenAI's dashboard
+    # ours alone (no export to OpenAI's dashboard), then exactly what was
+    # registered before — set_trace_processors replaces the whole list
+    registered = list(get_trace_provider()._multi_processor._processors)
+    set_trace_processors([tracing._AgentsProcessor()])
     try:
         async def flow():
             async with tracing.run("log", input="two eggs", session_id="log-2") as root:
@@ -378,7 +447,7 @@ def test_agents_sdk_spans_nest_under_the_current_run(sent):
 
         asyncio.run(flow())
     finally:
-        set_trace_processors([default_processor()])
+        set_trace_processors(registered)
 
     t = sent[0][2]["trace"]
     by_id = {s["id"]: s for s in t["spans"]}
