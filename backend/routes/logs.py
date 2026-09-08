@@ -44,7 +44,7 @@ from routes.commit import SavedMealNote
 from services import quota
 
 if TYPE_CHECKING:  # the service is imported lazily at call time (route tests stub it)
-    from services.agent import EstimateItem
+    from services.agent import EstimateItem, MealFood
 
 # routes/agent.py's stream callback: one wire event (a dict) per call
 Emit = Callable[[dict], Awaitable[None]]
@@ -839,6 +839,132 @@ async def _stage_estimate(
     return [r.staged for r in resolutions]
 
 
+# ---------------------------------------------------------------------------
+# §8.4 through the agent (§6.4): save_meal / update_meal — the writes the
+# Library and the diary's "Save as meal" make (routes/meals.py), reached from
+# the chat. What the tools hand the model is words, never macros.
+# ---------------------------------------------------------------------------
+
+_LAST_COMMITTED_LOG_SQL = (
+    "SELECT l.id FROM logs l WHERE l.status = 'committed' "
+    "AND EXISTS (SELECT 1 FROM entries e WHERE e.log_id = l.id) "
+    "ORDER BY l.committed_at DESC LIMIT 1"
+)
+
+
+def _meal_item_words(it) -> str:
+    return f"{it.food_name or it.food_id} {it.qty:g} × {it.serving_description or it.serving_id}"
+
+
+def _meal_words(meal) -> str:
+    """A saved meal as the agent reads it (routes/meals.MealOut): the name,
+    the items as "food qty × serving", the trigger phrases, inactive marked."""
+    items = "; ".join(_meal_item_words(it) for it in meal.items) or "no items"
+    state = "" if meal.is_active else " (inactive)"
+    return f"{meal.name}{state}: {items} — say: {', '.join(meal.trigger_phrases)}"
+
+
+def _meal_out(meal) -> dict:
+    """What a meal tool answers after a write: the meal as stored, in words."""
+    return {
+        "meal": meal.name,
+        "is_active": meal.is_active,
+        "item_count": len(meal.items),
+        "items": [_meal_item_words(it) for it in meal.items],
+        "trigger_phrases": list(meal.trigger_phrases),
+    }
+
+
+def _meal_error(e: HTTPException) -> dict:
+    """routes/meals.py's refusals, as the tool reports them to the model."""
+    kind = {404: "not_found", 409: "duplicate_name", 422: "invalid"}.get(e.status_code, "failed")
+    return {"error": kind, "message": str(e.detail)}
+
+
+async def _find_meal(name: str) -> dict | None:
+    """The macro of that name: the active one first (an inactive namesake is
+    what a reactivation finds), then the most recently changed."""
+    return await db.fetchone(
+        "SELECT * FROM meal_macros WHERE lower(name) = lower(%s) "
+        "ORDER BY is_active DESC, updated_at DESC LIMIT 1",
+        (name.strip(),),
+    )
+
+
+def _match_meal_item(meal, food: str) -> int | dict:
+    """The one item `food` names — its food name, exact first, else a
+    substring, case-insensitive — or an error listing the items."""
+    key = food.strip().lower()
+    names = [(it.food_name or "").lower() for it in meal.items]
+    hits = [i for i, n in enumerate(names) if n == key] or [
+        i for i, n in enumerate(names) if key and key in n
+    ]
+    if len(hits) == 1:
+        return hits[0]
+    return {
+        "error": "ambiguous_item" if hits else "unknown_item",
+        "message": f"'{food}' names {len(hits)} of the meal's items — use one of these",
+        "items": [it.food_name or it.food_id for it in meal.items],
+    }
+
+
+async def _resolve_meal_words(
+    items: list[MealFood], meal: Meal
+) -> tuple[list[dict], list[dict]]:
+    """Foods in words → (food, serving, qty) rows for a saved meal, through
+    the identical tiers 1–2 log_estimate's components take (tier 0 skipped;
+    the amount on the §7.3 spoken-quantity channel, none = the usual
+    portion). Nothing is persisted: tier 3 is a client-kicked handoff from a
+    staged row, so a food the databases do not know yet is reported back —
+    logging it once is what makes it known."""
+    import tracing
+
+    resolved: list[dict] = []
+    unresolved: list[dict] = []
+    async with tracing.run(
+        "cascade", kind="retriever", input=[it.phrase for it in items]
+    ) as lookup:
+        for i, it in enumerate(items):
+            parsed = ParsedItem(
+                phrase=it.phrase.strip(), phrase_kind="food",
+                qty=float(it.qty) if it.qty is not None else None,
+                unit=(it.unit or "").strip() or None,
+                state=None, brand=None, library_match=None, meal_ref=None,
+            )
+            st = (await cascade.resolve_item(parsed, i, meal, skip_tier0=True)).staged
+            if st.status == "resolved" and st.food is not None and st.serving is not None:
+                resolved.append({
+                    "food_id": st.food.id, "serving_id": st.serving.id,
+                    "qty": float(st.qty if st.qty is not None else 1),
+                    "food": st.food.name, "serving": st.serving.description,
+                })
+            else:
+                unresolved.append({
+                    "phrase": it.phrase, "status": st.status,
+                    "message": "not in the databases yet — log it once, then add it",
+                })
+        lookup.set(output={
+            "resolved": [r["food"] for r in resolved],
+            "unresolved": [u["phrase"] for u in unresolved],
+        })
+    return resolved, unresolved
+
+
+async def _stamp_save_intent(log_id: str, name: str, triggers: list[str] | None) -> int:
+    """§8.4 on a log that is still staged: the intent rides the rows' staged
+    jsonb under the key decompose's save_intent uses, so commit step 4 builds
+    the macro from the committed items. A jsonb MERGE: nothing else on the
+    row is touched (no KEEP_LOG_KEYS_SQL needed), and KEEP_LOG_KEYS_SQL
+    carries the object whole through every later rewrite (tier 3,
+    /api/resolve, the commit). Returns the rows stamped."""
+    return await db.execute(
+        "UPDATE item_resolutions "
+        "SET staged = staged || jsonb_build_object('save_intent', %s::jsonb) "
+        "WHERE log_id = %s AND status <> 'removed'",
+        (Json({"name": name, "trigger_phrases": triggers}), log_id),
+    )
+
+
 async def _run_agent_lane(
     body: LogCreate, meal: Meal, emit: Emit | None = None
 ) -> LogCreateResponse:
@@ -853,12 +979,14 @@ async def _run_agent_lane(
     — the model contributes the reply and nothing else. `emit` streams the
     run's events to the chat window (routes/agent.py)."""
     import tracing
+    from routes import meals as meals_route  # lazy: routes/meals → routes/photo → here
     from services import agent as agent_svc
 
     tracing.init_tracing()
     result: dict = {
         "items": [], "food": None, "weight": None, "basis": None,
         "estimate_meal": None, "next_index": 0, "discarded": [],
+        "saved_meal": None, "note": None,
     }
     staging = asyncio.Lock()
     history = [t.model_dump(mode="json") for t in (body.history or [])]
@@ -965,6 +1093,150 @@ async def _run_agent_lane(
             out["change"] = round(shown - before, 1)  # computed here, never by the model
         return out
 
+    def newest_conversation_log() -> str | None:
+        for t in reversed(history):
+            if t.get("log_id") and t.get("state") != "discarded":
+                return t["log_id"]
+        return None
+
+    def note_meal(saved) -> None:
+        result["saved_meal"] = SavedMealNote(
+            meal_id=saved.id, name=saved.name, item_count=len(saved.items)
+        )
+
+    # the meal writes are read-modify-write on one row: "add a banana and make
+    # the eggs 3" is a save_meal and an update_meal the SDK may run at once
+    meals = asyncio.Lock()
+
+    async def save_meal(name: str, triggers, log_id: str | None, items) -> dict:
+        """§8.4 through the agent: from foods in words (added to the meal of
+        that name, or a new one), or from a log — this turn's when log_food
+        staged one, else the one the conversation names, else the last
+        committed — replacing the meal's items. A staged log is stamped
+        (saved at commit); a committed one is saved now, exactly as the
+        diary's "Save as meal" is (routes/meals.meal_from_log)."""
+        async with meals:
+            return await _save_meal(name, triggers, log_id, items)
+
+    async def _save_meal(name: str, triggers, log_id: str | None, items) -> dict:
+        try:
+            if items is not None:
+                resolved, unresolved = await _resolve_meal_words(items, meal)
+                if not resolved:
+                    return {"error": "unresolved", "unresolved": unresolved,
+                            "message": "none of those foods is in the databases yet — "
+                                       "log them once first"}
+                rows = [{"food_id": r["food_id"], "serving_id": r["serving_id"], "qty": r["qty"]}
+                        for r in resolved]
+                existing = await _find_meal(name)
+                if existing is not None and existing["is_active"]:
+                    # extend: the same food and serving adds to its quantity
+                    kept = [dict(i) for i in existing["items"] or []]
+                    for r in rows:
+                        same = next((k for k in kept if k["food_id"] == r["food_id"]
+                                     and k["serving_id"] == r["serving_id"]), None)
+                        if same is not None:
+                            same["qty"] = float(same.get("qty") or 1) + r["qty"]
+                        else:
+                            kept.append(r)
+                    saved = await meals_route.patch_meal(
+                        existing["id"],
+                        meals_route.MealPatch(
+                            trigger_phrases=triggers,
+                            items=[meals_route.MealItemIn(**i) for i in kept],
+                        ),
+                    )
+                else:
+                    saved = await meals_route.create_meal(meals_route.MealCreate(
+                        name=name, trigger_phrases=triggers or [],
+                        items=[meals_route.MealItemIn(**i) for i in rows],
+                    ))
+                note_meal(saved)
+                out = _meal_out(saved)
+                if unresolved:
+                    out["unresolved"] = unresolved
+                return out
+            target = log_id
+            if target is not None and target not in known_logs:
+                return {"error": "unknown_log",
+                        "message": "only a log from this conversation can be saved"}
+            if target is None:
+                async with staging:
+                    if result["food"] is not None:
+                        target = str(body.id)
+                target = target or newest_conversation_log()
+            if target is None:
+                last = await db.fetchone(_LAST_COMMITTED_LOG_SQL)  # §8.4 path a
+                if last is None:
+                    return {"error": "nothing_to_save",
+                            "message": f"nothing logged yet to save as '{name}' — log the items first"}
+                target = str(last["id"])
+            row = await db.fetchone("SELECT status FROM logs WHERE id = %s", (target,))
+            status = row["status"] if row else "unknown"
+            if status == "staged":
+                if not await _stamp_save_intent(target, name, triggers):
+                    return {"error": "nothing_to_save",
+                            "message": "that log has nothing staged to save"}
+                result["note"] = f"'{name}' will be saved when you commit."
+                return {"meal": name, "pending": True, "log_id": target,
+                        "message": f"'{name}' is saved the moment they commit this log — say so"}
+            if status != "committed":
+                return {"error": "not_saved", "log_id": target, "status": status,
+                        "message": f"that log is {status} — nothing to save"}
+            saved = await meals_route.meal_from_log(meals_route.MealFromLog(
+                log_id=UUID(target), name=name, trigger_phrases=triggers or [],
+            ))
+        except HTTPException as e:
+            return _meal_error(e)
+        note_meal(saved)
+        return _meal_out(saved)
+
+    async def update_meal(name: str, new_name, triggers, is_active, set_qty, remove) -> dict:
+        """The Library sheet's edits (routes/meals.patch_meal), by name."""
+        async with meals:
+            return await _update_meal(name, new_name, triggers, is_active, set_qty, remove)
+
+    async def _update_meal(name: str, new_name, triggers, is_active, set_qty, remove) -> dict:
+        row = await _find_meal(name)
+        if row is None:
+            names = [r["name"] for r in await db.fetchall(
+                "SELECT name FROM meal_macros ORDER BY is_active DESC, name"
+            )]
+            return {"error": "not_found", "message": f"no saved meal called '{name}'",
+                    "meals": names}
+        current = (await meals_route._hydrate([row]))[0]
+        patch: dict = {}
+        if new_name is not None:
+            patch["name"] = new_name
+        if triggers is not None:
+            patch["trigger_phrases"] = triggers
+        if is_active is not None:
+            patch["is_active"] = is_active
+        if set_qty or remove:
+            items = [it.model_dump() for it in current.items]
+            for change in set_qty or []:
+                hit = _match_meal_item(current, change.food)
+                if isinstance(hit, dict):
+                    return hit
+                items[hit]["qty"] = float(change.qty)
+            drop: set[int] = set()
+            for food in remove or []:
+                hit = _match_meal_item(current, food)
+                if isinstance(hit, dict):
+                    return hit
+                drop.add(hit)
+            patch["items"] = [
+                meals_route.MealItemIn(food_id=it["food_id"], serving_id=it["serving_id"], qty=it["qty"])
+                for i, it in enumerate(items) if i not in drop
+            ]
+        try:
+            saved = await meals_route.patch_meal(row["id"], meals_route.MealPatch(**patch))
+        except HTTPException as e:
+            return _meal_error(e)
+        if "items" in patch:
+            note_meal(saved)
+        return _meal_out(saved)
+
     settings = {
         r["key"]: r["value"]
         for r in await db.fetchall(
@@ -985,6 +1257,9 @@ async def _run_agent_lane(
         stage_estimate=stage_estimate,
         record_weight=record_weight,
         discard_log=discard_staged,
+        save_meal=save_meal,
+        update_meal=update_meal,
+        saved_meals=[_meal_words(m) for m in await meals_route.list_meals(include_inactive=True)],
         history=history,
         now_local=now_local,
         unit_pref=unit_pref,
@@ -1016,6 +1291,7 @@ async def _run_agent_lane(
                 "weight": run.weight,
                 "options": run.options,
                 "discarded": result["discarded"],
+                "meal_calls": run.meal_calls,
                 "history_turns": len(history),
                 "max_turns_hit": run.max_turns_hit,
             },
@@ -1028,23 +1304,28 @@ async def _run_agent_lane(
     food = result["food"]
     if (
         run.options and food is None and not result["items"]
-        and result["weight"] is None and not result["discarded"]
+        and result["weight"] is None and not result["discarded"] and not run.meal_calls
     ):
         # the turn only asked — nothing staged, discarded or weighed: a demo's
         # one-a-day log attempt goes back so the answer (the next turn, a new
         # client id) can claim it, a capped number of times a day (§8.9)
         await quota.refund_question()
     items = sorted(result["items"], key=lambda it: it.item_index)
+    # the §8.4 outcome: the meal tools' (code-side), else decompose's save_intent
+    saved_meal = result["saved_meal"] or (food.saved_meal if food is not None else None)
+    note = result["note"] or (food.note if food is not None else None)
     if food is None and not items:
         # nothing staged: the row stays an itemless staged log, as the §8.4
         # save-intent path leaves it — nothing counts it (§9)
-        return LogCreateResponse(log_id=body.id, meal=meal, items=[], agent=outcome)
+        return LogCreateResponse(
+            log_id=body.id, meal=meal, items=[], saved_meal=saved_meal, note=note, agent=outcome
+        )
     return LogCreateResponse(
         log_id=body.id,
         meal=food.meal if food is not None else (result["estimate_meal"] or meal),
         items=items,
-        saved_meal=food.saved_meal if food is not None else None,
-        note=food.note if food is not None else None,
+        saved_meal=saved_meal,
+        note=note,
         agent=outcome,
     )
 
@@ -1079,11 +1360,7 @@ async def _save_intent_without_items(name: str) -> tuple[SavedMealNote | None, s
     name, triggers defaulting to norm(name), same as the "Save as meal" tap.
     Nothing committed yet → (None, note); the log row stays an itemless
     staged log that nothing counts (§9 reads committed/discarded only)."""
-    last = await db.fetchone(
-        "SELECT l.id FROM logs l WHERE l.status = 'committed' "
-        "AND EXISTS (SELECT 1 FROM entries e WHERE e.log_id = l.id) "
-        "ORDER BY l.committed_at DESC LIMIT 1"
-    )
+    last = await db.fetchone(_LAST_COMMITTED_LOG_SQL)
     if last is None:
         return None, f"Nothing to save as '{name}' yet — log the items first."
     entries = await db.fetchall(

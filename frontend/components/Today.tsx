@@ -379,7 +379,7 @@ export default function Today() {
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
       setSavedNote(
         log.saved_meal
-          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} items`
+          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} item${log.saved_meal.item_count === 1 ? "" : "s"}`
           : (log.note as string),
       );
       return;
@@ -475,7 +475,7 @@ export default function Today() {
         kind: "agent",
         id: crypto.randomUUID(),
         text: log.saved_meal
-          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} items`
+          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} item${log.saved_meal.item_count === 1 ? "" : "s"}`
           : (log.note as string),
       });
     }

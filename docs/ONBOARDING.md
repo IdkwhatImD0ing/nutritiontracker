@@ -262,7 +262,8 @@ backend/
     commit.py          §3.5 idempotent commit transaction, alias/portion learning
     norm.py            phrase normalization (used by every tier)
   services/
-    agent.py           the Agent lane's front door (§6.4): log_food → the pipeline, log_weight → weights
+    agent.py           the Agent lane's front door (§6.4): log_food → the pipeline, log_estimate,
+                       log_weight → weights, save_meal / update_meal → saved meals (§8.4)
     decompose.py       utterance → items (Luna, structured output)
     tier3.py           the OpenAI-Agents food-resolution agent + its tools (web lane: chains + retail products)
     transcribe.py      Deepgram/OpenAI behind one interface
@@ -336,6 +337,15 @@ tier 3 15–18 s over two runs) — the product was in the database, so the web 
 types are regenerated (commit `frontend/lib/api-types.ts` and `openapi.json` with the change);
 `tsc` and `next build` are clean. Nobody has rendered the Agent sheet or the weight card in a
 browser — the dev app's Today needs a signed-in session.
+
+**2026-09-07 — saved meals through the agent** (DESIGN §6.4, §8.4; BACKLOG 160). Bill's ruling:
+the agent can do whatever the UI can. Two tools, `save_meal` and `update_meal`, reach the
+Library's own writes (`routes/meals.py`'s route functions, called from the lane's closures) —
+save what was logged as a named meal (stamped on a staged log and built at commit, with the
+spoken triggers), build or extend one from foods in words (tiers 1–2, nothing logged), rename,
+re-trigger, set a quantity, remove an item, deactivate/reactivate. The saved meals ride the
+agent's per-run input in words. `tests/test_agent_meals.py` (8, offline) and one live story in
+`test_agent_live.py`.
 
 What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
 (18, now 100), the preview-protection bypass token (19), the input-hardening pass (98), the

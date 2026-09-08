@@ -81,7 +81,7 @@ async def _invoke(agent, name: str, **kwargs) -> dict:
 
 
 def _deps(**over) -> agent_svc.AgentDeps:
-    calls: dict = {"food": [], "estimate": [], "weight": []}
+    calls: dict = {"food": [], "estimate": [], "weight": [], "meal": [], "update": []}
 
     async def stage_food(text: str) -> dict:
         calls["food"].append(text)
@@ -100,11 +100,28 @@ def _deps(**over) -> agent_svc.AgentDeps:
         calls.setdefault("discard", []).append(log_id)
         return {"log_id": log_id, "status": "discarded"}
 
+    async def save_meal(name: str, triggers, log_id, items) -> dict:
+        calls["meal"].append(
+            (name, triggers, log_id, [it.model_dump() for it in items] if items else None)
+        )
+        return {"meal": name, "is_active": True, "item_count": 1,
+                "items": ["egg 2 × 1 large"], "trigger_phrases": triggers or [name.lower()]}
+
+    async def update_meal(name: str, new_name, triggers, is_active, set_qty, remove) -> dict:
+        calls["update"].append((
+            name, new_name, triggers, is_active,
+            [c.model_dump() for c in set_qty] if set_qty else None, remove,
+        ))
+        return {"meal": new_name or name, "is_active": True if is_active is None else is_active,
+                "item_count": 1, "items": ["egg 2 × 1 large"], "trigger_phrases": triggers or []}
+
     kw = dict(
         stage_food=stage_food,
         stage_estimate=stage_estimate,
         record_weight=record_weight,
         discard_log=discard_log,
+        save_meal=save_meal,
+        update_meal=update_meal,
         now_local=NOW.astimezone(ZoneInfo(TZ)),
         unit_pref="lb",
     )
