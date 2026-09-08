@@ -164,6 +164,19 @@
   font-size: 0.8rem;
 }
 
+/* A serving the §4 guard would refuse: offered, so the list is the food's
+   real one, but visibly not pickable. */
 .diary-servings button:disabled {
   cursor: default;
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+/* Picker status ("Loading servings…", "only the one serving"). Not .k — that
+   is the uppercase tracked micro-label for "Qty · 1 cup", and a sentence set
+   in it shouts. */
+.diary-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
 }

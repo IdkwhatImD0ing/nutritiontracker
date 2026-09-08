@@ -163,11 +163,13 @@ export default function DiaryList({
     return <p className="diary-empty">{emptyText}</p>;
   }
 
-  const run = async (id: string, fn: () => Promise<void>) => {
+  /** true when `fn` landed — the row keeps its draft on a refusal. */
+  const run = async (id: string, fn: () => Promise<void>): Promise<boolean> => {
     setBusy(id);
     setError(null);
     try {
       await fn();
+      return true;
     } catch (e) {
       // A refused portion says why (a serving with partial macros is a 422
       // naming it, §4 invariant) — show the server's sentence, not a generic
@@ -176,6 +178,7 @@ export default function DiaryList({
         (e instanceof ApiError && e.status === 422 && e.detail) ||
           "Couldn't save that change — try again.",
       );
+      return false;
     } finally {
       setBusy(null);
     }
