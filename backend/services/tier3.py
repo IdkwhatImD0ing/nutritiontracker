@@ -43,7 +43,12 @@ from models import (
     WebSource,
 )
 from resolver import cascade, foods_repo
-from resolver.commit import COMMITTABLE_FOOD_SQL, KEEP_LOG_KEYS_SQL, food_committable
+from resolver.commit import (
+    COMMITTABLE_FOOD_SQL,
+    KEEP_LOG_KEYS_SQL,
+    food_committable,
+    with_loggable_servings,
+)
 from resolver.norm import norm
 from sources import fdc, web
 
@@ -1238,7 +1243,12 @@ _FOOD_COLS = (
 
 
 def _food_row(row: Any) -> tuple[str, dict]:
-    """(food_row_id, food dict) from a foods row selected with _FOOD_COLS."""
+    """(food_row_id, food dict) from a foods row selected with _FOOD_COLS.
+
+    with_loggable_servings runs here because rows cached before BACKLOG 169
+    still carry a phantom `label` serving as their default — hydrating one
+    unfiltered would stage a card with no numbers even though the row's
+    per-100 serving is fine."""
     prov = _col(row, 4, "provenance")
     food = {
         "source": _col(row, 1, "source"),
@@ -1253,7 +1263,7 @@ def _food_row(row: Any) -> tuple[str, dict]:
         "servings": _col(row, 10, "servings") or [],
         "default_serving_id": _col(row, 11, "default_serving_id"),
     }
-    return str(_col(row, 0, "id")), food
+    return str(_col(row, 0, "id")), with_loggable_servings(food)
 
 
 async def resolve_item_from_source(

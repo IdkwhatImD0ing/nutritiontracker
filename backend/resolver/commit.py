@@ -122,10 +122,39 @@ def food_committable(food: dict) -> bool:
     """Python side of COMMITTABLE_FOOD_SQL: does any serving carry the core four?
     The gate every lane applies BEFORE staging a food (search pick, tier-3
     resolution, barcode), so the commit guard below is a backstop, not the
-    first time the user hears about it."""
+    first time the user hears about it.
+
+    isinstance-guarded so a malformed servings element cannot raise here while
+    the SQL twin merely excludes the row."""
     return any(
-        not _missing_core_macros(s) for s in (food.get("servings") or [])
+        isinstance(s, dict) and not _missing_core_macros(s)
+        for s in (food.get("servings") or [])
     )
+
+
+def with_loggable_servings(food: dict) -> dict:
+    """The food with unloggable servings dropped and default_serving_id
+    repointed at a survivor (BACKLOG 169).
+
+    Answering `food_committable` is not enough on its own: the gate is per
+    FOOD, but what renders and commits is one SERVING. A branded record whose
+    `label` serving is a phantom and whose per-100 serving is complete passes
+    the gate, and then the portion cascade picks `label` — because that is the
+    provider default — so the card still shows no numbers and commit still
+    refuses it. fdc._branded_servings now drops the phantom at the source, but
+    rows cached BEFORE that landed still carry it, so every path that hydrates
+    a stored foods row runs this too. Returns the food unchanged (not a copy)
+    when nothing needs dropping, so the common case is free."""
+    servings = food.get("servings") or []
+    keep = [s for s in servings if isinstance(s, dict) and not _missing_core_macros(s)]
+    if len(keep) == len(servings):
+        return food
+    out = dict(food)
+    out["servings"] = keep
+    if not any(s.get("serving_id") == food.get("default_serving_id") for s in keep):
+        # keep the provider's preference order; only move when it was dropped
+        out["default_serving_id"] = keep[0]["serving_id"] if keep else None
+    return out
 
 # §3.4a / R3: rows the user never SPOKE learn nothing — a photo, barcode or
 # search log has no phrase worth remembering, and a photo-estimated portion

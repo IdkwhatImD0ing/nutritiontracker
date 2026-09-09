@@ -38,6 +38,11 @@ _TIMEOUT = 20.0
 
 _MACRO_IDS = {1003: "protein_g", 1004: "fat_g", 1005: "carb_g", 1008: "kcal"}
 _ATWATER_IDS = (2048, 2047)  # Energy, Atwater Specific then General Factors
+# The four a serving needs before it can be logged at all — the same set as
+# resolver.commit._CORE_MACROS, which is where the rule is documented. Kept
+# here as a frozenset so this module stays dependency-free (sources must not
+# import resolver).
+_CORE_KEYS = frozenset(_MACRO_IDS.values())
 
 _MICRO_IDS = {
     1079: "fiber_g",
@@ -216,12 +221,19 @@ def _core_macros_in_hit(hit: dict) -> set[str]:
     Search rows are FLAT (``nutrientId`` + ``value``), unlike /food/{id}'s
     nested ``nutrient`` objects — so this cannot reuse _nutrients_from_detail.
     _MACRO_IDS is exactly the core four; kcal also arrives as an Atwater id.
+
+    ``amount`` is read as well as ``value``, and the nested nutrient id as well
+    as the flat one: this feeds a FILTER, so a shape this function fails to
+    understand does not degrade one column — it drops every hit and turns the
+    whole search into a silent "no results".
     """
     have: set[str] = set()
     for row in hit.get("foodNutrients") or []:
-        if row.get("value") is None:
+        if row.get("value") is None and row.get("amount") is None:
             continue
         nid = row.get("nutrientId")
+        if nid is None:
+            nid = (row.get("nutrient") or {}).get("id")
         if nid in _MACRO_IDS:
             have.add(_MACRO_IDS[nid])
         elif nid in _ATWATER_IDS:
@@ -243,7 +255,13 @@ def _hit_is_loggable(hit: dict) -> bool:
     an unloggable row is noise there too. The search payload already carries
     the nutrients, so this costs no extra request.
     """
-    return set(_MACRO_IDS.values()) <= _core_macros_in_hit(hit)
+    return _CORE_KEYS <= _core_macros_in_hit(hit)
+
+
+def _has_core_macros(macros: dict) -> bool:
+    """The serving-level half of the same rule — mirrors
+    resolver.commit._missing_core_macros (numeric values, not just keys)."""
+    return all(isinstance(macros.get(k), (int, float)) for k in _CORE_KEYS)
 
 
 def _label_nutrients(label: dict) -> dict[str, float]:
@@ -388,12 +406,21 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
     else:
         description = "1 serving"
 
-    servings = [{
-        "serving_id": "label",
-        "description": description,
-        "grams": grams,
-        "macros": macros,
-    }]
+    # A label serving with no core macros is a phantom, and must not be
+    # emitted at all — let alone as the default (BACKLOG 169). Live records
+    # with servingSize null and labelNutrients {} land here with grams=None
+    # and macros={}: as the default it is exactly what the portion cascade
+    # picks, so the card renders with no numbers and commit refuses it even
+    # when the per-100 serving beside it is complete (FDC 2756849, 2756842,
+    # 2757143, 2756821 — all Oikos Triple Zero, all verified live).
+    servings = []
+    if _has_core_macros(macros):
+        servings.append({
+            "serving_id": "label",
+            "description": description,
+            "grams": grams,
+            "macros": macros,
+        })
     if per_100:
         base_id = "100ml" if basis_ml else "100g"
         servings.append({
@@ -402,7 +429,8 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
             "grams": None if basis_ml else 100.0,
             "macros": dict(per_100),
         })
-    return servings, "label"
+    # the default is whatever survived, in preference order (label first)
+    return servings, (servings[0]["serving_id"] if servings else "label")
 
 
 # ---------------------------------------------------------------------------

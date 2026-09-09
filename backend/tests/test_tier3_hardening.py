@@ -887,3 +887,80 @@ def test_answer_tap_on_a_thin_record_restores_the_question_instead_of_staging_bl
             assert (await cur.fetchone())["n"] == foods_before
 
     run(scenario())
+
+
+def test_branded_servings_drops_a_phantom_label_and_repoints_the_default():
+    """The serving-level half of BACKLOG 169. A record whose per-100 nutrients
+    are complete but whose label serving is a phantom (servingSize null,
+    labelNutrients {}) must not offer that serving at all — as the provider
+    default it is what the portion cascade picks, so the card would render
+    with no numbers while the complete serving sat right beside it. Live
+    shape: FDC 2756849/2756842/2757143/2756821, all Oikos Triple Zero."""
+    per_100 = {"kcal": 59.9, "protein_g": 9.98, "carb_g": 4.66, "fat_g": 0.0}
+    thin = {"servingSize": None, "servingSizeUnit": "g",
+            "householdServingFullText": "", "labelNutrients": {}}
+    servings, default = fdc._branded_servings(thin, per_100)
+    assert [s["serving_id"] for s in servings] == ["100g"]  # phantom dropped
+    assert default == "100g"                                # default repointed
+    assert commit_mod.food_committable({"servings": servings})
+
+    # a real label serving still leads, and still wins the default
+    good = {"servingSize": 150.0, "servingSizeUnit": "GRM",
+            "householdServingFullText": "1 container",
+            "labelNutrients": {"calories": {"value": 90}, "protein": {"value": 15},
+                               "carbohydrates": {"value": 6}, "fat": {"value": 0}}}
+    servings, default = fdc._branded_servings(good, per_100)
+    assert [s["serving_id"] for s in servings] == ["label", "100g"]
+    assert default == "label"
+
+    # per-100 itself short of the core four (the live 2756792 shape): the
+    # serving is still emitted — the adapter does not judge whole records —
+    # but the food-level gate is what refuses it, so no lane can stage it
+    servings, default = fdc._branded_servings(thin, {"kcal": 59.9, "protein_g": 9.98})
+    assert [s["serving_id"] for s in servings] == ["100g"] and default == "100g"
+    assert not commit_mod.food_committable({"servings": servings})
+
+
+def test_with_loggable_servings_repairs_a_row_cached_before_the_rule():
+    """Rows cached before BACKLOG 169 still carry the phantom as their default,
+    so hydrating one has to drop it — food_committable alone would pass the
+    row (its 100g serving is fine) and then the cascade would pick 'label'."""
+    cached = {"display_name": "mixed berry", "servings": [THIN_LABEL, MASS],
+              "default_serving_id": "label"}
+    assert commit_mod.food_committable(cached)  # the food gate is not enough
+    fixed = commit_mod.with_loggable_servings(cached)
+    assert [s["serving_id"] for s in fixed["servings"]] == ["100g"]
+    assert fixed["default_serving_id"] == "100g"
+    assert cached["default_serving_id"] == "label"  # input not mutated
+
+    # untouched when every serving is loggable — same object, no copy
+    fine = {"servings": [MASS], "default_serving_id": "100g"}
+    assert commit_mod.with_loggable_servings(fine) is fine
+
+    # a malformed serving element is dropped, never raised on
+    junk = {"servings": ["nonsense", MASS], "default_serving_id": "100g"}
+    assert [s["serving_id"] for s in
+            commit_mod.with_loggable_servings(junk)["servings"]] == ["100g"]
+    assert commit_mod.food_committable({"servings": ["nonsense"]}) is False
+
+
+def test_a_thin_default_serving_stages_real_macros_not_a_blank_card():
+    """End of the chain: the food that passes every gate but used to render
+    blank now stages the serving that carries numbers, and commits."""
+    async def scenario():
+        food = {"display_name": "oikos triple zero cherry",
+                "servings": [THIN_LABEL, MASS], "default_serving_id": "label"}
+        food = commit_mod.with_loggable_servings(food)
+        sid, qty, verify = await tier3._apply_portion(food, None, 2.0, None)
+        item = tier3._staged_from_food(
+            0, "oikos triple zero cherry", "breakfast", qty, food, str(uuid4()),
+            serving_id=sid, confidence="low" if verify else "high",
+            alternates=None, question=None, tier=3,
+        )
+        assert sid == "100g"
+        assert item.macros is not None, "the card must carry numbers"
+        assert item.macros.kcal == 330.0 and item.macros.protein_g == 62.0
+        serving = commit_mod._find_serving(food["servings"], sid)
+        assert commit_mod._missing_core_macros(serving) == []  # commit accepts it
+
+    run(scenario())
