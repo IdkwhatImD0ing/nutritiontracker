@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Archivo, Bricolage_Grotesque } from "next/font/google";
 import "./globals.css";
+import { LegacyChatCleanup } from "./legacy-storage";
 import { ServiceWorkerProvider } from "./serwist/provider";
 
 // Self-hosted at build time: no runtime request to Google, no layout shift.
@@ -113,7 +114,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${archivo.variable} ${bricolage.variable}`}>
       <body>
-        <ServiceWorkerProvider>{children}</ServiceWorkerProvider>
+        <ServiceWorkerProvider>
+          <LegacyChatCleanup />
+          {children}
+        </ServiceWorkerProvider>
       </body>
     </html>
   );
