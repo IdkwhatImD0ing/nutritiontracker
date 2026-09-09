@@ -3373,6 +3373,8 @@ export interface operations {
                      * @description a plate photo — the §3.4b lane as a chat turn; exactly one of audio or image
                      */
                     image?: string;
+                    /** @description said alongside an image — makes it a chat turn the agent can see (§6.4) */
+                    text?: string;
                     /**
                      * Format: uuid
                      * @description the staged photo log this conversation is tuning (§3.4b)

@@ -737,7 +737,10 @@ export default function Today() {
   // same JPEG reuses it (§5 idempotent upsert, §8.6 re-attach) — and the same
   // stream: the server runs vision and stages the rows, the chat shows the
   // read as a tool line, and the reply invites the correction.
-  const submitPhoto = async (shot: PhotoShot): Promise<boolean> => {
+  // `said` (2026-09-09): words sent with the picture. They make it an agent
+  // turn — the model sees the image and answers what was asked — where the
+  // bare shot stays the deterministic vision parse.
+  const submitPhoto = async (shot: PhotoShot, said = ""): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -753,7 +756,12 @@ export default function Today() {
     const history = chatHistory(justDiscarded);
     closeQuestions();
     const userId = attempt.userId;
-    const bubble: ChatMessage = { kind: "photo", id: userId, thumb: shot.thumb };
+    const bubble: ChatMessage = {
+      kind: "photo",
+      id: userId,
+      thumb: shot.thumb,
+      text: said || undefined,
+    };
     if (retry) resumeTurn(userId, bubble);
     else pushChat(bubble);
     try {
@@ -764,6 +772,9 @@ export default function Today() {
           shot,
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
           history,
+          text: said || undefined,
+          // only the agent lane can act on it; the bare parse ignores it
+          photo_log_id: said ? photoLogId(justDiscarded) : null,
         },
         (ev) => {
           if (inConvo(convo)) onAgentEvent(ev, userId);

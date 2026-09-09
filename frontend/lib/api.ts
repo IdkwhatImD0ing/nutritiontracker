@@ -345,6 +345,8 @@ function photoForm(args: {
   shot: PhotoShot;
   tz: string;
   history?: AgentTurn[];
+  text?: string;
+  photo_log_id?: string | null;
 }): FormData {
   const { blob, mimeType, capturedAt } = args.shot;
   const form = new FormData();
@@ -352,6 +354,10 @@ function photoForm(args: {
   form.set("captured_at", capturedAt);
   form.set("tz", args.tz);
   if (args.history?.length) form.set("history", JSON.stringify(args.history));
+  // §6.4: words alongside the picture make it a turn the agent can see,
+  // instead of the deterministic §3.4b plate parse
+  if (args.text?.trim()) form.set("text", args.text.trim());
+  if (args.photo_log_id) form.set("photo_log_id", args.photo_log_id);
   form.set("image", new File([blob], "plate.jpg", { type: mimeType || "image/jpeg" }));
   return form;
 }
@@ -393,6 +399,10 @@ export type AgentPhotoArgs = {
   shot: PhotoShot;
   tz: string;
   history?: AgentTurn[];
+  /** said alongside the picture — with it the agent sees the image and answers;
+   *  without it the shot is the §3.4b plate parse, which runs no chat model */
+  text?: string;
+  photo_log_id?: string | null;
 };
 
 /** The chat's streaming front door (routes/agent.py): the same body as

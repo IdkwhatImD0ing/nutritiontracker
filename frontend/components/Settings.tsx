@@ -322,13 +322,15 @@ export default function Settings() {
                   setForm((f) => (f ? { ...f, profile_notes: e.target.value } : f))
                 }
                 placeholder={
-                  "lactose intolerant; 'fairlife' always means Core Power Elite 42g; I train ~6pm"
+                  "lactose intolerant; 'fairlife' always means Core Power Elite 42g; I train ~6pm; weekday lunch is the office cafeteria, its menu is at example.com"
                 }
               />
             </label>
             <p className="m3-note">
-              Injected verbatim every time a log is parsed or a food is searched
-              for. Preferences, conventions, what a word means to you.
+              Injected verbatim every time a log is parsed, a food is searched
+              for, or a plate is photographed. Preferences, conventions, what a
+              word means to you — and where you usually eat: a menu named here
+              is one the photo lane can go read.
             </p>
           </section>
 

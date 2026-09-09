@@ -408,6 +408,14 @@ class AgentDeps:
     # §6.4 the one read: (query | None, limit) → a row per food this account
     # has logged, with the amount it was last logged at — never macros
     past_foods: Callable[[str | None, int], Awaitable[list[dict]]] | None = None
+    # §6.4 (2026-09-09): an image the person attached to THIS turn, as a data
+    # URL. The agent sees it alongside the utterance, which is what makes
+    # "what is this?" and "is this the small size?" answerable — the plate the
+    # photo lane parses is a different thing, deterministic and tool-free.
+    # Never stored (§8.8): it lives for the run and goes. Both chat models
+    # take one — `image_input` is listed on the gpt-5.6-terra and
+    # gpt-5.6-sol model pages (re-read 2026-09-09).
+    image: str | None = None
     # §3.4b/§6.4 (2026-09-08): this conversation has a photo in it — the model
     # is PHOTO_MODEL at PHOTO_EFFORT, adjust_photo is in the toolset, and the
     # instructions gain the photo block. False is every other conversation.
@@ -923,7 +931,20 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
     options: list[str] | None = None
     names: dict[str, str] = {}
     try:
-        result = Runner.run_streamed(agent, agent_input(text, deps), max_turns=MAX_TURNS)
+        prompt = agent_input(text, deps)
+        # The SDK takes either a string or a list of input items; an attached
+        # image needs the list form, with the same text beside it so nothing
+        # about the run changes except that the model can now look.
+        run_input: Any = prompt
+        if deps.image:
+            run_input = [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": deps.image, "detail": "auto"},
+                ],
+            }]
+        result = Runner.run_streamed(agent, run_input, max_turns=MAX_TURNS)
         async for event in result.stream_events():
             if emit is None:
                 continue

@@ -73,7 +73,8 @@ committed — keep it that way. `.env.example` lists the canonical variable name
 
 `DATABASE_URL`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_COOKIE_SECRET`, `OPENAI_API_KEY`,
 `DEEPGRAM_API_KEY`, `FDC_API_KEY`, `OFF_USER_AGENT`, `FIRETRACE_API_KEY` (a development
-key — the key decides the environment; unset, tracing is simply off), the `LANGFUSE_*`
+key — the key decides the environment; unset, tracing is simply off), `FIRECRAWL_API_KEY`
+(the photo lane's web tools; unset, the lane keeps hosted search alone), the `LANGFUSE_*`
 set (the eval harness only, §6), plus the Neon-managed `POSTGRES_*`/`PG*` set.
 
 Two deliberate omissions:
@@ -412,6 +413,7 @@ person. DESIGN §0.5 has the *why* for each.
 | OpenAI | an API key with access to the GPT-5.6 family and the web search tool | `OPENAI_API_KEY` |
 | Deepgram | an API key — or set `STT_PROVIDER=openai` and skip it; OpenAI transcribe is the fallback either way | `DEEPGRAM_API_KEY` |
 | USDA FDC | free key: https://fdc.nal.usda.gov/api-key-signup | `FDC_API_KEY` |
+| Firecrawl | optional. A key from [firecrawl.dev](https://firecrawl.dev) gives the owner's photo lane its hosted MCP tools — finding and reading a menu page for the dish in the picture (DESIGN §3.4b). Without it the lane still has hosted `web_search`; demo accounts never get either | `FIRECRAWL_API_KEY` |
 | FireTrace | a project on your FireTrace deployment, one write key per environment (the key decides which). Unset, tracing is off and nothing else changes | `FIRETRACE_API_KEY` |
 | Langfuse | only the eval harness (`backend/evals`, `uv run --group evals`), until FireTrace has datasets (docs/FIRETRACE_FEEDBACK.md) | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT=test` |
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |

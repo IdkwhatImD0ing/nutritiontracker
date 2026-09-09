@@ -72,7 +72,7 @@ _spec.loader.exec_module(VREAL)
 _vision: dict = {"fn": None}
 
 
-async def _vision_dispatch(image, mime):
+async def _vision_dispatch(image, mime, **kw):
     fn = _vision["fn"]
     if fn is None:
         raise AssertionError("vision must not be called by this test")
@@ -232,12 +232,12 @@ async def insert_alias(conn, alias_norm, food_id):
 def vitem(phrase, *, qty=None, unit=None, est_grams=None, confidence="high", note=""):
     return VREAL.VisionItem(
         phrase=phrase, qty=qty, unit=unit, est_grams=est_grams,
-        confidence=confidence, note=note or phrase,
+        confidence=confidence, note=note or phrase, menu=None,
     )
 
 
 def install_vision(items, meal_hint=None):
-    async def fake(image, mime):
+    async def fake(image, mime, **kw):
         assert mime in ("image/png", "image/jpeg", "image/webp")
         return VREAL.VisionResult(items=items, meal_hint=meal_hint)
 
@@ -900,7 +900,9 @@ _PHOTO_URL = (
     "960px-%D0%A1%D0%BA%D1%80%D0%BE%D0%BC%D0%BD%D1%8B%D0%B9_%D0%B7%D0%B0%D0%B2%D1%82%D1%80%D0%B0%D0%BA.jpg"
 )
 _PHOTO_PATH = Path(os.environ.get("CLAUDE_SCRATCHPAD_DIR") or tempfile.gettempdir()) / "cc0-breakfast.jpg"
-_ITEM_KEYS = {"phrase", "qty", "unit", "est_grams", "confidence", "note"}
+# `menu` (2026-09-09) is the ONE place a number may ride, and only the web
+# lane fills it: a dish's published label, transcribed, never estimated
+_ITEM_KEYS = {"phrase", "qty", "unit", "est_grams", "confidence", "note", "menu"}
 
 
 def _load_env() -> None:
@@ -939,9 +941,11 @@ def test_vision_live_identifies_foods_and_never_outputs_nutrition():
     assert out["items"], out
     assert set(out.keys()) == {"items", "meal_hint"}
     for it in out["items"]:
-        assert set(it.keys()) == _ITEM_KEYS  # no numeric nutrition field exists
+        assert set(it.keys()) == _ITEM_KEYS  # no numeric field but the menu label
         assert it["phrase"].strip() and it["note"].strip()
         assert it["confidence"] in ("high", "medium", "low")
+        # this call has no web tools, so there is nothing to transcribe from
+        assert it["menu"] is None, it
     # what the photo shows: eggs on a plate
     assert any("egg" in it["phrase"].lower() for it in out["items"]), out
 

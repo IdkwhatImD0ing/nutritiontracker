@@ -20,7 +20,14 @@ export type ChatMessage =
   /** §3.4b: a plate sent as a turn. `thumb` is a small data: URL (the chat is
    *  persisted, so a blob: URL would be dead after a reload) and may be null
    *  when the browser could not produce one. */
-  | { kind: "photo"; id: string; thumb: string | null; pending?: boolean }
+  | {
+      kind: "photo";
+      id: string;
+      thumb: string | null;
+      /** said alongside it — with words it is a turn the agent can see */
+      text?: string;
+      pending?: boolean;
+    }
   | {
       kind: "tool";
       id: string;
@@ -53,8 +60,9 @@ type Props = {
    *  started here would burn STT spend on room noise and file a voice
    *  failure the user never caused (§13's counter). */
   openWith: "mic" | "photo";
-  /** Send a plate as a turn. Same contract as onSubmit. */
-  onSubmitPhoto: (shot: PhotoShot) => Promise<boolean>;
+  /** Send a plate as a turn. With `text` the agent sees the picture and
+   *  answers; without it the shot is the deterministic plate parse. */
+  onSubmitPhoto: (shot: PhotoShot, text: string) => Promise<boolean>;
   /** Returns true on success; the field only clears then, so a failed send
    *  can be resubmitted unchanged (same client uuid upstream). */
   onSubmit: (text: string) => Promise<boolean>;
@@ -375,6 +383,10 @@ export default function AgentChat({
   const [text, setText] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // A picked shot waits in the composer instead of sending itself, so it can
+  // carry a question ("is this the small size?"). Sent alone it is still the
+  // §3.4b plate parse — the words are what make it a turn the agent sees.
+  const [attached, setAttached] = useState<PhotoShot | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const { supported, recording, elapsedMs, start, stop, cancel } =
@@ -516,13 +528,16 @@ export default function AgentChat({
                 );
               case "photo":
                 return (
-                  <div key={m.id} className="bubble user photo-bubble">
-                    {m.thumb ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={m.thumb} alt="The plate you sent" />
-                    ) : (
-                      "📷 Photo"
-                    )}
+                  <div key={m.id} className="bubble-wrap photo-wrap">
+                    <div className="bubble user photo-bubble">
+                      {m.thumb ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={m.thumb} alt="The plate you sent" />
+                      ) : (
+                        "📷 Photo"
+                      )}
+                    </div>
+                    {m.text ? <div className="bubble user">{m.text}</div> : null}
                   </div>
                 );
               case "tool":
@@ -572,6 +587,26 @@ export default function AgentChat({
         </div>
 
         <div className="sheet-foot chat-foot">
+          {/* the mic is disabled while this is up, so it never shows mid-recording */}
+          {attached ? (
+            <div className="chat-attached">
+              {attached.thumb ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={attached.thumb} alt="Attached photo" />
+              ) : (
+                <span aria-hidden="true">📷</span>
+              )}
+              <span className="chat-attached-hint">Photo attached</span>
+              <button
+                type="button"
+                aria-label="Remove photo"
+                onClick={() => setAttached(null)}
+                disabled={busy}
+              >
+                ✕
+              </button>
+            </div>
+          ) : null}
           {recording ? (
             <div className="chat-rec" aria-live="polite">
               <button
@@ -600,10 +635,13 @@ export default function AgentChat({
               onSubmit={async (e) => {
                 e.preventDefault();
                 const trimmed = text.trim();
-                if (!trimmed || busy) return;
-                const ok = await onSubmit(trimmed);
+                if (busy || (!trimmed && !attached)) return;
+                const ok = attached
+                  ? await onSubmitPhoto(attached, trimmed)
+                  : await onSubmit(trimmed);
                 if (ok) {
                   setText("");
+                  setAttached(null);
                   setNotice(null);
                 }
               }}
@@ -612,8 +650,12 @@ export default function AgentChat({
                 <button
                   type="button"
                   className="mic-btn"
-                  aria-label="Record a voice log"
-                  disabled={busy}
+                  aria-label={
+                    attached
+                      ? "Record a voice log — not while a photo is attached"
+                      : "Record a voice log"
+                  }
+                  disabled={busy || attached !== null}
                   onClick={toggleMic}
                 >
                   <MicIcon />
@@ -637,7 +679,7 @@ export default function AgentChat({
                 type="text"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                placeholder="Tell the agent…"
+                placeholder={attached ? "Ask about it — or just send it" : "Tell the agent…"}
                 aria-label="Tell the agent"
                 enterKeyHint="send"
                 autoComplete="off"
@@ -645,7 +687,7 @@ export default function AgentChat({
               <button
                 type="submit"
                 className="send-btn"
-                disabled={busy || !text.trim()}
+                disabled={busy || (!text.trim() && !attached)}
                 aria-label="Send"
               >
                 {busy ? <span className="spinner" /> : <SendIcon />}
@@ -666,7 +708,8 @@ export default function AgentChat({
         onPicked={(shot) => {
           setPickerOpen(false);
           setNotice(null);
-          void onSubmitPhoto(shot);
+          setAttached(shot);
+          requestAnimationFrame(() => inputRef.current?.focus());
         }}
       />
     </>

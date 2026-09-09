@@ -656,7 +656,9 @@ async def create_log(body: LogCreate) -> LogCreateResponse:
     return await _run_pipeline(body)
 
 
-async def _run_pipeline(body: LogCreate, emit: Emit | None = None) -> LogCreateResponse:
+async def _run_pipeline(
+    body: LogCreate, emit: Emit | None = None, image: str | None = None
+) -> LogCreateResponse:
     """§3.0 short-circuit, else — through the agent when the log asks for it
     (§6.4) — decompose → the per-log cascade → _persist, on a log row this
     request owns (a fresh claim, or a claimed orphan). `emit` streams the
@@ -673,7 +675,7 @@ async def _run_pipeline(body: LogCreate, emit: Emit | None = None) -> LogCreateR
         return LogCreateResponse(log_id=body.id, meal=meal, items=[r.staged for r in sc])
 
     if body.agent:
-        return await _run_agent_lane(body, meal, emit)
+        return await _run_agent_lane(body, meal, emit, image)
     return await _stage_from_text(body, meal, body.text)
 
 
@@ -1069,7 +1071,7 @@ async def _stamp_save_intent(log_id: str, name: str, triggers: list[str] | None)
 
 
 async def _run_agent_lane(
-    body: LogCreate, meal: Meal, emit: Emit | None = None
+    body: LogCreate, meal: Meal, emit: Emit | None = None, image: str | None = None
 ) -> LogCreateResponse:
     """§6.4: the front-door agent. Its effects are closures over this log:
     the food part of the utterance goes through _stage_from_text exactly as
@@ -1424,6 +1426,8 @@ async def _run_agent_lane(
         past_foods=past_foods,
         # §3.4b: a conversation with a staged plate in it runs on the photo
         # tier and can edit that plate; every other one is unchanged
+        # §6.4: an image attached to this turn — the agent looks at it
+        image=image,
         photo_chat=body.photo_log_id is not None,
         adjust_photo=adjust_photo if body.photo_log_id is not None else None,
         saved_meals=[_meal_words(m) for m in await meals_route.list_meals(include_inactive=True)],

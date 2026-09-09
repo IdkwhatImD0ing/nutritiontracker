@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
@@ -39,9 +40,10 @@ from psycopg.types.json import Json
 from pydantic import BaseModel
 
 import db
-from auth import require_user
+from auth import is_owner, require_user
 from models import FoodRef, Macros, Meal, ParsedItem, ServingOption, ServingRef, StagedItem
 from resolver import cascade, foods_repo
+from resolver.norm import norm
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from routes.logs import (
     _RERUN_GRACE_SECONDS,
@@ -113,6 +115,26 @@ def sniff_image(head: bytes) -> str | None:
     if head[4:8] == b"ftyp" and head[8:12] in _HEIC_BRANDS:
         return "image/heic"
     return None
+
+
+async def _photo_context(captured_at: datetime, tz: str | None) -> str:
+    """What the vision call is told about the person, and when they ate.
+
+    §6.1's profile notes are the one place they already write standing facts
+    about themselves ("I eat lunch at the Pinterest SF cafeteria, menu at
+    …"), and they are what turns the web lane from a guess into a lookup: no
+    place named, nothing to look up. The date matters as much — a cafeteria
+    menu is per-day, so a photo without one can only be matched against
+    today's. Nothing here knows what a cafeteria is; the notes are free text
+    and the lane works the same for a restaurant."""
+    row = await db.fetchone("SELECT value FROM settings WHERE key = 'profile_notes'")
+    notes = (row["value"] if row and isinstance(row.get("value"), str) else "") or ""
+    try:
+        local = captured_at.astimezone(ZoneInfo(tz)) if tz else captured_at
+    except Exception:
+        local = captured_at
+    when = f"This photo was taken on {local:%A %Y-%m-%d} at {local:%H:%M} local time."
+    return "\n\n".join(part for part in (notes.strip(), when) if part)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +249,76 @@ def _flag(item: StagedItem, v: VisionItem) -> StagedItem:
     if has_portion:
         update.update(estimated="portion", estimate_note=note)
     return item.model_copy(update=update) if update else item
+
+
+async def _stage_menu_food(item: StagedItem, v: VisionItem) -> StagedItem:
+    """A row the model matched to a published dish, carrying that page's own
+    numbers (§3.4a as widened 2026-09-09, Bill's ruling: the photo lane may
+    transcribe a menu's nutrition, because every photo row is confirmed by a
+    human before it commits).
+
+    The numbers still reach the diary the only way any numbers can — through a
+    cached `foods` row, here `source='menu'` with the URL and the raw block in
+    its provenance, so a committed entry can always be traced to the page it
+    was read off. The row keeps `estimated="portion"`: the FOOD is the menu's,
+    the AMOUNT is one published serving and almost certainly not what was on
+    the plate, so it still cannot commit until someone says it is right.
+
+    CODE decides whether the block is usable, not the prompt: a dish name, an
+    http(s) URL and all four core macros as real numbers, or the whole block is
+    dropped and the row stays exactly as the cascade left it. A page read
+    halfway must yield nothing rather than a plausible-looking calorie."""
+    m = v.menu
+    if m is None:
+        return item
+    macros = {"kcal": m.kcal, "protein_g": m.protein_g, "carb_g": m.carb_g, "fat_g": m.fat_g}
+    if not (m.dish or "").strip() or not m.source_url.lower().startswith(("http://", "https://")):
+        return item
+    if not all(isinstance(x, (int, float)) and x >= 0 for x in macros.values()):
+        return item
+
+    dish = m.dish.strip()
+    serving = {
+        "serving_id": "menu",
+        "description": (m.serving or "").strip() or "1 serving",
+        "grams": None,
+        "macros": macros,
+    }
+    food_id = await foods_repo.persist_food(
+        {
+            "source": "menu",
+            "source_id": f"{m.source_url}#{norm(dish)}",
+            "source_url": m.source_url,
+            "provenance": {"menu": m.model_dump(mode="json"), "model": None, "vision": True},
+            "name": dish,
+            "display_name": dish,
+            "brand": None,
+            "food_type": "generic",
+            "state": None,
+            "state_sensitive": False,
+            "servings": [serving],
+            "default_serving_id": "menu",
+            "per_100g": None,
+            "payload": {"menu": m.model_dump(mode="json")},
+        }
+    )
+    return item.model_copy(
+        update={
+            "status": "resolved",
+            "tier": None,
+            "food": FoodRef(id=food_id, name=dish),
+            "serving": ServingRef(id="menu", description=serving["description"]),
+            "qty": 1.0,
+            "macros": Macros(**macros),
+            "servings": [ServingOption(**s) for s in cascade._serving_options([serving])],
+            "search_instead": False,
+            "estimated": "portion",
+            "estimate_note": (
+                f"Menu: {dish} — numbers from {m.source_url}, "
+                f"per {serving['description']}. Check the amount."
+            ),
+        }
+    )
 
 
 def _summary(seen: VisionResult) -> str:
@@ -394,7 +486,13 @@ async def _stage_photo(
         })
     t0 = time.monotonic()
     try:
-        seen = await vision.analyze(image_bytes, sniffed)  # its span rides in this trace (§10)
+        seen = await vision.analyze(  # its span rides in this trace (§10)
+            image_bytes, sniffed,
+            context=await _photo_context(captured_at, tz),
+            # §8.9: the hosted search and scraper are billed per action,
+            # so the web lane is the owner's, as tier 3's is
+            web=is_owner(),
+        )
     except OpenAIError as e:
         await _drop_empty_log(log_id)
         if emit is not None:
@@ -432,6 +530,9 @@ async def _stage_photo(
         lookup.set(output=cascade_summary(resolutions))
     for r, v in zip(resolutions, seen.items):
         r.staged = _flag(r.staged, v)
+        # a published dish beats whatever the cascade guessed from its name:
+        # the kitchen's own numbers for its own dish (§3.4a, 2026-09-09)
+        r.staged = await _stage_menu_food(r.staged, v)
     await _persist(
         log_id, resolutions, meal,
         short_circuit=False, decompose_ms=vision_ms, trace_id=trace_id,

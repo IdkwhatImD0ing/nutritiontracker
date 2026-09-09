@@ -965,13 +965,13 @@ def test_a_photo_streams_read_photo_then_a_reply_and_runs_no_model(monkeypatch):
 
             import services.vision as vision_mod
 
-            async def fake_analyze(image, mime):
+            async def fake_analyze(image, mime, **kw):
                 assert image == PNG and mime == "image/png"  # the SNIFFED type
                 return vision_mod.VisionResult(
                     items=[
                         vision_mod.VisionItem(
                             phrase="two eggs", qty=2, unit="egg", est_grams=100,
-                            confidence="high", note="two fried eggs",
+                            confidence="high", note="two fried eggs", menu=None,
                         )
                     ],
                     meal_hint=None,
@@ -1049,12 +1049,12 @@ def test_a_photo_conversation_carries_its_plate_into_the_next_turn(monkeypatch):
 
             import services.vision as vision_mod
 
-            async def fake_analyze(image, mime):
+            async def fake_analyze(image, mime, **kw):
                 return vision_mod.VisionResult(
                     items=[
                         vision_mod.VisionItem(
                             phrase="two eggs", qty=2, unit="egg", est_grams=100,
-                            confidence="high", note="two fried eggs",
+                            confidence="high", note="two fried eggs", menu=None,
                         )
                     ],
                     meal_hint=None,
@@ -1115,7 +1115,7 @@ def test_a_photo_with_no_food_says_so_once_and_leaves_no_staged_log(monkeypatch)
 
             import services.vision as vision_mod
 
-            async def fake_analyze(image, mime):
+            async def fake_analyze(image, mime, **kw):
                 return vision_mod.VisionResult(items=[], meal_hint=None)
 
             monkeypatch.setattr(vision_mod, "analyze", fake_analyze)
@@ -1164,12 +1164,12 @@ def test_adjust_photo_writes_nothing_when_one_change_names_no_row(monkeypatch):
 
             import services.vision as vision_mod
 
-            async def fake_analyze(image, mime):
+            async def fake_analyze(image, mime, **kw):
                 return vision_mod.VisionResult(
                     items=[
                         vision_mod.VisionItem(
                             phrase="two eggs", qty=2, unit="egg", est_grams=100,
-                            confidence="high", note="two fried eggs",
+                            confidence="high", note="two fried eggs", menu=None,
                         )
                     ],
                     meal_hint=None,

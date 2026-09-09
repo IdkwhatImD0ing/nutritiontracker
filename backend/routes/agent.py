@@ -31,6 +31,7 @@ which puts the conversation on the photo tier and gives the agent the
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -76,6 +77,10 @@ _AGENT_FORM["properties"]["history"] = {
 _AGENT_FORM["properties"]["image"] = {
     "type": "string", "format": "binary",
     "description": "a plate photo — the §3.4b lane as a chat turn; exactly one of audio or image",
+}
+_AGENT_FORM["properties"]["text"] = {
+    "type": "string",
+    "description": "said alongside an image — makes it a chat turn the agent can see (§6.4)",
 }
 _AGENT_FORM["properties"]["photo_log_id"] = {
     "type": "string", "format": "uuid",
@@ -383,6 +388,7 @@ async def agent_voice(
     capture_error: Annotated[str | None, Form()] = None,
     history: Annotated[str | None, Form()] = None,
     meal_hint: Annotated[Meal | None, Form()] = None,
+    text: Annotated[str | None, Form()] = None,
     photo_log_id: Annotated[UUID | None, Form()] = None,
 ) -> NDJSONResponse:
     """The multipart turn — exactly one of `audio` or `image`.
@@ -392,16 +398,30 @@ async def agent_voice(
     `transcript` → the agent's events → `done`. `history` is the chat so far
     as a JSON array of AgentTurn (the JSON route takes it as a field).
 
-    Image (§3.4b, 2026-09-08): the photo lane as a chat turn. The same
+    Image alone (§3.4b, 2026-09-08): the photo lane as a chat turn. The same
     re-attach and claim, then the identical vision → cascade → staging
     pipeline `POST /api/logs/photo` runs (routes/photo._stage_photo), shown
     as a `read_photo` tool line, and a reply built in code from what vision
-    saw. No agent runs on this turn — there is no utterance to route, and the
-    model cannot see the photo; the tuning turns that follow are the agent's."""
+    saw. No agent runs on it — there is no utterance to route, and logging a
+    plate should not need one; the tuning turns that follow are the agent's.
+
+    Image with `text` (§6.4, 2026-09-09): a chat turn that happens to carry a
+    picture. It runs the agent, which can see the image — see
+    `_agent_image_turn`."""
     turns = _parse_history(history)
     if (audio is None) == (image is None):
         raise HTTPException(422, "send exactly one of `audio` or `image`")
     if image is not None:
+        # A photo with something SAID about it is a conversation turn: the
+        # agent sees the image and answers ("is that the small size?", "what
+        # is the sauce?"). A photo on its own is the §3.4b lane — the
+        # deterministic astra parse, no chat model, which is what logging a
+        # plate should be.
+        said = (text or "").strip()
+        if said:
+            return await _agent_image_turn(
+                image, said, log_id, captured_at, tz, turns, photo_log_id
+            )
         return await _agent_photo(image, log_id, captured_at, tz, meal_hint, turns)
     live = live_run(log_id)
     if live is not None:
@@ -434,6 +454,53 @@ async def agent_voice(
                 history=turns, photo_log_id=photo_log_id,
             )
             response = await _run_pipeline(body, emit)
+            trace.set(output=response)
+            return response
+
+    return _stream(_follow(_start(log_id, work)))
+
+
+async def _agent_image_turn(
+    image: UploadFile,
+    said: str,
+    log_id: UUID,
+    captured_at: datetime,
+    tz: str,
+    turns: list[AgentTurn] | None,
+    photo_log_id: UUID | None,
+) -> NDJSONResponse:
+    """A chat turn that carries an image (§6.4, 2026-09-09) — the same run a
+    typed turn gets, with the picture beside the words so the agent can answer
+    about what it shows. Every tool it has still applies, so "log this" works
+    the same as if it had been described.
+
+    The upload is validated by the photo lane's own reader, so one contract
+    covers both: same types, same 12 MB cap, same refusals, before the stream.
+    The bytes are never stored (§8.8) — they live for this run only."""
+    from routes import photo as photo_route  # lazy: it imports routes/logs
+
+    image_bytes, sniffed = await photo_route.read_image(image)
+    data_url = f"data:{sniffed};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+
+    live = live_run(log_id)
+    if live is not None:
+        return _stream(_follow(live))
+    body = LogCreate(
+        id=log_id, text=said, captured_at=captured_at, tz=tz, agent=True,
+        history=turns, photo_log_id=photo_log_id,
+    )
+    replay = await claim_text_log(body)
+    if replay is not None:
+        return _stream(_replay(log_id, replay, with_text=False))
+
+    async def work(emit: Emit):
+        import tracing  # lazy: stubbed in route tests
+
+        async with tracing.run(
+            "agent-chat", session_id=str(log_id), tags=["lane:agent", "lane:image"],
+            input={"text": said, "mime": sniffed, "bytes": len(image_bytes)},
+        ) as trace:
+            response = await _run_pipeline(body, emit, image=data_url)
             trace.set(output=response)
             return response
 

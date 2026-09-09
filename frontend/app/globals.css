@@ -2142,6 +2142,12 @@ a {
   border-bottom-right-radius: 4px;
 }
 
+/* the plate with what you said alongside it — one right-hand column */
+.bubble-wrap.photo-wrap {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
 .bubble.agent {
   align-self: flex-start;
   background: var(--surface-2);
@@ -2317,6 +2323,46 @@ a {
 
 .chat-rec .voice-alt {
   margin: 0 0 0 auto;
+}
+
+/* a picked shot waiting above the composer — it sends with the next line */
+.chat-attached {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.chat-attached img {
+  display: block;
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.chat-attached-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.chat-attached button {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
 }
 
 /* an agent bubble with the answers to its question under it */

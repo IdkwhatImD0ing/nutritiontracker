@@ -29,11 +29,13 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 import pytest
+from types import SimpleNamespace
 from fastapi import HTTPException
 
 from agents.tool_context import ToolContext
 
 import services.agent as agent_svc
+from models import Meal, StagedItem
 
 CAPTURED = datetime(2026, 9, 8, 19, 15, tzinfo=timezone.utc)
 TZ = "America/Los_Angeles"
@@ -203,3 +205,259 @@ def test_the_multipart_schema_documents_the_photo_part():
     assert "audio" not in form["required"]
     assert set(form["required"]) == {"id", "captured_at", "tz"}
     assert form["properties"]["image"]["format"] == "binary"
+
+
+# ---------------------------------------------------------------------------
+# 4. the photo lane's web lane (§3.4b, 2026-09-09)
+# ---------------------------------------------------------------------------
+
+
+def _sent_kwargs(monkeypatch, **analyze_kw) -> dict:
+    """One analyze() call against a fake client; returns the request kwargs."""
+    import services.vision as vision
+
+    sent: dict = {}
+
+    class _Responses:
+        async def parse(self, **kwargs):
+            sent.update(kwargs)
+            return SimpleNamespace(
+                output_parsed=vision.VisionResult(items=[], meal_hint=None), usage=None
+            )
+
+    monkeypatch.setattr(vision, "_client", SimpleNamespace(responses=_Responses()))
+    try:
+        asyncio.run(vision.analyze(b"\xff\xd8\xff\xe0" + b"\0" * 8, "image/jpeg", **analyze_kw))
+    finally:
+        vision._client = None
+    return sent
+
+
+def test_the_photo_web_lane_is_off_by_default(monkeypatch):
+    """A demo account, and every call that does not ask for it, gets the lane
+    exactly as it was: no tools, and the instructions unchanged so the prompt
+    cache still hits."""
+    import services.vision as vision
+
+    sent = _sent_kwargs(monkeypatch)
+    assert sent["tools"] == []
+    assert sent["input"][0]["content"][0]["text"] == vision.INSTRUCTIONS
+    assert "web_search" not in sent["input"][0]["content"][0]["text"]
+
+
+def test_the_web_lane_offers_hosted_tools_only(monkeypatch):
+    """Nothing first-party fetches anything: web_search is OpenAI's and the
+    scraper is Firecrawl's own remote MCP server, which OpenAI calls. The key
+    rides `authorization`, never the URL (Firecrawl's own instruction), and the
+    tool surface is narrowed — the server offers two dozen tools, of which this
+    lane can use two."""
+    import services.vision as vision
+
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test-key")
+    sent = _sent_kwargs(monkeypatch, web=True)
+    kinds = [t["type"] for t in sent["tools"]]
+    assert kinds == ["web_search", "mcp"]
+    mcp = sent["tools"][1]
+    assert mcp["server_url"] == "https://mcp.firecrawl.dev/v2/mcp"
+    assert "fc-test-key" not in mcp["server_url"]
+    assert mcp["authorization"] == "fc-test-key"
+    assert mcp["allowed_tools"] == ["firecrawl_scrape", "firecrawl_search"]
+    assert mcp["require_approval"] == "never"
+
+
+def test_the_web_lane_degrades_to_search_without_a_key(monkeypatch):
+    """No Firecrawl key configured is not an error — the lane keeps hosted
+    search and simply cannot read a page it is handed."""
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    sent = _sent_kwargs(monkeypatch, web=True)
+    assert [t["type"] for t in sent["tools"]] == ["web_search"]
+
+
+def test_the_person_context_rides_the_user_message_not_the_cached_prefix(monkeypatch):
+    """The profile notes differ per account and change whenever they are
+    edited, so putting them in the developer message would break the prompt
+    cache for every photo. INSTRUCTIONS (+ the fixed web block) stays the
+    byte-stable prefix; the notes go in the user turn beside the image."""
+    import services.vision as vision
+
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test-key")
+    sent = _sent_kwargs(monkeypatch, context="I eat at the Pinterest SF cafeteria.", web=True)
+    developer = sent["input"][0]["content"][0]["text"]
+    user_text = sent["input"][1]["content"][0]["text"]
+    assert developer == vision.INSTRUCTIONS + vision._WEB_LANE
+    assert "Pinterest" not in developer
+    assert "Pinterest SF cafeteria" in user_text
+    # the guard that keeps a menu from becoming a shopping list
+    assert "NEVER add an item because a menu lists it" in vision._WEB_LANE
+    # …and, since Bill widened §3.4a on 2026-09-09 to let a menu's own numbers
+    # through, the guards that replaced the old absolute ban: copied not
+    # computed, and never loose in the free text where nothing checks them
+    assert "TRANSCRIBE, never estimate" in vision._WEB_LANE
+    assert "Still NEVER put a number in `phrase` or `note`" in vision._WEB_LANE
+
+
+def test_a_menu_match_only_lands_when_the_page_gave_all_four_macros(monkeypatch):
+    """CODE decides whether a transcribed block is usable, not the prompt.
+    Measured on the real cafeteria 2026-09-09: its rendered menu publishes
+    calories and nothing else (protein/carbs/fat live in a script blob no text
+    scraper reads), so this is the common case, not an edge one. A row with
+    calories alone must stay exactly as the cascade left it — a foods row with
+    partial macros cannot commit anyway (the core-macros guard), so accepting
+    one would only put a confident wrong number in front of the user."""
+    import services.vision as vision
+    from routes import photo
+
+    async def run(menu):
+        item = StagedItem(
+            item_index=0, phrase="lamb", status="searching",
+            meal=Meal("lunch"), confidence="medium",
+        )
+        v = vision.VisionItem(
+            phrase="lamb", qty=None, unit=None, est_grams=120,
+            confidence="medium", note="sliced lamb", menu=menu,
+        )
+        return await photo._stage_menu_food(item, v)
+
+    full = vision.MenuMatch(
+        dish="herb roasted leg of lamb",
+        source_url="https://pinterest-sf.cafebonappetit.com/cafe/2026-09-08/",
+        serving="1 serving", kcal=320, protein_g=28, carb_g=2, fat_g=21,
+    )
+    # a block the page could not fill is refused before any write
+    for bad in (
+        full.model_copy(update={"dish": "   "}),
+        full.model_copy(update={"source_url": "not-a-url"}),
+        full.model_copy(update={"protein_g": -1}),
+    ):
+        assert asyncio.run(run(bad)).food is None
+
+    assert asyncio.run(run(None)).food is None
+
+
+# ---------------------------------------------------------------------------
+# 5. a chat turn that carries an image (§6.4, 2026-09-09)
+# ---------------------------------------------------------------------------
+
+_PIXEL = "data:image/png;base64,iVBORw0KGgo="
+
+
+def test_words_alone_still_reach_the_model_as_a_plain_string():
+    """The image path must not change the shape of every other run: no deps
+    image, no list — the SDK sees exactly the string it always saw."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_agent import _fake_runner  # the fake that drives real closures
+
+    runner = _fake_runner([], "Noted.")
+    agent_svc._load_runner()
+    real, agent_svc.Runner = agent_svc.Runner, runner
+    try:
+        asyncio.run(agent_svc.run_agent("two eggs", _deps()))
+    finally:
+        agent_svc.Runner = real
+    assert isinstance(runner.input, str)
+    assert "two eggs" in runner.input
+
+
+def test_an_attached_image_rides_beside_the_words_never_instead_of_them():
+    """§6.4: the picture is added to the turn, so everything the agent was
+    told still reaches it — the same prompt, with the image next to it."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_agent import _fake_runner
+
+    runner = _fake_runner([], "That looks like the small size.")
+    deps = _deps(image=_PIXEL)
+    agent_svc._load_runner()
+    real, agent_svc.Runner = agent_svc.Runner, runner
+    try:
+        asyncio.run(agent_svc.run_agent("is this the small one?", deps))
+    finally:
+        agent_svc.Runner = real
+
+    sent = runner.input
+    assert isinstance(sent, list) and len(sent) == 1
+    content = sent[0]["content"]
+    assert sent[0]["role"] == "user"
+    kinds = [part["type"] for part in content]
+    assert kinds == ["input_text", "input_image"]
+    # the same prompt a text turn would have got, unabridged
+    assert content[0]["text"] == agent_svc.agent_input("is this the small one?", deps)
+    assert content[1]["image_url"] == _PIXEL
+
+
+def test_a_photo_with_words_runs_the_agent_and_a_bare_photo_does_not():
+    """The dispatch §3.4b rests on: words make it a conversation turn the
+    model can see; a plate on its own stays the deterministic vision parse,
+    which spends nothing on a chat model."""
+    from io import BytesIO
+
+    from starlette.datastructures import Headers, UploadFile
+
+    from routes import agent as agent_routes
+
+    took: list[str] = []
+
+    async def to_agent(*_a, **_k):
+        took.append("agent")
+
+    async def to_parse(*_a, **_k):
+        took.append("parse")
+
+    def upload():
+        return UploadFile(
+            file=BytesIO(b"\xff\xd8\xff\xe0" + b"\0" * 32), filename="plate.jpg",
+            headers=Headers({"content-type": "image/jpeg"}),
+        )
+
+    real_agent = agent_routes._agent_image_turn
+    real_parse = agent_routes._agent_photo
+    agent_routes._agent_image_turn = to_agent
+    agent_routes._agent_photo = to_parse
+    try:
+        for said in ("is this the small size?", "   ", None):
+            asyncio.run(
+                agent_routes.agent_voice(
+                    log_id=uuid4(), captured_at=CAPTURED, tz=TZ,
+                    image=upload(), text=said,
+                )
+            )
+    finally:
+        agent_routes._agent_image_turn = real_agent
+        agent_routes._agent_photo = real_parse
+
+    # whitespace is not a question — it must not buy a model run
+    assert took == ["agent", "parse", "parse"]
+
+
+def test_the_multipart_schema_documents_the_said_part():
+    """typegen reads this; without it the generated client cannot send the
+    words that turn a photo into a chat turn."""
+    from routes import agent as agent_routes
+
+    said = agent_routes._AGENT_FORM["properties"]["text"]
+    assert said["type"] == "string"
+    assert "text" not in agent_routes._AGENT_FORM["required"]
+
+
+def test_a_chat_image_is_held_to_the_photo_lane_s_own_contract():
+    """One photo contract: the chat turn validates through the photo lane's
+    reader, so an unsupported upload is refused with the same sentence — and
+    before the claim, so no log id is spent on it."""
+    from io import BytesIO
+
+    from starlette.datastructures import Headers, UploadFile
+
+    from routes import agent as agent_routes
+
+    # declared a JPEG, is not one: the magic-byte sniff runs here too
+    lying = UploadFile(
+        file=BytesIO(b"not an image at all, whatever it says"), filename="plate.jpg",
+        headers=Headers({"content-type": "image/jpeg"}),
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            agent_routes._agent_image_turn(
+                lying, "what is this?", uuid4(), CAPTURED, TZ, None, None
+            )
+        )
+    assert exc.value.status_code == 415
+    assert exc.value.detail == "not a JPEG, PNG or WebP image"
