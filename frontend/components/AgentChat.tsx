@@ -176,8 +176,10 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       ok = "Saved";
       break;
     case "past_foods": {
-      // §6.4's one read — no effect to report, so the line names what it looked at
-      const n = out ? count(out.foods) : null;
+      // §6.4's one read — no effect to report, so the line names what it looked at.
+      // `count` comes off the tool itself: past ~16 rows _parse_output replaces
+      // the payload with {summary, truncated} and the array is gone.
+      const n = out ? (typeof out.count === "number" ? out.count : count(out.foods)) : null;
       doing = a.query
         ? `Checking what you've logged: “${str(a.query)}”`
         : "Checking what you've logged before";

@@ -920,7 +920,8 @@ def _match_meal_item(meal, food: str) -> int | dict:
 # is the food analogue of known_logs: only a food reachable through THIS
 # tenant's `entries` may join a saved meal by id. One statement per call.
 _MY_FOODS_SQL = (
-    "SELECT DISTINCT f.id::text AS id, f.display_name, f.servings"
+    "SELECT DISTINCT f.id::text AS id, f.display_name, f.servings,"
+    " f.default_serving_id"
     " FROM entries e JOIN foods f ON f.id = e.food_id"
     " WHERE e.food_id = ANY(%s::uuid[])"
 )
@@ -935,57 +936,91 @@ def _uuid_or_none(value: str | None) -> str | None:
         return None
 
 
-async def _my_foods(items: list[MealFood]) -> dict[str, dict]:
-    ids = [
-        fid
-        for fid in (_uuid_or_none(it.food_id) for it in items if it.food_id and it.serving_id)
-        if fid is not None
-    ]
-    if not ids:
-        return {}
-    return {r["id"]: r for r in await db.fetchall(_MY_FOODS_SQL, (ids,))}
+async def _resolve_meal_ids(items: list[MealFood]) -> dict[int, dict | None]:
+    """The id path (§6.4), by item index: the (food, serving, qty) row for
+    every item pointing at a past_foods row, or None when this account has
+    never logged that food, the id is malformed, or the serving is not on the
+    food. THIS is the tenancy gate _MY_FOODS_SQL describes — a food_id alone
+    proves nothing — so it stays even though validate_meal_items looks
+    sufficient (BACKLOG 164). Each id is canonicalised once, here.
+
+    A `food_id` with no `serving_id` falls back to the food's own default
+    serving: the person pointed at a food, and a name search for it could
+    land on a different row entirely."""
+    wanted = {i: _uuid_or_none(it.food_id) for i, it in enumerate(items) if it.food_id}
+    ids = sorted({fid for fid in wanted.values() if fid is not None})
+    mine = {r["id"]: r for r in await db.fetchall(_MY_FOODS_SQL, (ids,))} if ids else {}
+    out: dict[int, dict | None] = {}
+    for i, fid in wanted.items():
+        it = items[i]
+        food = mine.get(fid or "")
+        serving = (
+            commit_tx._find_serving(
+                food["servings"],
+                (it.serving_id or "").strip() or food["default_serving_id"],
+            )
+            if food is not None
+            else None
+        )
+        out[i] = (
+            None
+            if serving is None
+            else {
+                "food_id": food["id"], "serving_id": serving["serving_id"],
+                "qty": float(it.qty) if it.qty is not None else 1.0,
+                "food": food["display_name"], "serving": serving["description"],
+            }
+        )
+    return out
 
 
-async def _resolve_meal_words(
+def _merge_meal_rows(rows: list[dict]) -> list[dict]:
+    """One row per (food, serving): the model echoing the same past_foods row
+    twice must not make a meal that logs it twice. The extend path merges the
+    same way; the create path would not."""
+    merged: list[dict] = []
+    for r in rows:
+        same = next(
+            (m for m in merged
+             if m["food_id"] == r["food_id"] and m["serving_id"] == r["serving_id"]),
+            None,
+        )
+        if same is None:
+            merged.append(r)
+        else:
+            same["qty"] += r["qty"]
+    return merged
+
+
+async def _resolve_meal_items(
     items: list[MealFood], meal: Meal
 ) -> tuple[list[dict], list[dict]]:
-    """Foods → (food, serving, qty) rows for a saved meal. An item carrying
-    `food_id` + `serving_id` (a past_foods row, §6.4) is taken verbatim once
-    _my_foods proves the account logged that food — no lookup, so the stored
-    amount is exactly the one in the diary. An item in words goes through the
-    identical tiers 1–2 log_estimate's components take (tier 0 skipped; the
-    amount on the §7.3 spoken-quantity channel, none = the usual portion).
-    Nothing is persisted: tier 3 is a client-kicked handoff from a staged
-    row, so a food the databases do not know yet is reported back — logging
-    it once is what makes it known."""
+    """Foods → (food, serving, qty) rows for a saved meal. An item pointing at
+    a past_foods row by id is taken from _resolve_meal_ids — no lookup, so the
+    amount is exactly the diary's. An item in words goes through the identical
+    tiers 1–2 log_estimate's components take (tier 0 skipped; the amount on
+    the §7.3 spoken-quantity channel, none = the usual portion). Nothing is
+    persisted: tier 3 is a client-kicked handoff from a staged row, so a food
+    the databases do not know yet is reported back — logging it once is what
+    makes it known."""
     import tracing
 
     resolved: list[dict] = []
     unresolved: list[dict] = []
-    mine = await _my_foods(items)
+    by_id = await _resolve_meal_ids(items)
     async with tracing.run(
         "cascade", kind="retriever", input=[it.phrase for it in items]
     ) as lookup:
         for i, it in enumerate(items):
-            if it.food_id and it.serving_id:
-                food = mine.get(_uuid_or_none(it.food_id) or "")
-                serving = (
-                    commit_tx._find_serving(food["servings"], it.serving_id.strip())
-                    if food is not None
-                    else None
-                )
-                if serving is None:
+            if i in by_id:
+                if by_id[i] is None:
                     unresolved.append({
                         "phrase": it.phrase, "status": "unknown_food",
                         "message": "not one of the foods this account has logged — "
                                    "look it up with past_foods, or name it in words",
                     })
-                    continue
-                resolved.append({
-                    "food_id": food["id"], "serving_id": serving["serving_id"],
-                    "qty": float(it.qty) if it.qty is not None else 1.0,
-                    "food": food["display_name"], "serving": serving["description"],
-                })
+                else:
+                    resolved.append(by_id[i])
                 continue
             parsed = ParsedItem(
                 phrase=it.phrase.strip(), phrase_kind="food",
@@ -1005,6 +1040,7 @@ async def _resolve_meal_words(
                     "phrase": it.phrase, "status": st.status,
                     "message": "not in the databases yet — log it once, then add it",
                 })
+        resolved = _merge_meal_rows(resolved)
         lookup.set(output={
             "resolved": [r["food"] for r in resolved],
             "unresolved": [u["phrase"] for u in unresolved],
@@ -1171,13 +1207,9 @@ async def _run_agent_lane(
         the amount it was last logged at. qty/grams are `numeric` — cast, or
         json.dumps(default=str) hands the model "1.5" as a string. Null keys
         are dropped: brand, grams and a dangling serving are often empty, and
-        the model reads this list whole."""
-        try:  # body.tz is an unvalidated client string; AT TIME ZONE would raise
-            ZoneInfo(body.tz)
-            tz = body.tz
-        except Exception:
-            tz = "UTC"
-        rows = await foods_repo.past_foods(query, limit, tz)
+        the model reads this list whole. body.tz is an unvalidated client
+        string; past_foods falls back to UTC on one it cannot resolve."""
+        rows = await foods_repo.past_foods(query, limit, body.tz)
         return [
             {
                 k: v
@@ -1211,11 +1243,19 @@ async def _run_agent_lane(
         async with meals:
             try:
                 if items is not None:
-                    resolved, unresolved = await _resolve_meal_words(items, meal)
+                    resolved, unresolved = await _resolve_meal_items(items, meal)
                     if not resolved:
+                        # the headline has to match why they failed: telling
+                        # them to log a food they already have, because an id
+                        # was rejected, sends them the wrong way entirely
                         return {"error": "unresolved", "unresolved": unresolved,
-                                "message": "none of those foods is in the databases yet — "
-                                           "log them once first"}
+                                "message": (
+                                    "none of those is a food this account has logged — "
+                                    "look them up with past_foods, or name them in words"
+                                    if all(u["status"] == "unknown_food" for u in unresolved)
+                                    else "none of those foods is in the databases yet — "
+                                         "log them once first"
+                                )}
                     rows = [{"food_id": r["food_id"], "serving_id": r["serving_id"], "qty": r["qty"]}
                             for r in resolved]
                     existing = await _find_meal(name)

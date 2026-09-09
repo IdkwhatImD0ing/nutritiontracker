@@ -212,10 +212,14 @@ _SCRUB: tuple[tuple[re.Pattern, str], ...] = (
     # possibly several lines — up to the prompt's next section. Every section
     # that can follow must be listed: the saved-meals block sits between the
     # notes and the history and was being swallowed whole, so no trace could
-    # show whether the agent saw the meals it was asked to change.
+    # show whether the agent saw the meals it was asked to change. Each anchor
+    # is the section's FULL header, not its opening words — the notes are free
+    # text, and a person who writes a line starting "Saved meals" must not
+    # truncate their own redaction.
     (re.compile(
         r"(Profile notes:)[\s\S]*?"
-        r"(?=\nSaved meals|\n\nEarlier in this conversation|\n\nUtterance:|\Z)"
+        r"(?=\nSaved meals \(name: items"
+        r"|\n\nEarlier in this conversation|\n\nUtterance:|\Z)"
     ), r"\1 [REDACTED]"),
 )
 

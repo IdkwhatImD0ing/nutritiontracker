@@ -83,10 +83,15 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+async def _raw(agent, tool: str, **kwargs) -> str:
+    """The tool's own serialized answer — what actually reaches the model."""
+    args = json.dumps(kwargs)
+    return await _tool(agent, tool).on_invoke_tool(_ctx(tool, args), args)
+
+
 async def _call(agent, tool: str, **kwargs) -> dict:
     """test_agent._invoke, for tools whose own first parameter is `name`."""
-    args = json.dumps(kwargs)
-    return json.loads(await _tool(agent, tool).on_invoke_tool(_ctx(tool, args), args))
+    return json.loads(await _raw(agent, tool, **kwargs))
 
 
 def _probe_runner(probe, reply: str = "Done."):
@@ -702,8 +707,14 @@ def test_save_meal_takes_the_ids_and_amounts_past_foods_reported(monkeypatch):
             name = f"Shake {tag}"
 
             async def build(agent):
-                got = await _call(agent, "past_foods", query=tag)
+                raw = await _raw(agent, "past_foods", query=tag)
+                got = json.loads(raw)
                 assert got["count"] == 2 and "error" not in got
+                # §6.4 where it counts: the JSON the MODEL reads, not the repo
+                # rows one layer below it (these two foods carry no such words)
+                assert not any(
+                    w in raw.lower() for w in ("kcal", "protein", "carb", "fat", "macros")
+                ), raw
                 out = await _call(agent, "save_meal", name=name, items=[
                     {"phrase": f["food"], "qty": f["qty"], "unit": None,
                      "food_id": f["food_id"], "serving_id": f["serving_id"]}
@@ -764,6 +775,10 @@ def test_a_food_this_account_never_logged_cannot_join_a_meal_by_id(monkeypatch):
                     ])
                     assert out["error"] == "unresolved", (why, out)
                     assert out["unresolved"][0]["status"] == "unknown_food", why
+                    # the headline must not send them off to log a food they
+                    # already have — the id was rejected, not the food missing
+                    assert "past_foods" in out["message"], (why, out)
+                    assert "log them once first" not in out["message"], (why, out)
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(probe, "Couldn't do that."))
             resp = await logs_routes.create_log(_log(f"save {name}", agent=True))
@@ -771,6 +786,43 @@ def test_a_food_this_account_never_logged_cannot_join_a_meal_by_id(monkeypatch):
             assert await _scalar(
                 conn, "SELECT count(*) FROM meal_macros WHERE name = %s", (name,)
             ) == 0
+
+    _run(scenario())
+
+
+def test_an_id_without_a_serving_takes_the_default_and_duplicates_merge(monkeypatch):
+    """A food_id is what they pointed at: a missing serving_id falls back to
+    that food's own default, never to a name search that could land somewhere
+    else. And the same row named twice is one item, not two."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            tag = uuid4().hex[:6]
+            milk = await insert_named_food(conn, f"milk {tag}", [MILK_CUP], brand="fairlife")
+            # what the cascade would find by name if the id were dropped
+            decoy = await insert_named_food(conn, f"milk {tag} lite", [HUNDRED_G])
+            await insert_named_alias(conn, norm(f"milk {tag}"), decoy)
+            await _eat(conn, milk, at="2026-09-06T12:00:00+00", serving_id="srv-cup", qty=1.5)
+            name = f"Half shake {tag}"
+
+            async def build(agent):
+                out = await _call(agent, "save_meal", name=name, items=[
+                    {"phrase": f"milk {tag}", "qty": 2, "unit": None,
+                     "food_id": milk, "serving_id": None},
+                    {"phrase": f"milk {tag}", "qty": 1, "unit": None,
+                     "food_id": milk, "serving_id": "srv-cup"},
+                ])
+                assert "error" not in out, out
+
+            monkeypatch.setattr(agent_svc, "Runner", _probe_runner(build, "Saved."))
+            resp = await logs_routes.create_log(_log(f"save {name}", agent=True))
+            assert resp.saved_meal is not None
+            row = await _macro(conn, name)
+            # the id beat the alias, the default serving filled in, and the two
+            # rows collapsed into one
+            assert row["items"] == [{"food_id": milk, "serving_id": "srv-cup", "qty": 3.0}]
+            assert decoy not in [i["food_id"] for i in row["items"]]
 
     _run(scenario())
 

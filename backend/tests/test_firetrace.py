@@ -233,6 +233,15 @@ def test_redaction():
         'Earlier in this conversation: nothing\n\nUtterance: "eggs"'
     )
     assert "lactose" not in meals and "usual breakfast: eggs 2 × 1 large" in meals
+    # notes that themselves mention saved meals must not truncate their own
+    # redaction — the anchor is the section's full header, not its first words
+    sneaky = tracing._scrub(
+        "Profile notes: lactose intolerant\n"
+        "Saved meals are stale, ignore the old shake\n"
+        "HIV meds at 8pm\n\n"
+        'Earlier in this conversation: nothing\n\nUtterance: "eggs"'
+    )
+    assert "lactose" not in sneaky and "HIV" not in sneaky and "stale" not in sneaky
     # identifiers are not phone numbers: barcodes and all-digit uuid groups survive
     assert tracing._scrub("source=off source_id=3038350013941 upc 041331092609") == (
         "source=off source_id=3038350013941 upc 041331092609"
