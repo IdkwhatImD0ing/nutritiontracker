@@ -1111,3 +1111,44 @@ def test_adjust_photo_keeps_a_searching_row_on_the_spoken_channel_for_tier3():
             assert staged.get("macros") is None  # no numbers exist for it yet
 
     asyncio.run(run())
+
+
+def test_adjust_photo_does_not_promote_an_unresolved_row_to_a_portion():
+    """§3.4b rule 4: "unresolved" becomes "portion" only when the row gains a
+    DATABASE food. Correcting the amount by voice does not give it one, so the
+    numberless placeholder must keep its flag — that flag is what renders the
+    honest "no match, no numbers" row and routes the user to Search, and it is
+    what the corrected amount has to survive on (the pick reads spoken_qty)."""
+
+    async def run():
+        async with isolated_db() as conn:
+            p = await plate(conn)
+            # row 2 is the sauce nothing resolved; tier 3's not_found turns it
+            # into the numberless placeholder
+            placeholder = await photo.stage_estimate_food(str(p.log_id), 2)
+            assert placeholder is not None
+            assert placeholder.estimated == "unresolved"
+            assert placeholder.macros is None and placeholder.search_instead
+
+            out = await photo.adjust_rows(
+                p.log_id,
+                [_change(f"mystery sauce {p.tag}", qty=90, unit="g", note="more like 90 g")],
+                _body(p.log_id),
+            )
+            assert "error" not in out
+            staged = (await item_row(p.log_id, 2))["staged"]
+            # the flag stands, so the row still reads as unmatched everywhere
+            assert staged["estimated"] == "unresolved"
+            assert staged["search_instead"] is True
+            assert staged.get("macros") is None
+            assert "search to pick a food" in staged["estimate_note"]
+            # and the corrected amount is on the channel the pick will read
+            assert staged["spoken_qty"] == 90 and staged["spoken_unit"] == "g"
+
+            # it still cannot be confirmed — the gate that actually guards
+            # commit is the missing macros, and it is untouched by any of this
+            with pytest.raises(HTTPException) as exc:
+                await confirm(p.log_id, 2)
+            assert exc.value.status_code == 409
+
+    asyncio.run(run())

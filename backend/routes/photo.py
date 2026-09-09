@@ -636,10 +636,13 @@ async def _apply_amount(item: StagedItem, change: PhotoChange) -> StagedItem:
     rule 1 can run here: the person always states an amount. Macros are
     recomputed from the food's own cached numbers; nothing is invented."""
     servings = [s.model_dump() for s in (item.servings or [])]
-    if item.status != "resolved" or not servings:
-        # nothing to map onto yet — tier 3 is still looking. The amount rides
-        # the spoken channel for whatever it picks, as _stage_estimate does for
-        # its own searching rows.
+    if item.status != "resolved" or item.estimated == "unresolved" or not servings:
+        # Nothing real to map onto. Either tier 3 is still looking, or this is
+        # the numberless placeholder (§3.4b rule 2) whose only "serving" is the
+        # photo's own guess with an empty macros block — sizing against that
+        # would dress a row with no food up as a measured portion. The amount
+        # rides the §7.3 spoken channel instead, which is what the search pick
+        # reads when a database food finally replaces it (rule 4).
         return item.model_copy(update={"qty": float(change.grams or change.qty)})
     default_id = item.serving.id if item.serving else servings[0]["serving_id"]
     serving_id, qty, verify_me = await cascade.resolve_portion(
@@ -739,7 +742,16 @@ async def adjust_rows(
             continue
         item = StagedItem.model_validate(row["staged"])
         updated = await _apply_amount(item, change)
+        # §3.4b rule 4: the flag only ever downgrades, and "unresolved" becomes
+        # "portion" only when the row gains a DATABASE food. Correcting the
+        # amount does not give it one — stamping "portion" here would erase the
+        # one thing that tells the user (and StagedRow) this row still has no
+        # match and no numbers, taking its "search to pick a food" note with it.
+        unresolved = item.estimated == "unresolved"
+        flag = "unresolved" if unresolved else "portion"
         note = f"You said: {change.note.strip() or 'amount corrected'}"
+        if unresolved:
+            note += " — still no database match; search to pick a food and get its numbers"
         payload = updated.model_dump(mode="json", exclude_none=True)
         # §3.4b rule 4: a new amount needs a fresh confirm. KEEP_LOG_KEYS_SQL
         # deliberately does not carry estimate_confirmed, but this payload was
@@ -748,11 +760,12 @@ async def adjust_rows(
         payload.pop("estimate_confirmed", None)
         # The §7.3 spoken channel, the way stage_estimate_food carries it: a
         # full payload rewrite drops these extras and KEEP_LOG_KEYS_SQL does
-        # not carry them, so they are re-applied here. A row tier 3 has yet to
-        # answer gets the CORRECTED amount (that is what tier 3 will size to);
-        # a resolved row keeps what the photo first said, which is still the
-        # record a later search pick reads.
-        if updated.status != "resolved":
+        # not carry them, so they are re-applied here. A row with nothing to
+        # map onto — tier 3 still looking, or the numberless placeholder, the
+        # same two cases _apply_amount returns early for — gets the CORRECTED
+        # amount, because that is what tier 3 or the search pick will size the
+        # food it finds by. A resolved row keeps what the photo first said.
+        if updated.status != "resolved" or unresolved:
             payload["spoken_qty"] = updated.qty
             payload["spoken_unit"] = change.unit or ("g" if change.grams else None)
         else:
@@ -761,13 +774,13 @@ async def adjust_rows(
         await db.execute(
             "UPDATE item_resolutions "
             f"SET staged = %s::jsonb{KEEP_LOG_KEYS_SQL} "
-            "|| jsonb_build_object('estimated', 'portion'::text, 'estimate_note', %s::text), "
+            "|| jsonb_build_object('estimated', %s::text, 'estimate_note', %s::text), "
             # the amount is the person's now, not the resolver's proposal —
             # the same column a portion edit in the sheet sets (§3.5, §9's
             # edit rate). proposed_* stay: they mean "what was first shown".
             "was_edited = TRUE "
             f"WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}",
-            (Json(payload), note, str(log_id), row["item_index"]),
+            (Json(payload), flag, note, str(log_id), row["item_index"]),
         )
         done.append(f"{label} → {updated.qty:g} × {updated.serving.description}"
                     if updated.serving else f"{label} updated")
