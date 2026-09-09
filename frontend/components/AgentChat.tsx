@@ -717,7 +717,12 @@ export default function AgentChat({
           the send, and every failure, belong to the conversation. */}
       <PhotoCapture
         open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
+        onClose={() => {
+          // dismissed without a pick: the lane's one send-on-pick is spent,
+          // or the composer's next camera tap would send instead of attach
+          openedLaneRef.current = false;
+          setPickerOpen(false);
+        }}
         onPicked={(shot) => {
           setPickerOpen(false);
           setNotice(null);

@@ -189,7 +189,15 @@ export default function Today() {
       if (m.kind === "user" && !m.pending && m.text) {
         turns.push({ role: "user", text: m.text });
       } else if (m.kind === "photo") {
-        turns.push({ role: "user", text: "[sent a photo of their plate]" });
+        // the words said WITH the picture are the utterance the agent was
+        // answering — dropped, a follow-up ("what about the sauce?") arrives
+        // with no record of the question it follows
+        turns.push({
+          role: "user",
+          text: m.text
+            ? `[sent a photo of their plate] ${m.text}`
+            : "[sent a photo of their plate]",
+        });
       } else if (m.kind === "agent") {
         turns.push({ role: "agent", text: m.text });
       } else if (m.kind === "result") {

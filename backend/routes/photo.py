@@ -42,7 +42,9 @@ from pydantic import BaseModel
 
 import db
 from auth import is_owner, require_user
-from models import FoodRef, Macros, Meal, ParsedItem, ServingOption, ServingRef, StagedItem
+from models import (
+    FoodRef, Macros, Meal, ParsedItem, ServingOption, ServingRef, StagedItem, WebSource,
+)
 from resolver import cascade, foods_repo
 from resolver.norm import norm
 from resolver.commit import KEEP_LOG_KEYS_SQL
@@ -329,6 +331,9 @@ async def _stage_menu_food(item: StagedItem, v: VisionItem) -> StagedItem:
                 f"Menu: {dish} — numbers from {m.source_url}, "
                 f"per {serving['description']}. Check the amount."
             ),
+            # §3.4a: transcribed numbers owe the reader the page they came
+            # from, as a visible link — the same debt tier 3's web rows pay
+            "web_source": WebSource(url=m.source_url, title=dish),
         }
     )
 
@@ -497,13 +502,15 @@ async def _stage_photo(
             "args": {"mime": sniffed, "bytes": len(image_bytes)},
         })
     t0 = time.monotonic()
+    # §8.9: the hosted search and scraper are billed per action, so the web
+    # lane is the owner's, as tier 3's is. Read once — it gates both the call
+    # and what may be believed about what comes back.
+    web_lane = is_owner()
     try:
         seen = await vision.analyze(  # its span rides in this trace (§10)
             image_bytes, sniffed,
             context=await _photo_context(captured_at, tz),
-            # §8.9: the hosted search and scraper are billed per action,
-            # so the web lane is the owner's, as tier 3's is
-            web=is_owner(),
+            web=web_lane,
         )
     except OpenAIError as e:
         await _drop_empty_log(log_id)
@@ -543,8 +550,13 @@ async def _stage_photo(
     for r, v in zip(resolutions, seen.items):
         r.staged = _flag(r.staged, v)
         # a published dish beats whatever the cascade guessed from its name:
-        # the kitchen's own numbers for its own dish (§3.4a, 2026-09-09)
-        r.staged = await _stage_menu_food(r.staged, v)
+        # the kitchen's own numbers for its own dish (§3.4a, 2026-09-09).
+        # Only when the web lane actually ran: without tools there is no page
+        # to have read, so a `menu` block is a fabrication — and `foods` is
+        # the shared table (§8.9), where a demo account must not be able to
+        # plant a branded row with numbers nobody published.
+        if web_lane:
+            r.staged = await _stage_menu_food(r.staged, v)
     await _persist(
         log_id, resolutions, meal,
         short_circuit=False, decompose_ms=vision_ms, trace_id=trace_id,

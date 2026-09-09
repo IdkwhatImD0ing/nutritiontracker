@@ -1217,3 +1217,49 @@ def test_a_menu_match_stages_a_menu_food_row_with_the_pages_own_numbers():
             assert any(h.food_id == staged.food.id for h in hits), hits
 
     asyncio.run(run())
+
+
+def test_a_menu_match_is_only_believed_when_the_web_lane_actually_ran():
+    """§8.9: `foods` is the SHARED table. Without the web lane there were no
+    tools, so there is no page the model can have read — a `menu` block on
+    that call is a fabrication, and a demo account must not be able to plant
+    a branded row carrying numbers nobody published. Found by review
+    2026-09-09: completeness was checked, provenance was not."""
+
+    async def stage(as_owner: bool):
+        async with isolated_db():
+            tag = uuid4().hex[:8]
+            url = f"https://example-restaurant.test/menu/{tag}"
+            item = VREAL.VisionItem(
+                phrase=f"lamb {tag}", qty=None, unit=None, est_grams=120,
+                confidence="medium", note="sliced lamb",
+                menu=VREAL.MenuMatch(
+                    dish=f"Herb Roasted Leg of Lamb {tag}", source_url=url,
+                    serving="4 oz", kcal=320, protein_g=28, carb_g=2, fat_g=21,
+                ),
+            )
+            install_vision([item])
+            import auth
+
+            token = auth.current_user.set(
+                {"id": "t", "email": "test", "is_owner": as_owner}
+            )
+            try:
+                resp = await post_photo(uuid4())
+            finally:
+                auth.current_user.reset(token)
+            planted = await db.fetchone(
+                "SELECT id FROM foods WHERE source = 'menu' AND source_url = %s", (url,)
+            )
+            return resp.items[0], planted
+
+    staged, planted = asyncio.run(stage(as_owner=False))
+    assert planted is None, "a demo call planted a menu row in the shared cache"
+    assert staged.food is None or staged.macros is None or staged.serving.id != "menu"
+
+    staged, planted = asyncio.run(stage(as_owner=True))
+    assert planted is not None
+    assert staged.serving.id == "menu"
+    # §3.4a: transcribed numbers carry a visible link to the page
+    assert staged.web_source is not None
+    assert staged.web_source.url.startswith("https://example-restaurant.test/menu/")

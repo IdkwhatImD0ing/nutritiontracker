@@ -64,10 +64,17 @@ def display_macros(stored: dict) -> dict:
     return {k: v for k, v in stored.items() if not k.startswith(_BASE_PREFIX)}
 
 
+# The sources whose macros were TRANSCRIBED from a page a model read, and
+# which therefore owe the reader a visible link to it (§3.4a): tier 3's chain
+# lane, and the photo lane's menu match (2026-09-09). FDC and OFF rows are
+# database facts and carry no citation.
+_CITED_SOURCES = frozenset({"web", "menu"})
+
+
 def web_source_of(source: str, source_url: str | None, provenance: dict | None,
                   display_name: str) -> WebSource | None:
-    """The citation block for a web-transcribed food (§3.4a), else None."""
-    if source != "web" or not source_url:
+    """The citation block for a transcribed food (§3.4a), else None."""
+    if source not in _CITED_SOURCES or not source_url:
         return None
     prov = provenance or {}
     title = prov.get("page_title") or next(
