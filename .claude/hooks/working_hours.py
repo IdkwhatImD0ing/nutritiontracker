@@ -2,8 +2,9 @@
 """PreToolUse hook: refuse `git commit` / `git push` during working hours.
 
 Bill's rule (2026-09-03): commit and push only outside working hours, because
-pushing `main` auto-deploys production. Working hours are assumed to be
-Monday-Friday 09:00-18:00 America/Los_Angeles; weekends are open.
+pushing `main` auto-deploys production. Working hours are Monday-Friday
+09:00-17:00 America/Los_Angeles (the end hour was 18:00 until Bill corrected
+it to 17:00 on 2026-09-08); weekends are open.
 
 Reads the hook's JSON on stdin ({tool_name, tool_input: {command}}), prints a
 deny decision when a git commit/push would run inside the window, and prints
@@ -20,7 +21,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Los_Angeles")
-START_HOUR, END_HOUR = 9, 18  # 09:00 inclusive .. 18:00 exclusive
+START_HOUR, END_HOUR = 9, 17  # 09:00 inclusive .. 17:00 exclusive
 GIT_WRITE = re.compile(r"\bgit\b(?:\s+\S+)*?\s+(commit|push)\b")
 
 
@@ -47,7 +48,8 @@ def main() -> int:
     verb = m.group(1)
     reopen = t.replace(hour=END_HOUR, minute=0, second=0, microsecond=0)
     reason = (
-        f"Working-hours rule: no git {verb} Mon-Fri 09:00-18:00 America/Los_Angeles "
+        f"Working-hours rule: no git {verb} Mon-Fri {START_HOUR:02d}:00-{END_HOUR:02d}:00 "
+        f"America/Los_Angeles "
         f"(it is {t.strftime('%a %H:%M')} PT). Pushing main deploys production. "
         f"Deploy a preview and try again after {reopen.strftime('%H:%M')} PT, "
         f"or the owner can say 'push anyway'."
