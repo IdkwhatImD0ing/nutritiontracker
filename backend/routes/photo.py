@@ -29,6 +29,7 @@ logs.input_mode).
 
 from __future__ import annotations
 
+import math
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -271,10 +272,15 @@ async def _stage_menu_food(item: StagedItem, v: VisionItem) -> StagedItem:
     m = v.menu
     if m is None:
         return item
+    from services import vision  # lazy: stubbed in route tests
+
     macros = {"kcal": m.kcal, "protein_g": m.protein_g, "carb_g": m.carb_g, "fat_g": m.fat_g}
     if not (m.dish or "").strip() or not m.source_url.lower().startswith(("http://", "https://")):
         return item
-    if not all(isinstance(x, (int, float)) and x >= 0 for x in macros.values()):
+    # finite and non-negative: pydantic already made these floats, but it
+    # accepts inf/nan, and `Infinity` is not JSON — it would blow up in
+    # persist_food after the vision spend, or store a number nothing can read
+    if not all(math.isfinite(x) and x >= 0 for x in macros.values()):
         return item
 
     dish = m.dish.strip()
@@ -289,7 +295,13 @@ async def _stage_menu_food(item: StagedItem, v: VisionItem) -> StagedItem:
             "source": "menu",
             "source_id": f"{m.source_url}#{norm(dish)}",
             "source_url": m.source_url,
-            "provenance": {"menu": m.model_dump(mode="json"), "model": None, "vision": True},
+            "provenance": {
+                "menu": m.model_dump(mode="json"),
+                # which model read the page: a transcribed number that turns
+                # out wrong has to be traceable to the run that made it
+                "model": vision.MODEL,
+                "vision": True,
+            },
             "name": dish,
             "display_name": dish,
             "brand": None,

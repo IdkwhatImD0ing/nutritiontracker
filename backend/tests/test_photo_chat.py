@@ -27,6 +27,10 @@ from uuid import uuid4
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
+# this directory too: section 5 borrows test_agent's fake Runner
+TESTS = Path(__file__).resolve().parent
+if str(TESTS) not in sys.path:
+    sys.path.insert(0, str(TESTS))
 
 import pytest
 from types import SimpleNamespace
@@ -344,7 +348,6 @@ _PIXEL = "data:image/png;base64,iVBORw0KGgo="
 def test_words_alone_still_reach_the_model_as_a_plain_string():
     """The image path must not change the shape of every other run: no deps
     image, no list — the SDK sees exactly the string it always saw."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from test_agent import _fake_runner  # the fake that drives real closures
 
     runner = _fake_runner([], "Noted.")
@@ -361,7 +364,6 @@ def test_words_alone_still_reach_the_model_as_a_plain_string():
 def test_an_attached_image_rides_beside_the_words_never_instead_of_them():
     """§6.4: the picture is added to the turn, so everything the agent was
     told still reaches it — the same prompt, with the image next to it."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from test_agent import _fake_runner
 
     runner = _fake_runner([], "That looks like the small size.")
@@ -461,3 +463,134 @@ def test_a_chat_image_is_held_to_the_photo_lane_s_own_contract():
         )
     assert exc.value.status_code == 415
     assert exc.value.detail == "not a JPEG, PNG or WebP image"
+
+
+# ---------------------------------------------------------------------------
+# 6. review fixes, 2026-09-09 — the three ways an image turn could go quiet
+# ---------------------------------------------------------------------------
+
+
+def test_an_attached_image_is_never_treated_as_a_memorized_phrase():
+    """§3.0's short-circuit runs before the agent lane, so a photo sent with
+    "my usual breakfast" would have staged the saved meal and dropped the
+    picture — the question unanswered and a plate nobody photographed."""
+    from routes import logs as logs_route
+
+    asked: list[str] = []
+
+    async def short_circuit_all(text, meal):
+        asked.append(text)
+        raise AssertionError("the short circuit must not see an image turn")
+
+    async def agent_lane(body, meal, emit=None, image=None):
+        return image
+
+    async def infer_meal(*_a, **_k):
+        return Meal("lunch")
+
+    body = SimpleNamespace(
+        id=uuid4(), text="my usual breakfast", captured_at=CAPTURED, tz=TZ, agent=True
+    )
+    real = (
+        logs_route.cascade.short_circuit_all,
+        logs_route._run_agent_lane,
+        logs_route.infer_meal,
+    )
+    logs_route.cascade.short_circuit_all = short_circuit_all
+    logs_route._run_agent_lane = agent_lane
+    logs_route.infer_meal = infer_meal
+    try:
+        got = asyncio.run(logs_route._run_pipeline(body, None, "data:image/jpeg;base64,AA=="))
+    finally:
+        (
+            logs_route.cascade.short_circuit_all,
+            logs_route._run_agent_lane,
+            logs_route.infer_meal,
+        ) = real
+
+    assert asked == []  # not consulted at all
+    assert got == "data:image/jpeg;base64,AA=="  # the image reached the agent
+
+    # and without one it is consulted exactly as before
+    async def none(text, meal):
+        asked.append(text)
+        return None
+
+    logs_route.cascade.short_circuit_all = none
+    logs_route._run_agent_lane = agent_lane
+    logs_route.infer_meal = infer_meal
+    try:
+        asyncio.run(logs_route._run_pipeline(body, None, None))
+    finally:
+        (
+            logs_route.cascade.short_circuit_all,
+            logs_route._run_agent_lane,
+            logs_route.infer_meal,
+        ) = real
+    assert asked == ["my usual breakfast"]
+
+
+def test_an_image_turn_claims_a_photo_log_so_its_rows_never_learn():
+    """§3.5: what this turn stages was identified from pixels. Claimed as
+    `text` it would pass commit's `_NO_LEARN_MODES` gate, and a portion the
+    model read off an image would become the next spoken log's default."""
+    from io import BytesIO
+
+    from starlette.datastructures import Headers, UploadFile
+
+    from routes import agent as agent_routes
+
+    seen: dict = {}
+
+    async def claim(body, mode="text"):
+        seen["mode"] = mode
+        seen["text"] = body.text
+        return SimpleNamespace(items=[])  # a replay: stops before the stream
+
+    def stream(_gen):
+        return "streamed"
+
+    real = (agent_routes.claim_text_log, agent_routes._stream, agent_routes._replay)
+    agent_routes.claim_text_log = claim
+    agent_routes._stream = stream
+    agent_routes._replay = lambda *a, **k: None
+    try:
+        asyncio.run(
+            agent_routes._agent_image_turn(
+                UploadFile(
+                    file=BytesIO(b"\xff\xd8\xff\xe0" + b"\0" * 32), filename="p.jpg",
+                    headers=Headers({"content-type": "image/jpeg"}),
+                ),
+                "is this the small size?", uuid4(), CAPTURED, TZ, None, None,
+            )
+        )
+    finally:
+        agent_routes.claim_text_log, agent_routes._stream, agent_routes._replay = real
+
+    assert seen["mode"] == "photo"
+    assert seen["text"] == "is this the small size?"
+
+
+def test_words_sent_with_audio_are_refused_rather_than_dropped():
+    """`text` means "said about a picture". Beside audio the transcript is the
+    utterance, so the field has nowhere to go — and silently ignoring it would
+    hide the caller's mistake behind a turn that looks like it worked."""
+    from io import BytesIO
+
+    from starlette.datastructures import Headers, UploadFile
+
+    from routes import agent as agent_routes
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            agent_routes.agent_voice(
+                log_id=uuid4(), captured_at=CAPTURED, tz=TZ,
+                audio=UploadFile(
+                    file=BytesIO(b"\x1aE\xdf\xa3" + b"\0" * 32), filename="clip.webm",
+                    headers=Headers({"content-type": "audio/webm"}),
+                ),
+                text="and a banana",
+            )
+        )
+    assert exc.value.status_code == 422
+    assert "`text` belongs with `image`" in exc.value.detail

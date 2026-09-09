@@ -48,7 +48,11 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 MODEL = "gpt-6-astra"  # pinned full id — never a bare family alias (§6)
-PROMPT_CACHE_KEY = "tally-vision-v2"  # bumped with the model: a cache key names a prompt prefix
+# A cache key names a prompt PREFIX, so the web lane — whose developer
+# message carries an extra block — gets its own. One key over two prefixes
+# is two variants evicting each other with no error to notice it by.
+PROMPT_CACHE_KEY = "tally-vision-v3"  # bumped with the model or the prompt
+WEB_PROMPT_CACHE_KEY = f"{PROMPT_CACHE_KEY}-web"
 
 # The web lane's two hosted tools (§3.4b, 2026-09-09). Both run on OpenAI's
 # side — web_search is theirs, and the scraper is Firecrawl's own remote MCP
@@ -59,7 +63,8 @@ _FIRECRAWL_MCP = "https://mcp.firecrawl.dev/v2/mcp"
 
 
 def _web_tools() -> list[dict]:
-    """The hosted tools, or none when the account has no Firecrawl key. The
+    """The hosted tools for a web-lane call: OpenAI's own `web_search` always,
+    plus Firecrawl's remote MCP server when a key is configured. The
     MCP surface is narrowed to the two tools this lane can use: the server
     offers two dozen (crawls, monitors, a paper index), and every one of them
     would be schema the model has to read past on the hot path."""
@@ -166,7 +171,8 @@ eggs", "about a cup of white rice", "a brown sauce, not sure which").
 meal_hint — ONLY when the photo itself makes the meal explicit (a breakfast
 tray, a menu card); otherwise null. Never infer it from the food.
 
-menu — null. You have nothing to match against here.
+menu — null, unless a later section says otherwise. Nothing below this
+line gives you anything to match against.
 
 NEVER output calories, protein, carbohydrate, fat or any other nutrition
 number anywhere — not in phrase, not in note. Nutrition comes from a food
@@ -245,6 +251,7 @@ async def analyze(
     what is on the plate. The tool is hosted, so OpenAI runs the searches
     inside this one call and the parsed result comes back as it always did."""
     data_url = f"data:{mime};base64,{base64.b64encode(image).decode('ascii')}"
+    cache_key = WEB_PROMPT_CACHE_KEY if web else PROMPT_CACHE_KEY
     context = (context or "").strip()
     ask = "Identify the foods in this photo and estimate each portion."
     if context:
@@ -252,7 +259,7 @@ async def analyze(
     async with tracing.run(
         "vision", kind="llm", provider="openai", model=MODEL,
         input={"mime": mime, "bytes": len(image)},  # what was sent, never the image
-        attributes={"prompt_cache_key": PROMPT_CACHE_KEY, "web_lane": web},
+        attributes={"prompt_cache_key": cache_key, "web_lane": web},
     ) as span:
         response = await _get_client().responses.parse(
             model=MODEL,
@@ -278,7 +285,7 @@ async def analyze(
             # is what the §3.4a flag asks the user to catch. decompose's
             # effort "none" is for pure text extraction.
             reasoning={"effort": "medium"},
-            prompt_cache_key=PROMPT_CACHE_KEY,
+            prompt_cache_key=cache_key,
         )
         span.set(output=response.output_parsed, usage=response.usage)
     return response.output_parsed

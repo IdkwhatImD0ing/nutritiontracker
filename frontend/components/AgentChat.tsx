@@ -387,6 +387,12 @@ export default function AgentChat({
   // carry a question ("is this the small size?"). Sent alone it is still the
   // §3.4b plate parse — the words are what make it a turn the agent sees.
   const [attached, setAttached] = useState<PhotoShot | null>(null);
+  // True only for the picker this lane opened itself (+ sheet → Take photo).
+  // That pick is the whole gesture — the user asked to log a plate, not to
+  // start a sentence — so it sends, exactly as it did before the composer
+  // learned to attach. Cleared on the first pick, so the camera button beside
+  // the composer attaches even in a lane that opened this way.
+  const openedLaneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const { supported, recording, elapsedMs, start, stop, cancel } =
@@ -426,6 +432,7 @@ export default function AgentChat({
     if (startedRef.current) return;
     if (openWith === "photo") {
       startedRef.current = true;
+      openedLaneRef.current = true; // this pick IS the turn — see onPicked
       setPickerOpen(true);
       return;
     }
@@ -443,11 +450,17 @@ export default function AgentChat({
         setPickerOpen(false);
         return;
       }
+      // then the attachment: closing would destroy a picture that may not be
+      // re-takeable, and the sheet is one more Escape away
+      if (attached) {
+        setAttached(null);
+        return;
+      }
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, pickerOpen]);
+  }, [onClose, pickerOpen, attached]);
 
   // The parent worded the failure (a demo 429: "Demo accounts can log once a
   // day — resets at …") — drop this sheet's own "type it instead" notice so
@@ -708,6 +721,11 @@ export default function AgentChat({
         onPicked={(shot) => {
           setPickerOpen(false);
           setNotice(null);
+          if (openedLaneRef.current) {
+            openedLaneRef.current = false;
+            void onSubmitPhoto(shot, "");
+            return;
+          }
           setAttached(shot);
           requestAnimationFrame(() => inputRef.current?.focus());
         }}

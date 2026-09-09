@@ -2142,10 +2142,18 @@ a {
   border-bottom-right-radius: 4px;
 }
 
-/* the plate with what you said alongside it — one right-hand column */
+/* the plate with what you said alongside it — one right-hand column. The
+   wrap carries the photo bubble's own 62%, because `.bubble-wrap`'s 86% would
+   otherwise apply first and the picture would come out smaller than it did
+   before it had a wrapper. */
 .bubble-wrap.photo-wrap {
   align-self: flex-end;
   align-items: flex-end;
+  max-width: 62%;
+}
+
+.bubble-wrap.photo-wrap .bubble.user.photo-bubble {
+  max-width: 100%;
 }
 
 .bubble.agent {
@@ -2352,10 +2360,12 @@ a {
   color: var(--muted);
 }
 
+/* the same 44px target as the composer's own buttons — this is the only way
+   to take a photo back, and missing it sends one */
 .chat-attached button {
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 50%;
   background: var(--surface-3);

@@ -411,6 +411,11 @@ async def agent_voice(
     turns = _parse_history(history)
     if (audio is None) == (image is None):
         raise HTTPException(422, "send exactly one of `audio` or `image`")
+    # `text` is what was said ABOUT a picture. Beside audio it has no meaning —
+    # the transcript is the utterance — and silently dropping it would hide a
+    # caller's mistake behind a turn that looks like it worked.
+    if audio is not None and (text or "").strip():
+        raise HTTPException(422, "`text` belongs with `image`, not with `audio`")
     if image is not None:
         # A photo with something SAID about it is a conversation turn: the
         # agent sees the image and answers ("is that the small size?", "what
@@ -476,7 +481,9 @@ async def _agent_image_turn(
 
     The upload is validated by the photo lane's own reader, so one contract
     covers both: same types, same 12 MB cap, same refusals, before the stream.
-    The bytes are never stored (§8.8) — they live for this run only."""
+    The bytes are never stored (§8.8) — they live for this run only. The cap is
+    the upload's, not the model's: the app's own client downscales to ≤1600 px
+    before it ever gets here (BACKLOG 183)."""
     from routes import photo as photo_route  # lazy: it imports routes/logs
 
     image_bytes, sniffed = await photo_route.read_image(image)
@@ -489,7 +496,11 @@ async def _agent_image_turn(
         id=log_id, text=said, captured_at=captured_at, tz=tz, agent=True,
         history=turns, photo_log_id=photo_log_id,
     )
-    replay = await claim_text_log(body)
+    # claimed as a PHOTO log, not a text one: whatever this turn stages was
+    # identified from pixels, and §3.5's learning gate reads logs.input_mode.
+    # A portion the model read off an image must not become the next spoken
+    # log's default, and the typed words are a question, not a phrase to learn.
+    replay = await claim_text_log(body, mode="photo")
     if replay is not None:
         return _stream(_replay(log_id, replay, with_text=False))
 

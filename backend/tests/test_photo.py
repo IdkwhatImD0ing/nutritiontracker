@@ -1156,3 +1156,64 @@ def test_adjust_photo_does_not_promote_an_unresolved_row_to_a_portion():
             assert exc.value.status_code == 409
 
     asyncio.run(run())
+
+
+def test_a_menu_match_stages_a_menu_food_row_with_the_pages_own_numbers():
+    """§3.4a as widened 2026-09-09: the ONE path that carries model-sourced
+    macros into the diary. The numbers still land the only way any numbers
+    can — a cached `foods` row — so this pins the row it writes, not just the
+    blocks it refuses (those are in test_photo_chat.py, which needs no DB).
+
+    The row stays `estimated="portion"`: the FOOD is the menu's, the AMOUNT is
+    one published serving and almost certainly not what was on the plate, so
+    it still cannot commit until a human says it is right."""
+
+    async def run():
+        async with isolated_db():
+            tag = uuid4().hex[:8]
+            url = f"https://example-restaurant.test/menu/{tag}"
+            item = StagedItem(
+                item_index=0, phrase=f"lamb {tag}", status="searching",
+                meal=Meal.lunch, confidence="medium",
+            )
+            v = VREAL.VisionItem(
+                phrase=f"lamb {tag}", qty=None, unit=None, est_grams=120,
+                confidence="medium", note="sliced lamb",
+                menu=VREAL.MenuMatch(
+                    dish=f"Herb Roasted Leg of Lamb {tag}", source_url=url,
+                    serving="4 oz", kcal=320, protein_g=28, carb_g=2, fat_g=21,
+                ),
+            )
+            staged = await photo._stage_menu_food(item, v)
+
+            # the row the chat and the sheet will show
+            assert staged.status == "resolved" and staged.search_instead is False
+            assert staged.food.name == f"Herb Roasted Leg of Lamb {tag}"
+            assert staged.serving.id == "menu" and staged.serving.description == "4 oz"
+            assert staged.qty == 1.0
+            # the four core macros and nothing invented around them: a menu
+            # publishes no fibre, so the row says so rather than guessing 0
+            assert staged.macros.model_dump() == {
+                "kcal": 320, "protein_g": 28, "carb_g": 2, "fat_g": 21, "fiber_g": None,
+            }
+            # still flagged: the published serving is not what was on the plate
+            assert staged.estimated == "portion"
+            assert url in staged.estimate_note and "4 oz" in staged.estimate_note
+            assert staged.servings and staged.servings[0].serving_id == "menu"
+
+            # and the cached row it came from, traceable to page and model
+            food = await db.fetchone("SELECT * FROM foods WHERE id = %s", (staged.food.id,))
+            assert food["source"] == "menu"
+            assert food["source_url"] == url
+            assert food["source_id"].startswith(url + "#")
+            assert food["provenance"]["model"] == VREAL.MODEL
+            assert food["provenance"]["menu"]["source_url"] == url
+            assert food["servings"][0]["macros"]["protein_g"] == 28
+            # a `source='menu'` row is a real cached food — unlike the
+            # numberless `source='estimate'` placeholder, search may return it
+            from routes.foods import _local_hits
+
+            hits = await _local_hits(f"Herb Roasted Leg of Lamb {tag}")
+            assert any(h.food_id == staged.food.id for h in hits), hits
+
+    asyncio.run(run())

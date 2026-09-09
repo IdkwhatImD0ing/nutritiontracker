@@ -626,16 +626,22 @@ async def _stored_capture_failure(log_id: UUID) -> CaptureFailureResponse | None
     )
 
 
-async def claim_text_log(body: LogCreate) -> LogResponse | None:
+async def claim_text_log(body: LogCreate, mode: str = "text") -> LogResponse | None:
     """The text lane's §8.6 claim, shared with routes/agent.py: None when
-    this request owns the row and runs the pipeline; else the replay to send."""
+    this request owns the row and runs the pipeline; else the replay to send.
+
+    `mode` is what goes in `logs.input_mode`. The chat's image turn passes
+    `"photo"`: what it staged was identified from pixels, so §3.5's learning
+    gate (`_NO_LEARN_MODES`) has to see it as the photo row it is, or a
+    portion the model read off an image becomes the next spoken log's
+    default."""
     # Idempotent claim by client id (§5, §8.6), the demo's attempt with it: a
     # concurrent double-drain or retry cannot create two logs — and only the
     # request that actually inserted the row (or claimed an orphan, below)
     # runs the pipeline. A refused attempt leaves no row.
     if not await claim_log(
         _INSERT_LOG_SQL,
-        (body.id, "text", body.text, body.captured_at, body.capture_fallback,
+        (body.id, mode, body.text, body.captured_at, body.capture_fallback,
          body.capture_error, None),
     ):
         replay = await _duplicate_post_response(
@@ -669,7 +675,11 @@ async def _run_pipeline(
     # Meal macro first (tier 0, N rows — "my usual breakfast"), then alias
     # (tier 1, one row); None → decompose. The agent lane keeps it: a
     # memorized phrase stages in one round trip whichever sheet it came from.
-    sc = await cascade.short_circuit_all(body.text, meal)
+    # An attached image is never a memorized phrase (§6.4, 2026-09-09): the
+    # words were said ABOUT a picture, so "my usual breakfast" beside a photo
+    # is a question about that photo, not a saved meal. Short-circuiting would
+    # stage from memory and drop the image with nothing said about it.
+    sc = None if image else await cascade.short_circuit_all(body.text, meal)
     if sc is not None:
         await _persist(body.id, sc, meal, short_circuit=True)
         return LogCreateResponse(log_id=body.id, meal=meal, items=[r.staged for r in sc])
