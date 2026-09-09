@@ -473,7 +473,11 @@ async def _agent_photo(
             # the §8.6 claim, the demo quota and the replay all live inside
             # _stage_photo, as they do for POST /api/logs/photo
             response = await photo_route._stage_photo(
-                image_bytes, sniffed, log_id, captured_at, meal_hint, tz, emit
+                image_bytes, sniffed, log_id, captured_at, meal_hint, tz, emit,
+                # this lane's run lives in _RUNS for _RUN_MAX_SECONDS, so the
+                # §8.6 orphan window has to be the same span — at 90 s a retry
+                # elsewhere would re-run vision under a run still thinking
+                grace=_AGENT_RERUN_GRACE_SECONDS,
             )
             trace.set(output=response)
         # _stage_photo builds the reply itself (photo_reply) on every path that

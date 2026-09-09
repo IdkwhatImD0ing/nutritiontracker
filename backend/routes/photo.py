@@ -44,6 +44,7 @@ from models import FoodRef, Macros, Meal, ParsedItem, ServingOption, ServingRef,
 from resolver import cascade, foods_repo
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from routes.logs import (
+    _RERUN_GRACE_SECONDS,
     AgentOutcome,
     Emit,
     LogCreateResponse,
@@ -344,6 +345,7 @@ async def _stage_photo(
     meal_hint: Meal | None,
     tz: str | None,
     emit: Emit | None = None,
+    grace: int = _RERUN_GRACE_SECONDS,
 ) -> LogCreateResponse:
     """The claim, vision, the cascade and staging — the handler's body, inside
     the run's trace, and the chat lane's photo turn (routes/agent.py) verbatim.
@@ -351,7 +353,14 @@ async def _stage_photo(
     `emit` is the chat's wire (§6.4): the read shows up as a `read_photo` tool
     line the moment the bytes leave for the model, and settles with what was
     seen. The image itself never rides it — its type and size, as everywhere
-    else (§8.8). Without `emit` the identical path runs silently."""
+    else (§8.8). Without `emit` the identical path runs silently.
+
+    `grace` is the §8.6 orphan window — how long another request may plausibly
+    still own this id. It is the LANE's worst case, not the route's: a chat
+    photo turn's run lives in routes/agent._RUNS for _AGENT_RERUN_GRACE_SECONDS,
+    so claiming its log as an orphan at 90 s would re-run vision underneath a
+    run that is merely still thinking (a second astra call, and two stagings of
+    one plate). routes/logs.py:94-99 states the invariant the two must satisfy."""
     # §8.6 + the demo quota (routes/logs.claim_log): the claim of the client
     # id answers a stored log — a replay, a foreign id's 404 — before vision,
     # and records the attempt with the row: after the free upload checks,
@@ -365,7 +374,7 @@ async def _stage_photo(
         """,
         (log_id, captured_at),
     ):
-        replay = await _duplicate_post_response(log_id)
+        replay = await _duplicate_post_response(log_id, grace=grace)
         if replay is not None:
             return replay
         # orphaned staged log claimed (earlier attempt died mid-pipeline) →
@@ -438,9 +447,21 @@ async def _stage_photo(
         return AgentOutcome(reply=photo_reply(seen, items)) if emit is not None else None
 
     if not seen.items:
+        # Vision ran and saw nothing. The attempt is real and adherence-relevant
+        # (§5), so the log is DISCARDED, not deleted the way a vision *failure*
+        # drops its row — and it must not be left staged, which is what the old
+        # client's discardLog() call prevented before this lane moved into the
+        # chat. In the chat the reply already says it; `note` would be a second,
+        # identical bubble (agentDone renders it), so only the plain route gets
+        # one.
+        await db.execute(
+            "UPDATE logs SET status = 'discarded' WHERE id = %s AND status = 'staged'",
+            (str(log_id),),
+        )
         return LogCreateResponse(
             log_id=log_id, meal=meal, items=[], agent=outcome([]),
-            note="No food recognized in the photo — try another shot, or log it by voice or text.",
+            note=None if emit is not None
+            else "No food recognized in the photo — try another shot, or log it by voice or text.",
         )
     # the raw vision output per row (eval loop) — an extra key like spoken_qty
     async with db.tx() as conn:
@@ -683,6 +704,12 @@ async def adjust_rows(
     rows = [r for r in rows if isinstance(r["staged"], dict)]
     added: list = []
     done: list[str] = []
+    # Resolve EVERY change to its row before writing any of them. A name that
+    # matches nothing (or two things) is the likeliest failure here — the model
+    # is naming rows from words — and applying the first two of three changes
+    # and then answering with a bare error would leave the plate in a state
+    # nobody asked for, which the model cannot see and would retry over.
+    resolved: list[tuple[int, PhotoChange]] = []
     seen_rows: set[int] = set()
     for change in changes:
         if change.op == "add":
@@ -697,6 +724,9 @@ async def adjust_rows(
                 "message": f"'{change.item}' is changed twice in one call — say the final amount once",
             }
         seen_rows.add(hit)
+        resolved.append((hit, change))
+
+    for hit, change in resolved:
         row = rows[hit]
         label = _row_label(row["staged"])
         if change.op == "remove":

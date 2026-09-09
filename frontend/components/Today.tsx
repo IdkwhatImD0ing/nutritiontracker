@@ -112,6 +112,12 @@ export default function Today() {
   // still opens the staging sheet (agentDone) — it is real and needs review.
   const convoRef = useRef(0);
   const inConvo = (convo: number) => convoRef.current === convo;
+  // The same number as state, purely to key <AgentChat>: a new conversation
+  // must REMOUNT it, or its mount effect (which decides between starting the
+  // mic and opening the picker) has already latched and the lane's intent is
+  // silently dropped — "Take photo" from an open chat would blank the window
+  // and do nothing else. Remounting also clears the composer and any recording.
+  const [convoKey, setConvoKey] = useState(0);
   const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
   // a retry of the same turn (§8.6): its bubble stays — put back if the failed
   // attempt dropped it — and the failure note under it goes; the stream the
@@ -231,10 +237,11 @@ export default function Today() {
   // id (§5 idempotent upsert) instead of minting a fresh one per attempt.
   const audioRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
   // §3.4b photo twin of audioRef: one uuid per shot, keyed by the capture
-  // instant, so re-sending the same JPEG reuses the id instead of minting a
-  // second log for one plate. `lastShotRef` keeps the blob a retry needs.
+  // instant, so the same shot sent twice reuses the id rather than minting a
+  // second log for one plate. Note there is no Retry affordance yet — every
+  // pick stamps a fresh capturedAt, so a re-picked photo after a failed send
+  // IS a new plate to this (BACKLOG 176).
   const photoRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
-  const lastShotRef = useRef<PhotoShot | null>(null);
   // §8.1d/§13: a failed voice capture is reported on the NEXT text log as
   // capture_fallback + capture_error — the §9 voice-viability counter.
   const voiceFailRef = useRef<string | null>(null);
@@ -305,6 +312,7 @@ export default function Today() {
     // stamped on a later conversation's first typed log (§13).
     if (target === "agent") {
       convoRef.current += 1;
+      setConvoKey(convoRef.current);
       setChat([]);
       pendingRef.current = null;
       audioRef.current = null;
@@ -742,7 +750,6 @@ export default function Today() {
     const attempt =
       retry ?? { id: crypto.randomUUID(), capturedAt: shot.capturedAt, userId: crypto.randomUUID() };
     photoRef.current = attempt;
-    lastShotRef.current = shot;
     const history = chatHistory(justDiscarded);
     closeQuestions();
     const userId = attempt.userId;
@@ -878,6 +885,17 @@ export default function Today() {
   const closeStaging = (snap: StagingSnapshot) => {
     const current = staging;
     if (!current) return;
+    // §3.4b: closing the sheet over the plate this conversation is still
+    // tuning means "back to the chat", not "throw the plate away". A photo
+    // turn never auto-opens the sheet for exactly this reason; Review is the
+    // only way in, and arming the discard here would delete the log the very
+    // next utterance is about to correct (and silently drop the conversation
+    // off the photo tier, since photo_log_id is derived from that card).
+    // Every other lane keeps the §5 discard-on-close it has always had.
+    if (photoLogId() === current.log.log_id) {
+      setStaging(null);
+      return;
+    }
     flushDiscard(); // at most one undoable discard at a time
     setStaging(null);
     const entry = { log: current.log, snap };
@@ -968,6 +986,7 @@ export default function Today() {
 
       {lane === "agent" ? (
         <AgentChat
+          key={convoKey}
           messages={chat}
           busy={captureBusy}
           error={captureError}

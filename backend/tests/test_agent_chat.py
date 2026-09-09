@@ -1101,3 +1101,122 @@ def test_a_photo_conversation_carries_its_plate_into_the_next_turn(monkeypatch):
             assert updated["items"][0]["estimated"] == "portion"
 
     _run(scenario())
+
+
+def test_a_photo_with_no_food_says_so_once_and_leaves_no_staged_log(monkeypatch):
+    """Vision ran and saw nothing. The chat must say so ONCE — `note` would be
+    a second, identical bubble, since agentDone renders it alongside the reply
+    — and the itemless log must not be left staged: the old client discarded it
+    from PhotoCapture, and that call went away when the lane moved in here."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "photo-owner", is_owner=True)
+
+            import services.vision as vision_mod
+
+            async def fake_analyze(image, mime):
+                return vision_mod.VisionResult(items=[], meal_hint=None)
+
+            monkeypatch.setattr(vision_mod, "analyze", fake_analyze)
+
+            class _NoModel:
+                def run_streamed(self, *a, **k):
+                    raise AssertionError("no model on the photo turn")
+
+            monkeypatch.setattr(agent_svc, "Runner", _NoModel())
+
+            log_id = uuid4()
+            events = await _drain(
+                await agent_routes.agent_voice(
+                    image=_image(), log_id=log_id, captured_at=NOW, tz=TZ
+                )
+            )
+            assert [e["type"] for e in events] == [
+                "tool_call", "tool_result", "reply", "done",
+            ]
+            assert events[1]["output"]["seen"] == []
+            assert "couldn't find any food" in events[2]["text"]
+            done = events[3]["log"]
+            assert done["items"] == []
+            # exactly one sentence reaches the chat: the reply, not reply + note
+            assert done["note"] is None
+            assert done["agent"]["reply"] == events[2]["text"]
+            # §5: the attempt is real and stays as telemetry, but not as a log
+            # the user has to go and dismiss
+            assert await _scalar(
+                conn, "SELECT status FROM logs WHERE id = %s", (log_id,)
+            ) == "discarded"
+
+    _run(scenario())
+
+
+def test_adjust_photo_writes_nothing_when_one_change_names_no_row(monkeypatch):
+    """A name that matches nothing is the likeliest failure — the model is
+    naming rows from words. Applying the changes before it and then answering
+    with a bare error would leave the plate in a state nobody asked for, and
+    the model would retry over the top of it."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "photo-owner", is_owner=True)
+            await insert_alias(conn, await insert_food(conn))
+
+            import services.vision as vision_mod
+
+            async def fake_analyze(image, mime):
+                return vision_mod.VisionResult(
+                    items=[
+                        vision_mod.VisionItem(
+                            phrase="two eggs", qty=2, unit="egg", est_grams=100,
+                            confidence="high", note="two fried eggs",
+                        )
+                    ],
+                    meal_hint=None,
+                )
+
+            monkeypatch.setattr(vision_mod, "analyze", fake_analyze)
+
+            class _NoModel:
+                def run_streamed(self, *a, **k):
+                    raise AssertionError("no model on the photo turn")
+
+            monkeypatch.setattr(agent_svc, "Runner", _NoModel())
+            plate_id = uuid4()
+            await _drain(
+                await agent_routes.agent_voice(
+                    image=_image(), log_id=plate_id, captured_at=NOW, tz=TZ
+                )
+            )
+            before = await _scalar(
+                conn,
+                "SELECT staged->>'qty' FROM item_resolutions WHERE log_id = %s AND item_index = 0",
+                (plate_id,),
+            )
+
+            from models import LogCreate as _LogCreate
+            from routes import photo as photo_route
+            from services.agent import PhotoChange
+
+            body = _LogCreate(
+                id=uuid4(), text="", captured_at=NOW, tz=TZ, photo_log_id=plate_id
+            )
+            out = await photo_route.adjust_rows(
+                plate_id,
+                [
+                    PhotoChange(op="amount", item="two eggs", qty=3, unit=None,
+                                grams=150, note="three"),
+                    PhotoChange(op="remove", item="bacon", qty=None, unit=None,
+                                grams=None, note="not there"),
+                ],
+                body,
+            )
+            assert out["error"] == "unknown_item"
+            # the valid change ahead of it must NOT have landed
+            assert await _scalar(
+                conn,
+                "SELECT staged->>'qty' FROM item_resolutions WHERE log_id = %s AND item_index = 0",
+                (plate_id,),
+            ) == before
+
+    _run(scenario())
