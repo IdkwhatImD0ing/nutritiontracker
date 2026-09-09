@@ -221,6 +221,22 @@ def test_wire_events_translate_function_calls_outputs_and_web_search():
     )
     (only,) = agent_svc.wire_events(ev("tool_output", big), names)
     assert only["output"]["truncated"] is True and len(only["output"]["summary"]) < 5_000
+    # …but the tool's own short scalars ride along: the chat line is written
+    # from them (past_foods' count), and losing `error` made a truncated
+    # failure read as success
+    fat = ToolCallOutputItem(
+        raw_item={"type": "function_call_output", "call_id": "call_10", "output": "x"},
+        output=json.dumps({
+            "count": 200, "error": "unavailable", "note": "z" * 500,
+            "foods": [{"food": "y" * 100} for _ in range(60)],
+        }),
+        agent=agent,
+    )
+    (only,) = agent_svc.wire_events(ev("tool_output", fat), names)
+    assert only["output"]["truncated"] is True
+    assert only["output"]["count"] == 200 and only["output"]["error"] == "unavailable"
+    assert "foods" not in only["output"]  # the bulk went into the summary
+    assert "note" not in only["output"]  # and so did an over-long scalar
 
 
 def test_a_clarifying_question_rides_the_reply_and_discard_replaces_a_staged_log(monkeypatch):

@@ -176,6 +176,17 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       doing = `Logging weight: ${str(a.weight)} ${str(a.unit)}`;
       ok = "Saved";
       break;
+    case "past_foods": {
+      // §6.4's one read — no effect to report, so the line names what it looked at.
+      // `count` comes off the tool itself: past ~16 rows _parse_output replaces
+      // the payload with {summary, truncated} and the array is gone.
+      const n = out ? (typeof out.count === "number" ? out.count : count(out.foods)) : null;
+      doing = a.query
+        ? `Checking what you've logged: “${str(a.query)}”`
+        : "Checking what you've logged before";
+      ok = n === 0 ? "Nothing logged like that" : `Found ${n ?? "?"} food${n === 1 ? "" : "s"}`;
+      break;
+    }
     case "save_meal": {
       // §8.4 through the agent: saved now (a committed log, or foods in
       // words), or stamped on a staged log and saved when it commits

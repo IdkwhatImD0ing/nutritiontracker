@@ -9,6 +9,10 @@
   python apply.py 003            -> 003_weights.sql (the weigh-in log; needs 002, no-op if applied)
   python apply.py 003 --dry-run  -> apply 003 + verify inside one transaction, then ROLL BACK
   python apply.py 003 --check    -> re-run 003's verification against the committed schema
+  python apply.py 004            -> 004_entries_food_idx.sql (past_foods' index; needs 002,
+                                    no-op if applied)
+  python apply.py 004 --dry-run  -> apply 004 + verify inside one transaction, then ROLL BACK
+  python apply.py 004 --check    -> re-run 004's verification against the committed schema
 
 Every migration runs in ONE transaction. 002 is verified before COMMIT (row
 counts unchanged, every existing row backfilled to the owner, RLS filters
@@ -18,6 +22,8 @@ insert with no tenant fails); a failed check rolls back. Guards:
   002 - the 7 tables must be present and logs.user_id absent; present -> no-op, exit 0
   002 --check - logs.user_id must be present
   003 - logs.user_id must be present (002 applied) and `weights` absent; present -> no-op, exit 0
+  004 - logs.user_id must be present (002 applied); the index is CREATE INDEX IF NOT EXISTS,
+        so re-applying is a no-op either way
 
 Never prints secret values (the owner's user id is an identifier, not a secret).
 """
@@ -33,6 +39,7 @@ ENV_FILE = REPO_ROOT / ".env"
 SQL_FILE = MIGRATIONS_DIR / "001_init.sql"
 SQL_FILE_002 = MIGRATIONS_DIR / "002_multiuser.sql"
 SQL_FILE_003 = MIGRATIONS_DIR / "003_weights.sql"
+SQL_FILE_004 = MIGRATIONS_DIR / "004_entries_food_idx.sql"
 
 EXPECTED_TABLES = {
     "foods",
@@ -328,17 +335,74 @@ def check_003(conn) -> None:
     print("CHECK OK: 003 invariants hold.")
 
 
+# ---------------------------------------------------------------------------
+# 004 — past_foods' index (agent read tool, 2026-09-08)
+# ---------------------------------------------------------------------------
+
+
+def has_004(cur) -> bool:
+    cur.execute(
+        "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' "
+        "AND indexname = 'entries_user_food_logged_idx'"
+    )
+    return cur.fetchone() is not None
+
+
+def verify_004(cur) -> None:
+    """004's one invariant: the index exists on `entries` over the columns
+    past_foods' DISTINCT ON walks. Nothing else changed — no table, no policy,
+    no row."""
+    assert has_004(cur), "entries_user_food_logged_idx missing"
+    cur.execute(
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'entries_user_food_logged_idx'"
+    )
+    indexdef = cur.fetchone()[0]
+    for column in ("user_id", "food_id", "logged_at"):
+        assert column in indexdef, f"{column} missing from the index: {indexdef}"
+
+
+def apply_004(conn, dry_run: bool) -> None:
+    sql = SQL_FILE_004.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        if not has_002(cur):
+            sys.exit("ERROR: refusing to apply 004 - 002 (logs.user_id) is not applied. No changes made.")
+        already = has_004(cur)
+        cur.execute(sql)
+        verify_004(cur)
+    if dry_run:
+        conn.rollback()
+        print("DRY RUN: 004_entries_food_idx.sql applied and verified, then ROLLED BACK.")
+        return
+    conn.commit()
+    print(
+        "Applied 004_entries_food_idx.sql: entries_user_food_logged_idx "
+        + ("already present, nothing to do." if already else "created.")
+    )
+
+
+def check_004(conn) -> None:
+    """`--check`: 004's own verification against the committed schema, rolled back."""
+    with conn.cursor() as cur:
+        if not has_004(cur):
+            sys.exit("ERROR: 004 is not applied (entries_user_food_logged_idx absent) - nothing to check.")
+        verify_004(cur)
+    conn.rollback()
+    print("CHECK OK: 004 invariants hold.")
+
+
 def main(argv: list[str]) -> None:
     dry_run = "--dry-run" in argv
     check = "--check" in argv
     args = [a for a in argv if a not in ("--dry-run", "--check")]
     which = args[0] if args else "001"
-    if which not in ("001", "002", "003") or (which == "001" and (dry_run or check)) or (dry_run and check):
+    if which not in ("001", "002", "003", "004") or (which == "001" and (dry_run or check)) or (dry_run and check):
         sys.exit(__doc__)
     dsn = read_database_url(ENV_FILE)
     with psycopg.connect(dsn) as conn:
         if which == "001":
             apply_001(conn)
+        elif which == "004":
+            check_004(conn) if check else apply_004(conn, dry_run)
         elif which == "003":
             check_003(conn) if check else apply_003(conn, dry_run)
         elif check:

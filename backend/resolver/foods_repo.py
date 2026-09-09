@@ -14,6 +14,9 @@ owner only. A demo's rows carry the adapter's own names.
 
 from __future__ import annotations
 
+from datetime import timezone
+from zoneinfo import ZoneInfo
+
 from psycopg.types.json import Json
 
 import auth
@@ -92,3 +95,84 @@ async def recent_foods(limit: int = RECENT_FOODS_CAP) -> list[dict]:
     """(id, source, source_id, display_name, brand) per food, newest commit
     first, at most RECENT_FOODS_CAP rows."""
     return await db.fetchall(_RECENT_FOODS_SQL, (max(1, min(int(limit), RECENT_FOODS_CAP)),))
+
+
+# The same rows recent_foods() lists, carrying the AMOUNT each food was last
+# logged at — what the agent's past_foods tool reads (§6.4). recent_foods()
+# groups the amount away and its two callers want it that way, so this is a
+# second statement rather than a parameter on the first.
+#
+# The name-search rule is defined once, here, and imported by
+# routes/foods._local_hits: that one searches the shared cache, this one only
+# what THIS account has eaten (RLS on `entries`), and the two must not drift.
+SIM_FLOOR = 0.15  # typo net; substring matches pass regardless via ILIKE
+
+
+def like_pattern(q: str) -> str:
+    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+# DISTINCT ON (food_id) → one row per food, the most recent amount: the
+# question is "what did I have", not "what do I usually have" (the mode lives
+# in cascade._portion_mode and answers a different one). Ordering is on
+# logged_at, not created_at as recent_foods uses — the person speaks in diary
+# days ("my previous day's"), so a back-dated log belongs where they put it.
+# similarity(x, NULL) is NULL for every row, so one statement serves both
+# modes: NULLS LAST collapses to pure recency when there is no query.
+# `entries_user_food_logged_idx` (004) is what keeps the DISTINCT ON from
+# sorting the account's whole history on every call.
+_PAST_FOODS_SQL = """
+SELECT e.food_id::text AS food_id, f.display_name, f.brand,
+       e.serving_id, e.qty, e.grams, e.meal, e.logged_at,
+       (SELECT s->>'description' FROM jsonb_array_elements(f.servings) s
+         WHERE s->>'serving_id' = e.serving_id LIMIT 1) AS serving,
+       similarity(f.display_name || ' ' || coalesce(f.brand, ''), %(q)s::text) AS sim
+FROM (
+  SELECT DISTINCT ON (food_id)
+         food_id, serving_id, qty, grams, meal, logged_at, created_at
+  FROM entries
+  ORDER BY food_id, logged_at DESC, created_at DESC
+) e
+JOIN foods f ON f.id = e.food_id
+WHERE f.source <> 'estimate'
+  AND (%(q)s::text IS NULL
+       OR (f.display_name || ' ' || coalesce(f.brand, '')) ILIKE %(like)s
+       OR similarity(f.display_name || ' ' || coalesce(f.brand, ''), %(q)s::text)
+          > %(floor)s)
+ORDER BY sim DESC NULLS LAST, e.logged_at DESC, e.created_at DESC
+LIMIT %(limit)s
+"""
+
+
+async def past_foods(
+    query: str | None = None, limit: int = RECENT_FOODS_CAP, tz: str = "UTC"
+) -> list[dict]:
+    """One row per food this account has logged — (food_id, display_name,
+    brand, serving_id, qty, grams, meal, day, serving) — carrying the amount
+    it was last logged at. `query` searches the whole history by name; None
+    lists the most recent. Never macros: the agent may read amounts, never
+    numbers (§6.4). `serving` is None when the stored serving_id has since
+    left the food's servings array.
+
+    `day` is derived here rather than by `AT TIME ZONE`: `tz` is an
+    unvalidated client string, and Postgres resolves zone names from its own
+    catalog, so a name ZoneInfo knows and the server does not would raise
+    inside the tool instead of falling back."""
+    q = (query or "").strip() or None
+    rows = await db.fetchall(
+        _PAST_FOODS_SQL,
+        {
+            "q": q,
+            "like": like_pattern(q) if q else None,
+            "floor": SIM_FLOOR,
+            "limit": max(1, min(int(limit), RECENT_FOODS_CAP)),
+        },
+    )
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:
+        zone = timezone.utc
+    for r in rows:
+        r["day"] = r.pop("logged_at").astimezone(zone).date()
+    return rows

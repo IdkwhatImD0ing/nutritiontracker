@@ -34,7 +34,10 @@ router = APIRouter(dependencies=[Depends(require_user)])
 
 _LOCAL_LIMIT = 10
 _REMOTE_LIMIT = 10
-_SIM_FLOOR = 0.15  # typo net; substring matches pass regardless via ILIKE
+# the name-search rule lives in foods_repo, which searches the same columns
+# over this account's own entries (§6.4 past_foods) — one definition, so the
+# two cannot drift
+_SIM_FLOOR = foods_repo.SIM_FLOOR
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +84,7 @@ class SelectResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _like_pattern(q: str) -> str:
-    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
+_like_pattern = foods_repo.like_pattern
 
 
 async def _local_hits(q: str) -> list[FoodHit]:

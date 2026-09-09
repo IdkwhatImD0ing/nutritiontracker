@@ -701,8 +701,8 @@ export interface components {
         /**
          * AgentToolCallEvent
          * @description The agent called a tool: `name` (log_food, log_estimate, log_weight,
-         *     discard_log, save_meal, update_meal, web_search) with `args` as the
-         *     model passed them.
+         *     discard_log, past_foods, save_meal, update_meal, web_search) with `args`
+         *     as the model passed them.
          */
         AgentToolCallEvent: {
             /**
