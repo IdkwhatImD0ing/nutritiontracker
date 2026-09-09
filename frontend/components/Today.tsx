@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   discardLog,
   getDiary,
+  getLog,
   patchTimings,
   quotaRefusal,
   streamAgent,
@@ -894,6 +895,17 @@ export default function Today() {
     // Every other lane keeps the §5 discard-on-close it has always had.
     if (photoLogId() === current.log.log_id) {
       setStaging(null);
+      // The sheet writes to the server as you use it — a removed row, a
+      // confirm, a search pick, a tier-3 result — so the card cannot keep the
+      // rows it was opened with. It is not a cosmetic copy: chatHistory()
+      // sends those rows to the agent as what is on the plate, and a later
+      // commit built from them is refused for the ones already removed. Re-read
+      // the log so the card, what the agent is told, and what commit will
+      // accept are the same list. Local portion edits that were never sent are
+      // deliberately not preserved: the agent is about to rewrite these rows.
+      getLog(current.log.log_id).then(patchResult).catch(() => {
+        /* the card keeps what it had; the next turn's outcome corrects it */
+      });
       return;
     }
     flushDiscard(); // at most one undoable discard at a time
