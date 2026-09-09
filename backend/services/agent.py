@@ -134,7 +134,11 @@ Tools:
   person said which meal or when ("for breakfast", "yesterday at lunch",
   "this morning", "last night"), pass the meal word as `meal_hint` and the
   time phrase as `when_hint`, exactly as said — the same words log_food keeps
-  verbatim — so the rows land on the right day and meal. Call it AT MOST
+  verbatim — AND resolve those time words yourself against the "Now" line
+  above into `when_day_offset` (whole days back: 0 today, -1 yesterday, -2 two
+  days ago, a weekday name the most recent past one) plus `when_meal` when the
+  words imply a meal ("last night" -> snack). Nothing downstream parses the
+  phrase, so the day comes from your number: omit it and the rows land today. Call it AT MOST
   ONCE, with all such items in one call. Never for a packaged product, a
   chain menu item or a plain whole food — those go to log_food.
 - web_search: research a product you need to understand before logging it —
@@ -234,6 +238,20 @@ How to decide:
   after the answer, ask it then. Do not ask about what the databases resolve on their own
   (variants of a labeled product — log_food handles those), and never ask what
   the person already said, or answered in an earlier turn.
+- ASK WHICH MEAL when they put food on an EARLIER day and name no meal
+  ("yesterday I had two of those yogurts"). Nothing downstream can work it
+  out: with no meal word the row takes the meal of whatever clock window YOU
+  are in right now, which says nothing about the day they meant — said after
+  midnight about yesterday, it lands as a snack. Same shape as any other ask:
+  no tool, the question in `reply`, and `options` ["Breakfast", "Lunch",
+  "Dinner", "Snack"]. TODAY needs no question — the clock is a fair guess for
+  food eaten a few hours ago — and neither does a day whose own words carry
+  the meal ("yesterday morning", "last night").
+- ASK WHICH DAY when a weekday could mean either of two ("last Monday" spoken
+  on a Wednesday: two days ago, or nine?). Offer the two dates as options.
+  "Yesterday", "this morning", "last night", "two days ago" are not ambiguous
+  — resolve those yourself and do not ask. If BOTH the day and the meal are
+  open, ask the day this turn and the meal next; one question per turn.
 - When the utterance answers your last question (the conversation shows it),
   proceed with what it settles; do not ask again.
 - An utterance can hold several of these (call each tool it needs, each at
@@ -308,10 +326,12 @@ class AgentDeps:
 
     # the food part of the utterance → a summary of what was staged (no macros)
     stage_food: Callable[[str], Awaitable[dict]]
-    # (component items, basis, meal_hint, when_hint) → a summary of the
-    # flagged rows staged (no macros)
+    # (component items, basis, meal_hint, when_hint, when_day_offset,
+    # when_meal) → a summary of the flagged rows staged (no macros)
     stage_estimate: Callable[
-        [list[EstimateItem], str, MealName | None, str | None], Awaitable[dict]
+        [list[EstimateItem], str, MealName | None, str | None, int | None,
+         MealName | None],
+        Awaitable[dict],
     ]
     # (weight as spoken, unit, local day) → the stored entry + the change since
     # the previous one; raises ValueError when the value is out of range
@@ -396,14 +416,21 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         basis: str,
         meal_hint: MealName | None = None,
         when_hint: str | None = None,
+        when_day_offset: int | None = None,
+        when_meal: MealName | None = None,
     ) -> str:
         """Stage the component foods of something with NO nutrition label,
         each with the amount you estimate (a count of pieces with its total
         `grams`, or a weight/measure). Every row is flagged as an
         estimate for the user to confirm. `basis`: one sentence on how you
         sized it. `meal_hint` / `when_hint`: the meal word and the time phrase
-        the user said, verbatim, when they said one. At most once per
-        utterance."""
+        the user said, verbatim, when they said one. `when_day_offset`: those
+        time words resolved against the "Now" line above, in whole days back —
+        0 today, -1 yesterday, -2 two days ago, a weekday name the most recent
+        past one; never positive, null only if no time was mentioned.
+        `when_meal`: the meal the TIME words imply ("last night" -> snack,
+        "yesterday morning" -> breakfast), null when they imply none. At most
+        once per utterance."""
         if state["estimate_calls"] >= 1:
             return json.dumps({
                 "error": "already_called",
@@ -431,7 +458,8 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         state["estimate_calls"] += 1
         try:
             out = await deps.stage_estimate(
-                items, basis.strip(), meal_hint, (when_hint or "").strip() or None
+                items, basis.strip(), meal_hint,
+                (when_hint or "").strip() or None, when_day_offset, when_meal,
             )
         except Exception:
             state["estimate_calls"] -= 1

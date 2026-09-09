@@ -52,11 +52,11 @@ from psycopg.types.json import Json
 _decompose: dict = {"fn": None}
 
 
-async def _decompose_dispatch(text, ctx):
+async def _decompose_dispatch(text, ctx, **kw):
     fn = _decompose["fn"]
     if fn is None:
         raise AssertionError("decompose must not be called by this test")
-    return await fn(text, ctx)
+    return await fn(text, ctx, **kw)
 
 
 def _build_stubs() -> dict:
@@ -123,7 +123,7 @@ from routes.commit import CommitItemRequest, CommitRequestIn  # noqa: E402
 from routes.commit import commit_item as commit_item_route  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
 from routes.diary import local_date  # noqa: E402
-from routes.logs import interpret_when_hint  # noqa: E402
+from routes.logs import when_shift  # noqa: E402
 from routes.resolve import Answer, AnswerRequest  # noqa: E402
 
 NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
@@ -266,8 +266,11 @@ def parsed(phrase, kind="food", meal_ref=None):
     )
 
 
-def parsed_log(items, *, when_hint=None, save_intent=None):
-    return ParsedLog(items=items, meal_hint=None, when_hint=when_hint, save_intent=save_intent)
+def parsed_log(items, *, when_hint=None, save_intent=None,
+               when_day_offset=None, when_meal=None):
+    return ParsedLog(items=items, meal_hint=None, when_hint=when_hint,
+                     when_day_offset=when_day_offset, when_meal=when_meal,
+                     save_intent=save_intent)
 
 
 def log_body(text, log_id=None):
@@ -417,14 +420,15 @@ def test_when_hint_keeps_captured_at_and_lands_every_entry_on_the_shifted_day():
             await insert_alias(conn, f"eggs {tag}", eggs)
             await insert_alias(conn, f"coffee {tag}", coffee)
 
-            async def fake_decompose(text, ctx):
-                return parsed_log([parsed(f"eggs {tag}")], when_hint="yesterday lunch")
+            async def fake_decompose(text, ctx, **kw):
+                return parsed_log([parsed(f"eggs {tag}")], when_hint="yesterday at lunch",
+                                  when_day_offset=-1, when_meal=Meal.lunch)
 
             _decompose["fn"] = fake_decompose
             body = log_body(f"yesterday at lunch i had eggs {tag}")
             resp = await logs_routes.create_log(body)
             assert resp.meal == Meal.lunch and len(resp.items) == 1
-            expected = interpret_when_hint("yesterday lunch", body.captured_at, body.tz).logged_at
+            expected = when_shift(-1, Meal.lunch, None, body.captured_at, body.tz).logged_at
             assert expected < body.captured_at
 
             log = await db.fetchone(
@@ -510,13 +514,14 @@ def test_commit_retry_and_late_item_still_bill_the_shifted_day():
             await insert_alias(conn, f"eggs {tag}", eggs)
             await insert_alias(conn, f"coffee {tag}", coffee)
 
-            async def fake_decompose(text, ctx):
-                return parsed_log([parsed(f"eggs {tag}")], when_hint="yesterday lunch")
+            async def fake_decompose(text, ctx, **kw):
+                return parsed_log([parsed(f"eggs {tag}")], when_hint="yesterday at lunch",
+                                  when_day_offset=-1, when_meal=Meal.lunch)
 
             _decompose["fn"] = fake_decompose
             body = log_body(f"yesterday at lunch i had eggs {tag}")
             resp = await logs_routes.create_log(body)
-            expected = interpret_when_hint("yesterday lunch", body.captured_at, body.tz).logged_at
+            expected = when_shift(-1, Meal.lunch, None, body.captured_at, body.tz).logged_at
             shift_day = await local_date(expected)
             assert shift_day != await local_date(body.captured_at)  # the shift crosses days
 
@@ -573,7 +578,7 @@ def test_itemless_save_intent_saves_the_last_committed_log():
             items = [rows[0].staged.model_copy(update={"qty": 3.0}), rows[1].staged]
             await commit_route(log_id, CommitRequest(items=items))
 
-            async def fake_decompose(text, ctx):
+            async def fake_decompose(text, ctx, **kw):
                 return parsed_log([], save_intent=SaveIntent(name=f"Usual Lunch {tag}"))
 
             _decompose["fn"] = fake_decompose

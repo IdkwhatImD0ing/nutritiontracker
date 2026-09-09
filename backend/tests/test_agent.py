@@ -87,8 +87,10 @@ def _deps(**over) -> agent_svc.AgentDeps:
         calls["food"].append(text)
         return {"meal": "breakfast", "items": [{"phrase": "eggs", "status": "searching"}]}
 
-    async def stage_estimate(items, basis: str, meal_hint=None, when_hint=None) -> dict:
-        calls["estimate"].append(([it.model_dump() for it in items], basis, meal_hint, when_hint))
+    async def stage_estimate(items, basis: str, meal_hint=None, when_hint=None,
+                             when_day_offset=None, when_meal=None) -> dict:
+        calls["estimate"].append(([it.model_dump() for it in items], basis, meal_hint,
+                                  when_hint, when_day_offset, when_meal))
         return {"meal": meal_hint or "lunch", "basis": basis,
                 "items": [{"phrase": it.phrase, "status": "searching"} for it in items]}
 
@@ -425,7 +427,7 @@ def _parsed(*phrases: tuple[str, float | None]) -> ParsedLog:
                        brand=None, library_match=None, meal_ref=None)
             for p, q in phrases
         ],
-        meal_hint=None, when_hint=None, save_intent=None,
+        meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
     )
 
 
@@ -438,7 +440,7 @@ def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
         async with isolated_db() as conn:
             seen: list[str] = []
 
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 seen.append(text)
                 return _parsed(("eggs", 2))
 
@@ -528,7 +530,7 @@ def test_plain_log_never_builds_the_agent(monkeypatch):
         async with isolated_db() as conn:
             seen: list[str] = []
 
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 seen.append(text)
                 return _parsed(("eggs", 2))
 

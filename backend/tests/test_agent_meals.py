@@ -390,7 +390,7 @@ def test_save_in_the_same_turn_stamps_the_staged_rows_and_commit_builds_the_macr
             egg = await insert_food(conn)
             await insert_alias(conn, egg)  # "two eggs" → tier 1, resolved
 
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("two eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)

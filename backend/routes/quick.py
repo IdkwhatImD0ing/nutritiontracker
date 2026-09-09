@@ -36,6 +36,7 @@ import db
 from auth import require_user
 from models import FoodRef, LogResponse, Macros, Meal, ServingOption, ServingRef, StagedItem
 from resolver import cascade, foods_repo
+from resolver.commit import with_loggable_servings
 from routes import logs as logs_routes
 from routes.diary import web_source_of
 from routes.photo import ESTIMATE_PICK_REFUSAL
@@ -97,7 +98,10 @@ _FOOD_COLS = (
 
 
 async def _load_food(food_id) -> dict | None:
-    return await db.fetchone(f"SELECT {_FOOD_COLS} FROM foods WHERE id = %s", (food_id,))
+    row = await db.fetchone(f"SELECT {_FOOD_COLS} FROM foods WHERE id = %s", (food_id,))
+    # BACKLOG 169: a row cached before that rule can still carry a phantom
+    # `label` serving as its default, which would stage with no numbers.
+    return None if row is None else with_loggable_servings(row)
 
 
 # ---------------------------------------------------------------------------

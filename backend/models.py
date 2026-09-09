@@ -139,7 +139,17 @@ class SaveIntent(BaseModel):
 class ParsedLog(BaseModel):
     items: list[ParsedItem]
     meal_hint: Meal | None  # only if spoken ("for breakfast I had…")
-    when_hint: str | None  # "this morning", "yesterday lunch"
+    when_hint: str | None  # "this morning", "yesterday lunch" — verbatim, for traces
+    # §7.2: the MODEL resolves the spoken time words against the NOW line in
+    # its input (BACKLOG 174). 0 = the local day of the utterance, -1 = the day
+    # before, and so on; null when no time reference was spoken. The server
+    # only does the arithmetic — no phrase is ever pattern-matched, so a form
+    # nobody enumerated ("the day before yesterday", "Sunday") still lands.
+    when_day_offset: int | None
+    # the meal the TIME words imply ("last night" -> snack, "yesterday
+    # morning" -> breakfast), which is not the same thing as meal_hint (a meal
+    # the user named outright). meal_hint outranks it, exactly as before.
+    when_meal: Meal | None
     save_intent: SaveIntent | None
 
 

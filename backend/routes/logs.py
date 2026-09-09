@@ -196,14 +196,6 @@ class RemoveItemResponse(BaseModel):
 # §7.2 when_hint interpreter (BACKLOG 26) — small, deterministic, no model
 # ---------------------------------------------------------------------------
 
-_WHEN_MEAL_WORDS = {
-    "breakfast": Meal.breakfast,
-    "morning": Meal.breakfast,
-    "lunch": Meal.lunch,
-    "dinner": Meal.dinner,
-    "evening": Meal.dinner,
-    "snack": Meal.snack,
-}
 # Canonical local clock time per meal — each inside its §7.2 default window,
 # so a shifted logged_at re-infers to the same meal it names.
 _WHEN_MEAL_HOUR = {
@@ -212,9 +204,6 @@ _WHEN_MEAL_HOUR = {
     Meal.dinner: (18, 30),
     Meal.snack: (22, 0),
 }
-_YESTERDAY_RE = re.compile(
-    r"^yesterday(?: at)? (breakfast|lunch|dinner|snack|morning|evening)$"
-)
 
 
 @dataclass
@@ -226,39 +215,56 @@ class WhenShift:
     note: str | None = None  # set when the hint was unrecognized (ignored)
 
 
-def interpret_when_hint(
-    hint: str | None, captured_at: datetime, tz: str | None
-) -> WhenShift:
-    """§7.2 cases: "this morning" / "yesterday (at) <meal>" / "last night".
-    Anything else is ignored with a note (BACKLOG 26) — never guessed at."""
-    if hint is None or not hint.strip():
-        return WhenShift()
+def local_time(captured_at: datetime, tz: str | None) -> datetime:
+    """The utterance's local wall clock. `tz` is an unvalidated client string,
+    so an unknown zone degrades to UTC rather than raising."""
     try:
-        local = captured_at.astimezone(ZoneInfo(tz) if tz else timezone.utc)
+        return captured_at.astimezone(ZoneInfo(tz) if tz else timezone.utc)
     except Exception:
-        local = captured_at.astimezone(timezone.utc)
+        return captured_at.astimezone(timezone.utc)
 
-    def at(day_delta: int, meal: Meal) -> WhenShift:
+
+def when_shift(
+    day_offset: int | None,
+    when_meal: Meal | None,
+    meal_hint: Meal | None,
+    captured_at: datetime,
+    tz: str | None,
+    *,
+    when_hint: str | None = None,
+) -> WhenShift:
+    """§7.2 — arithmetic on what the MODEL already resolved (BACKLOG 174).
+
+    The model reads the NOW line and answers `when_day_offset` (whole days
+    back) plus, when the time words imply one, `when_meal`. Nothing here parses
+    a phrase: that is exactly what used to fail, because a regex can only match
+    the forms someone thought to enumerate — a bare "yesterday" alongside a
+    meal word further along the sentence ("Yesterday, I also had two yogurts
+    for breakfast") matched none of them and the day was silently dropped.
+
+    The time of day comes from the meal that will actually be used (an
+    explicitly named `meal_hint` outranks `when_meal`, as it always has), so a
+    yesterday-breakfast row lands at breakfast o'clock rather than at whatever
+    time the person happened to be talking. `meal` is returned as `when_meal`
+    alone — the caller's precedence is unchanged.
+    """
+    if day_offset is None and when_meal is None:
+        # A phrase the model transcribed but did not resolve is a model
+        # failure, not an unknown format — note it for §10 and change nothing.
+        if when_hint and when_hint.strip():
+            return WhenShift(note=f"when_hint {when_hint!r} left unresolved — ignored")
+        return WhenShift()
+    local = local_time(captured_at, tz)
+    # food is always already eaten; a positive offset would be a model error
+    shifted = local + timedelta(days=min(int(day_offset or 0), 0))
+    meal = meal_hint or when_meal
+    if meal is not None:
         hour, minute = _WHEN_MEAL_HOUR[meal]
-        shifted = (local + timedelta(days=day_delta)).replace(
-            hour=hour, minute=minute, second=0, microsecond=0
-        )
-        # A when-hint refers to the past: "this morning" spoken at 06:00 must
-        # not push logged_at forward to the canonical 08:00.
-        if shifted > local:
-            shifted = local
-        return WhenShift(logged_at=shifted, meal=meal)
-
-    key = norm(hint)
-    if key == "this morning":
-        return at(0, Meal.breakfast)
-    if key == "last night":
-        # the most recent night — late-night eating lands in the snack window
-        return at(-1, Meal.snack)
-    m = _YESTERDAY_RE.match(key)
-    if m:
-        return at(-1, _WHEN_MEAL_WORDS[m.group(1)])
-    return WhenShift(note=f"when_hint {hint!r} not recognized — ignored")
+        shifted = shifted.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    # "this morning" spoken at 06:00 must not push logged_at forward to 08:00
+    if shifted > local:
+        shifted = local
+    return WhenShift(logged_at=shifted, meal=when_meal)
 
 
 async def infer_meal(captured_at: datetime, tz: str | None) -> Meal:
@@ -687,14 +693,20 @@ async def _stage_from_text(
     tracing.init_tracing()
     ctx = await build_agent_context()
     t0 = time.monotonic()
-    parsed = await decompose(text, ctx)
+    parsed = await decompose(
+        text, ctx, now_local=local_time(body.captured_at, body.tz)
+    )
     trace_id = tracing.current_trace_id()
     decompose_ms = int((time.monotonic() - t0) * 1000)
 
-    # §7.2 (BACKLOG 26): when_hint shifts logged_at/meal deterministically.
+    # §7.2 (BACKLOG 26, 174): the model resolved the spoken time words to a day
+    # offset against the NOW line it was given; this only does the arithmetic.
     # An explicit spoken meal_hint outranks the when-derived meal; the date
-    # shift applies regardless. Unknown hints are ignored with a note.
-    when = interpret_when_hint(parsed.when_hint, body.captured_at, body.tz)
+    # shift applies regardless.
+    when = when_shift(
+        parsed.when_day_offset, parsed.when_meal, parsed.meal_hint,
+        body.captured_at, body.tz, when_hint=parsed.when_hint,
+    )
     if parsed.meal_hint is not None:
         meal = parsed.meal_hint
     elif when.meal is not None:
@@ -792,6 +804,8 @@ async def _stage_estimate(
     start_index: int,
     meal_hint: str | None = None,
     when_hint: str | None = None,
+    when_day_offset: int | None = None,
+    when_meal: str | None = None,
 ) -> list[StagedItem]:
     """§6.4 log_estimate: the components of an unlabeled dish through the
     identical tiers 1–3 (tier 0 skipped — a saved-meal trigger is something
@@ -800,13 +814,21 @@ async def _stage_estimate(
     LEARNABLE_ROWS_SQL on the read side, commit's alias gate on the write
     side). The numbers are the database's; only the amount is the agent's.
     The spoken meal and time words ride in as the agent's `meal_hint` /
-    `when_hint` and go through the same §7.2 interpreter as decompose's, so
-    "yesterday I had a platter…" lands on yesterday's diary, not today's."""
-    when = interpret_when_hint(when_hint, body.captured_at, body.tz)
+    `when_hint`, and the agent — a model, like decompose — resolves the time
+    words itself into `when_day_offset` / `when_meal`, so "yesterday I had a
+    platter…" lands on yesterday's diary, not today's (BACKLOG 174)."""
+    try:
+        shift_meal = Meal(when_meal) if when_meal else None
+    except ValueError:
+        shift_meal = None
     try:
         spoken_meal = Meal(meal_hint) if meal_hint else None
     except ValueError:
         spoken_meal = None
+    when = when_shift(
+        when_day_offset, shift_meal, spoken_meal,
+        body.captured_at, body.tz, when_hint=when_hint,
+    )
     row_meal = spoken_meal or when.meal or meal  # an explicit meal word outranks the shift
     import tracing
 
@@ -1161,7 +1183,9 @@ async def _run_agent_lane(
         }
 
     async def stage_estimate(
-        items: list[EstimateItem], basis: str, meal_hint: str | None, when_hint: str | None
+        items: list[EstimateItem], basis: str, meal_hint: str | None,
+        when_hint: str | None, when_day_offset: int | None = None,
+        when_meal: str | None = None,
     ) -> dict:
         async with staging:
             # with no hint of its own, the meal log_food's hints moved the log
@@ -1170,6 +1194,7 @@ async def _run_agent_lane(
             rows = await _stage_estimate(
                 body, fallback, items, start_index=result["next_index"],
                 meal_hint=meal_hint, when_hint=when_hint,
+                when_day_offset=when_day_offset, when_meal=when_meal,
             )
             result["next_index"] += len(rows)
             result["items"].extend(rows)

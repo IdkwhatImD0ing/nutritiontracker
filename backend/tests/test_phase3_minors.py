@@ -71,11 +71,11 @@ async def _transcribe_dispatch(audio_bytes, mime):
     return await fn(audio_bytes, mime)
 
 
-async def _decompose_dispatch(text, ctx):
+async def _decompose_dispatch(text, ctx, **kw):
     fn = _decompose["fn"]
     if fn is None:
         raise AssertionError("decompose must not be called by this test")
-    return await fn(text, ctx)
+    return await fn(text, ctx, **kw)
 
 
 def _build_stubs() -> dict:
@@ -525,7 +525,7 @@ def _one_item(phrase):
         return ParsedLog(
             items=[ParsedItem(phrase=phrase, phrase_kind="food", qty=None, unit=None,
                               state=None, brand=None, library_match=None, meal_ref=None)],
-            meal_hint=None, when_hint=None, save_intent=None,
+            meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
         )
 
     return fake

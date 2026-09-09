@@ -132,9 +132,12 @@ def food_committable(food: dict) -> bool:
     )
 
 
-def with_loggable_servings(food: dict) -> dict:
-    """The food with unloggable servings dropped and default_serving_id
+def with_loggable_servings(food: dict, *, default_key: str = "default_serving_id") -> dict:
+    """The food with unloggable servings dropped and its default serving id
     repointed at a survivor (BACKLOG 169).
+
+    `default_key` names the default-serving field, because the cascade's own
+    row shape calls it `food_default_serving_id`.
 
     Answering `food_committable` is not enough on its own: the gate is per
     FOOD, but what renders and commits is one SERVING. A branded record whose
@@ -142,8 +145,12 @@ def with_loggable_servings(food: dict) -> dict:
     the gate, and then the portion cascade picks `label` — because that is the
     provider default — so the card still shows no numbers and commit still
     refuses it. fdc._branded_servings now drops the phantom at the source, but
-    rows cached BEFORE that landed still carry it, so every path that hydrates
-    a stored foods row runs this too. Returns the food unchanged (not a copy)
+    rows cached BEFORE that landed still carry it, and persist_food never
+    rewrites a stored servings array — so EVERY path that hydrates a foods row
+    runs this: tier3._food_row, routes.quick._load_food (barcode / from-food),
+    and the cascade's tier-1/2 and saved-meal expansion. Miss one and the
+    phantom is staged again from the same rows (found by review on the first
+    cut, which guarded only the first). Returns the food unchanged (not a copy)
     when nothing needs dropping, so the common case is free."""
     servings = food.get("servings") or []
     keep = [s for s in servings if isinstance(s, dict) and not _missing_core_macros(s)]
@@ -151,9 +158,9 @@ def with_loggable_servings(food: dict) -> dict:
         return food
     out = dict(food)
     out["servings"] = keep
-    if not any(s.get("serving_id") == food.get("default_serving_id") for s in keep):
+    if not any(s.get("serving_id") == food.get(default_key) for s in keep):
         # keep the provider's preference order; only move when it was dropped
-        out["default_serving_id"] = keep[0]["serving_id"] if keep else None
+        out[default_key] = keep[0]["serving_id"] if keep else None
     return out
 
 # §3.4a / R3: rows the user never SPOKE learn nothing — a photo, barcode or

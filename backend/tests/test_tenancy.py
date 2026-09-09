@@ -435,9 +435,9 @@ def test_two_tenants_are_invisible_to_each_other():
 def test_demo_log_quota_across_lanes_and_owner_unlimited(monkeypatch):
     decomposed: list[str] = []
 
-    async def decompose(text, ctx):
+    async def decompose(text, ctx, **kw):
         decomposed.append(text)
-        return ParsedLog(items=[], meal_hint=None, when_hint=None, save_intent=None)
+        return ParsedLog(items=[], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
 
     _stub_pipeline(monkeypatch, decompose=decompose)
 
@@ -724,9 +724,9 @@ def test_db_binds_app_role_and_tenant_per_statement():
 def test_same_id_repost_cannot_rerun_decompose_for_free(monkeypatch):
     calls: list[str] = []
 
-    async def decompose(text, ctx):
+    async def decompose(text, ctx, **kw):
         calls.append(text)
-        return ParsedLog(items=[], meal_hint=None, when_hint=None, save_intent=None)
+        return ParsedLog(items=[], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
 
     _stub_pipeline(monkeypatch, decompose=decompose)
 

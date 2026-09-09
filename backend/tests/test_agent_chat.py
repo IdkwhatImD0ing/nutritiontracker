@@ -106,9 +106,10 @@ def test_log_estimate_tool_runs_once_and_refuses_bad_amounts_in_code():
         out = await _invoke(agent, "log_estimate", items=[SHRIMP, SAUCE], basis=BASIS)
         assert out["basis"] == BASIS and [i["phrase"] for i in out["items"]] == ["shrimp, cooked", "cocktail sauce"]
         assert state["estimate_calls"] == 1
-        (items, basis, meal_hint, when_hint), = deps.calls["estimate"]
+        (items, basis, meal_hint, when_hint, day_offset, when_meal), = deps.calls["estimate"]
         assert basis == BASIS and items[0]["qty"] == 400 and items[0]["unit"] == "g"
         assert meal_hint is None and when_hint is None  # none spoken, none passed
+        assert day_offset is None and when_meal is None
 
         # once per utterance — a second call stages nothing again
         out = await _invoke(agent, "log_estimate", items=[SAUCE], basis="again")
@@ -133,9 +134,13 @@ def test_log_estimate_tool_runs_once_and_refuses_bad_amounts_in_code():
         deps3 = _deps()
         agent3 = agent_svc.build_agent(deps3, {})
         out = await _invoke(agent3, "log_estimate", items=[SAUCE], basis=BASIS,
-                            meal_hint="breakfast", when_hint=" yesterday morning ")
+                            meal_hint="breakfast", when_hint=" yesterday morning ",
+                            when_day_offset=-1, when_meal="breakfast")
         assert out["meal"] == "breakfast"
-        assert deps3.calls["estimate"][0][2:] == ("breakfast", "yesterday morning")
+        # the phrase rides verbatim for the trace; the DAY comes from the
+        # model's own offset, because nothing downstream parses the phrase (174)
+        assert deps3.calls["estimate"][0][2:] == (
+            "breakfast", "yesterday morning", -1, "breakfast")
 
         # a demo account's agent has no web lane (§8.9)
         demo = agent_svc.build_agent(_deps(web_lane=False), {})
@@ -286,7 +291,7 @@ def test_a_clarifying_question_rides_the_reply_and_discard_replaces_a_staged_log
 def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)
@@ -372,7 +377,7 @@ def test_a_question_turn_gives_a_demo_its_daily_log_attempt_back(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
             await _become(conn, "demo-asker")  # a demo account: one log a day
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)
@@ -466,7 +471,7 @@ def test_run_agent_emits_tool_calls_results_then_the_reply(monkeypatch):
 def test_agent_lane_estimate_rows_are_flagged_and_indexed_after_the_food(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)
@@ -511,7 +516,8 @@ def test_estimate_rows_honor_the_spoken_meal_and_time(monkeypatch):
             _stub_pipeline(monkeypatch)  # the estimate is the only staging
             runner = _fake_runner(
                 [("log_estimate", {"items": [SHRIMP], "basis": BASIS,
-                                   "meal_hint": None, "when_hint": "yesterday lunch"})],
+                                   "meal_hint": None, "when_hint": "yesterday at lunch",
+                                   "when_day_offset": -1, "when_meal": "lunch"})],
                 "Staged an estimate for yesterday's lunch.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
@@ -530,7 +536,8 @@ def test_estimate_rows_honor_the_spoken_meal_and_time(monkeypatch):
             assert stored["captured_at"] == NOW
             assert stored["staged"]["estimated"] == "portion"
 
-            # an explicit meal word outranks the shift's meal; an unknown when-hint is noted, not guessed
+            # an explicit meal word outranks the shift's meal; a phrase the
+            # agent could not resolve to a day is noted, never guessed at (174)
             runner2 = _fake_runner(
                 [("log_estimate", {"items": [SAUCE], "basis": BASIS,
                                    "meal_hint": "dinner", "when_hint": "a while ago"})],
@@ -541,7 +548,7 @@ def test_estimate_rows_honor_the_spoken_meal_and_time(monkeypatch):
             resp2 = await logs_routes.create_log(body2)
             assert resp2.items[0].meal.value == "dinner" and resp2.meal.value == "dinner"
             staged2 = await _scalar(conn, "SELECT staged FROM item_resolutions WHERE log_id = %s", (body2.id,))
-            assert "logged_at" not in staged2 and "not recognized" in staged2["when_hint_note"]
+            assert "logged_at" not in staged2 and "left unresolved" in staged2["when_hint_note"]
 
     _run(scenario())
 
@@ -634,7 +641,7 @@ def test_flagged_estimate_row_commits_only_once_confirmed_and_learns_no_alias(mo
 def test_agent_stream_orders_tool_events_reply_and_done(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)
@@ -679,7 +686,7 @@ def test_agent_stream_retry_attaches_to_the_live_run(monkeypatch):
     then the rest as they happen — and nothing runs twice."""
     async def scenario():
         async with isolated_db():
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 await asyncio.sleep(0.6)  # the run is still going when the retry lands
                 return _parsed(("eggs", 2))
 
@@ -706,7 +713,7 @@ def test_agent_stream_retry_attaches_to_the_live_run(monkeypatch):
 def test_agent_stream_voice_leads_with_the_transcript(monkeypatch):
     async def scenario():
         async with isolated_db():
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)
@@ -762,7 +769,7 @@ def test_a_live_run_is_its_tenants_alone(monkeypatch):
     gets what a foreign id gets from the claim — a 404 — never the stream."""
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)
@@ -795,7 +802,7 @@ def test_a_run_that_fails_after_staging_completes_on_the_staged_rows(monkeypatch
     the code-built reply and the stream ends in `done`, not `error`."""
     async def scenario():
         async with isolated_db():
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)
@@ -827,7 +834,7 @@ def test_a_run_that_fails_after_staging_completes_on_the_staged_rows(monkeypatch
 def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_again(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx):
+            async def decompose(text, ctx, **kw):
                 return _parsed(("eggs", 2))
 
             _stub_pipeline(monkeypatch, decompose=decompose)

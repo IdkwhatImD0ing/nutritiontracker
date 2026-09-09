@@ -68,7 +68,7 @@ def _build_stubs() -> dict:
 
     dec_mod = types.ModuleType("services.decompose")
 
-    async def decompose(text, ctx):
+    async def decompose(text, ctx, **kw):
         raise AssertionError("test must install its own decompose fake")
 
     dec_mod.decompose = decompose
@@ -249,7 +249,7 @@ async def insert_dummy_log(conn, status="staged"):
 
 
 def one_item_log(item: ParsedItem) -> ParsedLog:
-    return ParsedLog(items=[item], meal_hint=None, when_hint=None, save_intent=None)
+    return ParsedLog(items=[item], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
 
 
 def food_item(phrase, qty=None, unit=None, library_match=None, kind="food") -> ParsedItem:
@@ -276,7 +276,7 @@ def test_micro_decompose_fires_for_novel_text():
                 log_id = await insert_dummy_log(conn)
                 calls: list[str] = []
 
-                async def fake_decompose(text, ctx):
+                async def fake_decompose(text, ctx, **kw):
                     calls.append(text)
                     return one_item_log(
                         food_item(f"{t} shake", qty=2.0, library_match=food)
@@ -321,7 +321,7 @@ def test_micro_decompose_skipped_for_exact_alias():
                 log_id = await insert_dummy_log(conn)
                 calls: list[str] = []
 
-                async def fake_decompose(text, ctx):
+                async def fake_decompose(text, ctx, **kw):
                     calls.append(text)
                     return one_item_log(food_item(text))
 
@@ -350,7 +350,7 @@ def test_micro_decompose_outage_degrades_to_tier2a():
                 log_id = await insert_dummy_log(conn)
                 calls: list[str] = []
 
-                async def fake_decompose(text, ctx):
+                async def fake_decompose(text, ctx, **kw):
                     calls.append(text)
                     raise RuntimeError("LLM outage")
 
@@ -379,7 +379,7 @@ def test_micro_decompose_meal_ref_never_enters_food_search():
                 log_id = await insert_dummy_log(conn)
                 name = f"usual {tok()}"
 
-                async def fake_decompose(text, ctx):
+                async def fake_decompose(text, ctx, **kw):
                     return one_item_log(food_item(name, kind="meal_ref"))
 
                 with llm(fake_decompose):
