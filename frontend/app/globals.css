@@ -555,6 +555,17 @@ a {
   color: var(--text);
 }
 
+/* §3.4b: the camera sits beside the mic — the same quiet treatment, because
+   the loud button in this row is Send. Three 50px circles plus the gaps would
+   leave ~165px of text field on a 375px phone, so in the chat's composer the
+   two quiet buttons shrink to the 44px tap target and the field keeps the
+   rest. */
+.chat-foot .capture .mic-btn,
+.chat-foot .capture .photo-btn {
+  width: 44px;
+  height: 44px;
+}
+
 .capture .mic-btn.rec {
   background: var(--red);
   border-color: var(--red);
@@ -2113,6 +2124,22 @@ a {
 .bubble.user.pending {
   opacity: 0.7;
   font-style: italic;
+}
+
+/* §3.4b: the plate you sent, as its own bubble — the thumbnail IS the
+   message, so the padding that frames text would only box it in. */
+.bubble.user.photo-bubble {
+  padding: 4px;
+  max-width: 62%;
+  line-height: 0;
+}
+
+.bubble.user.photo-bubble img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  border-bottom-right-radius: 4px;
 }
 
 .bubble.agent {

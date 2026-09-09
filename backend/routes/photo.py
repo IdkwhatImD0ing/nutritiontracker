@@ -3,7 +3,7 @@
 The photo lane — the one place estimation is permitted, and only for what a
 photo cannot tell us: portions, and items no database resolves.
 
-  photo → services/vision.analyze (gpt-5.6-luna, structured: the foods seen
+  photo → services/vision.analyze (gpt-6-astra, structured: the foods seen
   + portion estimates, NEVER nutrition numbers) → ParsedItem[] → the SAME
   cascade as text/voice (cascade.resolve_item, tiers 1–3; tier 0 is a spoken
   shortcut and a plate is not a meal reference) → routes/logs._persist with
@@ -44,17 +44,24 @@ from models import FoodRef, Macros, Meal, ParsedItem, ServingOption, ServingRef,
 from resolver import cascade, foods_repo
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from routes.logs import (
+    AgentOutcome,
+    Emit,
     LogCreateResponse,
     _drop_empty_log,
     cascade_summary,
     _duplicate_post_response,
+    _load_log_response,
     _persist,
+    _size_by_weight,
+    _stage_estimate,
     claim_log,
     infer_meal,
 )
 from services import quota
 
 if TYPE_CHECKING:
+    from models import LogCreate, LogPollResponse
+    from services.agent import PhotoChange
     from services.vision import VisionItem, VisionResult
 
 router = APIRouter(dependencies=[Depends(require_user)])
@@ -234,22 +241,52 @@ def _summary(seen: VisionResult) -> str:
     return "photo: " + (", ".join(parts) if parts else "nothing recognized")
 
 
+def _and_list(parts: list[str]) -> str:
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def photo_reply(seen: VisionResult, items: list[StagedItem]) -> str:
+    """The photo turn's reply in the chat (§6.4) — built in code, with no model
+    call of its own.
+
+    The chat agent never sees the photo (§8.8: the bytes reach the vision call
+    and nothing else), so a model turn here could only reword a tool result it
+    has no independent knowledge of — a second round trip on the slowest lane
+    in the app, for nothing. Vision's `note` is already a phrase written for
+    the user and carries no numbers, by contract (services/vision.INSTRUCTIONS),
+    which is exactly what this needs. Same shape as `_fallback_reply`
+    (services/agent.py): when the answer is what the tools did, code says it."""
+    notes = [v.note.strip() or v.phrase.strip() for v in seen.items if (v.note or v.phrase).strip()]
+    if not notes:
+        return "I couldn't find any food in that photo — try another shot, or just tell me what you ate."
+    shown = _and_list(notes[:5])
+    more = f", and {len(notes) - 5} more" if len(notes) > 5 else ""
+    out = [f"I see {shown}{more}."]
+    searching = sum(1 for it in items if it.status == "searching")
+    if searching:
+        out.append(f"Still looking {'one' if searching == 1 else str(searching)} up.")
+    unresolved = [it.phrase for it in items if it.estimated == "unresolved"]
+    if unresolved:
+        out.append(
+            f"I have no database match for {_and_list(unresolved[:3])} — search for it in the list."
+        )
+    out.append("The amounts are my estimate, so tell me what's off.")
+    return " ".join(out)
+
+
 # ---------------------------------------------------------------------------
 # POST /api/logs/photo
 # ---------------------------------------------------------------------------
 
 
-@router.post("/api/logs/photo", response_model=LogCreateResponse)
-async def create_log_photo(
-    image: Annotated[UploadFile, File()],
-    log_id: Annotated[UUID, Form(alias="id")],
-    captured_at: Annotated[datetime, Form()],
-    meal_hint: Annotated[Meal | None, Form()] = None,
-    tz: Annotated[str | None, Form()] = None,
-) -> LogCreateResponse:
-    """Photo → vision → the identical cascade + staging; input_mode='photo'.
-    Idempotent by client id like POST /api/logs (§8.6). `tz` is optional —
-    without it the meal is inferred in the settings timezone."""
+async def read_image(image: UploadFile) -> tuple[bytes, str]:
+    """The upload's bytes and its sniffed type, or the refusal. Declared
+    content type AND magic bytes must both pass, under the 12 MB cap; the
+    sniffed type is what reaches the model. Shared with the chat lane's photo
+    turn (routes/agent.py), which validates identically — one photo contract,
+    one set of sentences."""
     mime = (image.content_type or "application/octet-stream").split(";")[0].strip().lower()
     if mime not in IMAGE_MIME_ALLOWLIST:
         raise HTTPException(
@@ -266,6 +303,25 @@ async def create_log_photo(
         raise HTTPException(415, "HEIC is not accepted by the vision API — re-encode the photo as JPEG")
     if sniffed is None:
         raise HTTPException(415, "not a JPEG, PNG or WebP image")
+    return image_bytes, sniffed
+
+
+@router.post("/api/logs/photo", response_model=LogCreateResponse)
+async def create_log_photo(
+    image: Annotated[UploadFile, File()],
+    log_id: Annotated[UUID, Form(alias="id")],
+    captured_at: Annotated[datetime, Form()],
+    meal_hint: Annotated[Meal | None, Form()] = None,
+    tz: Annotated[str | None, Form()] = None,
+) -> LogCreateResponse:
+    """Photo → vision → the identical cascade + staging; input_mode='photo'.
+    Idempotent by client id like POST /api/logs (§8.6). `tz` is optional —
+    without it the meal is inferred in the settings timezone.
+
+    The non-streaming entry. The + sheet's photo lane goes through the chat
+    (POST /api/agent, §6.4) since 2026-09-08 and shares `_stage_photo` with
+    this route; nothing here changed with it."""
+    image_bytes, sniffed = await read_image(image)
 
     import tracing  # lazy: stubbed in route tests
 
@@ -287,9 +343,15 @@ async def _stage_photo(
     captured_at: datetime,
     meal_hint: Meal | None,
     tz: str | None,
+    emit: Emit | None = None,
 ) -> LogCreateResponse:
     """The claim, vision, the cascade and staging — the handler's body, inside
-    the run's trace."""
+    the run's trace, and the chat lane's photo turn (routes/agent.py) verbatim.
+
+    `emit` is the chat's wire (§6.4): the read shows up as a `read_photo` tool
+    line the moment the bytes leave for the model, and settles with what was
+    seen. The image itself never rides it — its type and size, as everywhere
+    else (§8.8). Without `emit` the identical path runs silently."""
     # §8.6 + the demo quota (routes/logs.claim_log): the claim of the client
     # id answers a stored log — a replay, a foreign id's 404 — before vision,
     # and records the attempt with the row: after the free upload checks,
@@ -315,17 +377,33 @@ async def _stage_photo(
     from services import vision  # lazy: stubbed in route tests
 
     tracing.init_tracing()
+    call_id = f"photo-{log_id}"
+    if emit is not None:
+        await emit({
+            "type": "tool_call", "id": call_id, "name": "read_photo",
+            "args": {"mime": sniffed, "bytes": len(image_bytes)},
+        })
     t0 = time.monotonic()
     try:
         seen = await vision.analyze(image_bytes, sniffed)  # its span rides in this trace (§10)
     except OpenAIError as e:
         await _drop_empty_log(log_id)
+        if emit is not None:
+            await emit({
+                "type": "tool_result", "id": call_id, "name": "read_photo",
+                "output": {"error": "unavailable"},
+            })
         # the client's degrade path is voice/text, not a fake empty plate
         raise HTTPException(
             503, f"photo analysis unavailable — retry, or log it by voice or text ({type(e).__name__})"
         )
     except Exception:
         await _drop_empty_log(log_id)  # any other failure: same retry path
+        if emit is not None:
+            await emit({
+                "type": "tool_result", "id": call_id, "name": "read_photo",
+                "output": {"error": "failed"},
+            })
         raise
     trace_id = tracing.current_trace_id()
     vision_ms = int((time.monotonic() - t0) * 1000)
@@ -349,9 +427,19 @@ async def _stage_photo(
         log_id, resolutions, meal,
         short_circuit=False, decompose_ms=vision_ms, trace_id=trace_id,
     )
+    if emit is not None:
+        await emit({
+            "type": "tool_result", "id": call_id, "name": "read_photo",
+            "output": {"seen": [v.note.strip() or v.phrase for v in seen.items]},
+        })
+    # The chat turn's reply is this lane's own, built in code (photo_reply);
+    # POST /api/logs/photo answers without one, as it always has.
+    def outcome(items: list[StagedItem]) -> AgentOutcome | None:
+        return AgentOutcome(reply=photo_reply(seen, items)) if emit is not None else None
+
     if not seen.items:
         return LogCreateResponse(
-            log_id=log_id, meal=meal, items=[],
+            log_id=log_id, meal=meal, items=[], agent=outcome([]),
             note="No food recognized in the photo — try another shot, or log it by voice or text.",
         )
     # the raw vision output per row (eval loop) — an extra key like spoken_qty
@@ -367,7 +455,8 @@ async def _stage_photo(
                     r.staged.item_index,
                 ),
             )
-    return LogCreateResponse(log_id=log_id, meal=meal, items=[r.staged for r in resolutions])
+    staged = [r.staged for r in resolutions]
+    return LogCreateResponse(log_id=log_id, meal=meal, items=staged, agent=outcome(staged))
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +564,224 @@ async def stage_estimate_food(log_id: str, item_index: int) -> StagedItem | None
         (Json(payload), item.estimate_note, str(log_id), item_index),
     )
     return StagedItem.model_validate(row["staged"]) if row else None
+
+
+# ---------------------------------------------------------------------------
+# adjust_photo (§6.4, 2026-09-08): the chat tunes what the photo staged
+#
+# The photo lane is the front of a chat now, so "that's two eggs, not one" has
+# to reach the row the photo already staged. It edits in place — the plate
+# keeps what vision saw (`staged->'vision'`, the eval loop's record), keeps its
+# §3.4a flag, and keeps every row the correction did not touch. Restaging the
+# whole plate through log_food/log_estimate would throw all of that away to
+# change one amount, which is why the agent is told not to (services/agent.py).
+# ---------------------------------------------------------------------------
+
+
+def _row_words(staged: dict) -> list[str]:
+    """What the conversation calls one row: its food's name and its phrase."""
+    food = staged.get("food") or {}
+    return [n.strip().lower() for n in (food.get("name"), staged.get("phrase")) if n]
+
+
+def _row_label(staged: dict) -> str:
+    food = staged.get("food") or {}
+    return food.get("name") or staged.get("phrase") or "?"
+
+
+def _match_row(rows: list[dict], item: str) -> int | dict:
+    """The one row `item` names — its food name or phrase, exact first, else a
+    substring, case-insensitive — or an error listing what is on the plate.
+    Same rule and the same refusal shape as routes/logs._match_meal_item."""
+    key = item.strip().lower()
+    hits = [i for i, r in enumerate(rows) if key in _row_words(r["staged"])] or [
+        i for i, r in enumerate(rows)
+        if key and any(key in w for w in _row_words(r["staged"]))
+    ]
+    if len(hits) == 1:
+        return hits[0]
+    return {
+        "error": "ambiguous_item" if hits else "unknown_item",
+        "message": f"'{item}' names {len(hits)} of the plate's rows — use one of these",
+        "items": [_row_label(r["staged"]) for r in rows],
+    }
+
+
+async def _apply_amount(item: StagedItem, change: PhotoChange) -> StagedItem:
+    """The corrected amount on the row's own servings. `cascade.resolve_portion`
+    does the mapping — its rule 1, the §7.3 spoken-quantity channel, which is
+    the identical path a spoken "two cups of rice" takes, including the
+    count-serving divisor (`_pieces_per`) and the gram-serving choice. Only
+    rule 1 can run here: the person always states an amount. Macros are
+    recomputed from the food's own cached numbers; nothing is invented."""
+    servings = [s.model_dump() for s in (item.servings or [])]
+    if item.status != "resolved" or not servings:
+        # nothing to map onto yet — tier 3 is still looking. The amount rides
+        # the spoken channel for whatever it picks, as _stage_estimate does for
+        # its own searching rows.
+        return item.model_copy(update={"qty": float(change.grams or change.qty)})
+    default_id = item.serving.id if item.serving else servings[0]["serving_id"]
+    serving_id, qty, verify_me = await cascade.resolve_portion(
+        {"servings": servings, "food_default_serving_id": default_id},
+        float(change.qty),
+        change.unit,
+    )
+    chosen = next((s for s in item.servings if s.serving_id == serving_id), None)
+    if (
+        change.unit is None
+        and change.grams
+        and chosen is not None
+        and not cascade._is_count_serving(chosen.description)
+    ):
+        # a count of pieces on a food whose servings are all mass ("100 g"):
+        # size it by the stated weight rather than pieces × the mass default,
+        # exactly as the agent's own estimate rows are sized
+        return _size_by_weight(item, float(change.grams))
+    if chosen is None:
+        return item.model_copy(update={"qty": qty, "confidence": "low"})
+    macros = _macros_for(chosen, qty)
+    return item.model_copy(
+        update={
+            "serving": ServingRef(id=chosen.serving_id, description=chosen.description),
+            "qty": qty,
+            "macros": macros,
+            # the amount is now theirs, not the photo's, but it is still a
+            # stated guess about a plate — never "high"
+            "confidence": "low" if (verify_me or macros is None) else "medium",
+        }
+    )
+
+
+async def adjust_rows(
+    log_id: UUID, changes: list[PhotoChange], body: LogCreate
+) -> dict:
+    """The `adjust_photo` tool's effect (routes/logs._run_agent_lane closes
+    over it): apply the corrections to one staged photo log and answer with its
+    rows as they now stand.
+
+    Every write goes through the same guards the rest of the lane uses — the
+    live-row `WHERE` (`_LIVE_SQL`: never a removed row, never a committed one)
+    and `KEEP_LOG_KEYS_SQL` on every `staged` rewrite (BACKLOG 57), with the
+    flag and the new note re-applied *after* it, as `stage_estimate_food` does,
+    because KEEP carries the row's OLD note over the payload. `estimate_confirmed`
+    is deliberately not carried by KEEP (§3.4b rule 4), so a corrected amount
+    goes back to needing its confirm — which is the point."""
+    log = await db.fetchone("SELECT status FROM logs WHERE id = %s", (str(log_id),))
+    if log is None:
+        return {"error": "unknown_log", "message": "that plate is not here"}
+    if log["status"] != "staged":
+        return {
+            "error": "not_staged",
+            "message": f"that plate is {log['status']}, not staged — it cannot be changed here; "
+                       "if it is committed, say it is in the diary and can be edited there",
+        }
+    rows = await db.fetchall(
+        "SELECT item_index, staged FROM item_resolutions "
+        f"WHERE log_id = %s AND {_LIVE_SQL} ORDER BY item_index",
+        (str(log_id),),
+    )
+    rows = [r for r in rows if isinstance(r["staged"], dict)]
+    added: list = []
+    done: list[str] = []
+    seen_rows: set[int] = set()
+    for change in changes:
+        if change.op == "add":
+            added.append(change)
+            continue
+        hit = _match_row(rows, change.item)
+        if isinstance(hit, dict):
+            return hit
+        if hit in seen_rows:
+            return {
+                "error": "repeated_item",
+                "message": f"'{change.item}' is changed twice in one call — say the final amount once",
+            }
+        seen_rows.add(hit)
+        row = rows[hit]
+        label = _row_label(row["staged"])
+        if change.op == "remove":
+            await db.execute(
+                "UPDATE item_resolutions SET status = 'removed' "
+                f"WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}",
+                (str(log_id), row["item_index"]),
+            )
+            done.append(f"removed {label}")
+            continue
+        item = StagedItem.model_validate(row["staged"])
+        updated = await _apply_amount(item, change)
+        note = f"You said: {change.note.strip() or 'amount corrected'}"
+        payload = updated.model_dump(mode="json", exclude_none=True)
+        # §3.4b rule 4: a new amount needs a fresh confirm. KEEP_LOG_KEYS_SQL
+        # deliberately does not carry estimate_confirmed, but this payload was
+        # round-tripped through the STORED row, so a row the user had already
+        # confirmed would carry its own True straight back through.
+        payload.pop("estimate_confirmed", None)
+        # The §7.3 spoken channel, the way stage_estimate_food carries it: a
+        # full payload rewrite drops these extras and KEEP_LOG_KEYS_SQL does
+        # not carry them, so they are re-applied here. A row tier 3 has yet to
+        # answer gets the CORRECTED amount (that is what tier 3 will size to);
+        # a resolved row keeps what the photo first said, which is still the
+        # record a later search pick reads.
+        if updated.status != "resolved":
+            payload["spoken_qty"] = updated.qty
+            payload["spoken_unit"] = change.unit or ("g" if change.grams else None)
+        else:
+            payload["spoken_qty"] = row["staged"].get("spoken_qty")
+            payload["spoken_unit"] = row["staged"].get("spoken_unit")
+        await db.execute(
+            "UPDATE item_resolutions "
+            f"SET staged = %s::jsonb{KEEP_LOG_KEYS_SQL} "
+            "|| jsonb_build_object('estimated', 'portion'::text, 'estimate_note', %s::text), "
+            # the amount is the person's now, not the resolver's proposal —
+            # the same column a portion edit in the sheet sets (§3.5, §9's
+            # edit rate). proposed_* stay: they mean "what was first shown".
+            "was_edited = TRUE "
+            f"WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}",
+            (Json(payload), note, str(log_id), row["item_index"]),
+        )
+        done.append(f"{label} → {updated.qty:g} × {updated.serving.description}"
+                    if updated.serving else f"{label} updated")
+    if added:
+        from services.agent import EstimateItem
+
+        next_index = await db.fetchone(
+            "SELECT coalesce(max(item_index), -1) + 1 AS n FROM item_resolutions WHERE log_id = %s",
+            (str(log_id),),
+        )
+        meal_row = await db.fetchone(
+            "SELECT meal_inferred FROM logs WHERE id = %s", (str(log_id),)
+        )
+        meal = Meal(meal_row["meal_inferred"]) if meal_row and meal_row["meal_inferred"] else Meal("snack")
+        staged = await _stage_estimate(
+            body.model_copy(update={"id": log_id}),
+            meal,
+            [
+                EstimateItem(
+                    phrase=c.item, qty=float(c.qty), unit=c.unit, grams=c.grams,
+                    note=c.note.strip() or "the photo missed it",
+                )
+                for c in added
+            ],
+            start_index=int(next_index["n"]),
+        )
+        done.extend(f"added {it.food.name if it.food else it.phrase}" for it in staged)
+    current = await _load_log_response(log_id)
+    items = current.items if current is not None else []
+    return {
+        "changed": done,
+        # the plate as it now stands, for the reply — never the numbers
+        "items": [
+            {
+                "phrase": it.phrase,
+                "status": it.status,
+                "food": it.food.name if it.food else None,
+                "qty": it.qty,
+                "serving": it.serving.description if it.serving else None,
+            }
+            for it in items
+        ],
+        "note": "Every corrected row is flagged as an estimate again — the user confirms it in the list.",
+    }
 
 
 # ---------------------------------------------------------------------------

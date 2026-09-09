@@ -918,3 +918,170 @@ def test_live_runs_that_hang_or_are_cancelled_still_end(monkeypatch):
             await asyncio.sleep(0.05)  # the hung tasks finish inside the transaction
 
     _run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# 4. the photo turn (§3.4b in the chat, 2026-09-08)
+# ---------------------------------------------------------------------------
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+
+
+def _image() -> UploadFile:
+    return UploadFile(
+        BytesIO(PNG), filename="plate.png", headers=Headers({"content-type": "image/png"})
+    )
+
+
+def test_a_photo_streams_read_photo_then_a_reply_and_runs_no_model(monkeypatch):
+    """The whole point of the turn: the plate is read and staged by the SAME
+    pipeline POST /api/logs/photo runs, the chat sees it happen as a tool
+    line, and the reply comes back — with no chat model involved at all. The
+    Runner is one that raises if it is touched, which is the assertion."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "photo-owner", is_owner=True)
+            # the shared fixtures: an 'egg' food with a "1 egg" serving, and
+            # the alias 'two eggs' that resolves to it at tier 1
+            await insert_alias(conn, await insert_food(conn))
+
+            import services.vision as vision_mod
+
+            async def fake_analyze(image, mime):
+                assert image == PNG and mime == "image/png"  # the SNIFFED type
+                return vision_mod.VisionResult(
+                    items=[
+                        vision_mod.VisionItem(
+                            phrase="two eggs", qty=2, unit="egg", est_grams=100,
+                            confidence="high", note="two fried eggs",
+                        )
+                    ],
+                    meal_hint=None,
+                )
+
+            monkeypatch.setattr(vision_mod, "analyze", fake_analyze)
+
+            class _NoModel:
+                def run_streamed(self, *a, **k):
+                    raise AssertionError("the photo turn must not run the chat model")
+
+            monkeypatch.setattr(agent_svc, "Runner", _NoModel())
+
+            log_id = uuid4()
+            events = await _drain(
+                await agent_routes.agent_voice(
+                    image=_image(), log_id=log_id, captured_at=NOW, tz=TZ
+                )
+            )
+            assert [e["type"] for e in events] == [
+                "tool_call", "tool_result", "reply", "done",
+            ]
+            call, result, reply, done = events
+            assert call["name"] == "read_photo"
+            # §8.8: the type and the size ride the wire, never the image
+            assert call["args"] == {"mime": "image/png", "bytes": len(PNG)}
+            assert result["output"]["seen"] == ["two fried eggs"]
+            assert "two fried eggs" in reply["text"]
+            assert reply["text"].endswith("tell me what's off.")
+            # the plate is the turn's own log, staged by the photo pipeline
+            log = done["log"]
+            assert log["log_id"] == str(log_id)
+            assert [it["phrase"] for it in log["items"]] == ["two eggs"]
+            assert log["items"][0]["estimated"] == "portion"
+            assert await _scalar(
+                conn, "SELECT input_mode FROM logs WHERE id = %s", (log_id,)
+            ) == "photo"
+
+    _run(scenario())
+
+
+def test_a_photo_upload_is_validated_before_the_stream_starts(monkeypatch):
+    """415/413 stay plain HTTP errors, as every pre-stream refusal in this
+    route does — the client's own copy depends on the status."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "photo-owner", is_owner=True)
+            not_an_image = UploadFile(
+                BytesIO(b"hello, not an image"), filename="x.png",
+                headers=Headers({"content-type": "image/png"}),
+            )
+            with pytest.raises(HTTPException) as exc:
+                await agent_routes.agent_voice(
+                    image=not_an_image, log_id=uuid4(), captured_at=NOW, tz=TZ
+                )
+            assert exc.value.status_code == 415
+            # nothing was claimed: the refusal is before any database work
+            assert await _scalar(conn, "SELECT count(*) FROM logs WHERE input_mode = 'photo'", ()) == 0
+
+    _run(scenario())
+
+
+def test_a_photo_conversation_carries_its_plate_into_the_next_turn(monkeypatch):
+    """The tuning half: `photo_log_id` puts the run on the photo tier and
+    hands it the plate, and adjust_photo's edit comes back on the outcome
+    rather than as this turn's own (empty) log."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "photo-owner", is_owner=True)
+            # the shared fixtures: an 'egg' food with a "1 egg" serving, and
+            # the alias 'two eggs' that resolves to it at tier 1
+            await insert_alias(conn, await insert_food(conn))
+
+            import services.vision as vision_mod
+
+            async def fake_analyze(image, mime):
+                return vision_mod.VisionResult(
+                    items=[
+                        vision_mod.VisionItem(
+                            phrase="two eggs", qty=2, unit="egg", est_grams=100,
+                            confidence="high", note="two fried eggs",
+                        )
+                    ],
+                    meal_hint=None,
+                )
+
+            monkeypatch.setattr(vision_mod, "analyze", fake_analyze)
+
+            class _NoModel:
+                def run_streamed(self, *a, **k):
+                    raise AssertionError("no model on the photo turn")
+
+            monkeypatch.setattr(agent_svc, "Runner", _NoModel())
+            plate_id = uuid4()
+            await _drain(
+                await agent_routes.agent_voice(
+                    image=_image(), log_id=plate_id, captured_at=NOW, tz=TZ
+                )
+            )
+
+            # the next turn: "that's three eggs"
+            runner = _fake_runner(
+                [("adjust_photo", {"changes": [{
+                    "op": "amount", "item": "two eggs", "qty": 3,
+                    "unit": None, "grams": 150, "note": "they said three",
+                }]})],
+                "Updated — three eggs.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(
+                id=uuid4(), text="that's three eggs", captured_at=NOW, tz=TZ,
+                agent=True, photo_log_id=plate_id,
+            )
+            events = await _drain(await agent_routes.agent_text(body))
+            assert [e["type"] for e in events] == [
+                "tool_call", "tool_result", "reply", "done",
+            ]
+            done = events[3]["log"]
+            # this turn staged nothing of its own — the plate came back on the
+            # outcome, which is the only way the chat can patch its card
+            assert done["items"] == [] and done["log_id"] == str(body.id)
+            updated = done["agent"]["updated"]
+            assert updated["log_id"] == str(plate_id)
+            assert updated["items"][0]["qty"] == 3
+            assert updated["items"][0]["estimated"] == "portion"
+
+    _run(scenario())

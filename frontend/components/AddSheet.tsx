@@ -78,9 +78,11 @@ const ROWS = [
     Icon: BarcodeIcon,
   },
   {
+    // §3.4b (2026-09-08): the shot opens the Agent chat and lands in it —
+    // the plate is read, staged, and then corrected in words
     lane: "photo",
     label: "Take photo",
-    sub: "Names the plate; you confirm the amounts",
+    sub: "Reads the plate — then tell it what's off",
     Icon: CameraIcon,
   },
   {
@@ -94,7 +96,7 @@ const ROWS = [
     // starts on open), typing the fallback; it looks things up and shows you
     lane: "agent",
     label: "Agent",
-    sub: "Say or type it — it looks things up and stages them",
+    sub: "Say, type or snap it — it looks things up and stages them",
     Icon: MicIcon,
   },
 ] as const;

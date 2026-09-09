@@ -25,7 +25,8 @@ import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { getMe, type Me } from "./MeApi";
 import PendingItems from "./PendingItems";
-import PhotoCapture from "./PhotoCapture";
+import { photoErrorMessage } from "./PhotoApi";
+import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
@@ -91,9 +92,10 @@ export default function Today() {
   // is up. The pick arrives from TabBar as a window event (Today mounted) or
   // a sessionStorage handoff (navigated here from another tab).
   const [lane, setLane] = useState<AddLane | null>(null);
-  // The photo lane owns its own sheet (PhotoCapture: pick → downscale →
-  // upload); the staged log then enters the same staging sheet as the rest.
-  const [photoOpen, setPhotoOpen] = useState(false);
+  // §3.4b (2026-09-08): the photo lane IS the agent lane now — "Take photo"
+  // opens the chat with the picker up, so the plate lands in the conversation
+  // that is going to correct it. This is which of the two the lane opened for.
+  const [openWith, setOpenWith] = useState<"mic" | "photo">("mic");
   // Search/barcode twin of pendingRef: one uuid per food, so a retried
   // from-food log reuses it (§5 idempotent upsert).
   const quickRef = useRef<{ id: string; foodId: string } | null>(null);
@@ -124,9 +126,11 @@ export default function Today() {
               ? { ...m, done: true, output: { error: "interrupted" } }
               : m.kind === "user" && m.pending
                 ? { ...m, pending: false, text: m.text || "(recording)" }
-                : m.kind === "agent" && m.options
-                  ? { ...m, options: undefined }
-                  : m,
+                : m.kind === "photo" && m.pending
+                  ? { ...m, pending: false }
+                  : m.kind === "agent" && m.options
+                    ? { ...m, options: undefined }
+                    : m,
           ),
         );
       }
@@ -163,6 +167,35 @@ export default function Today() {
         m.kind === "result" && m.log.log_id === logId ? { ...m, state } : m,
       ),
     );
+  // §3.4b: the plate this conversation is still tuning — the newest photo
+  // result card that is still staged. DERIVED, never stored: the chat is
+  // already persisted per account, and a flag kept beside it could desync
+  // from it on a reload, an account switch or a CHAT_MAX truncation. It
+  // clears itself, because markResult already flips that card on commit,
+  // discard and replacement. `justDiscarded`: the log this send settled a
+  // pending discard for — its card still reads staged in this render.
+  const photoLogId = (justDiscarded: string | null = null): string | null => {
+    for (let i = chat.length - 1; i >= 0; i--) {
+      const m = chat[i];
+      if (m.kind !== "result" || !m.photo) continue;
+      return m.state === "staged" && m.log.log_id !== justDiscarded
+        ? m.log.log_id
+        : null;
+    }
+    return null;
+  };
+  // §3.4b: adjust_photo changed an EARLIER turn's log, so the rows come back
+  // on the outcome rather than as this turn's own (empty) log. The card that
+  // owns that log shows the new list — a second card would be a lie, and
+  // StagingSheet reads its rows from these props when Review mounts it.
+  const patchResult = (updated: LogResponse) =>
+    setChat((cur) =>
+      cur.map((m) =>
+        m.kind === "result" && m.log.log_id === updated.log_id
+          ? { ...m, log: { ...m.log, ...updated } }
+          : m,
+      ),
+    );
   // a run that ended in an error leaves no tool line spinning
   const settleRunning = () =>
     setChat((cur) =>
@@ -183,13 +216,15 @@ export default function Today() {
     for (const m of chat) {
       if (m.kind === "user" && !m.pending && m.text) {
         turns.push({ role: "user", text: m.text });
+      } else if (m.kind === "photo") {
+        turns.push({ role: "user", text: "[sent a photo of their plate]" });
       } else if (m.kind === "agent") {
         turns.push({ role: "agent", text: m.text });
       } else if (m.kind === "result") {
         const n = m.log.items.length;
         turns.push({
           role: "agent",
-          text: `staged ${n} item${n === 1 ? "" : "s"}`,
+          text: `${m.photo ? "read the photo — " : ""}staged ${n} item${n === 1 ? "" : "s"}`,
           log_id: m.log.log_id,
           items: m.log.items.map((it) =>
             `${it.food?.name ?? it.phrase}${
@@ -203,7 +238,13 @@ export default function Today() {
         });
       }
     }
-    return turns.slice(-12);
+    const tail = turns.slice(-12);
+    // §3.4b: the plate must not fall out of the window it is being tuned in —
+    // twelve corrections and the agent would be editing rows it can no longer
+    // see. The card it names is the one thing that always rides along.
+    const plate = photoLogId(justDiscarded);
+    const anchor = plate ? turns.find((t) => t.log_id === plate) : undefined;
+    return anchor && !tail.includes(anchor) ? [anchor, ...tail] : tail;
   };
   // a question's chips are for the next message only
   const closeQuestions = () =>
@@ -223,6 +264,11 @@ export default function Today() {
   // clip's capture start, so a retried upload of the same clip reuses the
   // id (§5 idempotent upsert) instead of minting a fresh one per attempt.
   const audioRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
+  // §3.4b photo twin of audioRef: one uuid per shot, keyed by the capture
+  // instant, so re-sending the same JPEG reuses the id instead of minting a
+  // second log for one plate. `lastShotRef` keeps the blob a retry needs.
+  const photoRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
+  const lastShotRef = useRef<PhotoShot | null>(null);
   // §8.1d/§13: a failed voice capture is reported on the NEXT text log as
   // capture_fallback + capture_error — the §9 voice-viability counter.
   const voiceFailRef = useRef<string | null>(null);
@@ -278,14 +324,9 @@ export default function Today() {
 
   const pickLane = (next: AddLane) => {
     setCaptureError(null);
-    if (next === "photo") {
-      setLane(null);
-      flushDiscard(); // a new capture settles any still-undoable discard
-      setPhotoOpen(true);
-      return;
-    }
-    setPhotoOpen(false);
-    setLane(next);
+    // "Take photo" opens the same chat, with the picker up instead of the mic
+    setOpenWith(next === "photo" ? "photo" : "mic");
+    setLane(next === "photo" ? "agent" : next);
   };
   // The + listener is bound once; the ref keeps it on the current closure.
   const pickRef = useRef(pickLane);
@@ -405,8 +446,9 @@ export default function Today() {
 
   // §8.4: a log that staged nothing but carried a save outcome is a
   // "save as my usual …" utterance, not a meal — confirm it and stage nothing.
-  // The photo, search and barcode lanes enter here; the Agent chat has its
-  // own entry below (its answers are chat messages, not toasts).
+  // The search and barcode lanes enter here; the Agent chat has its own entry
+  // below (its answers are chat messages, not toasts), and the photo lane is
+  // part of that chat since 2026-09-08 (§3.4b).
   const enterStaging = (log: LogCreateResponse): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
@@ -481,11 +523,18 @@ export default function Today() {
   // `replay` (§8.6): the server answered a retry from the stored log — no
   // tool lines or reply came with it (the reply is not stored, BACKLOG 139)
   // — so the chat says so instead of falling silent.
-  const agentDone = (log: LogCreateResponse, replay: boolean, userId: string): void => {
+  const agentDone = (
+    log: LogCreateResponse,
+    replay: boolean,
+    userId: string,
+    photo = false,
+  ): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.agent?.weight) setWeightsKey((k) => k + 1);
     // a correction: the earlier turn's log this one replaces
     for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
+    // §3.4b: adjust_photo edited the plate — patch its card, never add one
+    if (log.agent?.updated) patchResult(log.agent.updated);
     if (replay) {
       // a voice bubble the replay carried no transcript for stays honest
       setChat((cur) =>
@@ -512,9 +561,22 @@ export default function Today() {
           : (log.note as string),
       });
     }
-    if (log.items.length === 0) return; // the reply bubble is the answer
-    pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged" });
+    if (log.items.length === 0) {
+      t0Ref.current = null; // nothing will render this log — stop its clock
+      return; // the reply bubble is the answer
+    }
+    pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged", photo });
     setSavedNote(null);
+    if (photo) {
+      // §3.4b: the chat is the surface for a plate — the whole point is
+      // correcting it in words, and the staging sheet stacks OVER the
+      // composer, so opening it here would put the keyboard out of reach.
+      // Worse, dismissing it arms the 6 s undo-discard, which the next
+      // utterance would flush — deleting the very log being tuned. The
+      // card's Review opens the sheet, on fresh rows, when they are done.
+      requestAnimationFrame(() => stagedRendered(log.log_id));
+      return;
+    }
     setStaging({ log, restore: null });
   };
 
@@ -544,6 +606,9 @@ export default function Today() {
           capture_fallback: voiceFailRef.current != null,
           capture_error: voiceFailRef.current,
           history,
+          // §3.4b: while a photographed plate is staged, every turn of this
+          // conversation runs on the photo tier and can edit that plate
+          photo_log_id: photoLogId(justDiscarded),
         },
         (ev) => onAgentEvent(ev, userId),
       );
@@ -599,6 +664,7 @@ export default function Today() {
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
           capture_error: priorFailure,
           history,
+          photo_log_id: photoLogId(justDiscarded),
         },
         (ev) => onAgentEvent(ev, userId),
       );
@@ -640,6 +706,64 @@ export default function Today() {
         text: quota
           ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
           : "Couldn't upload that recording — try again, or type it.",
+      });
+      return false;
+    } finally {
+      setCaptureBusy(false);
+    }
+  };
+
+  // §3.4b (2026-09-08): a plate as a chat turn. The same shape as submitAudio
+  // — one client uuid per shot, keyed by the capture instant so a retry of the
+  // same JPEG reuses it (§5 idempotent upsert, §8.6 re-attach) — and the same
+  // stream: the server runs vision and stages the rows, the chat shows the
+  // read as a tool line, and the reply invites the correction.
+  const submitPhoto = async (shot: PhotoShot): Promise<boolean> => {
+    setCaptureBusy(true);
+    setCaptureError(null);
+    const justDiscarded = flushDiscard();
+    // the clock starts before the round trip, per attempt (BACKLOG 2) — the
+    // photo lane's staged_ms has always measured upload start → rendered
+    t0Ref.current = performance.now();
+    const retry =
+      photoRef.current?.capturedAt === shot.capturedAt ? photoRef.current : null;
+    const attempt =
+      retry ?? { id: crypto.randomUUID(), capturedAt: shot.capturedAt, userId: crypto.randomUUID() };
+    photoRef.current = attempt;
+    lastShotRef.current = shot;
+    const history = chatHistory(justDiscarded);
+    closeQuestions();
+    const userId = attempt.userId;
+    const bubble: ChatMessage = { kind: "photo", id: userId, thumb: shot.thumb };
+    if (retry) resumeTurn(userId, bubble);
+    else pushChat(bubble);
+    try {
+      const { log, replay } = await streamAgent(
+        {
+          kind: "photo",
+          id: attempt.id,
+          shot,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          history,
+        },
+        (ev) => onAgentEvent(ev, userId),
+      );
+      photoRef.current = null;
+      if ("status" in log) return false; // capture_failure is the voice lane's
+      agentDone(log, replay, userId, true);
+      return true;
+    } catch (e) {
+      t0Ref.current = null;
+      settleRunning();
+      // the thumbnail stays: it is what was sent, and it is still true
+      const quota = failCapture(e, null);
+      if (quota) photoRef.current = null; // a retry today meets the same 429
+      pushChat({
+        kind: "error",
+        id: crypto.randomUUID(),
+        text: quota
+          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+          : photoErrorMessage(e),
       });
       return false;
     } finally {
@@ -831,8 +955,10 @@ export default function Today() {
           messages={chat}
           busy={captureBusy}
           error={captureError}
+          openWith={openWith}
           onSubmit={submit}
           onSubmitAudio={submitAudio}
+          onSubmitPhoto={submitPhoto}
           onVoiceFailure={(e) => {
             voiceFailRef.current = e;
           }}
@@ -879,26 +1005,6 @@ export default function Today() {
           onClose={() => setLane(null)}
         />
       ) : null}
-
-      {/* §3.4b photo lane: the staged log enters the identical staging flow;
-          staged_ms here measures the shot's upload start → rendered, so the
-          clock starts in onUploadStart (before the round trip, per attempt),
-          not once the staged log is already back. */}
-      <PhotoCapture
-        open={photoOpen}
-        onClose={() => {
-          setPhotoOpen(false);
-          // the sheet owns its 429 surface; the banner catches up on close
-          if (demo) refreshMe();
-        }}
-        onUploadStart={() => {
-          t0Ref.current = performance.now();
-        }}
-        onStaged={(log) => {
-          setPhotoOpen(false);
-          enterStaging(log);
-        }}
-      />
 
       {staging ? (
         <StagingSheet

@@ -318,7 +318,7 @@ def test_photographed_plate_stages_flagged_then_commits_after_confirm_and_learns
                 )
                 assert row["staged"]["estimated"] == "portion"
                 assert row["staged"]["vision"]["est_grams"] == grams
-                assert row["staged"]["vision"]["model"] == "gpt-5.6-luna"
+                assert row["staged"]["vision"]["model"] == vision_real.MODEL
             chicken_row, rice_row = resp.items[0], resp.items[1]
             assert chicken_row.food.id == chicken and chicken_row.macros.kcal == 247.5
             assert rice_row.food.id == rice and rice_row.macros.kcal == 260

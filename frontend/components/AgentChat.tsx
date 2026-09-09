@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LogCreateResponse } from "@/lib/api";
+import PhotoCapture, { type PhotoShot } from "./PhotoCapture";
 import useVoiceCapture, {
   type VoiceClip,
   type VoiceFailure,
@@ -15,6 +16,10 @@ import useVoiceCapture, {
  *  result with its Review button. */
 export type ChatMessage =
   | { kind: "user"; id: string; text: string; pending?: boolean }
+  /** §3.4b: a plate sent as a turn. `thumb` is a small data: URL (the chat is
+   *  persisted, so a blob: URL would be dead after a reload) and may be null
+   *  when the browser could not produce one. */
+  | { kind: "photo"; id: string; thumb: string | null; pending?: boolean }
   | {
       kind: "tool";
       id: string;
@@ -31,6 +36,9 @@ export type ChatMessage =
       log: LogCreateResponse;
       /** replaced: a later turn corrected it and staged a new log */
       state: "staged" | "committed" | "discarded" | "replaced";
+      /** §3.4b: this card is a photographed plate — later turns tune it in
+       *  place, so it is patched rather than replaced by a second card */
+      photo?: boolean;
     }
   | { kind: "error"; id: string; text: string };
 
@@ -39,6 +47,13 @@ type Props = {
   busy: boolean;
   /** the lane's error surface — the demo quota's own sentence (§13) */
   error: string | null;
+  /** What the lane was opened for. "photo" opens the picker instead of
+   *  starting the mic: the OS camera takes the mic anyway, and a recording
+   *  started here would burn STT spend on room noise and file a voice
+   *  failure the user never caused (§13's counter). */
+  openWith: "mic" | "photo";
+  /** Send a plate as a turn. Same contract as onSubmit. */
+  onSubmitPhoto: (shot: PhotoShot) => Promise<boolean>;
   /** Returns true on success; the field only clears then, so a failed send
    *  can be resubmitted unchanged (same client uuid upstream). */
   onSubmit: (text: string) => Promise<boolean>;
@@ -94,6 +109,23 @@ function StopIcon() {
   );
 }
 
+function CameraIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+}
+
 function SendIcon() {
   return (
     <svg
@@ -116,6 +148,14 @@ function str(v: unknown): string {
 
 function count(v: unknown): number | null {
   return Array.isArray(v) ? v.length : null;
+}
+
+/** One adjust_photo change in words: "+ 1 banana", "− sauce", "3 eggs". */
+function changeWords(c: Record<string, unknown>): string {
+  const what = str(c.item);
+  const amount = c.qty != null ? `${str(c.qty)}${c.unit ? ` ${str(c.unit)}` : ""} ` : "";
+  if (c.op === "remove") return `− ${what}`;
+  return `${c.op === "add" ? "+ " : ""}${amount}${what}`;
 }
 
 function host(url: string): string {
@@ -153,6 +193,31 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       // live: the line is up before the query is known (the completed item brings it)
       doing = a.query ? `Searching the web: “${str(a.query)}”` : "Searching the web…";
       ok = hosts.length ? `Read ${shown}${more}` : "Done";
+      break;
+    }
+    case "read_photo": {
+      // §3.4b: no model called this — the photo turn emits the pair itself so
+      // the vision call is visible while it runs (it is the slowest step).
+      const list = out && Array.isArray(out.seen) ? (out.seen as unknown[]) : null;
+      doing = "Reading the plate…";
+      ok =
+        list == null
+          ? "Done"
+          : list.length === 0
+            ? "No food in that photo"
+            : `Saw ${list.slice(0, 4).map(str).join(", ")}` +
+              (list.length > 4 ? ` +${list.length - 4} more` : "");
+      break;
+    }
+    case "adjust_photo": {
+      const changes = Array.isArray(a.changes)
+        ? (a.changes as Record<string, unknown>[])
+        : [];
+      doing = changes.length
+        ? `Updating the plate: ${changes.map(changeWords).join(", ")}`
+        : "Updating the plate";
+      const done = out && Array.isArray(out.changed) ? (out.changed as unknown[]) : null;
+      ok = done?.length ? done.map(str).join(", ") : "Updated";
       break;
     }
     case "log_food": {
@@ -248,11 +313,14 @@ function ResultCard({
   return (
     <div className="result-card">
       <span className="result-text">
+        {m.photo ? "From the photo · " : ""}
         {n} item{n === 1 ? "" : "s"} staged
         {kcal > 0 ? ` · ${kcalFmt.format(kcal)} kcal` : ""}
         {estimated ? (
           <span className="result-sub">
-            {estimated} estimated — confirm or adjust before committing
+            {m.photo
+              ? `${estimated} estimated — say what's off, or review them`
+              : `${estimated} estimated — confirm or adjust before committing`}
           </span>
         ) : null}
       </span>
@@ -284,14 +352,17 @@ export default function AgentChat({
   messages,
   busy,
   error,
+  openWith,
   onSubmit,
   onSubmitAudio,
+  onSubmitPhoto,
   onVoiceFailure,
   onReview,
   onClose,
 }: Props) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const { supported, recording, elapsedMs, start, stop, cancel } =
@@ -322,23 +393,37 @@ export default function AgentChat({
     fallBackToText(NOTICE[res]);
   };
 
-  // `supported` is effect-set (false on the first render), so the auto-start
-  // waits for it; a mic-less device simply shows the text field.
+  // What the lane does on open. `supported` is effect-set (false on the first
+  // render), so the mic auto-start waits for it; a mic-less device simply
+  // shows the text field. Opened for a photo, the picker comes up instead and
+  // the mic is left alone — see the `openWith` prop.
   const startedRef = useRef(false);
   useEffect(() => {
-    if (!supported || startedRef.current) return;
+    if (startedRef.current) return;
+    if (openWith === "photo") {
+      startedRef.current = true;
+      setPickerOpen(true);
+      return;
+    }
+    if (!supported) return;
     startedRef.current = true;
     void beginRecording();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supported]);
+  }, [supported, openWith]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // the picker is stacked above the chat — Escape is its own first
+      if (pickerOpen) {
+        setPickerOpen(false);
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, pickerOpen]);
 
   // The parent worded the failure (a demo 429: "Demo accounts can log once a
   // day — resets at …") — drop this sheet's own "type it instead" notice so
@@ -402,8 +487,8 @@ export default function AgentChat({
           {messages.length === 0 ? (
             <p className="chat-empty">
               {supported
-                ? "Say or type it — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it stages."
-                : "No microphone here — type what you ate, or your weight."}
+                ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it stages."
+                : "No microphone here — type what you ate, or snap the plate."}
             </p>
           ) : null}
           {messages.map((m) => {
@@ -415,6 +500,17 @@ export default function AgentChat({
                     className={`bubble user${m.pending ? " pending" : ""}`}
                   >
                     {m.pending ? "Transcribing…" : m.text}
+                  </div>
+                );
+              case "photo":
+                return (
+                  <div key={m.id} className="bubble user photo-bubble">
+                    {m.thumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={m.thumb} alt="The plate you sent" />
+                    ) : (
+                      "📷 Photo"
+                    )}
                   </div>
                 );
               case "tool":
@@ -511,6 +607,19 @@ export default function AgentChat({
                   <MicIcon />
                 </button>
               ) : null}
+              <button
+                type="button"
+                className="mic-btn photo-btn"
+                aria-label="Send a photo of your plate"
+                disabled={busy}
+                onClick={() => {
+                  if (recording) cancel(); // the plate is the turn now
+                  setNotice(null);
+                  setPickerOpen(true);
+                }}
+              >
+                <CameraIcon />
+              </button>
               <input
                 ref={inputRef}
                 type="text"
@@ -535,6 +644,19 @@ export default function AgentChat({
           {notice && !error ? <p className="capture-notice">{notice}</p> : null}
         </div>
       </div>
+
+      {/* §3.4b: the picker stacks over the chat (.subsheet is above
+          .agent-sheet), decodes and downscales, and hands back the shot —
+          the send, and every failure, belong to the conversation. */}
+      <PhotoCapture
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPicked={(shot) => {
+          setPickerOpen(false);
+          setNotice(null);
+          void onSubmitPhoto(shot);
+        }}
+      />
     </>
   );
 }

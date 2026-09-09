@@ -302,13 +302,70 @@ async def plate(conn):
 
 
 def test_model_pin_and_sniff():
-    assert VREAL.MODEL == "gpt-5.6-luna"  # a pinned tier, never bare gpt-5.6
+    assert VREAL.MODEL == "gpt-6-astra"  # a pinned full id, never a family alias
     assert photo.sniff_image(JPEG) == "image/jpeg"
     assert photo.sniff_image(PNG) == "image/png"
     assert photo.sniff_image(WEBP) == "image/webp"
     assert photo.sniff_image(HEIC) == "image/heic"
     assert photo.sniff_image(b"hello world, not an image") is None
     assert photo.sniff_image(b"") is None
+
+
+def test_vision_call_sends_the_pinned_model_and_effort():
+    """The model id and the reasoning effort as they actually reach the API.
+    `MODEL` is asserted above, but nothing tested the effort until now — it is
+    the expensive half of this call (2026-09-08: astra at "medium"), and a
+    silent revert to "low" would show up only as worse portions."""
+    sent: dict = {}
+
+    class _Parse:
+        async def parse(self, **kwargs):
+            sent.update(kwargs)
+            return types.SimpleNamespace(
+                output_parsed=VREAL.VisionResult(items=[], meal_hint=None), usage=None
+            )
+
+    VREAL._client = types.SimpleNamespace(responses=_Parse())
+    try:
+        asyncio.run(VREAL.analyze(JPEG, "image/jpeg"))
+    finally:
+        VREAL._client = None
+    assert sent["model"] == "gpt-6-astra"
+    assert sent["reasoning"] == {"effort": "medium"}
+    assert sent["text_format"] is VREAL.VisionResult  # strict schema, not free text
+    assert sent["prompt_cache_key"] == VREAL.PROMPT_CACHE_KEY
+    # the image rides as a data URL of the SNIFFED type, never a file path
+    image_part = sent["input"][1]["content"][1]
+    assert image_part["image_url"].startswith("data:image/jpeg;base64,")
+
+
+def test_photo_reply_says_what_it_saw_and_invites_the_correction():
+    """The photo turn's reply is built in code from vision's own user-facing
+    notes — no model call (§6.4). It must name what was seen, flag a row with
+    no database match, and always end by asking for the correction, which is
+    the whole point of the lane being a chat."""
+    seen = VREAL.VisionResult(
+        items=[vitem("eggs", note="two fried eggs"), vitem("rice", note="about a cup of white rice")],
+        meal_hint=None,
+    )
+    plain = photo.photo_reply(seen, [])
+    assert "two fried eggs and about a cup of white rice" in plain
+    assert plain.endswith("tell me what's off.")
+
+    unresolved = photo.photo_reply(
+        seen,
+        [
+            StagedItem(
+                item_index=0, phrase="mystery sauce", status="resolved",
+                meal=Meal("lunch"), confidence="low", estimated="unresolved",
+            )
+        ],
+    )
+    assert "no database match for mystery sauce" in unresolved
+
+    assert "couldn't find any food" in photo.photo_reply(
+        VREAL.VisionResult(items=[], meal_hint=None), []
+    )
 
 
 def test_vision_item_rides_the_spoken_quantity_channel():
@@ -391,7 +448,7 @@ def test_photo_stages_staples_with_db_macros_and_flagged_portions():
             for idx, expect in ((0, 100), (1, 150), (2, 30), (3, None)):
                 row = await item_row(p.log_id, idx)
                 seen = row["staged"]["vision"]
-                assert seen["est_grams"] == expect and seen["model"] == "gpt-5.6-luna"
+                assert seen["est_grams"] == expect and seen["model"] == VREAL.MODEL
                 assert row["staged"]["estimated"] == ("none" if idx == 3 else "portion")
                 assert row["alias_id"] is not None if idx != 2 else row["alias_id"] is None
             assert set(log.keys()).isdisjoint({"image", "photo"})  # no bytes column, nothing stored
@@ -569,7 +626,7 @@ def test_not_found_photo_row_becomes_a_numberless_estimate_row_that_routes_to_se
             assert food["display_name"] == f"mystery sauce {p.tag}"
             assert food["servings"] == [item.servings[0].model_dump() | {"macros": {}}]
             assert food["provenance"]["vision"]["est_grams"] == 30
-            assert food["provenance"]["model"] == "gpt-5.6-luna"
+            assert food["provenance"]["model"] == VREAL.MODEL
             assert food["provenance"]["captured_at"] == CAPTURED.isoformat()
             row = await item_row(p.log_id, 2)
             assert row["status"] == "resolved"
@@ -887,3 +944,170 @@ def test_vision_live_identifies_foods_and_never_outputs_nutrition():
         assert it["confidence"] in ("high", "medium", "low")
     # what the photo shows: eggs on a plate
     assert any("egg" in it["phrase"].lower() for it in out["items"]), out
+
+
+# ---------------------------------------------------------------------------
+# 6. adjust_photo (§6.4, 2026-09-08): the chat tunes the plate in place
+#
+# The point of the lane being a chat: "that's three eggs, not two" has to land
+# on the row the photo already staged, keeping vision's record, the estimate
+# flag and every row it did not touch.
+# ---------------------------------------------------------------------------
+
+
+def _change(item, op="amount", qty=None, unit=None, grams=None, note="they said so"):
+    from services.agent import PhotoChange
+
+    return PhotoChange(op=op, item=item, qty=qty, unit=unit, grams=grams, note=note)
+
+
+def _body(log_id):
+    from models import LogCreate
+
+    return LogCreate(
+        id=uuid4(), text="", captured_at=CAPTURED, tz=TZ, photo_log_id=log_id
+    )
+
+
+def test_match_row_names_a_row_by_food_or_phrase_and_says_so_when_it_cannot():
+    rows = [
+        {"staged": {"phrase": "eggs abc", "food": {"name": "Egg, whole, fried"}}},
+        {"staged": {"phrase": "rice abc", "food": {"name": "Rice, white, cooked"}}},
+        {"staged": {"phrase": "mystery sauce abc"}},  # searching: no food yet
+    ]
+    assert photo._match_row(rows, "Rice, white, cooked") == 1  # exact food name
+    assert photo._match_row(rows, "eggs abc") == 0  # exact phrase
+    assert photo._match_row(rows, "sauce") == 2  # substring, on a foodless row
+    assert photo._match_row(rows, "  RICE, WHITE, COOKED ") == 1  # case/space insensitive
+
+    unknown = photo._match_row(rows, "bacon")
+    assert unknown["error"] == "unknown_item"
+    assert "Rice, white, cooked" in unknown["items"]  # the model is told what IS there
+    # "rice" hits the phrase AND the food name of one row — still one row, not ambiguous
+    assert photo._match_row(rows, "rice") == 1
+    ambiguous = photo._match_row(rows, "a")
+    assert ambiguous["error"] == "ambiguous_item"
+
+
+def test_adjust_photo_amount_lands_on_the_row_and_keeps_what_the_photo_saw():
+    """The core of the feature. A corrected count re-maps onto the food's own
+    serving with macros from the cache, the vision record and the diary-date
+    shift survive the rewrite (KEEP_LOG_KEYS_SQL, BACKLOG 57), the row is
+    flagged an estimate again and its confirmation is gone — a new amount
+    needs a new confirm (§3.4b rule 4)."""
+
+    async def run():
+        async with isolated_db() as conn:
+            p = await plate(conn)
+            eggs = p.items[0]
+            assert eggs.qty == 2 and eggs.estimated == "portion"
+            await confirm(p.log_id, 0)  # the user had already confirmed the photo's 2
+            # a §7.2 shift on the row: the key KEEP_LOG_KEYS_SQL exists to save.
+            # spoken_qty rides the same extra-key channel but KEEP does NOT
+            # carry it, so a full payload rewrite has to re-apply it by hand.
+            await db.execute(
+                "UPDATE item_resolutions SET staged = staged || "
+                "jsonb_build_object('logged_at', '2026-09-07T12:00:00+00:00', "
+                "                   'spoken_qty', 2, 'spoken_unit', null) "
+                "WHERE log_id = %s AND item_index = 0",
+                (p.log_id,),
+            )
+
+            out = await photo.adjust_rows(
+                p.log_id, [_change(f"eggs {p.tag}", qty=3, grams=150, note="there were three")],
+                _body(p.log_id),
+            )
+            assert "error" not in out
+            row = await item_row(p.log_id, 0)
+            staged = row["staged"]
+            assert staged["qty"] == 3  # one egg serving each
+            assert staged["macros"]["kcal"] == pytest.approx(EGG["macros"]["kcal"] * 3)
+            assert staged["estimated"] == "portion"
+            assert "there were three" in staged["estimate_note"]
+            assert staged["vision"]["note"] == "two fried eggs"  # the record stands
+            assert staged["logged_at"] == "2026-09-07T12:00:00+00:00"  # BACKLOG 57
+            assert "estimate_confirmed" not in staged  # must be confirmed again
+            assert row["was_edited"] is True
+            # a resolved row keeps the photo's own spoken estimate: it is what
+            # a later search pick sizes the swapped-in food by (§3.4b rule 4)
+            assert staged["spoken_qty"] == 2
+            # every other row untouched — this is what restaging would have lost
+            assert (await item_row(p.log_id, 1))["staged"]["qty"] == p.items[1].qty
+
+    asyncio.run(run())
+
+
+def test_adjust_photo_removes_a_row_and_adds_one_the_photo_missed():
+    async def run():
+        async with isolated_db() as conn:
+            p = await plate(conn)
+            banana = await insert_food(conn, f"banana {p.tag}", [RICE_100])
+            await insert_alias(conn, f"banana {p.tag}", banana)
+
+            out = await photo.adjust_rows(
+                p.log_id,
+                [
+                    _change(f"coffee {p.tag}", op="remove"),
+                    _change(f"banana {p.tag}", op="add", qty=120, unit="g",
+                            note="the photo missed it"),
+                ],
+                _body(p.log_id),
+            )
+            assert "error" not in out
+            assert (await item_row(p.log_id, 3))["status"] == "removed"
+            # the added row lands on the SAME log, after the highest index —
+            # including over the removed one, or _persist's ON CONFLICT would
+            # have swallowed it
+            added = await item_row(p.log_id, 4)
+            assert added is not None
+            assert added["staged"]["food"]["id"] == banana
+            assert added["staged"]["estimated"] == "portion"
+            # the answer is the plate as it now stands, and carries no macros
+            names = [i["food"] or i["phrase"] for i in out["items"]]
+            assert any(f"banana {p.tag}" in (n or "") for n in names)
+            assert not any("macros" in i for i in out["items"])
+
+    asyncio.run(run())
+
+
+def test_adjust_photo_refuses_a_committed_plate_and_an_unknown_row():
+    async def run():
+        async with isolated_db() as conn:
+            p = await plate(conn)
+            unknown = await photo.adjust_rows(
+                p.log_id, [_change("bacon", qty=2, grams=60)], _body(p.log_id)
+            )
+            assert unknown["error"] == "unknown_item"
+
+            await db.execute(
+                "UPDATE logs SET status = 'committed' WHERE id = %s", (p.log_id,)
+            )
+            done = await photo.adjust_rows(
+                p.log_id, [_change(f"eggs {p.tag}", qty=3, grams=150)], _body(p.log_id)
+            )
+            assert done["error"] == "not_staged" and "diary" in done["message"]
+
+    asyncio.run(run())
+
+
+def test_adjust_photo_keeps_a_searching_row_on_the_spoken_channel_for_tier3():
+    """Row 2 is the sauce nothing resolved. Correcting its amount cannot map
+    onto servings that do not exist yet, so the amount rides spoken_qty/unit
+    for whatever tier 3 picks — the §7.3 channel the whole lane uses."""
+
+    async def run():
+        async with isolated_db() as conn:
+            p = await plate(conn)
+            assert p.items[2].status == "searching"
+            out = await photo.adjust_rows(
+                p.log_id,
+                [_change(f"mystery sauce {p.tag}", qty=75, unit="g", note="more like 75 g")],
+                _body(p.log_id),
+            )
+            assert "error" not in out
+            staged = (await item_row(p.log_id, 2))["staged"]
+            assert staged["qty"] == 75 and staged["spoken_qty"] == 75
+            assert staged["spoken_unit"] == "g"
+            assert staged.get("macros") is None  # no numbers exist for it yet
+
+    asyncio.run(run())

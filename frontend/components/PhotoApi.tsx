@@ -12,6 +12,7 @@
 
 import {
   ApiError,
+  quotaRefusal,
   type LogCreateResponse,
   type Meal,
   type StagedItem,
@@ -71,6 +72,27 @@ export function isEstimateRefusal(e: unknown): boolean {
   return e instanceof ApiError && e.status === 409 && /estimat/i.test(e.message);
 }
 
+/** What went wrong sending a plate, in the user's words. The upload's own
+ *  refusals (415/413/422) are plain HTTP; a vision failure arrives as the
+ *  stream's `error` event, which streamAgent re-throws with its status, so
+ *  both land here. The demo quota's sentence is the server's own, verbatim
+ *  (§13) — never paraphrased. Lives here, not in the capture sheet, because
+ *  the photo lane's failures now surface in the chat (§6.4). */
+export function photoErrorMessage(e: unknown): string {
+  const quota = quotaRefusal(e);
+  if (quota) return quota.detail;
+  if (e instanceof ApiError) {
+    if (e.status === 413) return "That photo is too large to send.";
+    if (e.status === 400 || e.status === 415 || e.status === 422) {
+      return "That image wasn't accepted — try a JPEG or PNG.";
+    }
+    if (e.status === 503) {
+      return "Photo recognition is unavailable right now — retry, or type it.";
+    }
+  }
+  return "Couldn't send that photo — check your connection and retry.";
+}
+
 // ---------------------------------------------------------------------------
 // fetch — Bearer <JWT> + one retry on 401, minus the JSON content-type
 // (mirrors lib/api.ts multipart(): the browser sets the multipart boundary)
@@ -95,7 +117,12 @@ async function multipart(path: string, form: FormData): Promise<Response> {
 /** C2: POST /api/logs/photo — the (already client-downscaled) JPEG under
  *  `image` plus the log fields. `id` is the client uuid (§5 idempotent
  *  upsert: a retry of the same shot reuses it). `tz` rides along like the
- *  text and voice lanes send it; the route ignores it if it takes none. */
+ *  text and voice lanes send it; the route ignores it if it takes none.
+ *
+ *  The non-streaming entry, and the app no longer uses it: since 2026-09-08
+ *  the + sheet's photo lane goes through the chat (lib/api.streamAgent with
+ *  a shot), which runs the identical server-side pipeline and can then be
+ *  talked to. Kept because the route is still there and still tested. */
 export async function createLogPhoto(args: {
   id: string;
   file: Blob;
