@@ -964,3 +964,56 @@ def test_a_thin_default_serving_stages_real_macros_not_a_blank_card():
         assert commit_mod._missing_core_macros(serving) == []  # commit accepts it
 
     run(scenario())
+
+
+def test_barcode_ladder_skips_a_thin_fdc_record_so_off_gets_its_turn():
+    """BACKLOG 192: lookup_barcode returned the first record that merely was not
+    a 404, so a thin FDC Branded row won, was cached forever (foods is
+    cache-forever) and Open Food Facts — which has its own core-macro gate —
+    never ran. A scan that could have resolved landed on a numberless card."""
+    assert fdc._has_loggable_serving({"servings": [MASS]}) is True
+    assert fdc._has_loggable_serving({"servings": [THIN_LABEL, THIN_100G]}) is False
+    assert fdc._has_loggable_serving({"servings": []}) is False
+    # one complete serving among thin ones is enough
+    assert fdc._has_loggable_serving({"servings": [THIN_LABEL, MASS]}) is True
+
+    async def scenario():
+        class _Resp:
+            def __init__(self, payload):
+                self._p = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._p
+
+        hits = {"foods": [{"fdcId": 1, "gtinUpc": "0001"},
+                          {"fdcId": 2, "gtinUpc": "0001"}]}
+        served = {
+            "1": {"servings": [THIN_LABEL, THIN_100G]},   # thin: must be skipped
+            "2": {"servings": [MASS]},                    # complete: the answer
+        }
+        asked: list[str] = []
+        orig_get, orig_food = fdc._get, fdc.get_food
+
+        async def fake_get(path, **params):
+            return _Resp(hits)
+
+        async def fake_get_food(source, source_id):
+            asked.append(str(source_id))
+            return served.get(str(source_id))
+
+        fdc._get, fdc.get_food = fake_get, fake_get_food
+        try:
+            food = await fdc.lookup_barcode("0001")
+            assert food is served["2"], "the thin record must not win"
+            assert asked == ["1", "2"], asked
+
+            # every candidate thin -> a miss, so the caller can fall to OFF
+            served["2"] = {"servings": [THIN_100G]}
+            assert await fdc.lookup_barcode("0001") is None
+        finally:
+            fdc._get, fdc.get_food = orig_get, orig_food
+
+    run(scenario())

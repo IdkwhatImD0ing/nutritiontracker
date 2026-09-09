@@ -129,6 +129,12 @@ async def lookup_barcode(code: str) -> BarcodeResponse:
         """,
         (variants, variants),
     )
+    # BACKLOG 184: the same filter _load_food applies. Without it this path —
+    # the CACHE HIT, the common one — advertises a pre-rule phantom `label` as
+    # the default, and the from-food call that follows 422s on the very
+    # serving id this response just handed the client, because that path does
+    # filter. Both ends must see the same servings.
+    row = None if row is None else with_loggable_servings(row)
     if row is None:
         try:
             # FDC Branded first; Open Food Facts only on its miss — the §8.2

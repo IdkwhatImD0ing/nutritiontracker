@@ -259,9 +259,27 @@ def _hit_is_loggable(hit: dict) -> bool:
 
 
 def _has_core_macros(macros: dict) -> bool:
-    """The serving-level half of the same rule — mirrors
-    resolver.commit._missing_core_macros (numeric values, not just keys)."""
+    """All four, numeric — mirrors resolver.commit._missing_core_macros.
+
+    A partial serving counts as unloggable too (owner's ruling, 2026-09-09):
+    nothing can supply a record's missing carb and fat, so offering it only
+    produces a row that cannot commit.
+    """
     return all(isinstance(macros.get(k), (int, float)) for k in _CORE_KEYS)
+
+
+def _has_loggable_serving(food: dict) -> bool:
+    """Whether a normalized food has any serving that could be logged — the
+    barcode ladder's gate (BACKLOG 192).
+
+    lookup_barcode used to return the first record that merely wasn't a 404, so
+    a thin FDC Branded row won, was cached forever (foods is cache-forever), and
+    Open Food Facts — which has its own core-macro gate now — never got its
+    turn. A scan that could have resolved landed on a numberless card instead.
+    """
+    return any(
+        _has_core_macros(s.get("macros") or {}) for s in (food.get("servings") or [])
+    )
 
 
 def _label_nutrients(label: dict) -> dict[str, float]:
@@ -406,8 +424,8 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
     else:
         description = "1 serving"
 
-    # A label serving with no core macros is a phantom, and must not be
-    # emitted at all — let alone as the default (BACKLOG 184). Live records
+    # A label serving short of the four core macros must not be emitted — let
+    # alone as the default (BACKLOG 184, 192). Live records
     # with servingSize null and labelNutrients {} land here with grams=None
     # and macros={}: as the default it is exactly what the portion cascade
     # picks, so the card renders with no numbers and commit refuses it even
@@ -547,8 +565,11 @@ async def lookup_barcode(code: str) -> dict | None:
     hits.sort(key=lambda f: rank.get(f.get("gtinUpc") or "", len(rank)))
     for hit in hits[:3]:
         food = await get_food("fdc", str(hit["fdcId"]))
-        if food is not None:  # None = stale index entry (404) — drop the hit
-            return food
+        if food is None:  # stale index entry (404) — drop the hit
+            continue
+        if not _has_loggable_serving(food):
+            continue  # thin record: let Open Food Facts have its turn (192)
+        return food
     return None
 
 

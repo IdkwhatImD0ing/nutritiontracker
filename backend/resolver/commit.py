@@ -133,8 +133,18 @@ def food_committable(food: dict) -> bool:
 
 
 def with_loggable_servings(food: dict, *, default_key: str = "default_serving_id") -> dict:
-    """The food with unloggable servings dropped and its default serving id
-    repointed at a survivor (BACKLOG 184).
+    """The food with every unloggable serving dropped and its default serving
+    id repointed at a survivor (BACKLOG 184, 192).
+
+    A PARTIAL serving goes too, not just a numberless phantom (owner's ruling,
+    2026-09-09): "partials shouldn't be logged, there is no way to get the full
+    thing". Nothing can complete a record's missing carb and fat, so a serving
+    short of the four is a dead end wearing a verify-me badge — the user cannot
+    fix it, which is the one thing the badge implies. This reverses the tier-1/2
+    half of BACKLOG 7. It is also simply better: on a food with a complete
+    414 g label beside a partial 100 g base, "40 g of X" used to land on the
+    partial one and render blank; it now lands on the label and reads
+    22.2 kcal / 4.1 P / 0.9 C / 0.4 F.
 
     `default_key` names the default-serving field, because the cascade's own
     row shape calls it `food_default_serving_id`.

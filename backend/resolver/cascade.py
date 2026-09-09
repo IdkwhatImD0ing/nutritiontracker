@@ -39,7 +39,11 @@ from models import (
     ServingRef,
     StagedItem,
 )
-from resolver.commit import LEARNABLE_ROWS_SQL, with_loggable_servings
+from resolver.commit import (
+    COMMITTABLE_FOOD_SQL,
+    LEARNABLE_ROWS_SQL,
+    with_loggable_servings,
+)
 from resolver.norm import norm
 
 # ---------------------------------------------------------------------------
@@ -55,7 +59,8 @@ SELECT a.id AS alias_id, a.alias_norm, a.food_id, a.default_serving_id, a.defaul
 FROM aliases a
 JOIN foods f ON f.id = a.food_id
 WHERE a.alias_norm = %s
-"""
+  AND {loggable}
+""".format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
 
 # §3.3 tier 2a — trigram candidates against his personal corpus only. The
 # threshold lives IN THE QUERY as an explicit similarity() predicate: the `%%`
@@ -77,9 +82,10 @@ FROM aliases a
 JOIN foods f ON f.id = a.food_id
 WHERE a.alias_norm %% %s
   AND similarity(a.alias_norm, %s) >= %s
+  AND {loggable}
 ORDER BY sim DESC, a.use_count DESC
 LIMIT 3
-"""
+""".format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
 
 # §3.3 tier 2b — the validated library_match food, shaped like an alias row
 # (alias fields NULL) so the same staging/portion code path applies. Never
@@ -96,7 +102,8 @@ SELECT NULL AS alias_id, NULL AS alias_norm, f.id AS food_id,
        f.state, f.state_sensitive
 FROM foods f
 WHERE f.id = %s AND f.source <> 'estimate'
-"""
+  AND {loggable}
+""".format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
 
 # Words that denote a measure rather than a countable household unit (§7.3) —
 # including the dimensions, labels and provider unit codes a serving text may

@@ -53,7 +53,14 @@ from resolver.norm import norm
 from sources import fdc, web
 
 MODEL = "gpt-5.6-terra"
-MAX_TURNS = 6
+# The web lane needs seven: search_branded, an unpinned web_search to identify
+# the product, pin_chain_domain, web_search the nutrition page, fetch_page when
+# that cannot read it, add_food, the answer. At 6 it could not finish, and
+# MaxTurnsExceeded degrades to not_found -> manual entry, i.e. the user does the
+# work. Zero source='web' foods had ever been produced in production. 10 matches
+# the front-door agent (services/agent.MAX_TURNS); the heaviest real run
+# archived here used 5 tool calls over 4 model turns (owner's call, 2026-09-09).
+MAX_TURNS = 10
 
 # The openai-agents SDK, loaded on first use instead of at module scope.
 # `import agents` pulls `openai` in with it — together ~1.1 s of the api
@@ -491,8 +498,11 @@ Ranking and routing rules:
 2b. Packaged/retail product the databases miss ("costco tonkotsu ramen", a store brand,
    a new SKU): FIRST work out what the product is — the brand and the exact item (a
    retailer phrase usually names a branded product it sells; one unpinned web_search
-   may identify it) — and try search_branded under that name. If FDC Branded has no
-   match, use the web lane exactly as in 2a: pin_chain_domain with the brand's or the
+   may identify it) — and try search_branded under that name. A record that does not
+   carry all four of calories, protein, carbs and fat is NOT a match — results are
+   already filtered for that, so a thin-only product comes back empty and you must go
+   to the web rather than settle. If FDC Branded has no usable match,
+   use the web lane exactly as in 2a: pin_chain_domain with the brand's or the
    retailer's OFFICIAL domain (the manufacturer's site, or the retailer's product
    page), web_search or fetch_page the page that shows the Nutrition Facts panel, and
    transcribe its per-serving values EXACTLY as published into add_food(source="web").

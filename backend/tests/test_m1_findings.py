@@ -242,23 +242,31 @@ async def never_search(*a, **kw):
 # ---------------------------------------------------------------------------
 
 
-def test_partial_core_macros_stage_verify_me_not_crash():
+def test_partial_core_macros_are_not_offered_at_all():
+    """BACKLOG 7 staged a partial-core-macros serving as verify-me. The owner
+    reversed that on 2026-09-09 (BACKLOG 192): "partials shouldn't be logged,
+    there is no way to get the full thing" — nothing can supply a record's
+    missing carb and fat, so the badge promised a fix the user cannot make.
+
+    Partial servings are now dropped, and a food with ONLY partial servings is
+    invisible to tiers 1-2, so the item falls through to tier 3 and the agent
+    searches for a complete record. The user does nothing either way."""
     async def run():
         async with isolated_db() as conn:
-            # a) whole food is partial: tier-1 resolve must not 500
+            # a) partial-ONLY food: the alias exists, but the food cannot be
+            #    logged, so tier 1 must not claim it — it becomes a tier-3 hand-off
             phrase_a = f"{tok()} shake"
             partial_only = await insert_food(
                 conn, "Partial Only", [PARTIAL_100G], "srv-100g"
             )
             await insert_alias(conn, phrase_a, partial_only)
             res = await cascade.resolve_item(parsed(phrase_a), 0, Meal.snack)
-            assert res.staged.status == "resolved"
-            assert res.staged.macros is None  # never a partial Macros
-            assert res.staged.confidence == "low"  # verify-me styling
+            assert res.staged.status == "searching", "falls through to tier 3"
+            assert res.staged.tier is None and res.staged.macros is None
 
-            # b) the reviewer's exact reachable case: complete 'label' serving,
-            #    partial per-100g base; "40 g of X" routes the gram path onto
-            #    the partial base serving.
+            # b) complete 'label' + partial per-100g, spoken "40 g": the gram
+            #    path lands on the COMPLETE serving and carries real macros,
+            #    where it used to land on the partial base and render blank
             phrase_b = f"{tok()} bottle"
             mixed = await insert_food(
                 conn, "Mixed Bottle", [LABEL, PARTIAL_100G], "label"
@@ -268,10 +276,10 @@ def test_partial_core_macros_stage_verify_me_not_crash():
                 parsed(phrase_b, qty=40, unit="g"), 0, Meal.snack
             )
             assert res.staged.status == "resolved"
-            assert res.staged.serving.id == "srv-100g"  # gram path hit the base
-            assert res.staged.qty == 0.4
-            assert res.staged.macros is None
-            assert res.staged.confidence == "low"
+            assert res.staged.serving.id == "label"  # the partial base is gone
+            assert res.staged.macros is not None, "real numbers, not verify-me"
+            assert round(res.staged.macros.kcal, 1) == 22.2
+            assert round(res.staged.macros.carb_g, 1) == 0.9
 
             # c) complete serving still stages complete macros (no regression)
             phrase_c = f"{tok()} scoop"
