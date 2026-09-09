@@ -81,7 +81,7 @@ async def _invoke(agent, name: str, **kwargs) -> dict:
 
 
 def _deps(**over) -> agent_svc.AgentDeps:
-    calls: dict = {"food": [], "estimate": [], "weight": [], "meal": [], "update": []}
+    calls: dict = {"food": [], "estimate": [], "weight": [], "meal": [], "update": [], "past": []}
 
     async def stage_food(text: str) -> dict:
         calls["food"].append(text)
@@ -115,11 +115,17 @@ def _deps(**over) -> agent_svc.AgentDeps:
         return {"meal": new_name or name, "is_active": True if is_active is None else is_active,
                 "item_count": 1, "items": ["egg 2 × 1 large"], "trigger_phrases": triggers or []}
 
+    async def past_foods(query, limit) -> list[dict]:
+        calls["past"].append((query, limit))
+        return [{"food_id": "f-1", "food": "eggs", "qty": 2.0, "serving_id": "s-1",
+                 "serving": "1 large", "day": "2026-09-05", "meal": "breakfast"}]
+
     kw = dict(
         stage_food=stage_food,
         stage_estimate=stage_estimate,
         record_weight=record_weight,
         discard_log=discard_log,
+        past_foods=past_foods,
         save_meal=save_meal,
         update_meal=update_meal,
         now_local=NOW.astimezone(ZoneInfo(TZ)),

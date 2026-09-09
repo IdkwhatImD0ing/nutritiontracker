@@ -23,6 +23,12 @@ tier-3 agent with the hosted web_search, USDA FDC, Langfuse. Three stories:
      tapped, as the sheet would. Prints which lane answered and the run's
      tool calls. `not_found` fails the test.
 
+  6. a meal built from the diary (2026-09-08): three foods committed, then
+     "make a saved meal from the milk and the whey protein I logged, same
+     amounts" with no history and no log named — the run reads `past_foods`
+     and hands its ids back, so the macro holds those two foods at the
+     diary's own servings and quantities and the banana stays out.
+
 Every row is deleted in the finally block (weights first — its FK points at
 the log; a food the run created after t0 only when nothing else references
 it). Dated 2000-01-06 so diary noise never lands on a real day; the tenant is
@@ -483,6 +489,75 @@ def test_the_agent_saves_extends_and_renames_a_meal(client: TestClient):
         _run(_cleanup(t0, [l0, l1, l2, l3, l4]))
         # a run that died inside its own cleanup leaves this tenant rows on the
         # dead date, still referencing the aliases: sweep them first
+        stale = [str(r["id"]) for r in _run(db.fetchall(
+            "SELECT id FROM logs WHERE captured_at::date = %s", (LOCAL_DAY,)
+        ))]
+        if stale:
+            _run(_cleanup(t0, stale))
+        if learned:
+            _run(db.execute("DELETE FROM aliases WHERE food_id = ANY(%s::uuid[])", (learned,)))
+
+
+# ---------------------------------------------------------------------------
+# 6: past_foods — a meal built from the diary, at the diary's own amounts
+#    (§6.4, 2026-09-08; the trace where the agent had no way to look)
+# ---------------------------------------------------------------------------
+
+
+def test_the_agent_builds_a_meal_from_what_was_logged_before(client: TestClient):
+    """The failure this tool was written for: "make a meal from my previous
+    day's food, same amounts". The whole-log fallback cannot answer it — the
+    meal is a SUBSET of one log and the conversation names no log — so the
+    run has to read past_foods and hand its ids straight back to save_meal."""
+    t0 = _run(db.fetchone("SELECT now() AS t"))["t"]
+    l0, l1 = str(uuid4()), str(uuid4())
+    tag = uuid4().hex[:6]
+    name = f"test shake {tag}"
+
+    def macro() -> dict | None:
+        return _run(db.fetchone(
+            "SELECT name, items FROM meal_macros WHERE lower(name) LIKE %s "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (f"%{tag}",),
+        ))
+
+    try:
+        resolved = _log_and_commit(
+            client, l0, "a cup of milk, two scoops of whey protein, and a banana"
+        )
+        print(f"[agent live] committed: "
+              f"{[(it['food']['name'], it['qty'], it['serving']['description']) for it in resolved]}")
+        # the two the meal wants; the banana is the control that must stay out
+        want = {
+            it["food"]["id"]: (it["serving"]["id"], float(it["qty"]))
+            for it in resolved
+            if "milk" in _squash(it["food"]["name"]) or "whey" in _squash(it["food"]["name"])
+        }
+        assert len(want) == 2, [it["food"]["name"] for it in resolved]
+
+        # no history: the amounts exist nowhere but the diary
+        events = _post_stream(
+            client, l1,
+            f"make a saved meal called {name} from the milk and the whey protein "
+            "I logged, with the same amounts",
+        )
+        calls = _tool_calls(events)
+        assert "past_foods" in calls, calls  # it had to look them up
+        assert "save_meal" in calls, calls
+        row = macro()
+        assert row is not None, "no meal was saved"
+        print(f"[agent live] {row['name']!r} items={row['items']}")
+        assert {i["food_id"] for i in row["items"]} == set(want), (row["items"], want)
+        for i in row["items"]:  # the diary's own serving and quantity, unrounded
+            assert (i["serving_id"], float(i["qty"])) == want[i["food_id"]], (i, want)
+        reply = next(e for e in events if e["type"] == "reply")["text"]
+        assert "kcal" not in reply.lower() and "calorie" not in reply.lower(), reply
+    finally:
+        _run(db.execute("DELETE FROM meal_macros WHERE lower(name) LIKE %s", (f"%{tag}",)))
+        learned = [r["food_id"] for r in _run(db.fetchall(
+            "SELECT DISTINCT food_id FROM entries WHERE log_id = ANY(%s::uuid[])", ([l0],)
+        ))]
+        _run(_cleanup(t0, [l0, l1]))
         stale = [str(r["id"]) for r in _run(db.fetchall(
             "SELECT id FROM logs WHERE captured_at::date = %s", (LOCAL_DAY,)
         ))]

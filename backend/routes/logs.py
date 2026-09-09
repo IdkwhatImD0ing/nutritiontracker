@@ -37,6 +37,8 @@ import db
 from auth import require_user
 from models import LogCreate, LogResponse, Macros, Meal, ParsedItem, ServingRef, StagedItem
 from resolver import cascade
+from resolver import commit as commit_tx
+from resolver import foods_repo
 from resolver.norm import norm
 from routes import weights as weights_route
 from routes.commit import SavedMealNote
@@ -912,23 +914,79 @@ def _match_meal_item(meal, food: str) -> int | dict:
     }
 
 
+# The foods this account has actually eaten. `foods` is global — no user_id,
+# no RLS (migration 002) — so a food_id the model supplies proves nothing on
+# its own, and commit.validate_meal_items only checks the shared cache. This
+# is the food analogue of known_logs: only a food reachable through THIS
+# tenant's `entries` may join a saved meal by id. One statement per call.
+_MY_FOODS_SQL = (
+    "SELECT DISTINCT f.id::text AS id, f.display_name, f.servings"
+    " FROM entries e JOIN foods f ON f.id = e.food_id"
+    " WHERE e.food_id = ANY(%s::uuid[])"
+)
+
+
+def _uuid_or_none(value: str | None) -> str | None:
+    """The canonical form, or None — a non-uuid from the model must become an
+    unresolved row, never a psycopg error _tool_error would swallow."""
+    try:
+        return str(UUID((value or "").strip()))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+async def _my_foods(items: list[MealFood]) -> dict[str, dict]:
+    ids = [
+        fid
+        for fid in (_uuid_or_none(it.food_id) for it in items if it.food_id and it.serving_id)
+        if fid is not None
+    ]
+    if not ids:
+        return {}
+    return {r["id"]: r for r in await db.fetchall(_MY_FOODS_SQL, (ids,))}
+
+
 async def _resolve_meal_words(
     items: list[MealFood], meal: Meal
 ) -> tuple[list[dict], list[dict]]:
-    """Foods in words → (food, serving, qty) rows for a saved meal, through
-    the identical tiers 1–2 log_estimate's components take (tier 0 skipped;
-    the amount on the §7.3 spoken-quantity channel, none = the usual
-    portion). Nothing is persisted: tier 3 is a client-kicked handoff from a
-    staged row, so a food the databases do not know yet is reported back —
-    logging it once is what makes it known."""
+    """Foods → (food, serving, qty) rows for a saved meal. An item carrying
+    `food_id` + `serving_id` (a past_foods row, §6.4) is taken verbatim once
+    _my_foods proves the account logged that food — no lookup, so the stored
+    amount is exactly the one in the diary. An item in words goes through the
+    identical tiers 1–2 log_estimate's components take (tier 0 skipped; the
+    amount on the §7.3 spoken-quantity channel, none = the usual portion).
+    Nothing is persisted: tier 3 is a client-kicked handoff from a staged
+    row, so a food the databases do not know yet is reported back — logging
+    it once is what makes it known."""
     import tracing
 
     resolved: list[dict] = []
     unresolved: list[dict] = []
+    mine = await _my_foods(items)
     async with tracing.run(
         "cascade", kind="retriever", input=[it.phrase for it in items]
     ) as lookup:
         for i, it in enumerate(items):
+            if it.food_id and it.serving_id:
+                food = mine.get(_uuid_or_none(it.food_id) or "")
+                serving = (
+                    commit_tx._find_serving(food["servings"], it.serving_id.strip())
+                    if food is not None
+                    else None
+                )
+                if serving is None:
+                    unresolved.append({
+                        "phrase": it.phrase, "status": "unknown_food",
+                        "message": "not one of the foods this account has logged — "
+                                   "look it up with past_foods, or name it in words",
+                    })
+                    continue
+                resolved.append({
+                    "food_id": food["id"], "serving_id": serving["serving_id"],
+                    "qty": float(it.qty) if it.qty is not None else 1.0,
+                    "food": food["display_name"], "serving": serving["description"],
+                })
+                continue
             parsed = ParsedItem(
                 phrase=it.phrase.strip(), phrase_kind="food",
                 qty=float(it.qty) if it.qty is not None else None,
@@ -1108,6 +1166,37 @@ async def _run_agent_lane(
             meal_id=saved.id, name=saved.name, item_count=len(saved.items)
         )
 
+    async def past_foods(query: str | None, limit: int) -> list[dict]:
+        """§6.4's one read: a row per food this account has logged, carrying
+        the amount it was last logged at. qty/grams are `numeric` — cast, or
+        json.dumps(default=str) hands the model "1.5" as a string. Null keys
+        are dropped: brand, grams and a dangling serving are often empty, and
+        the model reads this list whole."""
+        try:  # body.tz is an unvalidated client string; AT TIME ZONE would raise
+            ZoneInfo(body.tz)
+            tz = body.tz
+        except Exception:
+            tz = "UTC"
+        rows = await foods_repo.past_foods(query, limit, tz)
+        return [
+            {
+                k: v
+                for k, v in {
+                    "food_id": r["food_id"],
+                    "food": r["display_name"],
+                    "brand": r["brand"],
+                    "qty": float(r["qty"]) if r["qty"] is not None else None,
+                    "serving_id": r["serving_id"],
+                    "serving": r["serving"],
+                    "grams": float(r["grams"]) if r["grams"] is not None else None,
+                    "day": str(r["day"]),
+                    "meal": r["meal"],
+                }.items()
+                if v is not None
+            }
+            for r in rows
+        ]
+
     # the meal writes are read-modify-write on one row: "add a banana and make
     # the eggs 3" is a save_meal and an update_meal the SDK may run at once
     meals = asyncio.Lock()
@@ -1265,6 +1354,7 @@ async def _run_agent_lane(
         discard_log=discard_staged,
         save_meal=save_meal,
         update_meal=update_meal,
+        past_foods=past_foods,
         saved_meals=[_meal_words(m) for m in await meals_route.list_meals(include_inactive=True)],
         history=history,
         now_local=now_local,

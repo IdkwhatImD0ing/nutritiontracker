@@ -20,6 +20,10 @@ the live database (isolated_db).
    reach.
 3. routes/agent: the stream shows the save_meal call, its result, the reply,
    and a done that carries saved_meal.
+4. past_foods (2026-09-08): the one read — a row per food this account has
+   logged with the amount it was last logged at, searchable by name; the ids
+   it hands out rebuild a saved meal with the diary's own amounts, and a food
+   this tenant never ate cannot join one by id.
 
 Run:  cd backend && uv run --with pytest pytest tests/test_agent_meals.py -q
 """
@@ -40,6 +44,7 @@ if sys.platform == "win32":  # psycopg async needs the selector loop on Windows
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from models import AgentTurn, CommitRequest, LogCreate  # noqa: E402
+from resolver import foods_repo  # noqa: E402
 from resolver.norm import norm  # noqa: E402
 from routes import agent as agent_routes  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
@@ -139,7 +144,7 @@ def test_meal_tools_refuse_bad_input_in_code():
         agent = agent_svc.build_agent(deps, state)
 
         assert (await _call(agent, "save_meal", name="  "))["error"] == "invalid_name"
-        egg = {"phrase": "egg", "qty": 1, "unit": None}
+        egg = {"phrase": "egg", "qty": 1, "unit": None, "food_id": None, "serving_id": None}
         out = await _call(agent, "save_meal", name="x", log_id=str(uuid4()), items=[egg])
         assert out["error"] == "choose_one"
         out = await _call(agent, "save_meal", name="x", items=[dict(egg, qty=0)])
@@ -429,9 +434,9 @@ def test_save_from_words_resolves_through_the_tiers_and_reports_the_unknown(monk
             name = f"Protein snack {tag}"
             cold = f"zzqx {uuid4().hex[:8]}"  # in no database
             words = [
-                {"phrase": f"whey {tag}", "qty": 1, "unit": "scoop"},
-                {"phrase": f"banana {tag}", "qty": 2, "unit": None},
-                {"phrase": cold, "qty": 1, "unit": None},
+                {"phrase": f"whey {tag}", "qty": 1, "unit": "scoop", "food_id": None, "serving_id": None},
+                {"phrase": f"banana {tag}", "qty": 2, "unit": None, "food_id": None, "serving_id": None},
+                {"phrase": cold, "qty": 1, "unit": None, "food_id": None, "serving_id": None},
             ]
 
             async def create(agent):
@@ -463,8 +468,8 @@ def test_save_from_words_resolves_through_the_tiers_and_reports_the_unknown(monk
 
             # extend: the same food and serving adds up; a new food joins the list
             more = [
-                {"phrase": f"banana {tag}", "qty": 1, "unit": None},
-                {"phrase": f"eggs {tag}", "qty": 3, "unit": None},
+                {"phrase": f"banana {tag}", "qty": 1, "unit": None, "food_id": None, "serving_id": None},
+                {"phrase": f"eggs {tag}", "qty": 3, "unit": None, "food_id": None, "serving_id": None},
             ]
             runner = _fake_runner([("save_meal", {"name": name.lower(), "items": more})], "Added.")
             monkeypatch.setattr(agent_svc, "Runner", runner)
@@ -595,5 +600,185 @@ def test_agent_stream_shows_the_save_meal_call_result_reply_and_done(monkeypatch
             assert done["items"] == [] and done["agent"]["reply"] == "Saved it."
             assert done["saved_meal"]["name"] == name and done["saved_meal"]["item_count"] == 1
             assert await _scalar(conn, "SELECT count(*) FROM meal_macros WHERE name = %s", (name,)) == 1
+
+    _run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# 4. past_foods — the agent's one read (§6.4, 2026-09-08)
+# ---------------------------------------------------------------------------
+
+MILK_CUP = {
+    "serving_id": "srv-cup",
+    "description": "1 cup (240 ml)",
+    "grams": 240,
+    "macros": {"kcal": 122, "protein_g": 8, "carb_g": 12, "fat_g": 4.5},
+}
+SCOOP = {
+    "serving_id": "srv-scoop",
+    "description": "1 scoop (32 g)",
+    "grams": 32,
+    "macros": {"kcal": 120, "protein_g": 24, "carb_g": 3, "fat_g": 1},
+}
+
+
+async def _eat(conn, food_id, *, at, serving_id, qty, grams=None, meal="lunch"):
+    """One committed diary row at a pinned instant — past_foods reads
+    `entries` directly, and `at` is UTC so the local-day conversion is under
+    test. tenancy's insert_entry pins the serving and the day; these turn on
+    both."""
+    await conn.execute(
+        "INSERT INTO entries (logged_at, meal, food_id, serving_id, qty, grams, macros) "
+        "VALUES (%s::timestamptz, %s, %s, %s, %s, %s, '{}'::jsonb)",
+        (at, meal, food_id, serving_id, qty, grams),
+    )
+
+
+def test_past_foods_reports_the_amount_each_food_was_last_logged_at():
+    async def scenario():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            milk = await insert_named_food(conn, f"milk {tag}", [MILK_CUP], brand="fairlife")
+            whey = await insert_named_food(conn, f"whey {tag}", [SCOOP])
+            # the older amount must lose to the newer one, per food
+            await _eat(conn, milk, at="2026-09-04T12:00:00+00", serving_id="srv-cup",
+                       qty=3, grams=720)
+            # 05:00 UTC is the previous evening in LA — the day must be theirs
+            await _eat(conn, milk, at="2026-09-07T05:00:00+00", serving_id="srv-cup",
+                       qty=1.5, grams=360, meal="breakfast")
+            await _eat(conn, whey, at="2026-09-06T12:00:00+00", serving_id="srv-scoop", qty=2)
+
+            rows = await foods_repo.past_foods(tz=TZ)
+            assert len([r for r in rows if r["food_id"] == milk]) == 1  # one row per food
+            by_id = {r["food_id"]: r for r in rows}
+            assert by_id[milk]["qty"] == 1.5 and by_id[milk]["grams"] == 360
+            assert by_id[milk]["meal"] == "breakfast"  # the newest row's meal, not the older
+            assert by_id[milk]["serving"] == "1 cup (240 ml)"  # resolved out of foods.servings
+            assert by_id[milk]["brand"] == "fairlife"
+            assert by_id[whey]["qty"] == 2 and by_id[whey]["grams"] is None
+            assert str(by_id[milk]["day"]) == "2026-09-06"
+            assert str(by_id[whey]["day"]) == "2026-09-06"
+            # §6.4: the agent may read amounts, never numbers
+            assert "kcal" not in json.dumps(rows, default=str)
+
+    _run(scenario())
+
+
+def test_past_foods_searches_the_whole_history_by_name():
+    async def scenario():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            milk = await insert_named_food(conn, f"milk {tag}", [MILK_CUP], brand="fairlife")
+            whey = await insert_named_food(conn, f"whey {tag}", [SCOOP])
+            await _eat(conn, milk, at="2026-08-01T12:00:00+00", serving_id="srv-cup", qty=1.5)
+            await _eat(conn, whey, at="2026-09-06T12:00:00+00", serving_id="srv-scoop", qty=2)
+
+            hits = [r["food_id"] for r in await foods_repo.past_foods(query="milk", tz=TZ)]
+            assert milk in hits and whey not in hits
+            # the brand is searchable too — it rides the same concatenation
+            assert milk in [r["food_id"] for r in await foods_repo.past_foods(query="fairlife", tz=TZ)]
+            # a fragment the trigram floor would miss still lands, via ILIKE
+            assert milk in [r["food_id"] for r in await foods_repo.past_foods(query="ilk", tz=TZ)]
+            # no query = the recent list, newest first: whey (1 day) before milk (40)
+            recent = [r["food_id"] for r in await foods_repo.past_foods(tz=TZ)]
+            assert recent.index(whey) < recent.index(milk)
+
+    _run(scenario())
+
+
+def test_save_meal_takes_the_ids_and_amounts_past_foods_reported(monkeypatch):
+    """The traced failure, offline: two foods eaten yesterday become a saved
+    meal with the diary's own amounts — no lookup, no question."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            tag = uuid4().hex[:6]
+            milk = await insert_named_food(conn, f"milk {tag}", [MILK_CUP], brand="fairlife")
+            whey = await insert_named_food(conn, f"whey {tag}", [SCOOP])
+            await _eat(conn, milk, at="2026-09-06T12:00:00+00", serving_id="srv-cup",
+                       qty=1.5, grams=360)
+            await _eat(conn, whey, at="2026-09-06T13:00:00+00", serving_id="srv-scoop", qty=2)
+            name = f"Shake {tag}"
+
+            async def build(agent):
+                got = await _call(agent, "past_foods", query=tag)
+                assert got["count"] == 2 and "error" not in got
+                out = await _call(agent, "save_meal", name=name, items=[
+                    {"phrase": f["food"], "qty": f["qty"], "unit": None,
+                     "food_id": f["food_id"], "serving_id": f["serving_id"]}
+                    for f in got["foods"]
+                ])
+                assert "error" not in out and "unresolved" not in out, out
+
+            monkeypatch.setattr(agent_svc, "Runner", _probe_runner(build, "Saved it."))
+            body = _log(f"make a meal called {name} from what I had yesterday", agent=True)
+            resp = await logs_routes.create_log(body)
+            assert resp.saved_meal is not None and resp.saved_meal.item_count == 2
+            row = await _macro(conn, name)
+            assert sorted(row["items"], key=lambda i: i["food_id"]) == sorted(
+                [
+                    {"food_id": milk, "serving_id": "srv-cup", "qty": 1.5},
+                    {"food_id": whey, "serving_id": "srv-scoop", "qty": 2.0},
+                ],
+                key=lambda i: i["food_id"],
+            )
+            # the read staged nothing and logged nothing
+            assert resp.items == []
+            assert await _scalar(
+                conn, "SELECT count(*) FROM item_resolutions WHERE log_id = %s", (body.id,)
+            ) == 0
+            assert await _scalar(conn, "SELECT count(*) FROM entries WHERE log_id = %s", (body.id,)) == 0
+
+    _run(scenario())
+
+
+def test_a_food_this_account_never_logged_cannot_join_a_meal_by_id(monkeypatch):
+    """`foods` is global, so a food_id proves nothing — only what THIS tenant
+    has eaten may be named by id (the food analogue of known_logs)."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            tag = uuid4().hex[:6]
+            theirs = await insert_named_food(conn, f"milk {tag}", [MILK_CUP])
+            mine = await insert_named_food(conn, f"whey {tag}", [SCOOP])
+
+            await _become(conn, "other")
+            await _eat(conn, theirs, at="2026-09-06T12:00:00+00", serving_id="srv-cup", qty=1.5)
+            await _become(conn, "test-user", is_owner=True)
+            await _eat(conn, mine, at="2026-09-06T12:00:00+00", serving_id="srv-scoop", qty=2)
+
+            # their food is in the shared cache but not in this account's diary
+            assert [r["food_id"] for r in await foods_repo.past_foods(query=tag, tz=TZ)] == [mine]
+            name = f"Borrowed {tag}"
+
+            async def probe(agent):
+                for bad, why in (
+                    ({"food_id": theirs, "serving_id": "srv-cup"}, "another tenant's food"),
+                    ({"food_id": "not-a-uuid", "serving_id": "srv-cup"}, "a malformed id"),
+                    ({"food_id": mine, "serving_id": "srv-nope"}, "a serving not on the food"),
+                ):
+                    out = await _call(agent, "save_meal", name=name, items=[
+                        {"phrase": "x", "qty": 1, "unit": None, **bad}
+                    ])
+                    assert out["error"] == "unresolved", (why, out)
+                    assert out["unresolved"][0]["status"] == "unknown_food", why
+
+            monkeypatch.setattr(agent_svc, "Runner", _probe_runner(probe, "Couldn't do that."))
+            resp = await logs_routes.create_log(_log(f"save {name}", agent=True))
+            assert resp.saved_meal is None
+            assert await _scalar(
+                conn, "SELECT count(*) FROM meal_macros WHERE name = %s", (name,)
+            ) == 0
+
+    _run(scenario())
+
+
+def test_past_foods_is_unavailable_when_the_route_injects_nothing():
+    async def scenario():
+        deps = _deps(past_foods=None)
+        out = await _call(agent_svc.build_agent(deps, {}), "past_foods")
+        assert out["error"] == "unavailable"
 
     _run(scenario())

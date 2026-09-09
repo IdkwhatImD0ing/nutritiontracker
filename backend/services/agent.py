@@ -16,7 +16,10 @@ amount is flagged `estimated="portion"` (the photo lane's flag, §3.4a) and the
 row must be confirmed before it commits. Since 2026-09-07 it also keeps the
 saved meals (§8.4) — `save_meal` / `update_meal`, the Library's own writes
 behind two more callbacks — because the agent can do whatever the UI can
-(Bill's ruling). The tools are its only effects, and
+(Bill's ruling). Since 2026-09-08 `past_foods` is its one tool that only
+reads — the foods this account has logged, each with the amount it was last
+logged at — so a meal built from what they already ate carries their own
+amounts instead of a guess or a question. The tools are its only effects, and
 the route reports what the tools actually did — never what the model says it
 did: `AgentRun` is assembled from tool-side state; the reply is the only model
 text that reaches the client.
@@ -49,6 +52,10 @@ MODEL = "gpt-5.6-terra"  # pinned tier id — never the bare gpt-5.6 alias (§6)
 MAX_TURNS = 10  # a search or two, up to three logging tools, the answer
 MAX_DAYS_AGO = 30
 MAX_ESTIMATE_ITEMS = 8
+# rows a past_foods call returns unless the model asks for more; the ceiling
+# is foods_repo.RECENT_FOODS_CAP (200), clamped there so this stays the one
+# module the tests can import without a database
+PAST_FOODS_DEFAULT = 20
 # a tool output larger than this is summarised for the chat, not shipped whole
 _MAX_WIRE_OUTPUT_CHARS = 4_000
 
@@ -119,6 +126,18 @@ Tools:
   usual unit from the context. `days_ago` is 0 for today, 1 for yesterday.
   A weight that was not spoken as a number is not a weight — "I'm down two
   pounds" states none; do not call the tool.
+- past_foods(query, limit): the foods THIS person has logged before, newest
+  first — each with the amount it was last logged at (the quantity, the
+  serving it was counted in, its weight, the day and the meal) and its
+  food_id and serving_id. `query` searches their whole history by name
+  ("milk", "protein powder"); leave it null for their most recent foods, and
+  raise `limit` (up to 200) when what you want is not in the list. Reach for
+  it when they point at something they logged before without saying the
+  amount — "the same as yesterday", "my previous day's shrimp", "the filtered
+  milk I had". What they say NOW wins over what the tool reports: an amount
+  they state this turn ("two scoops") is the amount. What the conversation or
+  the saved-meals list above already settles needs no call. One or two calls
+  at most; it reads only — nothing is logged or changed.
 - save_meal(name, trigger_phrases, log_id, items): saves a named meal — their
   "usual breakfast" — so saying its name logs it again, or puts more into one
   that exists (the saved meals are listed in the context). The items come from
@@ -135,6 +154,12 @@ Tools:
   More than 8 foods at once: the extras come back in `dropped` — name them
   and say they were not added. `trigger_phrases`: other ways they said they
   will call it, verbatim; null = the name.
+  A food you looked up with past_foods goes in with its `food_id`,
+  `serving_id` and the `qty` that tool reported, copied EXACTLY — that is the
+  amount they logged, and none of it is re-guessed. A food you have only in
+  words goes in as `phrase` with the amount as said, both ids null. Never
+  write a food_id past_foods did not give you: an id that is not one of their
+  own foods comes back unresolved.
 - update_meal(name, new_name, trigger_phrases, is_active, set_qty, remove):
   changes a saved meal that exists: rename, replace its trigger phrases, set
   an item's quantity or remove an item — the item by its food name as the
@@ -148,6 +173,13 @@ How to decide:
   food. Food and a save in one breath ("two eggs and toast, save that as my
   usual breakfast") → log_food first, its text verbatim as always, then
   save_meal once log_food has returned.
+- A saved meal built from what they have already eaten ("save what I had
+  yesterday as my usual lunch", "make a meal from the shrimp and the tofu I
+  logged", "same amounts as last time") → call past_foods FIRST and WAIT for
+  what it answers, then save_meal with each food's food_id, serving_id and
+  qty as reported. Never ask them for an amount they have already logged, and
+  never round or convert one. A food past_foods does not have is one they
+  have not logged: say so.
 - Plain foods, packaged products with a Nutrition Facts label, chain-restaurant
   items → log_food, verbatim. Unsure whether a product carries a label? One
   web_search settles it.
@@ -206,12 +238,18 @@ class EstimateItem(BaseModel):
 
 
 class MealFood(BaseModel):
-    """A food in words, for save_meal.items — looked up through the same
-    tiers log_estimate's components take; nothing is logged."""
+    """A food for save_meal.items: either in words — looked up through the
+    same tiers log_estimate's components take, nothing logged — or the exact
+    row past_foods reported, by id."""
 
     phrase: str  # a plain, database-searchable food name ("eggs", "whey")
     qty: float | None  # the amount as said; null = the usual portion, once
     unit: str | None  # "scoop", "cup", "g", "oz" … — null for a count of pieces
+    # both set = that exact past amount, no lookup: the ids come from a
+    # past_foods row verbatim (never invented) and qty is the count of THAT
+    # serving. Null for a food given in words.
+    food_id: str | None
+    serving_id: str | None
 
 
 class MealQty(BaseModel):
@@ -261,6 +299,9 @@ class AgentDeps:
     update_meal: Callable[..., Awaitable[dict]] | None = None
     # the saved meals as they stand, one line each (name, items, triggers)
     saved_meals: list[str] = field(default_factory=list)
+    # §6.4 the one read: (query | None, limit) → a row per food this account
+    # has logged, with the amount it was last logged at — never macros
+    past_foods: Callable[[str | None, int], Awaitable[list[dict]]] | None = None
 
 
 @dataclass
@@ -388,6 +429,27 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         return json.dumps(await deps.discard_log(log_id.strip()), default=str)
 
     @function_tool(failure_error_function=_tool_error)
+    async def past_foods(query: str | None = None, limit: int = PAST_FOODS_DEFAULT) -> str:
+        """The foods this person has logged before, newest first — each with
+        the amount it was last logged at (quantity, the serving it was counted
+        in, its weight, the day and the meal) and the food_id / serving_id
+        that name that amount exactly. `query` searches their whole history by
+        name; null lists their most recent foods. Up to 200. Reads only:
+        nothing is logged or changed."""
+        if deps.past_foods is None:
+            return json.dumps(
+                {"error": "unavailable", "message": "their past foods cannot be read here"}
+            )
+        rows = await deps.past_foods((query or "").strip() or None, limit)
+        out: dict[str, Any] = {"count": len(rows), "foods": rows}
+        if not rows:
+            out["message"] = (
+                "nothing they have logged matches — ask them for the food or the amount "
+                "rather than guessing one"
+            )
+        return json.dumps(out, default=str)
+
+    @function_tool(failure_error_function=_tool_error)
     async def save_meal(
         name: str,
         trigger_phrases: list[str] | None = None,
@@ -492,7 +554,9 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
             state["meal_note"] = f"updated '{out.get('meal') or name}'"
         return json.dumps(out, default=str)
 
-    tools: list = [log_food, log_estimate, log_weight, discard_log, save_meal, update_meal]
+    tools: list = [
+        log_food, log_estimate, log_weight, discard_log, past_foods, save_meal, update_meal
+    ]
     if deps.web_lane:
         # unpinned: this search identifies a product and its size, never a
         # page to transcribe numbers from (tier 3's pinned lane does that)
