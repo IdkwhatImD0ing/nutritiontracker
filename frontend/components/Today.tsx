@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   discardLog,
   getDiary,
-  getLog,
   patchTimings,
   quotaRefusal,
   streamAgent,
@@ -898,13 +897,22 @@ export default function Today() {
       // The sheet writes to the server as you use it — a removed row, a
       // confirm, a search pick, a tier-3 result — so the card cannot keep the
       // rows it was opened with. It is not a cosmetic copy: chatHistory()
-      // sends those rows to the agent as what is on the plate, and a later
-      // commit built from them is refused for the ones already removed. Re-read
-      // the log so the card, what the agent is told, and what commit will
-      // accept are the same list. Local portion edits that were never sent are
-      // deliberately not preserved: the agent is about to rewrite these rows.
-      getLog(current.log.log_id).then(patchResult).catch(() => {
-        /* the card keeps what it had; the next turn's outcome corrects it */
+      // sends those rows to the agent as what is on the plate, and a commit
+      // built from them is refused for the ones already removed.
+      //
+      // The snapshot IS that list, already in hand: the sheet folds every
+      // server response it makes back into `items`, and `removed` is what it
+      // was hiding. Taking it synchronously — rather than re-fetching the log
+      // — is what makes this correct rather than merely fresher: there is no
+      // window in which the next utterance reads the pre-sheet rows, and no
+      // in-flight response that can land after an adjust_photo outcome and
+      // overwrite a newer list with an older one. It also keeps the local
+      // portion edits, which is how the sheet has always worked — they are
+      // what a commit from this card would send.
+      patchResult({
+        log_id: current.log.log_id,
+        meal: snap.meal,
+        items: snap.items.filter((i) => !snap.removed.includes(i.item_index)),
       });
       return;
     }
