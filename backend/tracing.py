@@ -21,7 +21,7 @@ openai-agents runs (tier 3, the front-door agent) need no wrapping of their
 own: the SDK's tracing hooks emit a workflow span, the agent span, one
 ``turn N`` span per model turn holding its ``response`` span (model + token
 usage) and one ``function`` span per tool call, and the processor
-``init_tracing()`` registers maps them into the current trace.
+``install_agents_hook()`` registers maps them into the current trace.
 A hosted ``web_search`` call has no timing of its own, so it becomes a child
 tool span bounded by its model turn, marked ``hosted``.
 
@@ -452,6 +452,18 @@ def _bind_user(trace: _Trace) -> None:
 
 def _sdk_parent(trace: _Trace) -> str | None:
     """Inside an openai-agents tool call, the tool's span is the parent."""
+    # Never import the SDK just to ask. This runs for every span, including
+    # the lanes that never load `agents` at all (decompose, vision, the
+    # cascade) — and with the SDK unloaded there is no SDK span to be inside.
+    #
+    # Keyed on whether anyone has *tried* to install the hook, not on
+    # sys.modules: an install that failed only logs a warning, and short-
+    # circuiting on that would silently re-parent every tool span in the run to
+    # the trace root instead of its model turn (§10). Not-attempted is the only
+    # state that means "no SDK span can exist"; attempted-and-failed falls
+    # through to the lookup below, which answers correctly either way.
+    if not _agents_hook_attempted:
+        return None
     try:
         from agents.tracing import get_current_span
 
@@ -974,20 +986,22 @@ class _AgentsProcessor:
 
 
 _initialized = False
+# Set the moment install_agents_hook() runs, before its try — _sdk_parent reads
+# it to tell "the SDK was never loaded" (no span to find) apart from "the hook
+# failed to install" (there may well be one).
+_agents_hook_attempted = False
 
 
-def init_tracing() -> None:
-    """Idempotent: read .env, say whether FireTrace is on, hook the
-    openai-agents tracer. Safe to call from every AI route."""
-    global _initialized
-    if _initialized:
-        return
-    _initialized = True
-    _load_env()
-    if api_key():
-        log.info("firetrace: on (%s)", INGEST_URL)
-    else:
-        log.info("firetrace: off — %s is not set", KEY_ENV)
+def install_agents_hook() -> None:
+    """Register the processor that maps the SDK's spans into the current
+    trace. Idempotent — the processor is stashed on the SDK module, so a
+    reloaded tracing module re-points the existing one rather than adding a
+    second. Called at first SDK use (services/tier3._load_sdk, the agent lane
+    in routes/logs), NOT from init_tracing: importing `agents` pulls `openai`
+    in with it, ~1.1 s that a cold boot would otherwise pay before the first
+    request, and the lanes that never run an SDK agent must not pay it."""
+    global _agents_hook_attempted
+    _agents_hook_attempted = True
     try:
         import agents.tracing as agents_tracing
 
@@ -999,3 +1013,23 @@ def init_tracing() -> None:
         processor.module = sys.modules[__name__]
     except Exception:
         log.warning("firetrace: openai-agents tracing hook not installed", exc_info=True)
+
+
+def init_tracing() -> None:
+    """Idempotent: read .env, say whether FireTrace is on, and hook the
+    openai-agents tracer if the SDK is already loaded. Safe to call from every
+    AI route."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
+    _load_env()
+    if api_key():
+        log.info("firetrace: on (%s)", INGEST_URL)
+    else:
+        log.info("firetrace: off — %s is not set", KEY_ENV)
+    # Only when the SDK is already loaded — importing it here would put its
+    # ~1.1 s back on the boot path (main's lifespan calls this at startup).
+    # Whoever loads it installs the hook itself, via install_agents_hook().
+    if "agents.tracing" in sys.modules:
+        install_agents_hook()

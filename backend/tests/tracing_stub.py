@@ -1,9 +1,9 @@
 """A stand-in for backend/tracing.py in the route tests: the same public
-surface (init_tracing, run, current_trace_id, current_run, flush,
-score_commit, drain, FlushMiddleware), no network — a developer .env with a
-real FIRETRACE_API_KEY must never record test traces (FireTrace keeps them
-forever). `trace_id` is what the routes store on logs.trace_id, so a test can
-assert it; `scored` collects score_commit calls when given."""
+surface (init_tracing, install_agents_hook, run, current_trace_id, current_run,
+flush, score_commit, drain, FlushMiddleware), no network — a developer .env
+with a real FIRETRACE_API_KEY must never record test traces (FireTrace keeps
+them forever). `trace_id` is what the routes store on logs.trace_id, so a test
+can assert it; `scored` collects score_commit calls when given."""
 
 from __future__ import annotations
 
@@ -44,6 +44,9 @@ def make_tracing_stub(trace_id: str = "trace-test", scored: list | None = None) 
             scored.append((trace_id_, name, value))
 
     mod.init_tracing = lambda: None
+    # Split out of init_tracing so importing the openai-agents SDK stays off
+    # the cold-boot path; the agent lanes call it at first SDK use.
+    mod.install_agents_hook = lambda: None
     mod.run = run
     mod.current_run = lambda: None
     mod.current_trace_id = lambda: trace_id

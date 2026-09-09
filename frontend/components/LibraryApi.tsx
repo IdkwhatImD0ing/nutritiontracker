@@ -24,30 +24,12 @@ import {
   type FoodSearchResult,
   type StagedServing,
 } from "@/lib/api";
-import { authClient } from "@/lib/auth/client";
+import { getToken } from "@/lib/auth/token";
 
 // ---------------------------------------------------------------------------
-// fetch — Bearer <JWT> + one retry on 401 (mirrors lib/api.ts request())
+// fetch — Bearer <JWT> + one retry on 401 (mirrors lib/api.ts request();
+// the token cache behind getToken is shared with it, and with every other seam)
 // ---------------------------------------------------------------------------
-
-let cached: { token: string; exp: number } | null = null;
-
-function jwtExp(token: string): number {
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
-    return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
-  } catch {
-    return 0;
-  }
-}
-
-async function getToken(force: boolean): Promise<string | null> {
-  if (!force && cached && cached.exp - Date.now() > 30_000) return cached.token;
-  const res = await authClient.token();
-  const token = res.data?.token ?? null;
-  cached = token ? { token, exp: jwtExp(token) } : null;
-  return token;
-}
 
 export async function apiFetch<T>(
   path: string,

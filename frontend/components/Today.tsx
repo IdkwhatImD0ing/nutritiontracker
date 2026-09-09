@@ -29,6 +29,7 @@ import PhotoCapture from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
+import { useOnForeground } from "./useOnForeground";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
 
@@ -42,6 +43,12 @@ const PENDING_KEY = "usual.pending.v1";
  *  chat nor sends its log ids as their history. */
 const chatKey = (email: string) => `tally.chat.v1:${email}`;
 const CHAT_MAX = 60;
+
+/** How long Today may sit in the background before a return to the foreground
+ *  re-reads the server. Short enough that a meal logged on another device is
+ *  there when you look, long enough that flicking to the camera roll and back
+ *  costs nothing. A local-date rollover re-reads regardless of this. */
+const RESUME_STALE_MS = 60_000;
 
 type PendingState = { logId: string; items: StagedItem[] };
 
@@ -327,6 +334,32 @@ export default function Today() {
   const refreshMe = () => {
     getMe().then(setMe).catch(() => {});
   };
+
+  // Installed, Tally is resumed far more often than it is loaded: iOS keeps a
+  // standalone PWA warm for days, and the effects above run once per mount.
+  // Without this the diary, the quota banner and the weight card show whatever
+  // they read the first time — and past local midnight, yesterday's day
+  // entirely, since `getDiary` is keyed by date (§5). There is no reload button
+  // in standalone display and no pull-to-refresh (globals.css turns overscroll
+  // off), so nothing else was going to correct it.
+  //
+  // Re-reading also re-renders, which is what moves the header's date: it is
+  // derived during render, not held in state.
+  // Lazily, not `useRef(localDateISO())` — a useRef argument is evaluated on
+  // every render and thrown away, and Today re-renders on every streamed agent
+  // event.
+  const dayRef = useRef<string | null>(null);
+  if (dayRef.current === null) dayRef.current = localDateISO();
+  useOnForeground((awayMs) => {
+    const day = localDateISO();
+    const rolled = day !== dayRef.current;
+    if (!rolled && awayMs < RESUME_STALE_MS) return;
+    dayRef.current = day;
+    reloadDiary();
+    refreshMe();
+    // The card owns the series; Today only tells it the world moved (§6.4).
+    setWeightsKey((k) => k + 1);
+  });
 
   // A demo 429 carries the server's own sentence and the reset instant: the
   // sentence goes in the lane's error surface verbatim (never the generic

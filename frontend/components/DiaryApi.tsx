@@ -4,15 +4,15 @@
  * Diary entry seams for the Today diary list + the History day view (§5
  * `/api/entries/:id` PATCH/DELETE, §3.4a citation on diary rows).
  *
- * `apiRequest` mirrors lib/api.ts's private `request()` (Bearer from
- * authClient.token(), one 401 retry) because that helper is not exported and
- * lib/api.ts is outside this workstream; the integrator can collapse the two
- * by exporting `request` from lib/api.ts and deleting the copy below.
+ * `apiRequest` mirrors lib/api.ts's private `request()` (Bearer + one 401
+ * retry) because that helper is not exported. The token cache the two used to
+ * duplicate is now one module, lib/auth/token.ts; the request wrapper itself
+ * is still a copy, which costs nothing but a few lines.
  */
 
 import { ApiError, type DayTotals } from "@/lib/api";
 import type { components } from "@/lib/api-types";
-import { authClient } from "@/lib/auth/client";
+import { getToken } from "@/lib/auth/token";
 
 export type WebSource = components["schemas"]["WebSource"];
 
@@ -26,25 +26,6 @@ export type WebSource = components["schemas"]["WebSource"];
 export type DiaryEntry = components["schemas"]["DiaryEntry"];
 
 export type DiaryMeals = Record<string, DiaryEntry[]>;
-
-let cached: { token: string; exp: number } | null = null;
-
-function jwtExp(token: string): number {
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
-    return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
-  } catch {
-    return 0;
-  }
-}
-
-async function getToken(force: boolean): Promise<string | null> {
-  if (!force && cached && cached.exp - Date.now() > 30_000) return cached.token;
-  const res = await authClient.token();
-  const token = res.data?.token ?? null;
-  cached = token ? { token, exp: jwtExp(token) } : null;
-  return token;
-}
 
 export async function apiRequest<T>(
   path: string,

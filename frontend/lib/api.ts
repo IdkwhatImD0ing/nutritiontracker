@@ -5,13 +5,15 @@
  * every request/response type below is derived from lib/api-types.ts, which
  * is generated from the backend's /openapi.json — never hand-maintained.
  *
- * Attaches Authorization: Bearer <JWT from authClient.token()> and retries
- * exactly once on 401 with a freshly fetched token.
+ * Attaches Authorization: Bearer <JWT from lib/auth/token.getToken()> and
+ * retries exactly once on 401 with a freshly fetched token. That module holds
+ * the app's single token cache — this file used to keep its own, as three
+ * other seams still did.
  */
 
 import type { VoiceClip } from "@/components/useVoiceCapture";
 import type { components, operations } from "@/lib/api-types";
-import { authClient } from "@/lib/auth/client";
+import { getToken } from "@/lib/auth/token";
 
 /**
  * StagedItemOut = StagedItem + the GET-poll watchdog's optional `stale` flag
@@ -98,28 +100,6 @@ export function quotaRefusal(e: unknown): QuotaRefusal | null {
     detail: e.detail ?? "Demo limit reached — try again tomorrow.",
     resetsAt: e.resetsAt,
   };
-}
-
-/** Small token cache so the hot path doesn't round-trip /token per request. */
-let cached: { token: string; exp: number } | null = null;
-
-function jwtExp(token: string): number {
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
-    return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
-  } catch {
-    return 0;
-  }
-}
-
-async function getToken(force: boolean): Promise<string | null> {
-  if (!force && cached && cached.exp - Date.now() > 30_000) {
-    return cached.token;
-  }
-  const res = await authClient.token();
-  const token = res.data?.token ?? null;
-  cached = token ? { token, exp: jwtExp(token) } : null;
-  return token;
 }
 
 /** The Bearer scheme + the single 401 retry, for any body: JSON (the
