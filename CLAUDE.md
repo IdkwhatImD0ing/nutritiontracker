@@ -47,7 +47,8 @@ Non-obvious facts, each of which has already caused a bug:
 
 - API types are defined **once** in pydantic and generated to TS. Change a model → re-run
   `cd frontend && pnpm run typegen`. Never hand-edit `frontend/lib/api-types.ts`.
-- Pin full model ids (`gpt-5.6-luna`, `gpt-5.6-terra`) — never bare `gpt-5.6`.
+- Pin full model ids (`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-6-astra`) —
+  never a bare family alias (`gpt-5.6` routes to Sol at flagship prices).
 - DB tests hit the **production** Neon database inside force-rollback transactions (no dev
   branch yet, BACKLOG 18). Keep that pattern; leave no rows behind. `-m live` spends real money.
 - Tier-0 (saved-meal) rows never learn aliases or portion defaults — the saved meal is the memory.
@@ -67,3 +68,12 @@ Non-obvious facts, each of which has already caused a bug:
   the owner's rule, 2026-09-03; the day ends at 5pm, 2026-09-08). A local hook enforces it;
   inside the window, finish the work, run the suites, deploy a preview, and leave the
   commit for after 17:00.
+- The hook's only override is `WORKING_HOURS_NOW`, which the *hook process* reads — setting
+  it in a tool call does nothing, so **an agent cannot commit inside the window even with
+  permission**. When the owner says "push anyway", hand him the commands to run, or ask him
+  to disable the hook block in `.claude/settings.local.json`. Do not route around the regex.
+
+- **A command you hand Bill runs in Windows PowerShell 5.1**, not bash — `&&` is a parse
+  error there, as are `||`, `??`, ternaries and heredocs. Chain with `;` and `if ($?) { … }`,
+  and tag the block `powershell`. Claude's own Bash tool is Git Bash: different shell, so a
+  command that ran there is not thereby runnable by him.

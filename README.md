@@ -48,7 +48,7 @@ writes the entries, and learns the alias and portion for next time.
 - Next.js 16 (App Router, TypeScript), Serwist for the PWA
 - FastAPI, Python 3.12, `uv`
 - Neon Postgres (`pg_trgm`) with Neon Managed Better Auth; Row-Level Security for tenancy
-- OpenAI Agents SDK — `gpt-5.6-luna` parses utterances and reads photos, `gpt-5.6-terra` runs the food-search agent
+- OpenAI Agents SDK — `gpt-5.6-luna` parses utterances, `gpt-6-astra` reads photos, `gpt-5.6-terra` runs the chat and the food-search agent (`gpt-5.6-sol` once a photo is in the chat)
 - Deepgram Nova-3 for speech, OpenAI transcribe as the fallback
 - USDA FoodData Central for all food data; Open Food Facts as the quality-gated barcode fallback; chain restaurants via cited transcription of the chain's own page
 - FireTrace (self-hosted) for traces and commit-time scores; Langfuse only for the correction → replay eval harness, until FireTrace has datasets

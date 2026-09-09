@@ -17,11 +17,21 @@ rest live; a retry that finds no run to attach to (another instance, later)
 gets the stored answer as a single `done` marked `replay`.
 
 `agent` is implied: every log through here runs the front-door agent.
+
+Since 2026-09-08 the multipart form carries a plate photo instead of audio
+(§3.4b) and the photo lane is a chat turn: the identical vision → cascade →
+staging pipeline POST /api/logs/photo runs, shown as a `read_photo` tool line
+while it works, and a reply built in code from what vision saw. That turn runs
+no model of its own — there is no utterance to route and the agent cannot see
+the image. The turns after it can: `LogCreate.photo_log_id` names the plate,
+which puts the conversation on the photo tier and gives the agent the
+`adjust_photo` tool, so the amounts are corrected in words.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -36,7 +46,7 @@ from pydantic import BaseModel, Field, RootModel, TypeAdapter, ValidationError
 
 import db
 from auth import require_user
-from models import AgentTurn, LogCreate, LogResponse
+from models import AgentTurn, LogCreate, LogResponse, Meal
 from routes.logs import (
     _AGENT_RERUN_GRACE_SECONDS,
     _MULTIPART_OPENAPI,
@@ -56,10 +66,26 @@ router = APIRouter(dependencies=[Depends(require_user)])
 
 _TURNS = TypeAdapter(list[AgentTurn])
 # the multipart form documented on the JSON operation, plus the chat's history
+# and the photo part. `audio` stops being required: the form carries exactly
+# one of audio (a voice turn) or image (a photo turn, §3.4b).
 _AGENT_MULTIPART_OPENAPI = json.loads(json.dumps(_MULTIPART_OPENAPI))
-_AGENT_MULTIPART_OPENAPI["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"][
-    "history"
-] = {"type": "string", "description": "JSON array of AgentTurn — the chat so far (§6.4)"}
+_AGENT_FORM = _AGENT_MULTIPART_OPENAPI["requestBody"]["content"]["multipart/form-data"]["schema"]
+_AGENT_FORM["required"] = [k for k in _AGENT_FORM["required"] if k != "audio"]
+_AGENT_FORM["properties"]["history"] = {
+    "type": "string", "description": "JSON array of AgentTurn — the chat so far (§6.4)"
+}
+_AGENT_FORM["properties"]["image"] = {
+    "type": "string", "format": "binary",
+    "description": "a plate photo — the §3.4b lane as a chat turn; exactly one of audio or image",
+}
+_AGENT_FORM["properties"]["text"] = {
+    "type": "string",
+    "description": "said alongside an image — makes it a chat turn the agent can see (§6.4)",
+}
+_AGENT_FORM["properties"]["photo_log_id"] = {
+    "type": "string", "format": "uuid",
+    "description": "the staged photo log this conversation is tuning (§3.4b)",
+}
 
 
 def _parse_history(raw: str | None) -> list[AgentTurn] | None:
@@ -86,8 +112,10 @@ class AgentTranscriptEvent(BaseModel):
 
 class AgentToolCallEvent(BaseModel):
     """The agent called a tool: `name` (log_food, log_estimate, log_weight,
-    discard_log, past_foods, save_meal, update_meal, web_search) with `args`
-    as the model passed them."""
+    discard_log, past_foods, save_meal, update_meal, adjust_photo, web_search)
+    with `args` as the model passed them. `read_photo` is the exception — no
+    model called it: the photo turn (§3.4b) emits the pair itself so the chat
+    can show the vision call while it runs."""
 
     type: Literal["tool_call"] = "tool_call"
     id: str
@@ -351,19 +379,55 @@ def _stream(body: AsyncIterator[bytes]) -> NDJSONResponse:
 
 
 async def agent_voice(
-    audio: Annotated[UploadFile, File()],
     log_id: Annotated[UUID, Form(alias="id")],
     captured_at: Annotated[datetime, Form()],
     tz: Annotated[str, Form()],
+    audio: Annotated[UploadFile | None, File()] = None,
+    image: Annotated[UploadFile | None, File()] = None,
     capture_fallback: Annotated[bool, Form()] = False,
     capture_error: Annotated[str | None, Form()] = None,
     history: Annotated[str | None, Form()] = None,
+    meal_hint: Annotated[Meal | None, Form()] = None,
+    text: Annotated[str | None, Form()] = None,
+    photo_log_id: Annotated[UUID | None, Form()] = None,
 ) -> NDJSONResponse:
-    """Audio: a same-id retry re-attaches to its live run; else the claim
+    """The multipart turn — exactly one of `audio` or `image`.
+
+    Audio: a same-id retry re-attaches to its live run; else the claim
     before the stream (its errors are plain HTTP), then transcribe →
     `transcript` → the agent's events → `done`. `history` is the chat so far
-    as a JSON array of AgentTurn (the JSON route takes it as a field)."""
+    as a JSON array of AgentTurn (the JSON route takes it as a field).
+
+    Image alone (§3.4b, 2026-09-08): the photo lane as a chat turn. The same
+    re-attach and claim, then the identical vision → cascade → staging
+    pipeline `POST /api/logs/photo` runs (routes/photo._stage_photo), shown
+    as a `read_photo` tool line, and a reply built in code from what vision
+    saw. No agent runs on it — there is no utterance to route, and logging a
+    plate should not need one; the tuning turns that follow are the agent's.
+
+    Image with `text` (§6.4, 2026-09-09): a chat turn that happens to carry a
+    picture. It runs the agent, which can see the image — see
+    `_agent_image_turn`."""
     turns = _parse_history(history)
+    if (audio is None) == (image is None):
+        raise HTTPException(422, "send exactly one of `audio` or `image`")
+    # `text` is what was said ABOUT a picture. Beside audio it has no meaning —
+    # the transcript is the utterance — and silently dropping it would hide a
+    # caller's mistake behind a turn that looks like it worked.
+    if audio is not None and (text or "").strip():
+        raise HTTPException(422, "`text` belongs with `image`, not with `audio`")
+    if image is not None:
+        # A photo with something SAID about it is a conversation turn: the
+        # agent sees the image and answers ("is that the small size?", "what
+        # is the sauce?"). A photo on its own is the §3.4b lane — the
+        # deterministic astra parse, no chat model, which is what logging a
+        # plate should be.
+        said = (text or "").strip()
+        if said:
+            return await _agent_image_turn(
+                image, said, log_id, captured_at, tz, turns, photo_log_id
+            )
+        return await _agent_photo(image, log_id, captured_at, tz, meal_hint, turns)
     live = live_run(log_id)
     if live is not None:
         return _stream(_follow(live))
@@ -392,11 +456,118 @@ async def agent_voice(
             body = LogCreate(
                 id=log_id, text=text, captured_at=captured_at, tz=tz,
                 capture_fallback=capture_fallback, capture_error=capture_error, agent=True,
-                history=turns,
+                history=turns, photo_log_id=photo_log_id,
             )
             response = await _run_pipeline(body, emit)
             trace.set(output=response)
             return response
+
+    return _stream(_follow(_start(log_id, work)))
+
+
+async def _agent_image_turn(
+    image: UploadFile,
+    said: str,
+    log_id: UUID,
+    captured_at: datetime,
+    tz: str,
+    turns: list[AgentTurn] | None,
+    photo_log_id: UUID | None,
+) -> NDJSONResponse:
+    """A chat turn that carries an image (§6.4, 2026-09-09) — the same run a
+    typed turn gets, with the picture beside the words so the agent can answer
+    about what it shows. Every tool it has still applies, so "log this" works
+    the same as if it had been described.
+
+    The upload is validated by the photo lane's own reader, so one contract
+    covers both: same types, same 12 MB cap, same refusals, before the stream.
+    The bytes are never stored (§8.8) — they live for this run only. The cap is
+    the upload's, not the model's: the app's own client downscales to ≤1600 px
+    before it ever gets here (BACKLOG 183)."""
+    from routes import photo as photo_route  # lazy: it imports routes/logs
+
+    image_bytes, sniffed = await photo_route.read_image(image)
+    data_url = f"data:{sniffed};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+
+    live = live_run(log_id)
+    if live is not None:
+        return _stream(_follow(live))
+    body = LogCreate(
+        id=log_id, text=said, captured_at=captured_at, tz=tz, agent=True,
+        history=turns, photo_log_id=photo_log_id,
+    )
+    # claimed as a PHOTO log, not a text one: whatever this turn stages was
+    # identified from pixels, and §3.5's learning gate reads logs.input_mode.
+    # A portion the model read off an image must not become the next spoken
+    # log's default, and the typed words are a question, not a phrase to learn.
+    replay = await claim_text_log(body, mode="photo")
+    if replay is not None:
+        return _stream(_replay(log_id, replay, with_text=False))
+
+    async def work(emit: Emit):
+        import tracing  # lazy: stubbed in route tests
+
+        async with tracing.run(
+            "agent-chat", session_id=str(log_id), tags=["lane:agent", "lane:image"],
+            input={"text": said, "mime": sniffed, "bytes": len(image_bytes)},
+        ) as trace:
+            response = await _run_pipeline(body, emit, image=data_url)
+            trace.set(output=response)
+            return response
+
+    return _stream(_follow(_start(log_id, work)))
+
+
+async def _agent_photo(
+    image: UploadFile,
+    log_id: UUID,
+    captured_at: datetime,
+    tz: str,
+    meal_hint: Meal | None,
+    turns: list[AgentTurn] | None,
+) -> NDJSONResponse:
+    """The photo turn (§3.4b in the chat). The upload's two validations happen
+    here, before the first byte of the stream, so 415/413 stay the plain HTTP
+    errors the lane has always answered with; everything after rides the
+    stream. `turns` is accepted and ignored: this turn runs no model, so there
+    is no conversation to read — the chat keeps its own history for the tuning
+    turns that follow."""
+    from routes import photo as photo_route  # lazy: it imports routes/logs
+
+    image_bytes, sniffed = await photo_route.read_image(image)
+    live = live_run(log_id)
+    if live is not None:
+        return _stream(_follow(live))
+
+    async def work(emit: Emit):
+        import tracing  # lazy: stubbed in route tests
+
+        # §10: one trace per run, the log id as its session — the same shape
+        # the standalone photo route opens, tagged for both lanes
+        async with tracing.run(
+            "agent-chat", session_id=str(log_id), tags=["lane:agent", "lane:photo"],
+            input={"mime": sniffed, "bytes": len(image_bytes)},
+        ) as trace:
+            # the §8.6 claim, the demo quota and the replay all live inside
+            # _stage_photo, as they do for POST /api/logs/photo
+            response = await photo_route._stage_photo(
+                image_bytes, sniffed, log_id, captured_at, meal_hint, tz, emit,
+                # this lane's run lives in _RUNS for _RUN_MAX_SECONDS, so the
+                # §8.6 orphan window has to be the same span — at 90 s a retry
+                # elsewhere would re-run vision under a run still thinking
+                grace=_AGENT_RERUN_GRACE_SECONDS,
+            )
+            trace.set(output=response)
+        # _stage_photo builds the reply itself (photo_reply) on every path that
+        # actually ran vision; a §8.6 replay of an earlier attempt has none —
+        # the rows in the `done` event are the answer, and the chat says so.
+        reply = response.agent.reply if response.agent else None
+        await emit(
+            AgentReplyEvent(
+                text=reply or "That photo had already gone through — here is what it staged."
+            ).model_dump()
+        )
+        return response
 
     return _stream(_follow(_start(log_id, work)))
 

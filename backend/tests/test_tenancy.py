@@ -779,7 +779,7 @@ def test_same_id_repost_cannot_rerun_decompose_for_free(monkeypatch):
 def test_photo_vision_failure_keeps_the_attempt(monkeypatch):
     calls: list[str] = []
 
-    async def analyze(image, mime):
+    async def analyze(image, mime, **kw):  # kw: the lane grew context/web
         calls.append(mime)
         raise OpenAIError("vision down")
 

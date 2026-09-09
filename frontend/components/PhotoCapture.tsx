@@ -1,39 +1,37 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  ApiError,
-  discardLog,
-  quotaRefusal,
-  type LogResponse,
-  type Meal,
-} from "@/lib/api";
-import { createLogPhoto } from "./PhotoApi";
 import "@/app/photo.css";
 
 /** Vision needs nothing sharper than this; a 12 MP phone JPEG is ~4 MB and
  *  the route caps uploads at 12 MB, so downscale client-side, always. */
 const MAX_EDGE = 1600;
 const JPEG_QUALITY = 0.85;
+/** The chat bubble's thumbnail. It is persisted with the conversation (Today
+ *  writes the whole chat to localStorage), so it must be a data: URL — a
+ *  blob: URL is dead after a reload — and it must be small. */
+const THUMB_EDGE = 240;
+const THUMB_QUALITY = 0.6;
+
+/** One prepared shot (§3.4b in the chat, 2026-09-08). `capturedAt` is the
+ *  retry key, exactly as VoiceClip's is: re-sending the same shot reuses the
+ *  client uuid Today minted for it (§5 idempotent upsert, §8.6 re-attach). */
+export type PhotoShot = {
+  blob: Blob;
+  mimeType: string;
+  capturedAt: string;
+  /** a small data: URL for the chat bubble — never the full JPEG */
+  thumb: string | null;
+};
 
 type Props = {
   open: boolean;
-  /** the Today screen's current meal, if the caller knows it */
-  mealHint?: Meal;
   onClose: () => void;
-  /** the upload is leaving the device (each attempt, retries included) — the
-   *  caller starts its staged_ms clock here (BACKLOG 2), not when the staged
-   *  log comes back */
-  onUploadStart: () => void;
-  /** the photo staged — the caller opens the ordinary staging sheet */
-  onStaged: (log: LogResponse) => void;
+  /** a decoded, downscaled shot — the caller sends it as the chat turn */
+  onPicked: (shot: PhotoShot) => void;
 };
 
-/** One prepared shot = one client uuid (§5 idempotent upsert): a retried
- *  upload of the same JPEG reuses the id; a new pick mints a new one. */
-type Shot = { id: string; blob: Blob; url: string; capturedAt: string };
-
-type Phase = "pick" | "preparing" | "uploading" | "error";
+type Phase = "pick" | "preparing" | "error";
 
 /** Decode whatever the picker handed us. createImageBitmap honours EXIF
  *  orientation and is the only path that decodes HEIC — and only in Safari
@@ -58,12 +56,12 @@ async function decode(file: File): Promise<ImageBitmap | HTMLImageElement> {
   }
 }
 
-/** Downscale so the long edge is ≤ MAX_EDGE and re-encode as JPEG. */
-async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
+/** Draw `src` onto a canvas whose long edge is ≤ `edge`. */
+function fit(src: ImageBitmap | HTMLImageElement, edge: number): HTMLCanvasElement {
   const w = src instanceof HTMLImageElement ? src.naturalWidth : src.width;
   const h = src instanceof HTMLImageElement ? src.naturalHeight : src.height;
   if (!w || !h) throw new Error("empty image");
-  const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
+  const scale = Math.min(1, edge / Math.max(w, h));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(w * scale);
   canvas.height = Math.round(h * scale);
@@ -73,7 +71,12 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
-  if (!(src instanceof HTMLImageElement)) src.close();
+  return canvas;
+}
+
+/** Downscale so the long edge is ≤ MAX_EDGE and re-encode as JPEG. */
+async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
+  const canvas = fit(src, MAX_EDGE);
   const blob = await new Promise<Blob | null>((resolve) =>
     canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY),
   );
@@ -81,112 +84,54 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
   return blob;
 }
 
-function uploadMessage(e: unknown): string {
-  const quota = quotaRefusal(e);
-  if (quota) return quota.detail; // the demo quota's own sentence, verbatim
-  if (e instanceof ApiError) {
-    if (e.status === 413) return "That photo is too large to send.";
-    if (e.status === 400 || e.status === 415 || e.status === 422) {
-      return "That image wasn't accepted — try a JPEG or PNG.";
-    }
-    if (e.status === 503) {
-      return "Photo recognition is unavailable right now — retry, or type it.";
-    }
-  }
-  return "Couldn't send that photo — check your connection and retry.";
-}
-
-/** M4 (§12, §3.4a): the photo lane's entry point — a bottom sheet with
- *  "take a photo" and "choose from library". No camera stream of its own:
- *  the file input's `capture` attribute hands off to the OS camera on
- *  phones. Success hands the staged log to the caller; every failure is a
- *  visible message with a retry, never a silent dismiss. */
-export default function PhotoCapture({
-  open,
-  mealHint,
-  onClose,
-  onUploadStart,
-  onStaged,
-}: Props) {
+/** The photo picker (§3.4b; a chat turn since 2026-09-08) — a bottom sheet
+ *  with "take a photo" and "choose from library". No camera stream of its
+ *  own: the file input's `capture` attribute hands off to the OS camera on
+ *  phones.
+ *
+ *  It picks, decodes and downscales; it no longer uploads. The shot goes to
+ *  the caller, which sends it as a turn of the Agent chat and shows the
+ *  answer — and every failure — there, next to the conversation that is going
+ *  to correct it. Two buttons a human taps is also the only shape that works:
+ *  a file input cannot be opened from an effect, because the user activation
+ *  is long gone by the time the lane has mounted. */
+export default function PhotoCapture({ open, onClose, onPicked }: Props) {
   const [phase, setPhase] = useState<Phase>("pick");
-  const [shot, setShot] = useState<Shot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
-
-  // The preview URL lives exactly as long as its shot.
-  useEffect(() => {
-    if (!shot) return;
-    return () => URL.revokeObjectURL(shot.url);
-  }, [shot]);
 
   // A reopened sheet starts clean.
   useEffect(() => {
     if (open) return;
     setPhase("pick");
-    setShot(null);
     setError(null);
   }, [open]);
-
-  const upload = async (s: Shot) => {
-    setPhase("uploading");
-    setError(null);
-    onUploadStart();
-    try {
-      const log = await createLogPhoto({
-        id: s.id,
-        file: s.blob,
-        capturedAt: s.capturedAt,
-        mealHint,
-      });
-      if (log.items.length === 0 && log.note) {
-        // Vision saw no food (the route says so in `note`). Say so instead
-        // of opening an empty sheet; the empty log is closed out the way an
-        // abandoned sheet is (§5 status:'discarded'), and the next attempt
-        // is a fresh log.
-        discardLog(log.log_id).catch(() => {});
-        setShot(null);
-        setPhase("error");
-        setError("No food found in that photo — try another angle, or type it.");
-        return;
-      }
-      if (log.items.length === 0) {
-        // An itemless replay (§8.6): an earlier attempt under this id is
-        // still mid-pipeline server-side, so nothing is known yet. Keep the
-        // shot — Retry asks again, and a dead attempt is re-run once the
-        // grace period passes. Never discard a log another request owns.
-        setPhase("error");
-        setError("Still looking at that photo — give it a few seconds and retry.");
-        return;
-      }
-      setShot(null);
-      setPhase("pick");
-      onStaged(log);
-    } catch (e) {
-      // The shot stays so Retry re-sends it under the same id — unless the
-      // demo quota refused it: a retry today would meet the same 429.
-      if (quotaRefusal(e)) setShot(null);
-      setPhase("error");
-      setError(uploadMessage(e));
-    }
-  };
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     setPhase("preparing");
     setError(null);
     try {
-      const blob = await toJpeg(await decode(file));
-      const s: Shot = {
-        id: crypto.randomUUID(),
+      const src = await decode(file);
+      const blob = await toJpeg(src);
+      // the bubble's thumbnail, from the same decode — a data: URL, because
+      // the chat is persisted and a blob: URL would not survive a reload
+      let thumb: string | null = null;
+      try {
+        thumb = fit(src, THUMB_EDGE).toDataURL("image/jpeg", THUMB_QUALITY);
+      } catch {
+        /* a tainted or oversized canvas — the bubble renders without it */
+      }
+      if (!(src instanceof HTMLImageElement)) src.close();
+      onPicked({
         blob,
-        url: URL.createObjectURL(blob),
+        mimeType: blob.type || "image/jpeg",
         capturedAt: new Date().toISOString(),
-      };
-      setShot(s);
-      await upload(s);
+        thumb,
+      });
+      setPhase("pick");
     } catch {
-      setShot(null);
       setPhase("error");
       setError(
         "Couldn't read that photo — this browser can't decode it. Try a JPEG or PNG, or take a new one.",
@@ -196,9 +141,7 @@ export default function PhotoCapture({
 
   if (!open) return null;
 
-  // Closing mid-upload would orphan a log the server is about to stage, so
-  // the sheet is modal for those few seconds.
-  const locked = phase === "preparing" || phase === "uploading";
+  const locked = phase === "preparing";
   const close = () => {
     if (!locked) onClose();
   };
@@ -247,8 +190,8 @@ export default function PhotoCapture({
         {phase === "pick" ? (
           <>
             <p className="subsheet-hint">
-              Foods are matched to the database; portions are estimated from
-              the photo and flagged for you to confirm.
+              Foods are matched to the database and the amounts are estimated
+              from the photo — then you tell the agent what it got wrong.
             </p>
             <div className="photo-options">
               <button
@@ -294,10 +237,6 @@ export default function PhotoCapture({
           </>
         ) : null}
 
-        {shot ? (
-          <img className="photo-preview" src={shot.url} alt="Your plate" />
-        ) : null}
-
         {phase === "preparing" ? (
           <p className="photo-status" aria-live="polite">
             <span className="spinner" />
@@ -305,35 +244,18 @@ export default function PhotoCapture({
           </p>
         ) : null}
 
-        {phase === "uploading" ? (
-          <p className="photo-status" aria-live="polite">
-            <span className="spinner" />
-            Looking at your plate… this takes a few seconds.
-          </p>
-        ) : null}
-
         {phase === "error" ? (
           <>
             <p className="sheet-error">{error}</p>
             <div className="photo-actions">
-              {shot ? (
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => void upload(shot)}
-                >
-                  Retry
-                </button>
-              ) : null}
               <button
                 type="button"
                 onClick={() => {
-                  setShot(null);
                   setError(null);
                   setPhase("pick");
                 }}
               >
-                {shot ? "Choose another" : "Try another photo"}
+                Try another photo
               </button>
             </div>
           </>
