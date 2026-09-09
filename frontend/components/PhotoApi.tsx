@@ -16,7 +16,7 @@ import {
   type Meal,
   type StagedItem,
 } from "@/lib/api";
-import { authClient } from "@/lib/auth/client";
+import { getToken } from "@/lib/auth/token";
 import { apiFetch } from "./LibraryApi";
 
 // ---------------------------------------------------------------------------
@@ -75,25 +75,6 @@ export function isEstimateRefusal(e: unknown): boolean {
 // fetch — Bearer <JWT> + one retry on 401, minus the JSON content-type
 // (mirrors lib/api.ts multipart(): the browser sets the multipart boundary)
 // ---------------------------------------------------------------------------
-
-let cached: { token: string; exp: number } | null = null;
-
-function jwtExp(token: string): number {
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1] ?? ""));
-    return typeof payload.exp === "number" ? payload.exp * 1000 : 0;
-  } catch {
-    return 0;
-  }
-}
-
-async function getToken(force: boolean): Promise<string | null> {
-  if (!force && cached && cached.exp - Date.now() > 30_000) return cached.token;
-  const res = await authClient.token();
-  const token = res.data?.token ?? null;
-  cached = token ? { token, exp: jwtExp(token) } : null;
-  return token;
-}
 
 async function multipart(path: string, form: FormData): Promise<Response> {
   const attempt = async (forceToken: boolean) => {

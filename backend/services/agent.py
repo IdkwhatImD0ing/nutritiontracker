@@ -37,11 +37,42 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
-from agents import Agent, MaxTurnsExceeded, ModelSettings, Runner, WebSearchTool, function_tool
-from agents.items import ToolCallItem, ToolCallOutputItem
 from pydantic import BaseModel
+
+# The openai-agents SDK is imported inside the functions that use it, the way
+# services/transcribe.py defers its provider client: `import agents` pulls
+# `openai` in with it, ~1.1 s that a cold boot would otherwise pay before the
+# first request. Nothing here is needed until a chat turn runs.
+if TYPE_CHECKING:
+    from agents import Agent
+
+# `Runner` is the exception: it stays a module *attribute*, bound on first use
+# rather than at import, because it is this module's test seam — 43 sites
+# across tests/test_agent.py, test_agent_chat.py and test_agent_meals.py do
+# `monkeypatch.setattr(agent_svc, "Runner", <fake>)`, none with raising=False.
+# A function-local `from agents import Runner` would both remove the attribute
+# they patch (AttributeError at patch time) and shadow the fake if it were
+# restored — putting a real network call back inside the offline tests.
+# Same shape as services/tier3.py, including the `is None` guard: once a stub
+# is installed, _load_runner must not overwrite it.
+Runner = None
+MaxTurnsExceeded = None
+
+
+def _load_runner() -> None:
+    """Bind `Runner`/`MaxTurnsExceeded` from the SDK, once, at first run."""
+    global Runner, MaxTurnsExceeded
+    if Runner is not None and MaxTurnsExceeded is not None:
+        return
+    import agents
+
+    if Runner is None:
+        Runner = agents.Runner
+    if MaxTurnsExceeded is None:
+        MaxTurnsExceeded = agents.MaxTurnsExceeded
+
 
 log = logging.getLogger(__name__)
 
@@ -286,6 +317,8 @@ def _tool_error(ctx, error: Exception) -> str:
 def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
     """One agent per run: the tools close over `state`, which is what the
     route reads back (food_calls, estimate_calls, weight)."""
+    from agents import Agent, ModelSettings, WebSearchTool, function_tool
+
     state.setdefault("food_calls", 0)
     state.setdefault("estimate_calls", 0)
     state.setdefault("weight", None)
@@ -603,6 +636,8 @@ def wire_events(event: Any, names: dict[str, str]) -> list[dict]:
         return []
     if getattr(event, "type", None) != "run_item_stream_event":
         return []
+    from agents.items import ToolCallItem, ToolCallOutputItem
+
     item = event.item
     if event.name == "tool_called" and isinstance(item, ToolCallItem):
         raw = item.raw_item
@@ -649,6 +684,8 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
     """One streamed run. `emit` (optional) receives each wire event as it
     happens — tool_call, tool_result, then the reply; the route adds `done`.
     Every effect is a tool's; the reply is the model's one contribution."""
+    _load_runner()  # binds the module attributes the tests patch
+
     state: dict[str, Any] = {}
     agent = build_agent(deps, state)
     transcript: list = []

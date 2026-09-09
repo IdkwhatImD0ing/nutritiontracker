@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from openai import OpenAIError
 from psycopg.types.json import Json
 from pydantic import BaseModel
 
@@ -312,6 +311,7 @@ async def _stage_photo(
         await quota.check_log()
 
     import tracing
+    from openai import OpenAIError  # lazy: `import openai` is ~0.6 s of cold boot
     from services import vision  # lazy: stubbed in route tests
 
     tracing.init_tracing()

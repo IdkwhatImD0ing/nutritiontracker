@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { loadDetector } from "./BarcodeScanner";
+import { loadDetector } from "./barcodeDetector";
 
 /** The + sheet (owner ruling, 2026-09-02): the mid-screen capture bar is
  *  gone; every way to log opens from the tab bar's + button. Exactly four
