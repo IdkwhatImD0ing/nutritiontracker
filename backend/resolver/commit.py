@@ -102,6 +102,31 @@ class ItemRefused(Exception):
 
 _CORE_MACROS = ("kcal", "protein_g", "carb_g", "fat_g")
 
+# The same guard as a WHERE clause, for the paths that must not OFFER a food
+# they would later refuse (BACKLOG 169): a foods row is usable only if at
+# least one serving carries all four core macros. A provider record can be
+# genuinely that thin — live FDC 2756792 (Oikos Triple Zero Mixed Berry,
+# dataSource Euromonitor) has kcal and protein but no carb or fat, so every
+# serving of it fails _missing_core_macros and the row can never commit.
+# Staged, it renders a card with no numbers at all (tier3._staged_from_food
+# needs the full four), which is what the user sees. One definition, two
+# dialects: change _CORE_MACROS and this together.
+# `{t}` is the foods table's name or alias in the caller's query — .format() it.
+COMMITTABLE_FOOD_SQL = (
+    "EXISTS (SELECT 1 FROM jsonb_array_elements({t}.servings) s"
+    " WHERE (s->'macros') ?& array['kcal', 'protein_g', 'carb_g', 'fat_g'])"
+)
+
+
+def food_committable(food: dict) -> bool:
+    """Python side of COMMITTABLE_FOOD_SQL: does any serving carry the core four?
+    The gate every lane applies BEFORE staging a food (search pick, tier-3
+    resolution, barcode), so the commit guard below is a backstop, not the
+    first time the user hears about it."""
+    return any(
+        not _missing_core_macros(s) for s in (food.get("servings") or [])
+    )
+
 # §3.4a / R3: rows the user never SPOKE learn nothing — a photo, barcode or
 # search log has no phrase worth remembering, and a photo-estimated portion
 # would poison the alias mode-of-10. Read off logs.input_mode at commit.

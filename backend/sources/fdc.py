@@ -210,6 +210,42 @@ def _nutrients_from_detail(food_nutrients: list[dict]) -> dict[str, float]:
     return _round(out)
 
 
+def _core_macros_in_hit(hit: dict) -> set[str]:
+    """Which of the four core macros a /foods/search hit already carries.
+
+    Search rows are FLAT (``nutrientId`` + ``value``), unlike /food/{id}'s
+    nested ``nutrient`` objects — so this cannot reuse _nutrients_from_detail.
+    _MACRO_IDS is exactly the core four; kcal also arrives as an Atwater id.
+    """
+    have: set[str] = set()
+    for row in hit.get("foodNutrients") or []:
+        if row.get("value") is None:
+            continue
+        nid = row.get("nutrientId")
+        if nid in _MACRO_IDS:
+            have.add(_MACRO_IDS[nid])
+        elif nid in _ATWATER_IDS:
+            have.add("kcal")
+    return have
+
+
+def _hit_is_loggable(hit: dict) -> bool:
+    """§3.4: a hit whose own nutrients lack a core macro is dropped from
+    results (BACKLOG 169). FDC Branded carries plenty of thin records — live
+    "Oikos Triple Zero yogurt" returned 25 hits of which 5-6 lacked at least
+    one of kcal/protein/carb/fat (the count shifts with FDC's relevance
+    order), 2756792 (Mixed Berry) among them. Such a row can never satisfy
+    commit's core-macros guard, so offering it hands the user — or the tier-3
+    agent — a food that stages with no numbers and refuses at commit, while
+    complete records for the same product sit in the same result set (2775572
+    is the same flavor, fully populated). Generic hits are barely touched
+    (1 drop in 165 live hits over 7 whole-food queries) but run the same rule:
+    an unloggable row is noise there too. The search payload already carries
+    the nutrients, so this costs no extra request.
+    """
+    return set(_MACRO_IDS.values()) <= _core_macros_in_hit(hit)
+
+
 def _label_nutrients(label: dict) -> dict[str, float]:
     """Map Branded labelNutrients (per serving, as labeled)."""
     out: dict[str, float] = {}
@@ -381,6 +417,8 @@ async def search_generic(query: str) -> list[dict]:
     r.raise_for_status()
     hits = []
     for f in r.json().get("foods", []):
+        if not _hit_is_loggable(f):  # BACKLOG 169 — same rule as branded
+            continue
         protein = next(
             (n.get("value") for n in f.get("foodNutrients", [])
              if n.get("nutrientId") == 1003 and n.get("value") is not None),
@@ -416,7 +454,11 @@ async def search_branded(query: str) -> list[dict]:
     """FDC Branded search, ranked by brand match against the query tokens
     (§3.4 rule 2): plain name search is fuzzy-noisy — a "Quest" query returns
     123k hits with competitors ranked first, verified live. The sort is stable,
-    so FDC's own relevance order is preserved within equal brand scores."""
+    so FDC's own relevance order is preserved within equal brand scores.
+
+    Hits missing a core macro are dropped (_hit_is_loggable, BACKLOG 169) —
+    they cannot commit, and a complete record for the same product is usually
+    right there in the same page."""
     r = await _get("/foods/search", query=query, dataType="Branded", pageSize=25)
     r.raise_for_status()
     hits = [{
@@ -428,7 +470,7 @@ async def search_branded(query: str) -> list[dict]:
         "data_source": f.get("dataSource"),
         "published_date": f.get("publishedDate"),
         "gtin_upc": f.get("gtinUpc"),
-    } for f in r.json().get("foods", [])]
+    } for f in r.json().get("foods", []) if _hit_is_loggable(f)]
     query_tokens = set(_QUERY_TOKEN_RE.findall(query.lower()))
     hits.sort(key=lambda h: -_brand_overlap(query_tokens, h))
     return hits

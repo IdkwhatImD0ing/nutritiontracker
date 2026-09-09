@@ -43,7 +43,7 @@ from models import (
     WebSource,
 )
 from resolver import cascade, foods_repo
-from resolver.commit import KEEP_LOG_KEYS_SQL
+from resolver.commit import COMMITTABLE_FOOD_SQL, KEEP_LOG_KEYS_SQL, food_committable
 from resolver.norm import norm
 from sources import fdc, web
 
@@ -649,23 +649,31 @@ async def _local_candidates(phrase: str) -> list[dict]:
     # source='estimate' rows are the photo lane's numberless placeholders
     # (routes/photo.py stage_estimate_food) — never a candidate for a spoken
     # phrase: estimation is photo-only (R1).
+    #
+    # COMMITTABLE_FOOD_SQL drops cached rows with no loggable serving (BACKLOG
+    # 169). Without it a thin row cached by an earlier run outranks everything
+    # on trigram — the Oikos Triple Zero row cached at the first attempt came
+    # back at sim 0.13, top of the list, and the agent resolved straight to it
+    # instead of searching for the complete record.
+    loggable = COMMITTABLE_FOOD_SQL.format(t="foods")
+    loggable_f = COMMITTABLE_FOOD_SQL.format(t="f")  # the staples query aliases it
     trigram = await db.fetchall(
-        """
+        f"""
         SELECT id, source, source_id, display_name, brand,
                similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
         FROM foods
-        WHERE source <> 'estimate'
+        WHERE source <> 'estimate' AND {loggable}
         ORDER BY sim DESC
         LIMIT 15
         """,
         (phrase,),
     )
     staples = await db.fetchall(
-        """
+        f"""
         SELECT f.id, f.source, f.source_id, f.display_name, f.brand,
                sum(a.use_count) AS uses
         FROM foods f JOIN aliases a ON a.food_id = f.id
-        WHERE f.source <> 'estimate'
+        WHERE f.source <> 'estimate' AND {loggable_f}
         GROUP BY f.id, f.source, f.source_id, f.display_name, f.brand
         ORDER BY uses DESC, max(a.last_used_at) DESC
         LIMIT 10
@@ -775,10 +783,19 @@ async def _first_live_food(
     candidates: (source, source_id, display_name, serving_id, confidence)
     tuples — the agent's chosen food first, then its alternates in order.
     Returns (candidate, food), or (None, None) when every id 404ed.
+
+    A record with no committable serving is skipped exactly like a 404
+    (BACKLOG 169): its card would render with no numbers at all
+    (_staged_from_food needs the core four) and refuse at commit, so it is not
+    a resolution. The search filter keeps most of these out of the agent's
+    hands; this is the backstop for the ones that arrive anyway — a cached
+    local candidate, or a hit whose search row was fuller than its detail
+    record. Falling through to the alternates, and finally to not_found, puts
+    the user in the manual search box instead of on a dead-end card.
     """
     for cand in candidates:
         food = await _get_food_cached(cand[0], cand[1], counter, food_cache)
-        if food is not None:
+        if food is not None and food_committable(food):
             return cand, food
     return None, None
 
@@ -1277,11 +1294,13 @@ async def resolve_item_from_source(
         )
         if row is not None:
             food_row_id, food = _food_row(row)
-    if food is None:
-        # The tapped option's id 404ed (stale index entry, §3.4) or isn't in
-        # the local cache. Clean needs_input restoring the question so another
-        # option can be tapped — not_found (manual search) when no question
-        # survives. Never a crash.
+    if food is None or not food_committable(food):
+        # The tapped option's id 404ed (stale index entry, §3.4), isn't in the
+        # local cache, or carries no loggable serving (BACKLOG 169 — this is
+        # the path the Oikos Triple Zero flavor tap took: the option resolved,
+        # then staged a card with no numbers). Clean needs_input restoring the
+        # question so another option can be tapped — not_found (manual search)
+        # when no question survives. Never a crash.
         prev_q = staged_prev.get("question")
         item = StagedItem(
             item_index=item_index,

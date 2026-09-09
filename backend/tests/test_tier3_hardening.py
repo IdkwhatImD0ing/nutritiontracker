@@ -17,6 +17,10 @@
    the source_url to sit on it; and run_tier3 drops a web food whose page the
    run never actually searched, cited, or fetched (estimation has no code
    path — enforced, not prompted). Offline: Runner and tracing are stubbed.
+6. BACKLOG 169: a food with no serving carrying all four core macros is never
+   offered or staged — the search filter, the local-candidate filter,
+   _first_live_food and the answer tap all refuse it, so no card can render
+   with no numbers and then refuse at commit.
 
 DB tests run inside one force-rollback transaction (same harness as
 test_m1_findings.py) — nothing persists. No LLM calls.
@@ -53,7 +57,9 @@ from tenancy_harness import bind_test_tenant  # noqa: E402
 import services.tier3 as tier3  # noqa: E402
 from models import FoodRef, Meal, ServingRef, StagedItem  # noqa: E402
 from resolver import cascade  # noqa: E402
+from resolver import commit as commit_mod  # noqa: E402
 from resolver.norm import norm  # noqa: E402
+from sources import fdc  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # rollback harness
@@ -727,5 +733,157 @@ def test_fetch_page_refuses_a_repeat_of_a_failed_url():
             assert counter["network_calls"] == 3
         finally:
             tier3.web.fetch_page = orig
+
+    run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# 6. BACKLOG 169 — a food with no core macros is never offered or staged
+#
+# FDC 2756792 (Oikos Triple Zero Mixed Berry, dataSource Euromonitor) is the
+# live shape: kcal and protein but no carb and no fat, on a label serving with
+# servingSize null and labelNutrients {}. Staged, it renders a card with no
+# numbers and then refuses at commit — so every lane must refuse it first.
+# ---------------------------------------------------------------------------
+
+# the thin record's two servings, exactly as the adapter normalizes them
+THIN_LABEL = {"serving_id": "label", "description": "1 serving", "grams": None, "macros": {}}
+THIN_100G = {
+    "serving_id": "100g", "description": "100 g", "grams": 100.0,
+    "macros": {"kcal": 59.9, "protein_g": 9.98, "sugar_g": 3.33, "fiber_g": 0.0},
+}
+
+
+def test_food_committable_needs_one_serving_with_all_four_core_macros():
+    assert commit_mod._CORE_MACROS == ("kcal", "protein_g", "carb_g", "fat_g")
+    assert commit_mod.food_committable({"servings": [MASS]}) is True
+    assert commit_mod.food_committable({"servings": [THIN_LABEL, THIN_100G]}) is False
+    assert commit_mod.food_committable({"servings": [THIN_LABEL, MASS]}) is True  # one is enough
+    assert commit_mod.food_committable({"servings": []}) is False
+    assert commit_mod.food_committable({}) is False
+    # a null-valued core macro is not a value (mirrors _missing_core_macros)
+    assert commit_mod.food_committable(
+        {"servings": [{"macros": {"kcal": 1, "protein_g": 1, "carb_g": 1, "fat_g": None}}]}
+    ) is False
+
+
+def test_search_hit_loggability_reads_the_search_payloads_own_nutrients():
+    def hit(*nutrient_ids, value=1.0):
+        return {"foodNutrients": [{"nutrientId": n, "value": value} for n in nutrient_ids]}
+
+    assert fdc._hit_is_loggable(hit(1008, 1003, 1005, 1004)) is True
+    assert fdc._hit_is_loggable(hit(1003, 1005, 1004)) is False           # no kcal
+    assert fdc._hit_is_loggable(hit(1008, 1003)) is False                # the 2756792 shape
+    assert fdc._hit_is_loggable(hit()) is False
+    # Atwater energy stands in for 1008 (Foundation foods carry no 1008)
+    assert fdc._hit_is_loggable(hit(2048, 1003, 1005, 1004)) is True
+    # a null amount is not a value
+    assert fdc._hit_is_loggable(
+        {"foodNutrients": [
+            {"nutrientId": 1008, "value": None}, {"nutrientId": 1003, "value": 1},
+            {"nutrientId": 1005, "value": 1}, {"nutrientId": 1004, "value": 1},
+        ]}
+    ) is False
+
+
+def test_first_live_food_skips_a_thin_record_like_a_404():
+    async def scenario():
+        thin = {"servings": [THIN_LABEL, THIN_100G], "display_name": "mixed berry"}
+        full = {"servings": [MASS], "display_name": "mixed berry (complete)"}
+        served = {"2756792": thin, "2775572": full}
+        orig = tier3.fdc.get_food
+        calls: list[str] = []
+
+        async def fake_get_food(source, source_id):
+            calls.append(str(source_id))
+            return served.get(str(source_id))
+
+        tier3.fdc.get_food = fake_get_food
+        try:
+            counter, cache = {"network_calls": 0}, {}
+            cand, food = await tier3._first_live_food(
+                [("fdc", "2756792", "Mixed berry", "label", "medium"),
+                 ("fdc", "2775572", "Mixed berry", None, "low")],
+                counter, cache,
+            )
+            assert cand[1] == "2775572" and food is full  # the thin one was passed over
+            assert calls == ["2756792", "2775572"]
+
+            # nothing loggable anywhere -> (None, None), i.e. the not_found path
+            cand, food = await tier3._first_live_food(
+                [("fdc", "2756792", "Mixed berry", "label", "medium")], counter, {}
+            )
+            assert (cand, food) == (None, None)
+        finally:
+            tier3.fdc.get_food = orig
+
+    run(scenario())
+
+
+def test_local_candidates_hides_a_cached_food_with_no_loggable_serving():
+    async def scenario():
+        async with isolated_db() as conn:
+            thin = await insert_food(conn, "oikos triple zero mixed berry",
+                                     [THIN_LABEL, THIN_100G], "label")
+            full = await insert_food(conn, "oikos triple zero mixed berry complete",
+                                     [MASS], "100g")
+            names = {c["display_name"] for c
+                     in await tier3._local_candidates("oikos triple zero mixed berry")}
+            assert "oikos triple zero mixed berry complete" in names
+            assert "oikos triple zero mixed berry" not in names
+            assert thin != full  # two distinct rows were seeded
+
+    run(scenario())
+
+
+def test_answer_tap_on_a_thin_record_restores_the_question_instead_of_staging_blank():
+    """The exact path the Oikos flavor tap took: the option's id resolves, but
+    the record cannot be logged — so the row must go back to needs_input with
+    the question intact, not stage a card with no numbers."""
+    async def scenario():
+        async with isolated_db() as conn:
+            log_id = await insert_log(conn)
+            question = {
+                "text": "Which Oikos Triple Zero flavor?",
+                "options": [{"label": "Mixed berry", "source": "fdc", "source_id": "2756792"},
+                            {"label": "Vanilla", "source": "fdc", "source_id": "2756122"}],
+            }
+            await seed_item(
+                conn, log_id, 0, "costco's oikos zero triple zero yogurts",
+                status="needs_input",
+                staged={"item_index": 0, "phrase": "costco's oikos zero triple zero yogurts",
+                        "status": "needs_input", "meal": "breakfast", "question": question,
+                        "spoken_qty": 2.0, "spoken_unit": None},
+            )
+            # foods is shared, and the real 2756792 row may already be cached —
+            # so assert the count is UNCHANGED, not zero
+            cur = await conn.execute("SELECT count(*) AS n FROM foods")
+            foods_before = (await cur.fetchone())["n"]
+            orig = tier3.fdc.get_food
+
+            async def fake_get_food(source, source_id):
+                return {"source": "fdc", "source_id": str(source_id),
+                        "name": "Oikos Triple Zero Mixed Berry Nonfat Greek Yogurt",
+                        "display_name": "mixed berry", "brand": "Oikos",
+                        "food_type": "branded", "state": None, "state_sensitive": False,
+                        "servings": [THIN_LABEL, THIN_100G], "default_serving_id": "label",
+                        "per_100g": THIN_100G["macros"], "payload": {}}
+
+            tier3.fdc.get_food = fake_get_food
+            try:
+                item = await tier3.resolve_item_from_source(log_id, 0, "fdc", "2756792")
+            finally:
+                tier3.fdc.get_food = orig
+
+            assert item.status == "needs_input"
+            assert item.macros is None
+            assert item.question is not None
+            assert item.question.text == question["text"]  # another option can be tapped
+            row = await item_row(conn, log_id, 0)
+            assert row["status"] == "needs_input"
+            assert row["final_food_id"] is None and row["committed_at"] is None
+            # and no foods row was persisted for the unloggable record
+            cur = await conn.execute("SELECT count(*) AS n FROM foods")
+            assert (await cur.fetchone())["n"] == foods_before
 
     run(scenario())
