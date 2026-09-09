@@ -68,3 +68,12 @@ Non-obvious facts, each of which has already caused a bug:
   the owner's rule, 2026-09-03; the day ends at 5pm, 2026-09-08). A local hook enforces it;
   inside the window, finish the work, run the suites, deploy a preview, and leave the
   commit for after 17:00.
+- The hook's only override is `WORKING_HOURS_NOW`, which the *hook process* reads — setting
+  it in a tool call does nothing, so **an agent cannot commit inside the window even with
+  permission**. When the owner says "push anyway", hand him the commands to run, or ask him
+  to disable the hook block in `.claude/settings.local.json`. Do not route around the regex.
+
+- **A command you hand Bill runs in Windows PowerShell 5.1**, not bash — `&&` is a parse
+  error there, as are `||`, `??`, ternaries and heredocs. Chain with `;` and `if ($?) { … }`,
+  and tag the block `powershell`. Claude's own Bash tool is Git Bash: different shell, so a
+  command that ran there is not thereby runnable by him.
