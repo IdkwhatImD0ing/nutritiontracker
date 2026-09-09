@@ -158,9 +158,27 @@ def _servings(product: dict, per_100: dict[str, float]) -> tuple[list[dict], str
     return servings, (servings[0]["serving_id"] if servings else "")
 
 
+_CORE_KEYS = ("kcal", "protein_g", "carb_g", "fat_g")
+
+
+def _loggable(servings: list[dict]) -> list[dict]:
+    """Servings that can actually be logged (BACKLOG 184/188).
+
+    Same rule as resolver.commit._CORE_MACROS and fdc._has_core_macros, kept
+    literal here so this module stays dependency-free. A serving short of the
+    four cannot commit, and staged it renders a card with no numbers at all —
+    OFF is crowd-sourced, so partial nutriment tables are common."""
+    return [
+        s for s in servings
+        if all(isinstance((s.get("macros") or {}).get(k), (int, float)) for k in _CORE_KEYS)
+    ]
+
+
 def normalize(product: dict, code: str) -> dict | None:
     """One OFF product record -> the shared food dict, or None when there is
-    nothing to stage (no name, or no nutrient numbers at all)."""
+    nothing to stage: no name, no servings, or no serving carrying the four
+    core macros (BACKLOG 188 — a scan that stages a numberless card is worse
+    than a clean miss, because the miss falls through to manual entry)."""
     name = ""
     for key in ("product_name", "product_name_en", "generic_name"):
         candidate = str(product.get(key) or "").strip()
@@ -171,8 +189,11 @@ def normalize(product: dict, code: str) -> dict | None:
         return None
     per_100 = _nutrients(product.get("nutriments") or {}, "100g")
     servings, default_id = _servings(product, per_100)
+    servings = _loggable(servings)
     if not servings:
         return None
+    if not any(s.get("serving_id") == default_id for s in servings):
+        default_id = servings[0]["serving_id"]  # the provider default was dropped
     brands = [b.strip() for b in str(product.get("brands") or "").split(",") if b.strip()]
     brand = brands[0] if brands else (str(product.get("brand_owner") or "").strip() or None)
     return {

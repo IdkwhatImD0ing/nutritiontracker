@@ -109,7 +109,7 @@ def _parsed(phrase: str) -> ParsedLog:
     return ParsedLog(
         items=[ParsedItem(phrase=phrase, phrase_kind="food", qty=None, unit=None, state=None,
                           brand=None, library_match=None, meal_ref=None)],
-        meal_hint=None, when_hint=None, save_intent=None,
+        meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
     )
 
 
@@ -230,9 +230,9 @@ def test_q2_the_database_clock_is_the_only_clock(monkeypatch):
 def test_q3_foreign_and_stored_ids_are_answered_before_any_spend(monkeypatch):
     decomposed: list[str] = []
 
-    async def decompose(text, ctx):
+    async def decompose(text, ctx, **kw):
         decomposed.append(text)
-        return ParsedLog(items=[], meal_hint=None, when_hint=None, save_intent=None)
+        return ParsedLog(items=[], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
 
     _stub_pipeline(monkeypatch, decompose=decompose)  # vision refuses outright
     calls = _stub_stt(monkeypatch, "two eggs")
@@ -371,7 +371,7 @@ def test_q3_foreign_and_stored_ids_are_answered_before_any_spend(monkeypatch):
 def test_q4_resolve_on_a_foreign_item_is_404_before_any_model_call(monkeypatch):
     calls: list[str] = []
 
-    async def decompose(text, ctx):
+    async def decompose(text, ctx, **kw):
         calls.append(text)
         return _parsed(text)
 

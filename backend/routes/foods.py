@@ -27,6 +27,7 @@ import db
 from auth import require_user
 from models import StagedItem
 from resolver import foods_repo
+from resolver.commit import COMMITTABLE_FOOD_SQL
 from services import tier3
 from sources import fdc
 
@@ -90,12 +91,16 @@ _like_pattern = foods_repo.like_pattern
 async def _local_hits(q: str) -> list[FoodHit]:
     # source='estimate' is the photo lane's numberless placeholder
     # (routes/photo.stage_estimate_food) — never a search hit (R1).
+    # COMMITTABLE_FOOD_SQL hides cached rows with no loggable serving (BACKLOG
+    # 169): the search box is the escape hatch from a not_found row, so an
+    # entry that stages with no numbers is the one thing it must not offer.
     rows = await db.fetchall(
-        """
+        f"""
         SELECT id, source, source_id, display_name, brand,
                similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
         FROM foods
         WHERE source <> 'estimate'
+          AND {COMMITTABLE_FOOD_SQL.format(t="foods")}
           AND ((display_name || ' ' || coalesce(brand, '')) ILIKE %s
                OR similarity(display_name || ' ' || coalesce(brand, ''), %s) > %s)
         ORDER BY sim DESC

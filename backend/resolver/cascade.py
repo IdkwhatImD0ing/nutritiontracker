@@ -39,7 +39,11 @@ from models import (
     ServingRef,
     StagedItem,
 )
-from resolver.commit import LEARNABLE_ROWS_SQL
+from resolver.commit import (
+    COMMITTABLE_FOOD_SQL,
+    LEARNABLE_ROWS_SQL,
+    with_loggable_servings,
+)
 from resolver.norm import norm
 
 # ---------------------------------------------------------------------------
@@ -55,7 +59,8 @@ SELECT a.id AS alias_id, a.alias_norm, a.food_id, a.default_serving_id, a.defaul
 FROM aliases a
 JOIN foods f ON f.id = a.food_id
 WHERE a.alias_norm = %s
-"""
+  AND {loggable}
+""".format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
 
 # §3.3 tier 2a — trigram candidates against his personal corpus only. The
 # threshold lives IN THE QUERY as an explicit similarity() predicate: the `%%`
@@ -77,9 +82,10 @@ FROM aliases a
 JOIN foods f ON f.id = a.food_id
 WHERE a.alias_norm %% %s
   AND similarity(a.alias_norm, %s) >= %s
+  AND {loggable}
 ORDER BY sim DESC, a.use_count DESC
 LIMIT 3
-"""
+""".format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
 
 # §3.3 tier 2b — the validated library_match food, shaped like an alias row
 # (alias fields NULL) so the same staging/portion code path applies. Never
@@ -96,7 +102,8 @@ SELECT NULL AS alias_id, NULL AS alias_norm, f.id AS food_id,
        f.state, f.state_sensitive
 FROM foods f
 WHERE f.id = %s AND f.source <> 'estimate'
-"""
+  AND {loggable}
+""".format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
 
 # Words that denote a measure rather than a countable household unit (§7.3) —
 # including the dimensions, labels and provider unit codes a serving text may
@@ -433,6 +440,9 @@ async def _stage_resolved(
     """Stage one resolved item from an alias⋈food row (alias fields may be NULL
     for a tier-2b library match). Shared by tiers 1 and 2 — same portion
     resolution, dangling-serving guard, and §3.4a state question."""
+    # BACKLOG 184: drop any serving that could not be logged BEFORE the portion
+    # cascade chooses, or a stored phantom default is what it picks
+    picked = with_loggable_servings(picked, default_key="food_default_serving_id")
     serving_id, final_qty, verify = await resolve_portion(picked, qty, unit)
     serving = _serving_by_id(picked["servings"], serving_id)
     if serving is None:  # dangling id never renders (§4)
@@ -694,6 +704,7 @@ def _stage_tier0_item(
     {serving_id, qty} verbatim — no portion inference — with the §4
     dangling-serving and partial-core-macros guards (verify-me, never a
     zero-macro row). phrase = the food's display name (§5)."""
+    food = with_loggable_servings(food, default_key="food_default_serving_id")  # BACKLOG 184
     servings: list[dict] = food["servings"]
     serving_id = item.get("serving_id")
     qty = float(item.get("qty") or 1)

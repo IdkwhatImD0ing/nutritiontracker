@@ -38,6 +38,11 @@ _TIMEOUT = 20.0
 
 _MACRO_IDS = {1003: "protein_g", 1004: "fat_g", 1005: "carb_g", 1008: "kcal"}
 _ATWATER_IDS = (2048, 2047)  # Energy, Atwater Specific then General Factors
+# The four a serving needs before it can be logged at all — the same set as
+# resolver.commit._CORE_MACROS, which is where the rule is documented. Kept
+# here as a frozenset so this module stays dependency-free (sources must not
+# import resolver).
+_CORE_KEYS = frozenset(_MACRO_IDS.values())
 
 _MICRO_IDS = {
     1079: "fiber_g",
@@ -210,6 +215,73 @@ def _nutrients_from_detail(food_nutrients: list[dict]) -> dict[str, float]:
     return _round(out)
 
 
+def _core_macros_in_hit(hit: dict) -> set[str]:
+    """Which of the four core macros a /foods/search hit already carries.
+
+    Search rows are FLAT (``nutrientId`` + ``value``), unlike /food/{id}'s
+    nested ``nutrient`` objects — so this cannot reuse _nutrients_from_detail.
+    _MACRO_IDS is exactly the core four; kcal also arrives as an Atwater id.
+
+    ``amount`` is read as well as ``value``, and the nested nutrient id as well
+    as the flat one: this feeds a FILTER, so a shape this function fails to
+    understand does not degrade one column — it drops every hit and turns the
+    whole search into a silent "no results".
+    """
+    have: set[str] = set()
+    for row in hit.get("foodNutrients") or []:
+        if row.get("value") is None and row.get("amount") is None:
+            continue
+        nid = row.get("nutrientId")
+        if nid is None:
+            nid = (row.get("nutrient") or {}).get("id")
+        if nid in _MACRO_IDS:
+            have.add(_MACRO_IDS[nid])
+        elif nid in _ATWATER_IDS:
+            have.add("kcal")
+    return have
+
+
+def _hit_is_loggable(hit: dict) -> bool:
+    """§3.4: a hit whose own nutrients lack a core macro is dropped from
+    results (BACKLOG 184). FDC Branded carries plenty of thin records — live
+    "Oikos Triple Zero yogurt" returned 25 hits of which 5-6 lacked at least
+    one of kcal/protein/carb/fat (the count shifts with FDC's relevance
+    order), 2756792 (Mixed Berry) among them. Such a row can never satisfy
+    commit's core-macros guard, so offering it hands the user — or the tier-3
+    agent — a food that stages with no numbers and refuses at commit, while
+    complete records for the same product sit in the same result set (2775572
+    is the same flavor, fully populated). Generic hits are barely touched
+    (1 drop in 165 live hits over 7 whole-food queries) but run the same rule:
+    an unloggable row is noise there too. The search payload already carries
+    the nutrients, so this costs no extra request.
+    """
+    return _CORE_KEYS <= _core_macros_in_hit(hit)
+
+
+def _has_core_macros(macros: dict) -> bool:
+    """All four, numeric — mirrors resolver.commit._missing_core_macros.
+
+    A partial serving counts as unloggable too (owner's ruling, 2026-09-09):
+    nothing can supply a record's missing carb and fat, so offering it only
+    produces a row that cannot commit.
+    """
+    return all(isinstance(macros.get(k), (int, float)) for k in _CORE_KEYS)
+
+
+def _has_loggable_serving(food: dict) -> bool:
+    """Whether a normalized food has any serving that could be logged — the
+    barcode ladder's gate (BACKLOG 192).
+
+    lookup_barcode used to return the first record that merely wasn't a 404, so
+    a thin FDC Branded row won, was cached forever (foods is cache-forever), and
+    Open Food Facts — which has its own core-macro gate now — never got its
+    turn. A scan that could have resolved landed on a numberless card instead.
+    """
+    return any(
+        _has_core_macros(s.get("macros") or {}) for s in (food.get("servings") or [])
+    )
+
+
 def _label_nutrients(label: dict) -> dict[str, float]:
     """Map Branded labelNutrients (per serving, as labeled)."""
     out: dict[str, float] = {}
@@ -352,12 +424,21 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
     else:
         description = "1 serving"
 
-    servings = [{
-        "serving_id": "label",
-        "description": description,
-        "grams": grams,
-        "macros": macros,
-    }]
+    # A label serving short of the four core macros must not be emitted — let
+    # alone as the default (BACKLOG 184, 192). Live records
+    # with servingSize null and labelNutrients {} land here with grams=None
+    # and macros={}: as the default it is exactly what the portion cascade
+    # picks, so the card renders with no numbers and commit refuses it even
+    # when the per-100 serving beside it is complete (FDC 2756849, 2756842,
+    # 2757143, 2756821 — all Oikos Triple Zero, all verified live).
+    servings = []
+    if _has_core_macros(macros):
+        servings.append({
+            "serving_id": "label",
+            "description": description,
+            "grams": grams,
+            "macros": macros,
+        })
     if per_100:
         base_id = "100ml" if basis_ml else "100g"
         servings.append({
@@ -366,7 +447,8 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
             "grams": None if basis_ml else 100.0,
             "macros": dict(per_100),
         })
-    return servings, "label"
+    # the default is whatever survived, in preference order (label first)
+    return servings, (servings[0]["serving_id"] if servings else "label")
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +463,8 @@ async def search_generic(query: str) -> list[dict]:
     r.raise_for_status()
     hits = []
     for f in r.json().get("foods", []):
+        if not _hit_is_loggable(f):  # BACKLOG 184 — same rule as branded
+            continue
         protein = next(
             (n.get("value") for n in f.get("foodNutrients", [])
              if n.get("nutrientId") == 1003 and n.get("value") is not None),
@@ -416,7 +500,11 @@ async def search_branded(query: str) -> list[dict]:
     """FDC Branded search, ranked by brand match against the query tokens
     (§3.4 rule 2): plain name search is fuzzy-noisy — a "Quest" query returns
     123k hits with competitors ranked first, verified live. The sort is stable,
-    so FDC's own relevance order is preserved within equal brand scores."""
+    so FDC's own relevance order is preserved within equal brand scores.
+
+    Hits missing a core macro are dropped (_hit_is_loggable, BACKLOG 184) —
+    they cannot commit, and a complete record for the same product is usually
+    right there in the same page."""
     r = await _get("/foods/search", query=query, dataType="Branded", pageSize=25)
     r.raise_for_status()
     hits = [{
@@ -428,7 +516,7 @@ async def search_branded(query: str) -> list[dict]:
         "data_source": f.get("dataSource"),
         "published_date": f.get("publishedDate"),
         "gtin_upc": f.get("gtinUpc"),
-    } for f in r.json().get("foods", [])]
+    } for f in r.json().get("foods", []) if _hit_is_loggable(f)]
     query_tokens = set(_QUERY_TOKEN_RE.findall(query.lower()))
     hits.sort(key=lambda h: -_brand_overlap(query_tokens, h))
     return hits
@@ -477,8 +565,11 @@ async def lookup_barcode(code: str) -> dict | None:
     hits.sort(key=lambda f: rank.get(f.get("gtinUpc") or "", len(rank)))
     for hit in hits[:3]:
         food = await get_food("fdc", str(hit["fdcId"]))
-        if food is not None:  # None = stale index entry (404) — drop the hit
-            return food
+        if food is None:  # stale index entry (404) — drop the hit
+            continue
+        if not _has_loggable_serving(food):
+            continue  # thin record: let Open Food Facts have its turn (192)
+        return food
     return None
 
 

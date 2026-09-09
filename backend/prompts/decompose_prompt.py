@@ -60,9 +60,40 @@ otherwise null. Never infer it from the food or time of day.
 when_hint — the spoken time reference, verbatim ("this morning", "yesterday
 lunch"); null if none was spoken.
 
+when_day_offset — that same reference resolved to a WHOLE NUMBER OF DAYS back
+from the local date on the NOW line at the end of this input: 0 = that day,
+-1 = the day before it, -2 = two days before, and so on. Work it out for
+whatever was said — "yesterday" is -1, "last night" is -1, "this morning" is
+0, "the day before yesterday" is -2, "two days ago" is -2, a weekday name is
+the most recent PAST day with that name. Null ONLY when no time reference was
+spoken at all. Never a positive number: food is always already eaten. Set
+this even when the meal word sits elsewhere in the sentence ("Yesterday, I
+also had two yogurts for breakfast" -> when_day_offset -1, meal_hint
+"breakfast").
+
+when_meal — the meal that the TIME words themselves imply, when they do:
+"this morning"/"yesterday morning" -> breakfast, "last night" -> snack,
+"yesterday at lunch" -> lunch. Null when the time words say nothing about
+which meal ("yesterday", "two days ago") or when none were spoken. This is
+separate from meal_hint, which is only for a meal the user named outright;
+when both are set meal_hint wins.
+
 save_intent — ONLY when the user asked to save or name a meal ("save this as
 my usual breakfast" -> {"name": "usual breakfast"}); otherwise null.
 """
+
+
+def render_now(now_local) -> str:
+    """The NOW line (§7.2, BACKLOG 189) — what `when_day_offset` counts back from.
+
+    This rides with the UTTERANCE, never in the context block, because the
+    context block carries an explicit prompt-cache breakpoint: a clock in there
+    would change on every request and miss the cache every time.
+    """
+    return (
+        f"NOW: {now_local:%A %Y-%m-%d %H:%M} local time. "
+        "Resolve when_day_offset against this date."
+    )
 
 
 def _food_lines(foods) -> str:

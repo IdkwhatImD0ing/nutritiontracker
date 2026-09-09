@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import tracing
 from models import ParsedLog
-from prompts.decompose_prompt import INSTRUCTIONS, render_context
+from prompts.decompose_prompt import INSTRUCTIONS, render_context, render_now
 
 # The client is built on first call (_get_client), so `import openai` — ~0.6 s
 # on a cold boot — stays off the boot path and off every request that never
@@ -48,7 +48,12 @@ def _drop_invalid_library_matches(parsed: ParsedLog, valid_ids: set[str]) -> Par
     return parsed
 
 
-async def decompose(text: str, ctx, *, trace=None) -> ParsedLog:
+async def decompose(text: str, ctx, *, now_local=None, trace=None) -> ParsedLog:
+    """`now_local`: the utterance's tz-aware LOCAL time, when the caller knows
+    it. It becomes the NOW line the model resolves `when_day_offset` against
+    (§7.2, BACKLOG 189), and rides with the utterance so the context block's
+    cache breakpoint still matches. Omitted (the edited-phrase micro-decompose,
+    evals) the model has no date to count from and leaves the when fields null."""
     async with tracing.run(
         "decompose", kind="llm", provider="openai", model=MODEL, input=text,
         attributes={
@@ -76,7 +81,13 @@ async def decompose(text: str, ctx, *, trace=None) -> ParsedLog:
                         }
                     ],
                 },
-                {"role": "user", "content": [{"type": "input_text", "text": text}]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": t}
+                        for t in ((render_now(now_local),) if now_local else ())
+                    ] + [{"type": "input_text", "text": text}],
+                },
             ],
             text_format=ParsedLog,
             reasoning={"effort": "none"},

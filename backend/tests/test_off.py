@@ -186,3 +186,46 @@ def test_live_lookup_normalizes_the_scanned_code_and_reads_cheerios():
 @pytest.mark.live
 def test_live_lookup_miss_is_none():
     assert asyncio.run(off.lookup_barcode("0000000000000")) is None
+
+
+# ---------------------------------------------------------------------------
+# BACKLOG 188 — a scanned product with no core macros is a miss, not a card
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_refuses_a_product_with_no_loggable_serving():
+    """OFF is crowd-sourced, so a partial nutriment table is common. Staging one
+    renders a card with no numbers that then refuses at commit (the FDC 2756792
+    story, BACKLOG 184) — a clean miss is better, because it falls through to
+    Open Food Facts' sibling lanes and then manual entry."""
+    base = {"code": "0000000000001", "product_name": "Mystery Yogurt",
+            "brands": "Nobody"}
+
+    thin = dict(base, nutriments={"energy-kcal_100g": 60, "proteins_100g": 10})
+    assert off.normalize(thin, "0000000000001") is None  # no carb, no fat
+
+    full = dict(base, nutriments={"energy-kcal_100g": 60, "proteins_100g": 10,
+                                  "carbohydrates_100g": 5, "fat_100g": 0})
+    food = off.normalize(full, "0000000000001")
+    assert food is not None
+    assert food["servings"], "a complete product still stages"
+    assert any(s["serving_id"] == food["default_serving_id"] for s in food["servings"])
+
+
+def test_normalize_repoints_the_default_when_that_serving_is_dropped():
+    """A serving-size serving with no numbers must not stay the default just
+    because the provider listed it first."""
+    product = {
+        "code": "0000000000002", "product_name": "Half Labelled Bar",
+        "brands": "Nobody", "serving_size": "40 g",
+        # per-serving values absent, per-100g complete: the serving-size
+        # serving is scaled from per-100g, so both survive here — assert the
+        # default is one that actually carries the four
+        "nutriments": {"energy-kcal_100g": 400, "proteins_100g": 20,
+                       "carbohydrates_100g": 40, "fat_100g": 15},
+    }
+    food = off.normalize(product, "0000000000002")
+    assert food is not None
+    default = next(s for s in food["servings"] if s["serving_id"] == food["default_serving_id"])
+    for key in ("kcal", "protein_g", "carb_g", "fat_g"):
+        assert isinstance(default["macros"].get(key), (int, float)), key

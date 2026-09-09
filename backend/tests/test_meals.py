@@ -56,7 +56,7 @@ def _build_stubs() -> dict:
 
     dec_mod = types.ModuleType("services.decompose")
 
-    async def decompose(text, ctx):
+    async def decompose(text, ctx, **kw):
         raise AssertionError("decompose must not be called (tier-0 short-circuit)")
 
     dec_mod.decompose = decompose

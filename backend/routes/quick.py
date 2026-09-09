@@ -36,6 +36,7 @@ import db
 from auth import require_user
 from models import FoodRef, LogResponse, Macros, Meal, ServingOption, ServingRef, StagedItem
 from resolver import cascade, foods_repo
+from resolver.commit import with_loggable_servings
 from routes import logs as logs_routes
 from routes.diary import web_source_of
 from routes.photo import ESTIMATE_PICK_REFUSAL
@@ -97,7 +98,10 @@ _FOOD_COLS = (
 
 
 async def _load_food(food_id) -> dict | None:
-    return await db.fetchone(f"SELECT {_FOOD_COLS} FROM foods WHERE id = %s", (food_id,))
+    row = await db.fetchone(f"SELECT {_FOOD_COLS} FROM foods WHERE id = %s", (food_id,))
+    # BACKLOG 184: a row cached before that rule can still carry a phantom
+    # `label` serving as its default, which would stage with no numbers.
+    return None if row is None else with_loggable_servings(row)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +129,12 @@ async def lookup_barcode(code: str) -> BarcodeResponse:
         """,
         (variants, variants),
     )
+    # BACKLOG 184: the same filter _load_food applies. Without it this path —
+    # the CACHE HIT, the common one — advertises a pre-rule phantom `label` as
+    # the default, and the from-food call that follows 422s on the very
+    # serving id this response just handed the client, because that path does
+    # filter. Both ends must see the same servings.
+    row = None if row is None else with_loggable_servings(row)
     if row is None:
         try:
             # FDC Branded first; Open Food Facts only on its miss — the §8.2

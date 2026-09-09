@@ -128,7 +128,7 @@ def test_invalid_library_match_dropped():
         ],
         meal_hint=None,
         when_hint=None,
-        save_intent=None,
+        when_day_offset=None, when_meal=None, save_intent=None,
     )
     out = _drop_invalid_library_matches(parsed, VALID_IDS)
     assert out.items[0].library_match is None

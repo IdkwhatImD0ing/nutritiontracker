@@ -46,11 +46,11 @@ from psycopg.types.json import Json
 _decompose: dict = {"fn": None}
 
 
-async def _decompose_dispatch(text, ctx):
+async def _decompose_dispatch(text, ctx, **kw):
     fn = _decompose["fn"]
     if fn is None:
         raise AssertionError("decompose must not be called by this test")
-    return await fn(text, ctx)
+    return await fn(text, ctx, **kw)
 
 
 # Controllable transcribe (same pattern): tests set _transcribe["fn"].
@@ -155,7 +155,7 @@ from routes.logs import (  # noqa: E402
     create_log,
     discard_log,
     get_log,
-    interpret_when_hint,
+    when_shift,
     patch_timings,
 )
 
@@ -264,7 +264,7 @@ def novel_parsed_log(phrase):
                 state=None, brand=None, library_match=None, meal_ref=None,
             )
         ],
-        meal_hint=None, when_hint=None, save_intent=None,
+        meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
     )
 
 
@@ -371,7 +371,7 @@ def test_concurrent_double_post_one_log_one_pipeline():
             calls: list[str] = []
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx):
+            async def fake_decompose(text, ctx, **kw):
                 calls.append(text)
                 await asyncio.sleep(0.3)  # hold the winner mid-pipeline
                 return novel_parsed_log(phrase)
@@ -416,7 +416,7 @@ def test_orphaned_staged_log_reruns_only_after_grace():
             calls: list[str] = []
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx):
+            async def fake_decompose(text, ctx, **kw):
                 calls.append(text)
                 return novel_parsed_log(phrase)
 
@@ -492,7 +492,7 @@ def test_discard_lifecycle():
 
 
 # ---------------------------------------------------------------------------
-# 5. BACKLOG 26 — §7.2 when_hint interpreter (deterministic table test)
+# 5. BACKLOG 26/189 — §7.2 when_shift: arithmetic on the MODEL's resolution
 # ---------------------------------------------------------------------------
 
 WHEN_TZ = "America/Los_Angeles"
@@ -500,51 +500,70 @@ WHEN_TZ = "America/Los_Angeles"
 WHEN_CAPTURED = datetime(2026, 8, 20, 3, 15, tzinfo=timezone.utc)
 
 
-def test_when_hint_interpreter_table():
+def test_when_shift_table():
+    """The model answers (day_offset, when_meal); this only does the arithmetic.
+    No phrase is parsed anywhere — which is the point of 174: the old regex
+    could only shift the forms someone had enumerated."""
     local = WHEN_CAPTURED.astimezone(ZoneInfo(WHEN_TZ))
     cases = [
-        # (hint, day delta, (hour, minute) local, meal)
-        ("this morning", 0, (8, 0), Meal.breakfast),
-        ("This morning.", 0, (8, 0), Meal.breakfast),  # norm() applied
-        ("yesterday breakfast", -1, (8, 0), Meal.breakfast),
-        ("yesterday lunch", -1, (12, 30), Meal.lunch),
-        ("yesterday at lunch", -1, (12, 30), Meal.lunch),
-        ("Yesterday, at dinner", -1, (18, 30), Meal.dinner),
-        ("yesterday morning", -1, (8, 0), Meal.breakfast),
-        ("yesterday evening", -1, (18, 30), Meal.dinner),
-        ("yesterday snack", -1, (22, 0), Meal.snack),
-        ("last night", -1, (22, 0), Meal.snack),
+        # (day_offset, when_meal, meal_hint, day delta, (hour, minute), .meal)
+        (0, Meal.breakfast, None, 0, (8, 0), Meal.breakfast),      # "this morning"
+        (-1, Meal.breakfast, None, -1, (8, 0), Meal.breakfast),    # "yesterday morning"
+        (-1, Meal.lunch, None, -1, (12, 30), Meal.lunch),          # "yesterday at lunch"
+        (-1, Meal.dinner, None, -1, (18, 30), Meal.dinner),
+        (-1, Meal.snack, None, -1, (22, 0), Meal.snack),           # "last night"
+        # the case that was broken: a bare "yesterday" with the meal named
+        # separately further along the sentence. The regex matched nothing and
+        # the day was dropped; now the offset carries it and meal_hint sets the
+        # hour, while .meal stays None so meal_hint keeps precedence upstream.
+        (-1, None, Meal.breakfast, -1, (8, 0), None),
+        # forms nobody enumerated, which the model can now resolve
+        (-2, None, Meal.lunch, -2, (12, 30), None),                # "two days ago"
+        (-4, Meal.dinner, None, -4, (18, 30), Meal.dinner),        # "Sunday dinner"
+        # meal_hint outranks when_meal for the clock, as it always has
+        (-1, Meal.snack, Meal.lunch, -1, (12, 30), Meal.snack),
     ]
-    for hint, day_delta, (hour, minute), meal in cases:
-        shift = interpret_when_hint(hint, WHEN_CAPTURED, WHEN_TZ)
-        assert shift.note is None, hint
-        assert shift.meal == meal, hint
-        expected = (local + timedelta(days=day_delta)).replace(
+    for offset, when_meal, meal_hint, delta, (hour, minute), expect_meal in cases:
+        shift = when_shift(offset, when_meal, meal_hint, WHEN_CAPTURED, WHEN_TZ)
+        label = f"offset={offset} when_meal={when_meal} meal_hint={meal_hint}"
+        assert shift.note is None, label
+        assert shift.meal == expect_meal, label
+        expected = (local + timedelta(days=delta)).replace(
             hour=hour, minute=minute, second=0, microsecond=0
         )
-        assert shift.logged_at == expected, hint
+        assert shift.logged_at == expected, label
 
-    # no hint → nothing shifts, nothing noted
-    for hint in (None, "", "   "):
-        shift = interpret_when_hint(hint, WHEN_CAPTURED, WHEN_TZ)
-        assert shift.logged_at is None and shift.meal is None and shift.note is None
+    # a day offset with no meal anywhere keeps the utterance's own clock time
+    shift = when_shift(-1, None, None, WHEN_CAPTURED, WHEN_TZ)
+    assert shift.logged_at == local - timedelta(days=1) and shift.meal is None
 
-    # unknown hints are ignored WITH a note — never guessed at
-    for hint in ("two days ago", "last week", "yesterday", "earlier"):
-        shift = interpret_when_hint(hint, WHEN_CAPTURED, WHEN_TZ)
-        assert shift.logged_at is None and shift.meal is None
-        assert shift.note is not None and hint in shift.note
+    # nothing resolved and nothing spoken → no shift, no note
+    shift = when_shift(None, None, None, WHEN_CAPTURED, WHEN_TZ)
+    assert shift.logged_at is None and shift.meal is None and shift.note is None
+
+    # a phrase the model transcribed but did not resolve: unchanged, but noted
+    # for §10 — that is a model failure, not an unrecognized format
+    shift = when_shift(None, None, None, WHEN_CAPTURED, WHEN_TZ, when_hint="whenever")
+    assert shift.logged_at is None and shift.meal is None
+    assert shift.note is not None and "whenever" in shift.note
+
+    # offset 0 with no meal is not a shift at all (nothing about time was said)
+    assert when_shift(None, None, Meal.lunch, WHEN_CAPTURED, WHEN_TZ).logged_at is None
+
+    # a positive offset is a model error: food is always already eaten
+    shift = when_shift(3, None, Meal.lunch, WHEN_CAPTURED, WHEN_TZ)
+    assert shift.logged_at <= local
 
     # clamp: "this morning" spoken at 06:00 local never moves logged_at
     # forward to the canonical 08:00 — a when-hint refers to the past
     early = datetime(2026, 8, 20, 13, 0, tzinfo=timezone.utc)  # 06:00 PDT
-    shift = interpret_when_hint("this morning", early, WHEN_TZ)
+    shift = when_shift(0, Meal.breakfast, None, early, WHEN_TZ)
     assert shift.meal == Meal.breakfast
     assert shift.logged_at == early  # same instant, tz-normalized
 
     # unknown timezone falls back to UTC rather than failing the log:
     # 03:15 UTC is before the canonical 08:00, so the clamp keeps the instant
-    shift = interpret_when_hint("this morning", WHEN_CAPTURED, "Not/AZone")
+    shift = when_shift(0, Meal.breakfast, None, WHEN_CAPTURED, "Not/AZone")
     assert shift.meal == Meal.breakfast
     assert shift.logged_at == WHEN_CAPTURED
 
@@ -559,9 +578,11 @@ def test_when_hint_shifts_logged_at_and_meal_through_route():
         async with isolated_db() as conn:
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx):
+            async def fake_decompose(text, ctx, **kw):
                 parsed = novel_parsed_log(phrase)
-                parsed.when_hint = "yesterday lunch"
+                parsed.when_hint = "yesterday at lunch"   # verbatim, for the trace
+                parsed.when_day_offset = -1               # what the model resolved
+                parsed.when_meal = Meal.lunch
                 return parsed
 
             _decompose["fn"] = fake_decompose
@@ -570,8 +591,8 @@ def test_when_hint_shifts_logged_at_and_meal_through_route():
 
             assert resp.meal == Meal.lunch
             assert all(i.meal == Meal.lunch for i in resp.items)
-            expected = interpret_when_hint(
-                "yesterday lunch", body.captured_at, body.tz
+            expected = when_shift(
+                -1, Meal.lunch, None, body.captured_at, body.tz
             ).logged_at
             row = await db.fetchone(
                 "SELECT captured_at, meal_inferred FROM logs WHERE id = %s", (body.id,)
@@ -596,10 +617,12 @@ def test_spoken_meal_hint_outranks_when_hint_meal():
         async with isolated_db() as conn:
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx):
+            async def fake_decompose(text, ctx, **kw):
                 parsed = novel_parsed_log(phrase)
                 parsed.meal_hint = Meal.dinner  # explicit spoken meal
                 parsed.when_hint = "yesterday lunch"
+                parsed.when_day_offset = -1
+                parsed.when_meal = Meal.lunch
                 return parsed
 
             _decompose["fn"] = fake_decompose
@@ -610,8 +633,11 @@ def test_spoken_meal_hint_outranks_when_hint_meal():
             row = await db.fetchone(
                 "SELECT captured_at FROM logs WHERE id = %s", (body.id,)
             )
-            expected = interpret_when_hint(
-                "yesterday lunch", body.captured_at, body.tz
+            # meal_hint sets the clock time too, so a dinner row lands at
+            # dinner o'clock on the shifted day (174: previously the when-meal
+            # chose the hour, timestamping a "dinner" row 12:30)
+            expected = when_shift(
+                -1, Meal.lunch, Meal.dinner, body.captured_at, body.tz
             ).logged_at
             assert row["captured_at"] == body.captured_at  # the anchor never moves
             staged = await db.fetchall(
@@ -630,7 +656,7 @@ def test_unknown_when_hint_ignored_with_note_in_staged():
         async with isolated_db() as conn:
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx):
+            async def fake_decompose(text, ctx, **kw):
                 parsed = novel_parsed_log(phrase)
                 parsed.when_hint = "two days ago"
                 return parsed
@@ -777,7 +803,7 @@ def test_voice_happy_path_stores_transcript_mode_and_timing():
     async def fake_stt(audio_bytes, mime):
         return Transcription(text=transcript, transcribe_ms=777, provider="deepgram")
 
-    async def fake_decompose(text, ctx):
+    async def fake_decompose(text, ctx, **kw):
         assert text == transcript  # the transcript enters the identical path
         return novel_parsed_log(phrase)
 
@@ -862,7 +888,7 @@ def test_json_and_multipart_share_post_api_logs_and_one_openapi_operation():
 
     phrase = f"novel{uuid4().hex[:8]}"
 
-    async def fake_decompose(text, ctx):
+    async def fake_decompose(text, ctx, **kw):
         return novel_parsed_log(phrase)
 
     _decompose["fn"] = fake_decompose

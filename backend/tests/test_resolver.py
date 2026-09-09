@@ -64,7 +64,7 @@ def _build_stubs() -> dict:
 
     dec_mod = types.ModuleType("services.decompose")
 
-    async def decompose(text, ctx):
+    async def decompose(text, ctx, **kw):
         raise AssertionError("decompose must not be called (short-circuit path)")
 
     dec_mod.decompose = decompose
@@ -414,10 +414,10 @@ def test_decompose_path_tier1_and_searching():
                     state=None, brand=None, library_match=None, meal_ref=None,
                 )
 
-            async def fake_decompose(text, ctx):
+            async def fake_decompose(text, ctx, **kw):
                 return ParsedLog(
                     items=[parsed(phrase), parsed(f"novel{uuid4().hex[:8]}", qty=3, unit="g")],
-                    meal_hint=None, when_hint=None, save_intent=None,
+                    meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
                 )
 
             dec = sys.modules["services.decompose"]

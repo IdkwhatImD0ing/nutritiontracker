@@ -565,3 +565,49 @@ def test_the_agent_builds_a_meal_from_what_was_logged_before(client: TestClient)
             _run(_cleanup(t0, stale))
         if learned:
             _run(db.execute("DELETE FROM aliases WHERE food_id = ANY(%s::uuid[])", (learned,)))
+
+
+# ---------------------------------------------------------------------------
+# 7: a back-dated log with no meal named is a QUESTION, not a guess
+#    (owner's rule, 2026-09-09 — BACKLOG 191)
+# ---------------------------------------------------------------------------
+
+
+def test_the_agent_asks_which_meal_for_an_earlier_day(client: TestClient):
+    """"Yesterday I had two Oikos Triple Zero yogurts" names a day but no meal.
+    Nothing downstream can infer one: with no meal word the row takes the meal
+    of the CAPTURE clock window, which says nothing about the day meant — this
+    utterance at 08:15 local would land as yesterday's *breakfast* by accident,
+    and after midnight as a snack. So the agent must ask, staging nothing.
+
+    The same utterance WITH the meal named must not ask — that is the guard
+    against a prompt that turns every back-dated log into an interrogation."""
+    t0 = _run(db.fetchone("SELECT now() AS t"))["t"]
+    l1, l2 = str(uuid4()), str(uuid4())
+    try:
+        body = _post(client, l1, "yesterday I had two Oikos Triple Zero yogurts")
+        agent = body.get("agent") or {}
+        reply, options = agent.get("reply") or "", agent.get("options") or []
+        print(f"[agent live] asked: {reply!r} options={options}")
+        assert body["items"] == [], "it must stage nothing until the meal is settled"
+        assert options, "a clarifying question carries its options"
+        squashed = _squash(" ".join(options))
+        assert any(m in squashed for m in ("breakfast", "lunch", "dinner", "snack")), options
+        assert "?" in reply
+
+        # …and with the meal named it just logs, no question
+        body2 = _post(client, l2, "yesterday for breakfast I had two Oikos Triple Zero yogurts")
+        agent2 = body2.get("agent") or {}
+        print(f"[agent live] no-ask reply: {(agent2.get('reply') or '')!r}")
+        assert body2["items"], "with the meal named it stages instead of asking"
+        assert not (agent2.get("options") or []), "nothing left to ask"
+        assert all(it["meal"] == "breakfast" for it in body2["items"])
+        staged = _run(db.fetchall(
+            "SELECT staged FROM item_resolutions WHERE log_id = %s", (l2,)))
+        assert staged, "rows were persisted"
+        # the day actually moved back, and to breakfast o'clock (174)
+        for row in staged:
+            logged_at = row["staged"]["logged_at"]
+            assert logged_at.startswith("2000-01-05"), logged_at
+    finally:
+        _run(_cleanup(t0, [l1, l2]))

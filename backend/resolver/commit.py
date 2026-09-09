@@ -102,6 +102,77 @@ class ItemRefused(Exception):
 
 _CORE_MACROS = ("kcal", "protein_g", "carb_g", "fat_g")
 
+# The same guard as a WHERE clause, for the paths that must not OFFER a food
+# they would later refuse (BACKLOG 184): a foods row is usable only if at
+# least one serving carries all four core macros. A provider record can be
+# genuinely that thin — live FDC 2756792 (Oikos Triple Zero Mixed Berry,
+# dataSource Euromonitor) has kcal and protein but no carb or fat, so every
+# serving of it fails _missing_core_macros and the row can never commit.
+# Staged, it renders a card with no numbers at all (tier3._staged_from_food
+# needs the full four), which is what the user sees. One definition, two
+# dialects: change _CORE_MACROS and this together.
+# `{t}` is the foods table's name or alias in the caller's query — .format() it.
+COMMITTABLE_FOOD_SQL = (
+    "EXISTS (SELECT 1 FROM jsonb_array_elements({t}.servings) s"
+    " WHERE (s->'macros') ?& array['kcal', 'protein_g', 'carb_g', 'fat_g'])"
+)
+
+
+def food_committable(food: dict) -> bool:
+    """Python side of COMMITTABLE_FOOD_SQL: does any serving carry the core four?
+    The gate every lane applies BEFORE staging a food (search pick, tier-3
+    resolution, barcode), so the commit guard below is a backstop, not the
+    first time the user hears about it.
+
+    isinstance-guarded so a malformed servings element cannot raise here while
+    the SQL twin merely excludes the row."""
+    return any(
+        isinstance(s, dict) and not _missing_core_macros(s)
+        for s in (food.get("servings") or [])
+    )
+
+
+def with_loggable_servings(food: dict, *, default_key: str = "default_serving_id") -> dict:
+    """The food with every unloggable serving dropped and its default serving
+    id repointed at a survivor (BACKLOG 184, 192).
+
+    A PARTIAL serving goes too, not just a numberless phantom (owner's ruling,
+    2026-09-09): "partials shouldn't be logged, there is no way to get the full
+    thing". Nothing can complete a record's missing carb and fat, so a serving
+    short of the four is a dead end wearing a verify-me badge — the user cannot
+    fix it, which is the one thing the badge implies. This reverses the tier-1/2
+    half of BACKLOG 7. It is also simply better: on a food with a complete
+    414 g label beside a partial 100 g base, "40 g of X" used to land on the
+    partial one and render blank; it now lands on the label and reads
+    22.2 kcal / 4.1 P / 0.9 C / 0.4 F.
+
+    `default_key` names the default-serving field, because the cascade's own
+    row shape calls it `food_default_serving_id`.
+
+    Answering `food_committable` is not enough on its own: the gate is per
+    FOOD, but what renders and commits is one SERVING. A branded record whose
+    `label` serving is a phantom and whose per-100 serving is complete passes
+    the gate, and then the portion cascade picks `label` — because that is the
+    provider default — so the card still shows no numbers and commit still
+    refuses it. fdc._branded_servings now drops the phantom at the source, but
+    rows cached BEFORE that landed still carry it, and persist_food never
+    rewrites a stored servings array — so EVERY path that hydrates a foods row
+    runs this: tier3._food_row, routes.quick._load_food (barcode / from-food),
+    and the cascade's tier-1/2 and saved-meal expansion. Miss one and the
+    phantom is staged again from the same rows (found by review on the first
+    cut, which guarded only the first). Returns the food unchanged (not a copy)
+    when nothing needs dropping, so the common case is free."""
+    servings = food.get("servings") or []
+    keep = [s for s in servings if isinstance(s, dict) and not _missing_core_macros(s)]
+    if len(keep) == len(servings):
+        return food
+    out = dict(food)
+    out["servings"] = keep
+    if not any(s.get("serving_id") == food.get(default_key) for s in keep):
+        # keep the provider's preference order; only move when it was dropped
+        out[default_key] = keep[0]["serving_id"] if keep else None
+    return out
+
 # §3.4a / R3: rows the user never SPOKE learn nothing — a photo, barcode or
 # search log has no phrase worth remembering, and a photo-estimated portion
 # would poison the alias mode-of-10. Read off logs.input_mode at commit.
