@@ -89,6 +89,8 @@ MAX_ESTIMATE_ITEMS = 8
 PAST_FOODS_DEFAULT = 20
 # a tool output larger than this is summarised for the chat, not shipped whole
 _MAX_WIRE_OUTPUT_CHARS = 4_000
+# a scalar field small enough to ride alongside that summary (see _parse_output)
+_MAX_KEPT_SCALAR_CHARS = 200
 
 Unit = Literal["kg", "lb"]
 MealName = Literal["breakfast", "lunch", "dinner", "snack"]
@@ -673,9 +675,23 @@ def _parse_output(output: Any) -> Any:
         except ValueError:
             pass
     text = json.dumps(output, default=str)
-    if len(text) > _MAX_WIRE_OUTPUT_CHARS:
-        return {"summary": text[:_MAX_WIRE_OUTPUT_CHARS] + "…", "truncated": True}
-    return output
+    if len(text) <= _MAX_WIRE_OUTPUT_CHARS:
+        return output
+    # The chat gets a summary, never the whole payload — but the line is
+    # written from the tool's own small fields (past_foods' `count`, a meal
+    # name, and `error`, without which a truncated failure reads as success),
+    # so the short scalars survive the trim. Only the bulk is summarised.
+    kept = (
+        {
+            k: v
+            for k, v in output.items()
+            if not isinstance(v, (dict, list))
+            and len(json.dumps(v, default=str)) <= _MAX_KEPT_SCALAR_CHARS
+        }
+        if isinstance(output, dict)
+        else {}
+    )
+    return {**kept, "summary": text[:_MAX_WIRE_OUTPUT_CHARS] + "…", "truncated": True}
 
 
 def wire_events(event: Any, names: dict[str, str]) -> list[dict]:
