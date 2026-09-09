@@ -99,7 +99,7 @@ _FOOD_COLS = (
 
 async def _load_food(food_id) -> dict | None:
     row = await db.fetchone(f"SELECT {_FOOD_COLS} FROM foods WHERE id = %s", (food_id,))
-    # BACKLOG 169: a row cached before that rule can still carry a phantom
+    # BACKLOG 184: a row cached before that rule can still carry a phantom
     # `label` serving as its default, which would stage with no numbers.
     return None if row is None else with_loggable_servings(row)
 

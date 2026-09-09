@@ -84,7 +84,7 @@ my usual breakfast" -> {"name": "usual breakfast"}); otherwise null.
 
 
 def render_now(now_local) -> str:
-    """The NOW line (§7.2, BACKLOG 174) — what `when_day_offset` counts back from.
+    """The NOW line (§7.2, BACKLOG 189) — what `when_day_offset` counts back from.
 
     This rides with the UTTERANCE, never in the context block, because the
     context block carries an explicit prompt-cache breakpoint: a clock in there

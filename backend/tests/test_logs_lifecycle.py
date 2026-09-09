@@ -492,7 +492,7 @@ def test_discard_lifecycle():
 
 
 # ---------------------------------------------------------------------------
-# 5. BACKLOG 26/174 — §7.2 when_shift: arithmetic on the MODEL's resolution
+# 5. BACKLOG 26/189 — §7.2 when_shift: arithmetic on the MODEL's resolution
 # ---------------------------------------------------------------------------
 
 WHEN_TZ = "America/Los_Angeles"

@@ -141,7 +141,7 @@ class ParsedLog(BaseModel):
     meal_hint: Meal | None  # only if spoken ("for breakfast I had…")
     when_hint: str | None  # "this morning", "yesterday lunch" — verbatim, for traces
     # §7.2: the MODEL resolves the spoken time words against the NOW line in
-    # its input (BACKLOG 174). 0 = the local day of the utterance, -1 = the day
+    # its input (BACKLOG 189). 0 = the local day of the utterance, -1 = the day
     # before, and so on; null when no time reference was spoken. The server
     # only does the arithmetic — no phrase is ever pattern-matched, so a form
     # nobody enumerated ("the day before yesterday", "Sunday") still lands.

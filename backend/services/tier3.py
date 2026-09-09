@@ -790,7 +790,7 @@ async def _first_live_food(
     Returns (candidate, food), or (None, None) when every id 404ed.
 
     A record with no committable serving is skipped exactly like a 404
-    (BACKLOG 169): its card would render with no numbers at all
+    (BACKLOG 184): its card would render with no numbers at all
     (_staged_from_food needs the core four) and refuse at commit, so it is not
     a resolution. The search filter keeps most of these out of the agent's
     hands; this is the backstop for the ones that arrive anyway — a cached
@@ -1245,7 +1245,7 @@ _FOOD_COLS = (
 def _food_row(row: Any) -> tuple[str, dict]:
     """(food_row_id, food dict) from a foods row selected with _FOOD_COLS.
 
-    with_loggable_servings runs here because rows cached before BACKLOG 169
+    with_loggable_servings runs here because rows cached before BACKLOG 184
     still carry a phantom `label` serving as their default — hydrating one
     unfiltered would stage a card with no numbers even though the row's
     per-100 serving is fine."""
@@ -1306,7 +1306,7 @@ async def resolve_item_from_source(
             food_row_id, food = _food_row(row)
     if food is None or not food_committable(food):
         # The tapped option's id 404ed (stale index entry, §3.4), isn't in the
-        # local cache, or carries no loggable serving (BACKLOG 169 — this is
+        # local cache, or carries no loggable serving (BACKLOG 184 — this is
         # the path the Oikos Triple Zero flavor tap took: the option resolved,
         # then staged a card with no numbers). Clean needs_input restoring the
         # question so another option can be tapped — not_found (manual search)

@@ -51,7 +51,7 @@ def _drop_invalid_library_matches(parsed: ParsedLog, valid_ids: set[str]) -> Par
 async def decompose(text: str, ctx, *, now_local=None, trace=None) -> ParsedLog:
     """`now_local`: the utterance's tz-aware LOCAL time, when the caller knows
     it. It becomes the NOW line the model resolves `when_day_offset` against
-    (§7.2, BACKLOG 174), and rides with the utterance so the context block's
+    (§7.2, BACKLOG 189), and rides with the utterance so the context block's
     cache breakpoint still matches. Omitted (the edited-phrase micro-decompose,
     evals) the model has no date to count from and leaves the when fields null."""
     async with tracing.run(

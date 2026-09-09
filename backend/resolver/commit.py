@@ -103,7 +103,7 @@ class ItemRefused(Exception):
 _CORE_MACROS = ("kcal", "protein_g", "carb_g", "fat_g")
 
 # The same guard as a WHERE clause, for the paths that must not OFFER a food
-# they would later refuse (BACKLOG 169): a foods row is usable only if at
+# they would later refuse (BACKLOG 184): a foods row is usable only if at
 # least one serving carries all four core macros. A provider record can be
 # genuinely that thin — live FDC 2756792 (Oikos Triple Zero Mixed Berry,
 # dataSource Euromonitor) has kcal and protein but no carb or fat, so every
@@ -134,7 +134,7 @@ def food_committable(food: dict) -> bool:
 
 def with_loggable_servings(food: dict, *, default_key: str = "default_serving_id") -> dict:
     """The food with unloggable servings dropped and its default serving id
-    repointed at a survivor (BACKLOG 169).
+    repointed at a survivor (BACKLOG 184).
 
     `default_key` names the default-serving field, because the cascade's own
     row shape calls it `food_default_serving_id`.

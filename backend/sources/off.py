@@ -162,7 +162,7 @@ _CORE_KEYS = ("kcal", "protein_g", "carb_g", "fat_g")
 
 
 def _loggable(servings: list[dict]) -> list[dict]:
-    """Servings that can actually be logged (BACKLOG 169/173).
+    """Servings that can actually be logged (BACKLOG 184/188).
 
     Same rule as resolver.commit._CORE_MACROS and fdc._has_core_macros, kept
     literal here so this module stays dependency-free. A serving short of the
@@ -177,7 +177,7 @@ def _loggable(servings: list[dict]) -> list[dict]:
 def normalize(product: dict, code: str) -> dict | None:
     """One OFF product record -> the shared food dict, or None when there is
     nothing to stage: no name, no servings, or no serving carrying the four
-    core macros (BACKLOG 173 — a scan that stages a numberless card is worse
+    core macros (BACKLOG 188 — a scan that stages a numberless card is worse
     than a clean miss, because the miss falls through to manual entry)."""
     name = ""
     for key in ("product_name", "product_name_en", "generic_name"):

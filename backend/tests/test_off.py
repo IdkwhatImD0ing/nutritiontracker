@@ -189,14 +189,14 @@ def test_live_lookup_miss_is_none():
 
 
 # ---------------------------------------------------------------------------
-# BACKLOG 173 — a scanned product with no core macros is a miss, not a card
+# BACKLOG 188 — a scanned product with no core macros is a miss, not a card
 # ---------------------------------------------------------------------------
 
 
 def test_normalize_refuses_a_product_with_no_loggable_serving():
     """OFF is crowd-sourced, so a partial nutriment table is common. Staging one
     renders a card with no numbers that then refuses at commit (the FDC 2756792
-    story, BACKLOG 169) — a clean miss is better, because it falls through to
+    story, BACKLOG 184) — a clean miss is better, because it falls through to
     Open Food Facts' sibling lanes and then manual entry."""
     base = {"code": "0000000000001", "product_name": "Mystery Yogurt",
             "brands": "Nobody"}

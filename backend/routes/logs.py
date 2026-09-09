@@ -238,7 +238,7 @@ def when_shift(
     *,
     when_hint: str | None = None,
 ) -> WhenShift:
-    """§7.2 — arithmetic on what the MODEL already resolved (BACKLOG 174).
+    """§7.2 — arithmetic on what the MODEL already resolved (BACKLOG 189).
 
     The model reads the NOW line and answers `when_day_offset` (whole days
     back) plus, when the time words imply one, `when_meal`. Nothing here parses
@@ -716,7 +716,7 @@ async def _stage_from_text(
     trace_id = tracing.current_trace_id()
     decompose_ms = int((time.monotonic() - t0) * 1000)
 
-    # §7.2 (BACKLOG 26, 174): the model resolved the spoken time words to a day
+    # §7.2 (BACKLOG 26, 189): the model resolved the spoken time words to a day
     # offset against the NOW line it was given; this only does the arithmetic.
     # An explicit spoken meal_hint outranks the when-derived meal; the date
     # shift applies regardless.
@@ -833,7 +833,7 @@ async def _stage_estimate(
     The spoken meal and time words ride in as the agent's `meal_hint` /
     `when_hint`, and the agent — a model, like decompose — resolves the time
     words itself into `when_day_offset` / `when_meal`, so "yesterday I had a
-    platter…" lands on yesterday's diary, not today's (BACKLOG 174)."""
+    platter…" lands on yesterday's diary, not today's (BACKLOG 189)."""
     try:
         shift_meal = Meal(when_meal) if when_meal else None
     except ValueError:

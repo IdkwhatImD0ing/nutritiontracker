@@ -569,7 +569,7 @@ def test_the_agent_builds_a_meal_from_what_was_logged_before(client: TestClient)
 
 # ---------------------------------------------------------------------------
 # 7: a back-dated log with no meal named is a QUESTION, not a guess
-#    (owner's rule, 2026-09-09 — BACKLOG 176)
+#    (owner's rule, 2026-09-09 — BACKLOG 191)
 # ---------------------------------------------------------------------------
 
 

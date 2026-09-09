@@ -243,7 +243,7 @@ def _core_macros_in_hit(hit: dict) -> set[str]:
 
 def _hit_is_loggable(hit: dict) -> bool:
     """§3.4: a hit whose own nutrients lack a core macro is dropped from
-    results (BACKLOG 169). FDC Branded carries plenty of thin records — live
+    results (BACKLOG 184). FDC Branded carries plenty of thin records — live
     "Oikos Triple Zero yogurt" returned 25 hits of which 5-6 lacked at least
     one of kcal/protein/carb/fat (the count shifts with FDC's relevance
     order), 2756792 (Mixed Berry) among them. Such a row can never satisfy
@@ -407,7 +407,7 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
         description = "1 serving"
 
     # A label serving with no core macros is a phantom, and must not be
-    # emitted at all — let alone as the default (BACKLOG 169). Live records
+    # emitted at all — let alone as the default (BACKLOG 184). Live records
     # with servingSize null and labelNutrients {} land here with grams=None
     # and macros={}: as the default it is exactly what the portion cascade
     # picks, so the card renders with no numbers and commit refuses it even
@@ -445,7 +445,7 @@ async def search_generic(query: str) -> list[dict]:
     r.raise_for_status()
     hits = []
     for f in r.json().get("foods", []):
-        if not _hit_is_loggable(f):  # BACKLOG 169 — same rule as branded
+        if not _hit_is_loggable(f):  # BACKLOG 184 — same rule as branded
             continue
         protein = next(
             (n.get("value") for n in f.get("foodNutrients", [])
@@ -484,7 +484,7 @@ async def search_branded(query: str) -> list[dict]:
     123k hits with competitors ranked first, verified live. The sort is stable,
     so FDC's own relevance order is preserved within equal brand scores.
 
-    Hits missing a core macro are dropped (_hit_is_loggable, BACKLOG 169) —
+    Hits missing a core macro are dropped (_hit_is_loggable, BACKLOG 184) —
     they cannot commit, and a complete record for the same product is usually
     right there in the same page."""
     r = await _get("/foods/search", query=query, dataType="Branded", pageSize=25)

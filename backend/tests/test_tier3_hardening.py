@@ -17,7 +17,7 @@
    the source_url to sit on it; and run_tier3 drops a web food whose page the
    run never actually searched, cited, or fetched (estimation has no code
    path — enforced, not prompted). Offline: Runner and tracing are stubbed.
-6. BACKLOG 169: a food with no serving carrying all four core macros is never
+6. BACKLOG 184: a food with no serving carrying all four core macros is never
    offered or staged — the search filter, the local-candidate filter,
    _first_live_food and the answer tap all refuse it, so no card can render
    with no numbers and then refuse at commit.
@@ -738,7 +738,7 @@ def test_fetch_page_refuses_a_repeat_of_a_failed_url():
 
 
 # ---------------------------------------------------------------------------
-# 6. BACKLOG 169 — a food with no core macros is never offered or staged
+# 6. BACKLOG 184 — a food with no core macros is never offered or staged
 #
 # FDC 2756792 (Oikos Triple Zero Mixed Berry, dataSource Euromonitor) is the
 # live shape: kcal and protein but no carb and no fat, on a label serving with
@@ -890,7 +890,7 @@ def test_answer_tap_on_a_thin_record_restores_the_question_instead_of_staging_bl
 
 
 def test_branded_servings_drops_a_phantom_label_and_repoints_the_default():
-    """The serving-level half of BACKLOG 169. A record whose per-100 nutrients
+    """The serving-level half of BACKLOG 184. A record whose per-100 nutrients
     are complete but whose label serving is a phantom (servingSize null,
     labelNutrients {}) must not offer that serving at all — as the provider
     default it is what the portion cascade picks, so the card would render
@@ -922,7 +922,7 @@ def test_branded_servings_drops_a_phantom_label_and_repoints_the_default():
 
 
 def test_with_loggable_servings_repairs_a_row_cached_before_the_rule():
-    """Rows cached before BACKLOG 169 still carry the phantom as their default,
+    """Rows cached before BACKLOG 184 still carry the phantom as their default,
     so hydrating one has to drop it — food_committable alone would pass the
     row (its 100g serving is fine) and then the cascade would pick 'label'."""
     cached = {"display_name": "mixed berry", "servings": [THIN_LABEL, MASS],

@@ -433,7 +433,7 @@ async def _stage_resolved(
     """Stage one resolved item from an alias⋈food row (alias fields may be NULL
     for a tier-2b library match). Shared by tiers 1 and 2 — same portion
     resolution, dangling-serving guard, and §3.4a state question."""
-    # BACKLOG 169: drop any serving that could not be logged BEFORE the portion
+    # BACKLOG 184: drop any serving that could not be logged BEFORE the portion
     # cascade chooses, or a stored phantom default is what it picks
     picked = with_loggable_servings(picked, default_key="food_default_serving_id")
     serving_id, final_qty, verify = await resolve_portion(picked, qty, unit)
@@ -697,7 +697,7 @@ def _stage_tier0_item(
     {serving_id, qty} verbatim — no portion inference — with the §4
     dangling-serving and partial-core-macros guards (verify-me, never a
     zero-macro row). phrase = the food's display name (§5)."""
-    food = with_loggable_servings(food, default_key="food_default_serving_id")  # BACKLOG 169
+    food = with_loggable_servings(food, default_key="food_default_serving_id")  # BACKLOG 184
     servings: list[dict] = food["servings"]
     serving_id = item.get("serving_id")
     qty = float(item.get("qty") or 1)
