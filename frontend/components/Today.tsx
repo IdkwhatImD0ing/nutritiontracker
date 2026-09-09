@@ -38,12 +38,6 @@ const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
  *  真 retry-on-open — commit-item is idempotent, so a replayed item is safe. */
 const PENDING_KEY = "usual.pending.v1";
-/** §6.4: the Agent chat survives a reload on this device (the last turns; the
- *  logs themselves are on the server) — under the account's own key, so the
- *  next person to sign in on a shared browser neither reads the last one's
- *  chat nor sends its log ids as their history. */
-const chatKey = (email: string) => `tally.chat.v1:${email}`;
-const CHAT_MAX = 60;
 
 /** How long Today may sit in the background before a return to the foreground
  *  re-reads the server. Short enough that a meal logged on another device is
@@ -104,49 +98,20 @@ export default function Today() {
   // of opening an empty staging sheet.
   const [savedNote, setSavedNote] = useState<string | null>(null);
   // §6.4 the Agent chat (2026-09-06): the conversation lives here, not in
-  // the sheet, so closing the lane and reopening it shows the same history;
-  // the POST /api/agent stream appends to it as events land.
+  // the sheet, so the staging sheet stacked over the chat leaves it intact;
+  // the POST /api/agent stream appends to it as events land. Every opening
+  // of the lane is a NEW conversation (Bill, 2026-09-08): pickLane clears
+  // it, and nothing is kept on the device between openings (the legacy
+  // stored copy is dropped app-wide, app/legacy-storage.tsx).
   const [chat, setChat] = useState<ChatMessage[]>([]);
-  // state, not a ref: the save effect must see the LOADED chat in the same
-  // render it first saves in, or the mount's empty array overwrites storage
-  // (and a Strict Mode remount then loads that emptiness back)
-  const [chatLoaded, setChatLoaded] = useState(false);
-  // the account is known once /api/me answers; the chat loads, and saves, only then
-  const who = me?.email ?? null;
-  useEffect(() => {
-    if (!who || chatLoaded) return;
-    try {
-      const raw = localStorage.getItem(chatKey(who));
-      if (raw) {
-        const saved = JSON.parse(raw) as ChatMessage[];
-        // a reload mid-run: nothing is still running, nothing still transcribing
-        setChat(
-          saved.map((m) =>
-            m.kind === "tool" && !m.done
-              ? { ...m, done: true, output: { error: "interrupted" } }
-              : m.kind === "user" && m.pending
-                ? { ...m, pending: false, text: m.text || "(recording)" }
-                : m.kind === "photo" && m.pending
-                  ? { ...m, pending: false }
-                  : m.kind === "agent" && m.options
-                    ? { ...m, options: undefined }
-                    : m,
-          ),
-        );
-      }
-    } catch {
-      /* storage unavailable or unreadable — start empty */
-    }
-    setChatLoaded(true);
-  }, [who, chatLoaded]);
-  useEffect(() => {
-    if (!chatLoaded || !who) return;
-    try {
-      localStorage.setItem(chatKey(who), JSON.stringify(chat.slice(-CHAT_MAX)));
-    } catch {
-      /* storage unavailable — the chat still lives for this page session */
-    }
-  }, [chat, chatLoaded, who]);
+  // Which conversation is open. A run started in one can still be streaming
+  // when the next begins — the sheet closes mid-run and the lane is opened
+  // again — so every send captures this number and its chat writes are
+  // dropped once it is stale: the blank window never fills with the previous
+  // conversation's tool lines, reply or result card. The staged log itself
+  // still opens the staging sheet (agentDone) — it is real and needs review.
+  const convoRef = useRef(0);
+  const inConvo = (convo: number) => convoRef.current === convo;
   const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
   // a retry of the same turn (§8.6): its bubble stays — put back if the failed
   // attempt dropped it — and the failure note under it goes; the stream the
@@ -168,12 +133,13 @@ export default function Today() {
       ),
     );
   // §3.4b: the plate this conversation is still tuning — the newest photo
-  // result card that is still staged. DERIVED, never stored: the chat is
-  // already persisted per account, and a flag kept beside it could desync
-  // from it on a reload, an account switch or a CHAT_MAX truncation. It
+  // result card that is still staged. DERIVED from the chat, never stored
+  // beside it: a separate flag would have to be cleared in every place the
+  // card's state changes, and would go stale the moment one was missed. It
   // clears itself, because markResult already flips that card on commit,
-  // discard and replacement. `justDiscarded`: the log this send settled a
-  // pending discard for — its card still reads staged in this render.
+  // discard and replacement, and pickLane empties the chat on every opening.
+  // `justDiscarded`: the log this send settled a pending discard for — its
+  // card still reads staged in this render.
   const photoLogId = (justDiscarded: string | null = null): string | null => {
     for (let i = chat.length - 1; i >= 0; i--) {
       const m = chat[i];
@@ -324,9 +290,29 @@ export default function Today() {
 
   const pickLane = (next: AddLane) => {
     setCaptureError(null);
-    // "Take photo" opens the same chat, with the picker up instead of the mic
+    // §3.4b (2026-09-08): "Take photo" opens the same chat, with the picker
+    // up instead of the mic — so it is the Agent lane, and everything below
+    // applies to it. The still-undoable discard is settled by the send
+    // (submitPhoto, as submit and submitAudio do), not here.
+    const target = next === "photo" ? "agent" : next;
+    // §6.4: opening the Agent lane starts a new conversation (Bill,
+    // 2026-09-08) — cleared here, on open, rather than on close, so the
+    // sheet closing never cuts a run short. The generation bump is what
+    // keeps a run still streaming out of the blank window; the per-turn ids
+    // go with it, so a repeated utterance is a new log rather than a retry
+    // of one the previous conversation left behind (§8.6's same-id replay
+    // is for a retry *within* a conversation), and a mic failure is never
+    // stamped on a later conversation's first typed log (§13).
+    if (target === "agent") {
+      convoRef.current += 1;
+      setChat([]);
+      pendingRef.current = null;
+      audioRef.current = null;
+      photoRef.current = null;
+      voiceFailRef.current = null;
+    }
     setOpenWith(next === "photo" ? "photo" : "mic");
-    setLane(next === "photo" ? "agent" : next);
+    setLane(target);
   };
   // The + listener is bound once; the ref keeps it on the current closure.
   const pickRef = useRef(pickLane);
@@ -522,20 +508,26 @@ export default function Today() {
   // §8.4 save outcome is said in the chat. The chat stays open throughout.
   // `replay` (§8.6): the server answered a retry from the stored log — no
   // tool lines or reply came with it (the reply is not stored, BACKLOG 139)
-  // — so the chat says so instead of falling silent.
+  // — so the chat says so instead of falling silent. `convo`: the run's
+  // conversation. A newer one has since opened → the chat writes are its
+  // predecessor's and are dropped, but the staged log still opens the sheet.
+  // `photo` (§3.4b): the turn was a plate, so the chat is the surface and
+  // the staging sheet does NOT open over the composer.
   const agentDone = (
     log: LogCreateResponse,
     replay: boolean,
     userId: string,
+    convo: number,
     photo = false,
   ): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.agent?.weight) setWeightsKey((k) => k + 1);
+    const mine = inConvo(convo);
     // a correction: the earlier turn's log this one replaces
-    for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
+    if (mine) for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
     // §3.4b: adjust_photo edited the plate — patch its card, never add one
-    if (log.agent?.updated) patchResult(log.agent.updated);
-    if (replay) {
+    if (mine && log.agent?.updated) patchResult(log.agent.updated);
+    if (replay && mine) {
       // a voice bubble the replay carried no transcript for stays honest
       setChat((cur) =>
         cur.map((m) =>
@@ -552,7 +544,7 @@ export default function Today() {
           : "That one reached the server earlier, but its answer did not make it back here — if it asked you something, say it again.",
       });
     }
-    if (log.saved_meal || log.note) {
+    if ((log.saved_meal || log.note) && mine) {
       pushChat({
         kind: "agent",
         id: crypto.randomUUID(),
@@ -565,15 +557,20 @@ export default function Today() {
       t0Ref.current = null; // nothing will render this log — stop its clock
       return; // the reply bubble is the answer
     }
-    pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged", photo });
+    if (mine) {
+      pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged", photo });
+    }
     setSavedNote(null);
-    if (photo) {
+    if (photo && mine) {
       // §3.4b: the chat is the surface for a plate — the whole point is
       // correcting it in words, and the staging sheet stacks OVER the
       // composer, so opening it here would put the keyboard out of reach.
       // Worse, dismissing it arms the 6 s undo-discard, which the next
       // utterance would flush — deleting the very log being tuned. The
       // card's Review opens the sheet, on fresh rows, when they are done.
+      // Only while the conversation is still open: a plate that landed in a
+      // conversation since replaced has no card to be reviewed from, and the
+      // staged log is real, so it falls through to the sheet like any other.
       requestAnimationFrame(() => stagedRendered(log.log_id));
       return;
     }
@@ -583,6 +580,7 @@ export default function Today() {
   const submit = async (text: string): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
+    const convo = convoRef.current; // the conversation this turn belongs to
     const justDiscarded = flushDiscard(); // a new capture settles any still-undoable discard
     const retry = pendingRef.current?.text === text ? pendingRef.current : null;
     const pendingLog = retry ?? { id: crypto.randomUUID(), text, userId: crypto.randomUUID() };
@@ -610,24 +608,30 @@ export default function Today() {
           // conversation runs on the photo tier and can edit that plate
           photo_log_id: photoLogId(justDiscarded),
         },
-        (ev) => onAgentEvent(ev, userId),
+        (ev) => {
+          if (inConvo(convo)) onAgentEvent(ev, userId);
+        },
       );
-      pendingRef.current = null;
-      voiceFailRef.current = null; // reported once, on the fallback log
+      if (inConvo(convo)) {
+        pendingRef.current = null;
+        voiceFailRef.current = null; // reported once, on the fallback log
+      }
       if ("status" in log) return false; // capture_failure — text never is
-      agentDone(log, replay, userId);
+      agentDone(log, replay, userId, convo);
       return true;
     } catch (e) {
       t0Ref.current = null;
-      settleRunning();
       const quota = failCapture(e, null);
-      pushChat({
-        kind: "error",
-        id: crypto.randomUUID(),
-        text: quota
-          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
-          : "Couldn't log that — check your connection and retry.",
-      });
+      if (inConvo(convo)) {
+        settleRunning();
+        pushChat({
+          kind: "error",
+          id: crypto.randomUUID(),
+          text: quota
+            ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+            : "Couldn't log that — check your connection and retry.",
+        });
+      }
       return false;
     } finally {
       setCaptureBusy(false);
@@ -640,6 +644,7 @@ export default function Today() {
   const submitAudio = async (clip: VoiceClip): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
+    const convo = convoRef.current; // the conversation this turn belongs to
     const justDiscarded = flushDiscard();
     t0Ref.current = performance.now();
     // A failure from an earlier attempt rides this clip (voice retried and
@@ -666,47 +671,53 @@ export default function Today() {
           history,
           photo_log_id: photoLogId(justDiscarded),
         },
-        (ev) => onAgentEvent(ev, userId),
+        (ev) => {
+          if (inConvo(convo)) onAgentEvent(ev, userId);
+        },
       );
       // The server answered (staged or capture_failure) — the attempt is
       // spent; only a failed upload keeps the id for a retry.
-      audioRef.current = null;
+      if (inConvo(convo)) audioRef.current = null;
       if ("status" in log) {
         // capture_failure — the server-side half of §13's silent-blob class:
         // audio uploaded fine
         // but transcribed to nothing. The server recorded it on the audio
         // log; the retype that follows links to it via capture_fallback.
         t0Ref.current = null;
-        voiceFailRef.current = "empty_transcript";
-        dropPending(userId);
-        pushChat({
-          kind: "error",
-          id: crypto.randomUUID(),
-          text: "I couldn't hear anything in that — try again, or type it.",
-        });
+        if (inConvo(convo)) {
+          voiceFailRef.current = "empty_transcript";
+          dropPending(userId);
+          pushChat({
+            kind: "error",
+            id: crypto.randomUUID(),
+            text: "I couldn't hear anything in that — try again, or type it.",
+          });
+        }
         return false;
       }
-      if (voiceFailRef.current === priorFailure) voiceFailRef.current = null;
-      agentDone(log, replay, userId);
+      if (inConvo(convo) && voiceFailRef.current === priorFailure) voiceFailRef.current = null;
+      agentDone(log, replay, userId, convo);
       return true;
     } catch (e) {
       t0Ref.current = null;
-      // what was said stays (the transcript already landed); a bubble still
-      // waiting for one goes, and no tool line is left spinning
-      settleRunning();
-      dropPending(userId);
       // The demo quota refusing the upload is not a voice failure: §13's
       // counter stays clean, and the chat shows the server's sentence
       // instead of "type it instead" (typing meets the same wall).
       const quota = failCapture(e, null);
-      if (!quota) voiceFailRef.current = "upload_failed";
-      pushChat({
-        kind: "error",
-        id: crypto.randomUUID(),
-        text: quota
-          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
-          : "Couldn't upload that recording — try again, or type it.",
-      });
+      if (inConvo(convo)) {
+        // what was said stays (the transcript already landed); a bubble still
+        // waiting for one goes, and no tool line is left spinning
+        settleRunning();
+        dropPending(userId);
+        if (!quota) voiceFailRef.current = "upload_failed";
+        pushChat({
+          kind: "error",
+          id: crypto.randomUUID(),
+          text: quota
+            ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+            : "Couldn't upload that recording — try again, or type it.",
+        });
+      }
       return false;
     } finally {
       setCaptureBusy(false);
@@ -721,6 +732,7 @@ export default function Today() {
   const submitPhoto = async (shot: PhotoShot): Promise<boolean> => {
     setCaptureBusy(true);
     setCaptureError(null);
+    const convo = convoRef.current; // the conversation this turn belongs to
     const justDiscarded = flushDiscard();
     // the clock starts before the round trip, per attempt (BACKLOG 2) — the
     // photo lane's staged_ms has always measured upload start → rendered
@@ -746,25 +758,29 @@ export default function Today() {
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
           history,
         },
-        (ev) => onAgentEvent(ev, userId),
+        (ev) => {
+          if (inConvo(convo)) onAgentEvent(ev, userId);
+        },
       );
-      photoRef.current = null;
+      if (inConvo(convo)) photoRef.current = null;
       if ("status" in log) return false; // capture_failure is the voice lane's
-      agentDone(log, replay, userId, true);
+      agentDone(log, replay, userId, convo, true);
       return true;
     } catch (e) {
       t0Ref.current = null;
-      settleRunning();
-      // the thumbnail stays: it is what was sent, and it is still true
       const quota = failCapture(e, null);
-      if (quota) photoRef.current = null; // a retry today meets the same 429
-      pushChat({
-        kind: "error",
-        id: crypto.randomUUID(),
-        text: quota
-          ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
-          : photoErrorMessage(e),
-      });
+      if (inConvo(convo)) {
+        settleRunning();
+        // the thumbnail stays: it is what was sent, and it is still true
+        if (quota) photoRef.current = null; // a retry today meets the same 429
+        pushChat({
+          kind: "error",
+          id: crypto.randomUUID(),
+          text: quota
+            ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+            : photoErrorMessage(e),
+        });
+      }
       return false;
     } finally {
       setCaptureBusy(false);

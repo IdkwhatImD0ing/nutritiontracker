@@ -224,6 +224,24 @@ def test_redaction():
         "trying to conceive\n\nEarlier in this conversation: nothing\n\nUtterance: \"eggs\""
     )
     assert "HIV" not in notes and "conceive" not in notes and "Earlier in this conversation" in notes
+    # the saved-meals block sits between the notes and the history: it is the
+    # agent's view of what it may change, so a trace must keep it
+    meals = tracing._scrub(
+        "Profile notes: lactose intolerant\n"
+        "Saved meals (name: items — say: trigger phrases):\n"
+        "- usual breakfast: eggs 2 × 1 large — say: usual breakfast\n\n"
+        'Earlier in this conversation: nothing\n\nUtterance: "eggs"'
+    )
+    assert "lactose" not in meals and "usual breakfast: eggs 2 × 1 large" in meals
+    # notes that themselves mention saved meals must not truncate their own
+    # redaction — the anchor is the section's full header, not its first words
+    sneaky = tracing._scrub(
+        "Profile notes: lactose intolerant\n"
+        "Saved meals are stale, ignore the old shake\n"
+        "HIV meds at 8pm\n\n"
+        'Earlier in this conversation: nothing\n\nUtterance: "eggs"'
+    )
+    assert "lactose" not in sneaky and "HIV" not in sneaky and "stale" not in sneaky
     # identifiers are not phone numbers: barcodes and all-digit uuid groups survive
     assert tracing._scrub("source=off source_id=3038350013941 upc 041331092609") == (
         "source=off source_id=3038350013941 upc 041331092609"

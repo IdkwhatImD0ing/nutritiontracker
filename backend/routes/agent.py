@@ -107,10 +107,10 @@ class AgentTranscriptEvent(BaseModel):
 
 class AgentToolCallEvent(BaseModel):
     """The agent called a tool: `name` (log_food, log_estimate, log_weight,
-    discard_log, save_meal, update_meal, adjust_photo, web_search) with `args`
-    as the model passed them. `read_photo` is the exception — no model called
-    it: the photo turn (§3.4b) emits the pair itself so the chat can show the
-    vision call while it runs."""
+    discard_log, past_foods, save_meal, update_meal, adjust_photo, web_search)
+    with `args` as the model passed them. `read_photo` is the exception — no
+    model called it: the photo turn (§3.4b) emits the pair itself so the chat
+    can show the vision call while it runs."""
 
     type: Literal["tool_call"] = "tool_call"
     id: str

@@ -363,7 +363,7 @@ touch. The agent is told not to `discard_log` a plate. The staging sheet no long
 a photo turn: it stacks above the composer, and dismissing it arms the 6 s undo-discard that
 the next utterance would flush — deleting the log being tuned. The card's *Review* opens it.
 `POST /api/logs/photo` is unchanged and still tested; the UI no longer calls it.
-`tests/test_photo_chat.py` (9, offline), the new §6 block in `tests/test_photo.py` and three stream tests in `test_agent_chat.py`. **Measured on the live gate: astra at effort `medium` took 16.8–19.6s against luna's 3.1s**, and at effort `low` 10.9s. Astra is clearly the sharper read at either effort; `medium` has not yet been shown to earn its extra ~6s (on the test plate it called the same white slabs "cheese" on one run and "butter" on the next). `medium` is what Bill asked for and what shipped — read BACKLOG 164 before touching it.
+`tests/test_photo_chat.py` (9, offline), the new §6 block in `tests/test_photo.py` and three stream tests in `test_agent_chat.py`. **Measured on the live gate: astra at effort `medium` took 16.8–19.6s against luna's 3.1s**, and at effort `low` 10.9s. Astra is clearly the sharper read at either effort; `medium` has not yet been shown to earn its extra ~6s (on the test plate it called the same white slabs "cheese" on one run and "butter" on the next). `medium` is what Bill asked for and what shipped — read BACKLOG 170 before touching it.
 
 What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
 (18, now 100), the preview-protection bypass token (19), the input-hardening pass (98), the
