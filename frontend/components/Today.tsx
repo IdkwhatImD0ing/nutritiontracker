@@ -25,7 +25,8 @@ import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { getMe, type Me } from "./MeApi";
 import PendingItems from "./PendingItems";
-import PhotoCapture from "./PhotoCapture";
+import { photoErrorMessage } from "./PhotoApi";
+import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
@@ -85,9 +86,10 @@ export default function Today() {
   // is up. The pick arrives from TabBar as a window event (Today mounted) or
   // a sessionStorage handoff (navigated here from another tab).
   const [lane, setLane] = useState<AddLane | null>(null);
-  // The photo lane owns its own sheet (PhotoCapture: pick → downscale →
-  // upload); the staged log then enters the same staging sheet as the rest.
-  const [photoOpen, setPhotoOpen] = useState(false);
+  // §3.4b (2026-09-08): the photo lane IS the agent lane now — "Take photo"
+  // opens the chat with the picker up, so the plate lands in the conversation
+  // that is going to correct it. This is which of the two the lane opened for.
+  const [openWith, setOpenWith] = useState<"mic" | "photo">("mic");
   // Search/barcode twin of pendingRef: one uuid per food, so a retried
   // from-food log reuses it (§5 idempotent upsert).
   const quickRef = useRef<{ id: string; foodId: string } | null>(null);
@@ -110,6 +112,12 @@ export default function Today() {
   // still opens the staging sheet (agentDone) — it is real and needs review.
   const convoRef = useRef(0);
   const inConvo = (convo: number) => convoRef.current === convo;
+  // The same number as state, purely to key <AgentChat>: a new conversation
+  // must REMOUNT it, or its mount effect (which decides between starting the
+  // mic and opening the picker) has already latched and the lane's intent is
+  // silently dropped — "Take photo" from an open chat would blank the window
+  // and do nothing else. Remounting also clears the composer and any recording.
+  const [convoKey, setConvoKey] = useState(0);
   const pushChat = (m: ChatMessage) => setChat((cur) => [...cur, m]);
   // a retry of the same turn (§8.6): its bubble stays — put back if the failed
   // attempt dropped it — and the failure note under it goes; the stream the
@@ -128,6 +136,36 @@ export default function Today() {
     setChat((cur) =>
       cur.map((m) =>
         m.kind === "result" && m.log.log_id === logId ? { ...m, state } : m,
+      ),
+    );
+  // §3.4b: the plate this conversation is still tuning — the newest photo
+  // result card that is still staged. DERIVED from the chat, never stored
+  // beside it: a separate flag would have to be cleared in every place the
+  // card's state changes, and would go stale the moment one was missed. It
+  // clears itself, because markResult already flips that card on commit,
+  // discard and replacement, and pickLane empties the chat on every opening.
+  // `justDiscarded`: the log this send settled a pending discard for — its
+  // card still reads staged in this render.
+  const photoLogId = (justDiscarded: string | null = null): string | null => {
+    for (let i = chat.length - 1; i >= 0; i--) {
+      const m = chat[i];
+      if (m.kind !== "result" || !m.photo) continue;
+      return m.state === "staged" && m.log.log_id !== justDiscarded
+        ? m.log.log_id
+        : null;
+    }
+    return null;
+  };
+  // §3.4b: adjust_photo changed an EARLIER turn's log, so the rows come back
+  // on the outcome rather than as this turn's own (empty) log. The card that
+  // owns that log shows the new list — a second card would be a lie, and
+  // StagingSheet reads its rows from these props when Review mounts it.
+  const patchResult = (updated: LogResponse) =>
+    setChat((cur) =>
+      cur.map((m) =>
+        m.kind === "result" && m.log.log_id === updated.log_id
+          ? { ...m, log: { ...m.log, ...updated } }
+          : m,
       ),
     );
   // a run that ended in an error leaves no tool line spinning
@@ -150,13 +188,23 @@ export default function Today() {
     for (const m of chat) {
       if (m.kind === "user" && !m.pending && m.text) {
         turns.push({ role: "user", text: m.text });
+      } else if (m.kind === "photo") {
+        // the words said WITH the picture are the utterance the agent was
+        // answering — dropped, a follow-up ("what about the sauce?") arrives
+        // with no record of the question it follows
+        turns.push({
+          role: "user",
+          text: m.text
+            ? `[sent a photo of their plate] ${m.text}`
+            : "[sent a photo of their plate]",
+        });
       } else if (m.kind === "agent") {
         turns.push({ role: "agent", text: m.text });
       } else if (m.kind === "result") {
         const n = m.log.items.length;
         turns.push({
           role: "agent",
-          text: `staged ${n} item${n === 1 ? "" : "s"}`,
+          text: `${m.photo ? "read the photo — " : ""}staged ${n} item${n === 1 ? "" : "s"}`,
           log_id: m.log.log_id,
           items: m.log.items.map((it) =>
             `${it.food?.name ?? it.phrase}${
@@ -170,7 +218,13 @@ export default function Today() {
         });
       }
     }
-    return turns.slice(-12);
+    const tail = turns.slice(-12);
+    // §3.4b: the plate must not fall out of the window it is being tuned in —
+    // twelve corrections and the agent would be editing rows it can no longer
+    // see. The card it names is the one thing that always rides along.
+    const plate = photoLogId(justDiscarded);
+    const anchor = plate ? turns.find((t) => t.log_id === plate) : undefined;
+    return anchor && !tail.includes(anchor) ? [anchor, ...tail] : tail;
   };
   // a question's chips are for the next message only
   const closeQuestions = () =>
@@ -190,6 +244,12 @@ export default function Today() {
   // clip's capture start, so a retried upload of the same clip reuses the
   // id (§5 idempotent upsert) instead of minting a fresh one per attempt.
   const audioRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
+  // §3.4b photo twin of audioRef: one uuid per shot, keyed by the capture
+  // instant, so the same shot sent twice reuses the id rather than minting a
+  // second log for one plate. Note there is no Retry affordance yet — every
+  // pick stamps a fresh capturedAt, so a re-picked photo after a failed send
+  // IS a new plate to this (BACKLOG 176).
+  const photoRef = useRef<{ id: string; capturedAt: string; userId: string } | null>(null);
   // §8.1d/§13: a failed voice capture is reported on the NEXT text log as
   // capture_fallback + capture_error — the §9 voice-viability counter.
   const voiceFailRef = useRef<string | null>(null);
@@ -245,6 +305,11 @@ export default function Today() {
 
   const pickLane = (next: AddLane) => {
     setCaptureError(null);
+    // §3.4b (2026-09-08): "Take photo" opens the same chat, with the picker
+    // up instead of the mic — so it is the Agent lane, and everything below
+    // applies to it. The still-undoable discard is settled by the send
+    // (submitPhoto, as submit and submitAudio do), not here.
+    const target = next === "photo" ? "agent" : next;
     // §6.4: opening the Agent lane starts a new conversation (Bill,
     // 2026-09-08) — cleared here, on open, rather than on close, so the
     // sheet closing never cuts a run short. The generation bump is what
@@ -253,21 +318,17 @@ export default function Today() {
     // of one the previous conversation left behind (§8.6's same-id replay
     // is for a retry *within* a conversation), and a mic failure is never
     // stamped on a later conversation's first typed log (§13).
-    if (next === "agent") {
+    if (target === "agent") {
       convoRef.current += 1;
+      setConvoKey(convoRef.current);
       setChat([]);
       pendingRef.current = null;
       audioRef.current = null;
+      photoRef.current = null;
       voiceFailRef.current = null;
     }
-    if (next === "photo") {
-      setLane(null);
-      flushDiscard(); // a new capture settles any still-undoable discard
-      setPhotoOpen(true);
-      return;
-    }
-    setPhotoOpen(false);
-    setLane(next);
+    setOpenWith(next === "photo" ? "photo" : "mic");
+    setLane(target);
   };
   // The + listener is bound once; the ref keeps it on the current closure.
   const pickRef = useRef(pickLane);
@@ -387,8 +448,9 @@ export default function Today() {
 
   // §8.4: a log that staged nothing but carried a save outcome is a
   // "save as my usual …" utterance, not a meal — confirm it and stage nothing.
-  // The photo, search and barcode lanes enter here; the Agent chat has its
-  // own entry below (its answers are chat messages, not toasts).
+  // The search and barcode lanes enter here; the Agent chat has its own entry
+  // below (its answers are chat messages, not toasts), and the photo lane is
+  // part of that chat since 2026-09-08 (§3.4b).
   const enterStaging = (log: LogCreateResponse): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
@@ -465,17 +527,22 @@ export default function Today() {
   // — so the chat says so instead of falling silent. `convo`: the run's
   // conversation. A newer one has since opened → the chat writes are its
   // predecessor's and are dropped, but the staged log still opens the sheet.
+  // `photo` (§3.4b): the turn was a plate, so the chat is the surface and
+  // the staging sheet does NOT open over the composer.
   const agentDone = (
     log: LogCreateResponse,
     replay: boolean,
     userId: string,
     convo: number,
+    photo = false,
   ): void => {
     if (demo) refreshMe(); // the attempt counted — the banner learns it
     if (log.agent?.weight) setWeightsKey((k) => k + 1);
     const mine = inConvo(convo);
     // a correction: the earlier turn's log this one replaces
     if (mine) for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
+    // §3.4b: adjust_photo edited the plate — patch its card, never add one
+    if (mine && log.agent?.updated) patchResult(log.agent.updated);
     if (replay && mine) {
       // a voice bubble the replay carried no transcript for stays honest
       setChat((cur) =>
@@ -502,9 +569,27 @@ export default function Today() {
           : (log.note as string),
       });
     }
-    if (log.items.length === 0) return; // the reply bubble is the answer
-    if (mine) pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged" });
+    if (log.items.length === 0) {
+      t0Ref.current = null; // nothing will render this log — stop its clock
+      return; // the reply bubble is the answer
+    }
+    if (mine) {
+      pushChat({ kind: "result", id: crypto.randomUUID(), log, state: "staged", photo });
+    }
     setSavedNote(null);
+    if (photo && mine) {
+      // §3.4b: the chat is the surface for a plate — the whole point is
+      // correcting it in words, and the staging sheet stacks OVER the
+      // composer, so opening it here would put the keyboard out of reach.
+      // Worse, dismissing it arms the 6 s undo-discard, which the next
+      // utterance would flush — deleting the very log being tuned. The
+      // card's Review opens the sheet, on fresh rows, when they are done.
+      // Only while the conversation is still open: a plate that landed in a
+      // conversation since replaced has no card to be reviewed from, and the
+      // staged log is real, so it falls through to the sheet like any other.
+      requestAnimationFrame(() => stagedRendered(log.log_id));
+      return;
+    }
     setStaging({ log, restore: null });
   };
 
@@ -535,6 +620,9 @@ export default function Today() {
           capture_fallback: voiceFailRef.current != null,
           capture_error: voiceFailRef.current,
           history,
+          // §3.4b: while a photographed plate is staged, every turn of this
+          // conversation runs on the photo tier and can edit that plate
+          photo_log_id: photoLogId(justDiscarded),
         },
         (ev) => {
           if (inConvo(convo)) onAgentEvent(ev, userId);
@@ -597,6 +685,7 @@ export default function Today() {
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
           capture_error: priorFailure,
           history,
+          photo_log_id: photoLogId(justDiscarded),
         },
         (ev) => {
           if (inConvo(convo)) onAgentEvent(ev, userId);
@@ -643,6 +732,79 @@ export default function Today() {
           text: quota
             ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
             : "Couldn't upload that recording — try again, or type it.",
+        });
+      }
+      return false;
+    } finally {
+      setCaptureBusy(false);
+    }
+  };
+
+  // §3.4b (2026-09-08): a plate as a chat turn. The same shape as submitAudio
+  // — one client uuid per shot, keyed by the capture instant so a retry of the
+  // same JPEG reuses it (§5 idempotent upsert, §8.6 re-attach) — and the same
+  // stream: the server runs vision and stages the rows, the chat shows the
+  // read as a tool line, and the reply invites the correction.
+  // `said` (2026-09-09): words sent with the picture. They make it an agent
+  // turn — the model sees the image and answers what was asked — where the
+  // bare shot stays the deterministic vision parse.
+  const submitPhoto = async (shot: PhotoShot, said = ""): Promise<boolean> => {
+    setCaptureBusy(true);
+    setCaptureError(null);
+    const convo = convoRef.current; // the conversation this turn belongs to
+    const justDiscarded = flushDiscard();
+    // the clock starts before the round trip, per attempt (BACKLOG 2) — the
+    // photo lane's staged_ms has always measured upload start → rendered
+    t0Ref.current = performance.now();
+    const retry =
+      photoRef.current?.capturedAt === shot.capturedAt ? photoRef.current : null;
+    const attempt =
+      retry ?? { id: crypto.randomUUID(), capturedAt: shot.capturedAt, userId: crypto.randomUUID() };
+    photoRef.current = attempt;
+    const history = chatHistory(justDiscarded);
+    closeQuestions();
+    const userId = attempt.userId;
+    const bubble: ChatMessage = {
+      kind: "photo",
+      id: userId,
+      thumb: shot.thumb,
+      text: said || undefined,
+    };
+    if (retry) resumeTurn(userId, bubble);
+    else pushChat(bubble);
+    try {
+      const { log, replay } = await streamAgent(
+        {
+          kind: "photo",
+          id: attempt.id,
+          shot,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          history,
+          text: said || undefined,
+          // only the agent lane can act on it; the bare parse ignores it
+          photo_log_id: said ? photoLogId(justDiscarded) : null,
+        },
+        (ev) => {
+          if (inConvo(convo)) onAgentEvent(ev, userId);
+        },
+      );
+      if (inConvo(convo)) photoRef.current = null;
+      if ("status" in log) return false; // capture_failure is the voice lane's
+      agentDone(log, replay, userId, convo, true);
+      return true;
+    } catch (e) {
+      t0Ref.current = null;
+      const quota = failCapture(e, null);
+      if (inConvo(convo)) {
+        settleRunning();
+        // the thumbnail stays: it is what was sent, and it is still true
+        if (quota) photoRef.current = null; // a retry today meets the same 429
+        pushChat({
+          kind: "error",
+          id: crypto.randomUUID(),
+          text: quota
+            ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
+            : photoErrorMessage(e),
         });
       }
       return false;
@@ -742,6 +904,37 @@ export default function Today() {
   const closeStaging = (snap: StagingSnapshot) => {
     const current = staging;
     if (!current) return;
+    // §3.4b: closing the sheet over the plate this conversation is still
+    // tuning means "back to the chat", not "throw the plate away". A photo
+    // turn never auto-opens the sheet for exactly this reason; Review is the
+    // only way in, and arming the discard here would delete the log the very
+    // next utterance is about to correct (and silently drop the conversation
+    // off the photo tier, since photo_log_id is derived from that card).
+    // Every other lane keeps the §5 discard-on-close it has always had.
+    if (photoLogId() === current.log.log_id) {
+      setStaging(null);
+      // The sheet writes to the server as you use it — a removed row, a
+      // confirm, a search pick, a tier-3 result — so the card cannot keep the
+      // rows it was opened with. It is not a cosmetic copy: chatHistory()
+      // sends those rows to the agent as what is on the plate, and a commit
+      // built from them is refused for the ones already removed.
+      //
+      // The snapshot IS that list, already in hand: the sheet folds every
+      // server response it makes back into `items`, and `removed` is what it
+      // was hiding. Taking it synchronously — rather than re-fetching the log
+      // — is what makes this correct rather than merely fresher: there is no
+      // window in which the next utterance reads the pre-sheet rows, and no
+      // in-flight response that can land after an adjust_photo outcome and
+      // overwrite a newer list with an older one. It also keeps the local
+      // portion edits, which is how the sheet has always worked — they are
+      // what a commit from this card would send.
+      patchResult({
+        log_id: current.log.log_id,
+        meal: snap.meal,
+        items: snap.items.filter((i) => !snap.removed.includes(i.item_index)),
+      });
+      return;
+    }
     flushDiscard(); // at most one undoable discard at a time
     setStaging(null);
     const entry = { log: current.log, snap };
@@ -832,11 +1025,14 @@ export default function Today() {
 
       {lane === "agent" ? (
         <AgentChat
+          key={convoKey}
           messages={chat}
           busy={captureBusy}
           error={captureError}
+          openWith={openWith}
           onSubmit={submit}
           onSubmitAudio={submitAudio}
+          onSubmitPhoto={submitPhoto}
           onVoiceFailure={(e) => {
             voiceFailRef.current = e;
           }}
@@ -883,26 +1079,6 @@ export default function Today() {
           onClose={() => setLane(null)}
         />
       ) : null}
-
-      {/* §3.4b photo lane: the staged log enters the identical staging flow;
-          staged_ms here measures the shot's upload start → rendered, so the
-          clock starts in onUploadStart (before the round trip, per attempt),
-          not once the staged log is already back. */}
-      <PhotoCapture
-        open={photoOpen}
-        onClose={() => {
-          setPhotoOpen(false);
-          // the sheet owns its 429 surface; the banner catches up on close
-          if (demo) refreshMe();
-        }}
-        onUploadStart={() => {
-          t0Ref.current = performance.now();
-        }}
-        onStaged={(log) => {
-          setPhotoOpen(false);
-          enterStaging(log);
-        }}
-      />
 
       {staging ? (
         <StagingSheet

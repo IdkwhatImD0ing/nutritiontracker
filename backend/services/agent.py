@@ -29,9 +29,19 @@ result and the reply to the caller as it happens (the chat window shows them,
 routes/agent.py), through `Runner.run_streamed`. Without `emit` the same code
 path runs silently (POST /api/logs, the tests).
 
+Since 2026-09-08 the chat is also where a photographed plate lands (§3.4b):
+`routes/agent.py` runs the vision call first and stages the rows itself, so
+the photo turn reaches no model here at all — but every turn after it does,
+with `adjust_photo` in the toolset, which edits those staged rows in place
+(an amount, a row the photo invented, a food it missed) instead of throwing
+the plate away and restaging it.
+
 Model: gpt-5.6-terra — the research-and-judgement tier (tier 3's), because
 sizing an unlabeled platter is that class of work; the two-tool routing call
 this used to be ran on luna (§8.10). Escalation is one constant, as before.
+A conversation with a photo in it runs on gpt-5.6-sol at reasoning effort
+"low" instead (PHOTO_MODEL/PHOTO_EFFORT, `AgentDeps.photo_chat`) — different
+work, and the thinking that mattered happened in the vision call.
 """
 
 from __future__ import annotations
@@ -80,6 +90,18 @@ def _load_runner() -> None:
 log = logging.getLogger(__name__)
 
 MODEL = "gpt-5.6-terra"  # pinned tier id — never the bare gpt-5.6 alias (§6)
+# The photo conversation's tier (2026-09-08, Bill's direction): once a plate
+# has entered the chat, every turn of it runs on Sol at reasoning effort
+# "low" — the ChatGPT/Codex UI calls that "light"; the API has no such value
+# (none/low/medium/high/xhigh/max), so "low" is what it means. Sol because
+# tuning a staged plate is read-the-list-and-edit-the-right-row work over a
+# context that only grows, and Sol is the tier that holds a conversation;
+# "low" because the thinking that mattered already happened in the astra
+# vision call (services/vision.py). Every other conversation stays on Terra
+# at default effort — sizing an unlabeled platter with web_search is a
+# different job (§6.4, §8.10), and it did not change.
+PHOTO_MODEL = "gpt-5.6-sol"  # pinned tier id — never the bare gpt-5.6 alias (§6)
+PHOTO_EFFORT = "low"
 MAX_TURNS = 10  # a search or two, up to three logging tools, the answer
 MAX_DAYS_AGO = 30
 MAX_ESTIMATE_ITEMS = 8
@@ -148,9 +170,9 @@ Tools:
   anything: you pass foods and amounts; the databases supply the numbers. One
   or two searches at most.
 - discard_log(log_id): for a CORRECTION — the person changes what an earlier
-  turn of this conversation staged ("actually I only had half", "make that two
-  eggs", "no, the small tray"). Call it with that turn's log id (from the
-  conversation) while the log is still staged, then stage the corrected version
+  turn of this conversation staged ("actually I only had half", "no, that was
+  the small tray, not the party platter"). Call it with that turn's log id (from
+  the conversation) while the log is still staged, then stage the corrected version
   with log_food / log_estimate as if said fresh. A log the conversation shows
   as discarded — or that the tool reports already discarded (the person closed
   that sheet) — has nothing to replace: just stage the corrected version. A log
@@ -274,6 +296,39 @@ web_search is not available on this account: decide between log_food and
 log_estimate from what you already know, and size estimates the same way.
 """
 
+# Appended for a photo conversation (§3.4b, 2026-09-08): a plate has been
+# photographed, read and staged before this run; the turn is about tuning it.
+_PHOTO_LANE = """
+
+This conversation has a photographed plate in it. It was read from the photo
+and already staged — the conversation lists that log, its id and its rows —
+and the person is now correcting what it says. One more tool is yours:
+
+- adjust_photo(changes): change what the photographed plate staged. It acts on
+  that plate and only that plate — you never name a log. Each change is one of:
+  op "amount" — the row's amount was wrong ("that's two eggs, not one", "the
+  rice was about double that"); op "remove" — the photo saw something that
+  was not there, or they did not eat it ("there's no sauce", "I skipped the
+  bread"); op "add" — a food the photo missed ("there was a banana too").
+  `item` names the row as the conversation lists it (its food name, else the
+  phrase); for "add" it is the plain, database-searchable name of the food.
+  Amounts follow log_estimate's rule exactly: a countable food as a COUNT
+  with `unit` null and its total weight in `grams`, anything else by weight
+  ("g", "oz") or the measure it comes in ("cup", "tbsp") with `grams` null.
+  `note` is one short clause for the person on what you corrected. The tool
+  answers with the log's rows as they now stand — say what changed from that,
+  never from what you asked for.
+
+For anything about a photographed plate, adjust_photo is the tool: it edits
+the rows in place, keeps what the photo saw, and keeps each row flagged for
+them to confirm. Do NOT discard_log a photo log and stage it again — that
+throws the whole plate away to change one amount. log_food and log_estimate
+are still for food they tell you about that is not on that plate.
+
+A corrected row goes back to needing their confirmation, which is right —
+say the amount is updated, not that it is confirmed.
+"""
+
 
 class EstimateItem(BaseModel):
     """One component of an unlabeled food, as the agent sizes it."""
@@ -308,6 +363,24 @@ class MealQty(BaseModel):
 
     food: str  # the item's food name as the saved-meals list shows it
     qty: float  # > 0
+
+
+class PhotoChange(BaseModel):
+    """One correction to a plate the photo lane already staged (§3.4b/§6.4).
+
+    `op` says what to do; `item` names the row the way the conversation shows
+    it (the food's name, else the phrase — matched exactly first, then as a
+    substring), or, for "add", the plain name of the food that was missed.
+    The amount fields carry log_estimate's contract exactly: a countable food
+    as a COUNT with `unit` null and its total weight in `grams`, anything
+    else by weight or measure with `grams` null."""
+
+    op: Literal["amount", "remove", "add"]
+    item: str
+    qty: float | None  # amount/add: the corrected amount, > 0; null for remove
+    unit: str | None  # "g", "oz", "cup", "tbsp" … — null for a count of pieces
+    grams: float | None  # a count's total weight; null when given by weight/measure
+    note: str  # one short clause for the user on what was corrected
 
 
 class AgentReply(BaseModel):
@@ -355,6 +428,22 @@ class AgentDeps:
     # §6.4 the one read: (query | None, limit) → a row per food this account
     # has logged, with the amount it was last logged at — never macros
     past_foods: Callable[[str | None, int], Awaitable[list[dict]]] | None = None
+    # §6.4 (2026-09-09): an image the person attached to THIS turn, as a data
+    # URL. The agent sees it alongside the utterance, which is what makes
+    # "what is this?" and "is this the small size?" answerable — the plate the
+    # photo lane parses is a different thing, deterministic and tool-free.
+    # Never stored (§8.8): it lives for the run and goes. Both chat models
+    # take one — `image_input` is listed on the gpt-5.6-terra and
+    # gpt-5.6-sol model pages (re-read 2026-09-09).
+    image: str | None = None
+    # §3.4b/§6.4 (2026-09-08): this conversation has a photo in it — the model
+    # is PHOTO_MODEL at PHOTO_EFFORT, adjust_photo is in the toolset, and the
+    # instructions gain the photo block. False is every other conversation.
+    photo_chat: bool = False
+    # changes → the photographed plate's rows as they now stand. The route
+    # closes over WHICH log (the client's photo_log_id, checked against the
+    # database), so the model never names one and cannot name the wrong one.
+    adjust_photo: Callable[[list["PhotoChange"]], Awaitable[dict]] | None = None
 
 
 @dataclass
@@ -369,6 +458,7 @@ class AgentRun:
     max_turns_hit: bool = False
     options: list[str] | None = None  # the clarifying question's answers, when the reply is one
     meal_calls: int = 0  # save_meal / update_meal calls that wrote (or stamped) something
+    photo_calls: int = 0  # adjust_photo calls that changed a staged plate
 
 
 def _tool_error(ctx, error: Exception) -> str:
@@ -386,6 +476,7 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
     state.setdefault("estimate_calls", 0)
     state.setdefault("weight", None)
     state.setdefault("meal_calls", 0)
+    state.setdefault("photo_calls", 0)
 
     @function_tool(failure_error_function=_tool_error)
     async def log_food(text: str) -> str:
@@ -617,21 +708,86 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
             state["meal_note"] = f"updated '{out.get('meal') or name}'"
         return json.dumps(out, default=str)
 
+    @function_tool(failure_error_function=_tool_error)
+    async def adjust_photo(changes: list[PhotoChange]) -> str:
+        """Correct the plate this conversation photographed: change an amount,
+        drop a row the photo got wrong, or add a food it missed. It always acts
+        on that plate — there is no log to name. Use this, never discard_log,
+        for anything about the photographed plate. Returns its rows as they now
+        stand."""
+        if not changes:
+            return json.dumps({"error": "nothing_to_change", "message": "say what to change"})
+        bad = [
+            c.item for c in changes
+            if c.op != "remove" and not (c.qty is not None and c.qty > 0)
+        ]
+        if bad:
+            return json.dumps({
+                "error": "invalid_qty",
+                "message": f"every amount must be above zero: {bad}",
+            })
+        # the same rule log_estimate enforces: a count of pieces without its
+        # total weight would be sized as pieces × the food's mass default
+        uncounted = [
+            c.item for c in changes
+            if c.op != "remove" and c.unit is None and not (c.grams and c.grams > 0)
+        ]
+        if uncounted:
+            return json.dumps({
+                "error": "missing_grams",
+                "message": "a count of pieces needs its total weight in `grams` "
+                           f"(pieces × a typical piece weight): {uncounted}",
+            })
+        if len(changes) > MAX_ESTIMATE_ITEMS:
+            # refused, never truncated: log_estimate can drop the tail of a
+            # list it is building, but half-applying a correction leaves the
+            # plate in a state nobody asked for
+            return json.dumps({
+                "error": "too_many",
+                "message": f"at most {MAX_ESTIMATE_ITEMS} changes at once — "
+                           "make the most important ones, then say the rest",
+            })
+        if deps.adjust_photo is None:
+            return json.dumps({
+                "error": "unavailable", "message": "there is no photographed plate here"
+            })
+        out = await deps.adjust_photo(changes)
+        if "error" not in out:
+            state["photo_calls"] += 1
+        return json.dumps(out, default=str)
+
     tools: list = [
         log_food, log_estimate, log_weight, discard_log, past_foods, save_meal, update_meal
     ]
+    if deps.photo_chat:
+        tools.append(adjust_photo)
     if deps.web_lane:
         # unpinned: this search identifies a product and its size, never a
         # page to transcribe numbers from (tier 3's pinned lane does that)
         tools.append(WebSearchTool(search_context_size="medium"))
+    # the consulted-sources list rides each web_search action — the chat shows
+    # where the agent looked; the photo conversation also pins its effort (the
+    # thinking that mattered happened in the astra vision call)
+    reasoning = None
+    if deps.photo_chat:
+        from openai.types.shared import Reasoning
+
+        reasoning = Reasoning(effort=PHOTO_EFFORT)
+    settings = ModelSettings(
+        response_include=["web_search_call.action.sources"], reasoning=reasoning
+    )
     return Agent(
         name="tally-agent",
-        instructions=INSTRUCTIONS + ("" if deps.web_lane else _NO_WEB_LANE),
-        model=MODEL,
+        # appended, never interpolated: the instructions stay byte-stable per
+        # configuration, which is what the prompt cache keys on
+        instructions=(
+            INSTRUCTIONS
+            + ("" if deps.web_lane else _NO_WEB_LANE)
+            + (_PHOTO_LANE if deps.photo_chat else "")
+        ),
+        model=PHOTO_MODEL if deps.photo_chat else MODEL,
         tools=tools,
-        # the consulted-sources list rides each web_search action — the chat
-        # shows where the agent looked
-        model_settings=ModelSettings(response_include=["web_search_call.action.sources"]),
+        model_settings=settings,
         output_type=AgentReply,
     )
 
@@ -684,6 +840,8 @@ def _fallback_reply(state: dict) -> str:
         parts.append("staged an estimate for you to check")
     if state.get("weight"):
         parts.append("logged your weight")
+    if state.get("photo_calls"):
+        parts.append("updated the plate")
     if state.get("meal_note"):
         parts.append(state["meal_note"])
     if not parts:
@@ -801,7 +959,20 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
     options: list[str] | None = None
     names: dict[str, str] = {}
     try:
-        result = Runner.run_streamed(agent, agent_input(text, deps), max_turns=MAX_TURNS)
+        prompt = agent_input(text, deps)
+        # The SDK takes either a string or a list of input items; an attached
+        # image needs the list form, with the same text beside it so nothing
+        # about the run changes except that the model can now look.
+        run_input: Any = prompt
+        if deps.image:
+            run_input = [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": deps.image, "detail": "auto"},
+                ],
+            }]
+        result = Runner.run_streamed(agent, run_input, max_turns=MAX_TURNS)
         async for event in result.stream_events():
             if emit is None:
                 continue
@@ -818,7 +989,7 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
         reply = _fallback_reply(state)
         options = None
     except Exception:
-        if not (state["food_calls"] or state["estimate_calls"]):
+        if not (state["food_calls"] or state["estimate_calls"] or state["photo_calls"]):
             raise  # nothing staged: the route reports the failure and frees the claim
         # the model failed after its tools staged rows (a final output that
         # did not parse, a provider error on a later turn): the rows are in
@@ -841,4 +1012,5 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
         max_turns_hit=max_turns_hit,
         options=options,
         meal_calls=state["meal_calls"],
+        photo_calls=state["photo_calls"],
     )

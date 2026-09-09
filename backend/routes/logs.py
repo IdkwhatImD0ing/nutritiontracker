@@ -142,6 +142,11 @@ class AgentOutcome(BaseModel):
     weight: weights_route.WeightEntry | None = None
     options: list[str] | None = None
     discarded: list[UUID] | None = None
+    # §3.4b/§6.4 (2026-09-08): `adjust_photo` edited an EARLIER turn's log — the
+    # photographed plate. This turn's own log stages nothing, so the plate as it
+    # now stands comes back here and the chat patches the card that owns it. Null
+    # on every turn that did not touch a plate.
+    updated: LogPollResponse | None = None
 
 
 class LogCreateResponse(LogResponse):
@@ -627,16 +632,22 @@ async def _stored_capture_failure(log_id: UUID) -> CaptureFailureResponse | None
     )
 
 
-async def claim_text_log(body: LogCreate) -> LogResponse | None:
+async def claim_text_log(body: LogCreate, mode: str = "text") -> LogResponse | None:
     """The text lane's §8.6 claim, shared with routes/agent.py: None when
-    this request owns the row and runs the pipeline; else the replay to send."""
+    this request owns the row and runs the pipeline; else the replay to send.
+
+    `mode` is what goes in `logs.input_mode`. The chat's image turn passes
+    `"photo"`: what it staged was identified from pixels, so §3.5's learning
+    gate (`_NO_LEARN_MODES`) has to see it as the photo row it is, or a
+    portion the model read off an image becomes the next spoken log's
+    default."""
     # Idempotent claim by client id (§5, §8.6), the demo's attempt with it: a
     # concurrent double-drain or retry cannot create two logs — and only the
     # request that actually inserted the row (or claimed an orphan, below)
     # runs the pipeline. A refused attempt leaves no row.
     if not await claim_log(
         _INSERT_LOG_SQL,
-        (body.id, "text", body.text, body.captured_at, body.capture_fallback,
+        (body.id, mode, body.text, body.captured_at, body.capture_fallback,
          body.capture_error, None),
     ):
         replay = await _duplicate_post_response(
@@ -657,7 +668,9 @@ async def create_log(body: LogCreate) -> LogCreateResponse:
     return await _run_pipeline(body)
 
 
-async def _run_pipeline(body: LogCreate, emit: Emit | None = None) -> LogCreateResponse:
+async def _run_pipeline(
+    body: LogCreate, emit: Emit | None = None, image: str | None = None
+) -> LogCreateResponse:
     """§3.0 short-circuit, else — through the agent when the log asks for it
     (§6.4) — decompose → the per-log cascade → _persist, on a log row this
     request owns (a fresh claim, or a claimed orphan). `emit` streams the
@@ -668,13 +681,17 @@ async def _run_pipeline(body: LogCreate, emit: Emit | None = None) -> LogCreateR
     # Meal macro first (tier 0, N rows — "my usual breakfast"), then alias
     # (tier 1, one row); None → decompose. The agent lane keeps it: a
     # memorized phrase stages in one round trip whichever sheet it came from.
-    sc = await cascade.short_circuit_all(body.text, meal)
+    # An attached image is never a memorized phrase (§6.4, 2026-09-09): the
+    # words were said ABOUT a picture, so "my usual breakfast" beside a photo
+    # is a question about that photo, not a saved meal. Short-circuiting would
+    # stage from memory and drop the image with nothing said about it.
+    sc = None if image else await cascade.short_circuit_all(body.text, meal)
     if sc is not None:
         await _persist(body.id, sc, meal, short_circuit=True)
         return LogCreateResponse(log_id=body.id, meal=meal, items=[r.staged for r in sc])
 
     if body.agent:
-        return await _run_agent_lane(body, meal, emit)
+        return await _run_agent_lane(body, meal, emit, image)
     return await _stage_from_text(body, meal, body.text)
 
 
@@ -1086,7 +1103,7 @@ async def _stamp_save_intent(log_id: str, name: str, triggers: list[str] | None)
 
 
 async def _run_agent_lane(
-    body: LogCreate, meal: Meal, emit: Emit | None = None
+    body: LogCreate, meal: Meal, emit: Emit | None = None, image: str | None = None
 ) -> LogCreateResponse:
     """§6.4: the front-door agent. Its effects are closures over this log:
     the food part of the utterance goes through _stage_from_text exactly as
@@ -1112,7 +1129,7 @@ async def _run_agent_lane(
     result: dict = {
         "items": [], "food": None, "weight": None, "basis": None,
         "estimate_meal": None, "next_index": 0, "discarded": [],
-        "saved_meal": None, "note": None,
+        "saved_meal": None, "note": None, "updated": None,
     }
     staging = asyncio.Lock()
     history = [t.model_dump(mode="json") for t in (body.history or [])]
@@ -1207,6 +1224,22 @@ async def _run_agent_lane(
             "items": summary(rows),
             "note": "Each row is flagged as an estimate; the user confirms or adjusts it in the list.",
         }
+
+    async def adjust_photo(changes: list) -> dict:
+        """§3.4b in the chat: the corrections land on the photographed plate
+        this conversation is tuning — `body.photo_log_id`, which the client
+        derives from its own chat and the tool never names. The plate as it
+        now stands rides back on the outcome (`AgentOutcome.updated`), because
+        this turn's own log stages nothing."""
+        from routes import photo as photo_route  # lazy: photo imports this module
+
+        async with staging:
+            out = await photo_route.adjust_rows(body.photo_log_id, changes, body)
+            if "error" not in out:
+                # read twice on purpose: `out` is the model's view (no macros,
+                # ever — the reply must not state them), this is the client's
+                result["updated"] = await _load_log_response(body.photo_log_id)
+        return out
 
     async def record_weight(value: float, unit: str, day) -> dict:
         previous = await weights_route.latest_entry(before=day)
@@ -1426,6 +1459,12 @@ async def _run_agent_lane(
         save_meal=save_meal,
         update_meal=update_meal,
         past_foods=past_foods,
+        # §3.4b: a conversation with a staged plate in it runs on the photo
+        # tier and can edit that plate; every other one is unchanged
+        # §6.4: an image attached to this turn — the agent looks at it
+        image=image,
+        photo_chat=body.photo_log_id is not None,
+        adjust_photo=adjust_photo if body.photo_log_id is not None else None,
         saved_meals=[_meal_words(m) for m in await meals_route.list_meals(include_inactive=True)],
         history=history,
         now_local=now_local,
@@ -1445,8 +1484,13 @@ async def _run_agent_lane(
     # §10: the agent's step in this run's trace — the SDK's model turns and
     # tool calls nest under it, decompose and the cascade under log_food
     async with tracing.run(
-        "agent", kind="agent", provider="openai", model=agent_svc.MODEL, input=body.text,
-        attributes={"web_lane": deps.web_lane},
+        "agent", kind="agent", provider="openai",
+        # the tier this run actually used — a photo conversation is Sol, not
+        # Terra, and a trace that said otherwise would make the §10 cost and
+        # latency reads wrong for the lane that changed
+        model=agent_svc.PHOTO_MODEL if deps.photo_chat else agent_svc.MODEL,
+        input=body.text,
+        attributes={"web_lane": deps.web_lane, "photo_chat": deps.photo_chat},
     ) as gen:
         run = await agent_svc.run_agent(body.text, deps, emit)
         gen.set(
@@ -1459,6 +1503,7 @@ async def _run_agent_lane(
                 "options": run.options,
                 "discarded": result["discarded"],
                 "meal_calls": run.meal_calls,
+                "photo_calls": run.photo_calls,
                 "history_turns": len(history),
                 "max_turns_hit": run.max_turns_hit,
             },
@@ -1467,11 +1512,13 @@ async def _run_agent_lane(
     outcome = AgentOutcome(
         reply=run.reply, weight=result["weight"], options=run.options,
         discarded=[UUID(x) for x in result["discarded"]] or None,
+        updated=result["updated"],
     )
     food = result["food"]
     if (
         run.options and food is None and not result["items"]
         and result["weight"] is None and not result["discarded"] and not run.meal_calls
+        and not run.photo_calls
     ):
         # the turn only asked — nothing staged, discarded or weighed: a demo's
         # one-a-day log attempt goes back so the answer (the next turn, a new

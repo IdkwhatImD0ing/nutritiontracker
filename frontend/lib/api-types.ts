@@ -277,6 +277,10 @@ export interface paths {
          * @description Photo → vision → the identical cascade + staging; input_mode='photo'.
          *     Idempotent by client id like POST /api/logs (§8.6). `tz` is optional —
          *     without it the meal is inferred in the settings timezone.
+         *
+         *     The non-streaming entry. The + sheet's photo lane goes through the chat
+         *     (POST /api/agent, §6.4) since 2026-09-08 and shares `_stage_photo` with
+         *     this route; nothing here changed with it.
          */
         post: operations["create_log_photo_api_logs_photo_post"];
         delete?: never;
@@ -681,6 +685,7 @@ export interface components {
             options?: string[] | null;
             /** Discarded */
             discarded?: string[] | null;
+            updated?: components["schemas"]["LogPollResponse"] | null;
         };
         /**
          * AgentReplyEvent
@@ -701,8 +706,10 @@ export interface components {
         /**
          * AgentToolCallEvent
          * @description The agent called a tool: `name` (log_food, log_estimate, log_weight,
-         *     discard_log, past_foods, save_meal, update_meal, web_search) with `args`
-         *     as the model passed them.
+         *     discard_log, past_foods, save_meal, update_meal, adjust_photo, web_search)
+         *     with `args` as the model passed them. `read_photo` is the exception — no
+         *     model called it: the photo turn (§3.4b) emits the pair itself so the chat
+         *     can show the vision call while it runs.
          */
         AgentToolCallEvent: {
             /**
@@ -1455,6 +1462,8 @@ export interface components {
             agent: boolean;
             /** History */
             history?: components["schemas"]["AgentTurn"][] | null;
+            /** Photo Log Id */
+            photo_log_id?: string | null;
         };
         /**
          * LogCreateResponse
@@ -3346,7 +3355,7 @@ export interface operations {
                 "application/json": components["schemas"]["LogCreate"];
                 "multipart/form-data": {
                     /** Format: binary */
-                    audio: string;
+                    audio?: string;
                     /** Format: uuid */
                     id: string;
                     /** Format: date-time */
@@ -3359,6 +3368,18 @@ export interface operations {
                     agent?: boolean;
                     /** @description JSON array of AgentTurn — the chat so far (§6.4) */
                     history?: string;
+                    /**
+                     * Format: binary
+                     * @description a plate photo — the §3.4b lane as a chat turn; exactly one of audio or image
+                     */
+                    image?: string;
+                    /** @description said alongside an image — makes it a chat turn the agent can see (§6.4) */
+                    text?: string;
+                    /**
+                     * Format: uuid
+                     * @description the staged photo log this conversation is tuning (§3.4b)
+                     */
+                    photo_log_id?: string;
                 };
             };
         };

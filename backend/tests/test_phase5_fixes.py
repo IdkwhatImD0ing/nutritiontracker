@@ -107,11 +107,11 @@ EGG = {
 }
 VISION_EGGS = {
     "phrase": "eggs", "qty": 2, "unit": "egg", "est_grams": 100,
-    "confidence": "high", "note": "two fried eggs", "model": "gpt-5.6-luna",
+    "confidence": "high", "note": "two fried eggs", "model": "gpt-6-astra",
 }
 VISION_UNSIZED = {
     "phrase": "mystery sauce", "qty": None, "unit": None, "est_grams": None,
-    "confidence": "low", "note": "a brown sauce", "model": "gpt-5.6-luna",
+    "confidence": "low", "note": "a brown sauce", "model": "gpt-6-astra",
 }
 
 

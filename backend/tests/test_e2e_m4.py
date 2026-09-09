@@ -59,7 +59,7 @@ import services.vision as vision_real  # the real schema classes build the fixtu
 _vision: dict = {"fn": None}
 
 
-async def _vision_dispatch(image, mime):
+async def _vision_dispatch(image, mime, **kw):
     fn = _vision["fn"]
     if fn is None:
         raise AssertionError("vision must not be called by this test")
@@ -239,12 +239,12 @@ async def alias_snapshot(phrases):
 def vitem(phrase, *, qty=None, unit=None, est_grams=None, confidence="high", note=""):
     return vision_real.VisionItem(
         phrase=phrase, qty=qty, unit=unit, est_grams=est_grams,
-        confidence=confidence, note=note or phrase,
+        confidence=confidence, note=note or phrase, menu=None,
     )
 
 
 def install_vision(items, meal_hint=None):
-    async def fake(image, mime):
+    async def fake(image, mime, **kw):
         assert mime == "image/png"
         return vision_real.VisionResult(items=items, meal_hint=meal_hint)
 
@@ -318,7 +318,7 @@ def test_photographed_plate_stages_flagged_then_commits_after_confirm_and_learns
                 )
                 assert row["staged"]["estimated"] == "portion"
                 assert row["staged"]["vision"]["est_grams"] == grams
-                assert row["staged"]["vision"]["model"] == "gpt-5.6-luna"
+                assert row["staged"]["vision"]["model"] == vision_real.MODEL
             chicken_row, rice_row = resp.items[0], resp.items[1]
             assert chicken_row.food.id == chicken and chicken_row.macros.kcal == 247.5
             assert rice_row.food.id == rice and rice_row.macros.kcal == 260

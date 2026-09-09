@@ -438,7 +438,7 @@ def test_d1_photo_placeholders_belong_to_the_photographer():
     vision = {
         "phrase": "grilled chicken thigh", "note": "grilled chicken thigh over rice, dinner plate",
         "qty": None, "unit": None, "est_grams": 180, "confidence": "medium",
-        "model": "gpt-5.6-luna",
+        "model": "gpt-6-astra",
     }
 
     async def run():

@@ -12,6 +12,7 @@
  */
 
 import type { VoiceClip } from "@/components/useVoiceCapture";
+import type { PhotoShot } from "@/components/PhotoCapture";
 import type { components, operations } from "@/lib/api-types";
 import { getToken } from "@/lib/auth/token";
 
@@ -320,6 +321,7 @@ function audioForm(args: {
   tz: string;
   capture_error?: string | null;
   history?: AgentTurn[];
+  photo_log_id?: string | null;
 }): FormData {
   const { blob, mimeType, capturedAt } = args.clip;
   const ext = mimeType.includes("mp4") ? "m4a" : "webm";
@@ -329,7 +331,34 @@ function audioForm(args: {
   form.set("tz", args.tz);
   if (args.capture_error) form.set("capture_error", args.capture_error);
   if (args.history?.length) form.set("history", JSON.stringify(args.history));
+  // §3.4b: a spoken correction to a photographed plate is a photo turn too
+  if (args.photo_log_id) form.set("photo_log_id", args.photo_log_id);
   form.set("audio", new File([blob], `clip.${ext}`, { type: mimeType }));
+  return form;
+}
+
+/** The photo lane's form (§3.4b as a chat turn, 2026-09-08): the same fields
+ *  as audioForm, with the downscaled JPEG under `image` instead of the clip.
+ *  The route takes exactly one of the two. */
+function photoForm(args: {
+  id: string;
+  shot: PhotoShot;
+  tz: string;
+  history?: AgentTurn[];
+  text?: string;
+  photo_log_id?: string | null;
+}): FormData {
+  const { blob, mimeType, capturedAt } = args.shot;
+  const form = new FormData();
+  form.set("id", args.id);
+  form.set("captured_at", capturedAt);
+  form.set("tz", args.tz);
+  if (args.history?.length) form.set("history", JSON.stringify(args.history));
+  // §6.4: words alongside the picture make it a turn the agent can see,
+  // instead of the deterministic §3.4b plate parse
+  if (args.text?.trim()) form.set("text", args.text.trim());
+  if (args.photo_log_id) form.set("photo_log_id", args.photo_log_id);
+  form.set("image", new File([blob], "plate.jpg", { type: mimeType || "image/jpeg" }));
   return form;
 }
 
@@ -347,6 +376,9 @@ export type AgentTextArgs = {
   capture_error?: string | null;
   /** the chat so far (oldest first) — the agent's memory across turns */
   history?: AgentTurn[];
+  /** §3.4b: the staged photo log this conversation is tuning. Set, the turn
+   *  runs on the photo tier and the agent can edit that plate's rows. */
+  photo_log_id?: string | null;
 };
 
 export type AgentAudioArgs = {
@@ -356,6 +388,21 @@ export type AgentAudioArgs = {
   tz: string;
   capture_error?: string | null;
   history?: AgentTurn[];
+  photo_log_id?: string | null;
+};
+
+/** A plate photo as a chat turn (§3.4b). No `photo_log_id`: this turn is what
+ *  creates the plate the later turns tune. */
+export type AgentPhotoArgs = {
+  kind: "photo";
+  id: string;
+  shot: PhotoShot;
+  tz: string;
+  history?: AgentTurn[];
+  /** said alongside the picture — with it the agent sees the image and answers;
+   *  without it the shot is the §3.4b plate parse, which runs no chat model */
+  text?: string;
+  photo_log_id?: string | null;
 };
 
 /** The chat's streaming front door (routes/agent.py): the same body as
@@ -369,7 +416,7 @@ export type AgentAudioArgs = {
  *  event (with the status it would have been) both reject with an ApiError,
  *  so quotaRefusal() and `detail` work as for every other call. */
 export async function streamAgent(
-  args: AgentTextArgs | AgentAudioArgs,
+  args: AgentTextArgs | AgentAudioArgs | AgentPhotoArgs,
   onEvent: (ev: AgentEvent) => void,
 ): Promise<AgentResult> {
   const res =
@@ -387,11 +434,14 @@ export async function streamAgent(
               capture_error: args.capture_error ?? null,
               agent: true,
               history: args.history ?? null,
+              photo_log_id: args.photo_log_id ?? null,
             }),
           },
           true,
         )
-      : await multipart("/api/agent", audioForm(args));
+      : args.kind === "audio"
+        ? await multipart("/api/agent", audioForm(args))
+        : await multipart("/api/agent", photoForm(args));
   if (!res.ok || !res.body) {
     throw new ApiError(res.status, await res.text().catch(() => ""));
   }

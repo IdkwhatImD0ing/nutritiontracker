@@ -184,6 +184,15 @@ class LogCreate(BaseModel):
     # the chat so far (the last turns, oldest first) — what the agent reads to
     # understand references, answers to its own question, and corrections
     history: list[AgentTurn] | None = None
+    # §3.4b in the chat (2026-09-08): the staged photo log this conversation is
+    # still tuning. Set, this turn is part of a photo conversation — it runs on
+    # services/agent.PHOTO_MODEL and gets the `adjust_photo` tool, closed over
+    # THIS log, so the model never names one. The client derives it from its own
+    # chat (the newest photo result card that is still staged) and stops sending
+    # it once that log commits or is discarded. Untrusted like every client
+    # field: the tool re-reads the log and refuses anything not staged, and RLS
+    # keeps it inside the tenant.
+    photo_log_id: UUID | None = None
 
 
 class LogResponse(BaseModel):

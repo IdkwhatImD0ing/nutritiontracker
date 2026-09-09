@@ -18,7 +18,7 @@ was written from the code as it landed, and §8 has not been walked from an empt
 | **Stack** | Next.js 16 (App Router, TS) PWA + Python FastAPI, deployed as **two Vercel Services on one origin** |
 | **Database** | Neon Postgres (`pg_trgm`, `pgvector` available) — Vercel-Marketplace-managed. Row-Level Security scopes every user-owned table to `app.user_id`; `foods` is shared |
 | **Auth** | Neon Managed Better Auth; Next holds the session cookie, the client sends a 15-min EdDSA JWT, FastAPI verifies it via JWKS. Any verified account may sign in: `ALLOWED_EMAIL` is the owner, everyone else is a demo (`GET /api/me` says which) |
-| **LLM** | OpenAI Agents SDK — `gpt-5.6-luna` (decompose), `gpt-5.6-terra` (the front-door agent behind the Agent chat, and the tier-3 agent). **Always pin the full model id**, never bare `gpt-5.6` |
+| **LLM** | `gpt-5.6-luna` (decompose), `gpt-6-astra` at effort `medium` (photo vision), `gpt-5.6-terra` (the front-door agent behind the Agent chat, and the tier-3 agent), `gpt-5.6-sol` at effort `low` (a chat conversation with a photo in it). **Always pin the full model id**, never a bare family alias |
 | **Speech** | Deepgram `nova-3` primary, OpenAI `gpt-transcribe` fallback |
 | **Food data** | USDA FDC (generic + branded + barcodes) primary, Open Food Facts quality-gated fallback, chain restaurants only via web transcription with a stored source URL |
 | **Tracing** | FireTrace (self-hosted; `backend/tracing.py` POSTs one trace per model/agent run, stdlib only). `FIRETRACE_API_KEY` decides the environment — one key per Vercel scope. Langfuse survives only in the eval harness |
@@ -73,7 +73,8 @@ committed — keep it that way. `.env.example` lists the canonical variable name
 
 `DATABASE_URL`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_COOKIE_SECRET`, `OPENAI_API_KEY`,
 `DEEPGRAM_API_KEY`, `FDC_API_KEY`, `OFF_USER_AGENT`, `FIRETRACE_API_KEY` (a development
-key — the key decides the environment; unset, tracing is simply off), the `LANGFUSE_*`
+key — the key decides the environment; unset, tracing is simply off), `FIRECRAWL_API_KEY`
+(the photo lane's web tools; unset, the lane keeps hosted search alone), the `LANGFUSE_*`
 set (the eval harness only, §6), plus the Neon-managed `POSTGRES_*`/`PG*` set.
 
 Two deliberate omissions:
@@ -347,6 +348,24 @@ re-trigger, set a quantity, remove an item, deactivate/reactivate. The saved mea
 agent's per-run input in words. `tests/test_agent_meals.py` (8, offline) and one live story in
 `test_agent_live.py`.
 
+**2026-09-08 — the photo lane became a conversation** (DESIGN §3.4b, §6.4; Bill's direction).
+Two changes that only make sense together. The vision call moved from `gpt-5.6-luna` at effort
+`low` to **`gpt-6-astra` at effort `medium`** — a plate now costs cents rather than a fraction
+of one, deliberately, because a wrong amount is the one thing the §3.4a flag asks the user to
+catch. And **"Take photo" now opens the Agent chat** instead of its own sheet: the shot is a
+turn (`POST /api/agent`, multipart `image` instead of `audio`), the identical vision → cascade →
+staging pipeline runs behind a `read_photo` tool line, and the reply is built in code from what
+vision saw — that turn reaches no chat model, because there is no utterance to route and the
+agent cannot see the image. Every turn *after* it runs on **`gpt-5.6-sol` at effort `low`**
+(`LogCreate.photo_log_id`, which the client derives from its own chat) with one extra tool,
+`adjust_photo`: change an amount, drop a row the photo invented, add a food it missed — in
+place, keeping `staged->'vision'`, the estimate flags and every row the correction did not
+touch. The agent is told not to `discard_log` a plate. The staging sheet no longer opens over
+a photo turn: it stacks above the composer, and dismissing it arms the 6 s undo-discard that
+the next utterance would flush — deleting the log being tuned. The card's *Review* opens it.
+`POST /api/logs/photo` is unchanged and still tested; the UI no longer calls it.
+`tests/test_photo_chat.py` (9, offline), the new §6 block in `tests/test_photo.py` and three stream tests in `test_agent_chat.py`. **Measured on the live gate: astra at effort `medium` took 16.8–19.6s against luna's 3.1s**, and at effort `low` 10.9s. Astra is clearly the sharper read at either effort; `medium` has not yet been shown to earn its extra ~6s (on the test plate it called the same white slabs "cheese" on one run and "butter" on the next). `medium` is what Bill asked for and what shipped — read BACKLOG 170 before touching it.
+
 What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
 (18, now 100), the preview-protection bypass token (19), the input-hardening pass (98), the
 open-sourcing follow-ups (99–111), and whatever real use turns up.
@@ -394,6 +413,7 @@ person. DESIGN §0.5 has the *why* for each.
 | OpenAI | an API key with access to the GPT-5.6 family and the web search tool | `OPENAI_API_KEY` |
 | Deepgram | an API key — or set `STT_PROVIDER=openai` and skip it; OpenAI transcribe is the fallback either way | `DEEPGRAM_API_KEY` |
 | USDA FDC | free key: https://fdc.nal.usda.gov/api-key-signup | `FDC_API_KEY` |
+| Firecrawl | optional. A key from [firecrawl.dev](https://firecrawl.dev) gives the owner's photo lane its hosted MCP tools — finding and reading a menu page for the dish in the picture (DESIGN §3.4b). Without it the lane still has hosted `web_search`; demo accounts never get either | `FIRECRAWL_API_KEY` |
 | FireTrace | a project on your FireTrace deployment, one write key per environment (the key decides which). Unset, tracing is off and nothing else changes | `FIRETRACE_API_KEY` |
 | Langfuse | only the eval harness (`backend/evals`, `uv run --group evals`), until FireTrace has datasets (docs/FIRETRACE_FEEDBACK.md) | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT=test` |
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |
