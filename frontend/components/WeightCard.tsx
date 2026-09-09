@@ -49,7 +49,11 @@ type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
  *  read that fails renders nothing — never a stale or invented number. */
 export default function WeightCard({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<Data | null>(null);
-  const [today] = useState(() => isoDate(new Date()));
+  // Derived per render, not frozen in state: an installed PWA lives across
+  // midnight, and a `useState` initialiser would have gone on calling
+  // yesterday's weigh-in today's for as long as the app stayed open. Today
+  // bumps `refreshKey` when it comes back to the foreground on a new date.
+  const today = isoDate(new Date());
 
   useEffect(() => {
     let cancelled = false;

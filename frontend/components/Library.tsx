@@ -269,7 +269,15 @@ export default function Library() {
           <div className="m3-card" key={g.food_id}>
             <div className="m3-card-head">
               <div className="m3-card-title food-name">
-                <Link href={`/library/food/${encodeURIComponent(g.food_id)}`}>
+                {/* prefetch off: this list is unbounded, and /library/food/[id]
+                    is a dynamic auth-gated route, so the default viewport
+                    prefetch would burn a middleware invocation per learned food
+                    that scrolls past. The drill-in is a deliberate tap, not a
+                    likely next navigation. */}
+                <Link
+                  href={`/library/food/${encodeURIComponent(g.food_id)}`}
+                  prefetch={false}
+                >
                   {g.food_name}
                 </Link>
               </div>

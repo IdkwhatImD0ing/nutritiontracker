@@ -942,7 +942,7 @@ async def _resolve_meal_ids(items: list[MealFood]) -> dict[int, dict | None]:
     never logged that food, the id is malformed, or the serving is not on the
     food. THIS is the tenancy gate _MY_FOODS_SQL describes — a food_id alone
     proves nothing — so it stays even though validate_meal_items looks
-    sufficient (BACKLOG 164). Each id is canonicalised once, here.
+    sufficient (BACKLOG 165). Each id is canonicalised once, here.
 
     A `food_id` with no `serving_id` falls back to the food's own default
     serving: the person pointed at a food, and a name search for it could
@@ -1081,6 +1081,12 @@ async def _run_agent_lane(
     from services import agent as agent_svc
 
     tracing.init_tracing()
+    # This lane is about to run an openai-agents agent, so its span hook goes
+    # in here — init_tracing no longer installs it (importing the SDK is ~1.1 s
+    # a cold boot must not pay for the lanes that never reach a model). It must
+    # be installed before the "agent" span below opens. getattr because the
+    # route tests swap tests/tracing_stub.py in, which has no hook.
+    tracing.install_agents_hook()
     result: dict = {
         "items": [], "food": None, "weight": None, "basis": None,
         "estimate_meal": None, "next_index": 0, "discarded": [],

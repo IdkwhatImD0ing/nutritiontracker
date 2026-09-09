@@ -12,21 +12,30 @@ accepted and, when given, receives the utterance and parsed output via
 trace.update(input=..., output=...).
 """
 
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING
 
 import tracing
 from models import ParsedLog
 from prompts.decompose_prompt import INSTRUCTIONS, render_context
 
+# The client is built on first call (_get_client), so `import openai` — ~0.6 s
+# on a cold boot — stays off the boot path and off every request that never
+# reaches a model. This module has no `from __future__ import annotations`,
+# so the two AsyncOpenAI annotations below are written as strings.
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
+
 MODEL = "gpt-5.6-luna"  # pinned tier id — never the bare gpt-5.6 alias (§6)
 PROMPT_CACHE_KEY = "usual-decompose-v1"
 
-_client: AsyncOpenAI | None = None
+_client: "AsyncOpenAI | None" = None
 
 
-def _get_client() -> AsyncOpenAI:
+def _get_client() -> "AsyncOpenAI":
     global _client
     if _client is None:
+        from openai import AsyncOpenAI
+
         _client = AsyncOpenAI()  # reads OPENAI_API_KEY from the environment
     return _client
 

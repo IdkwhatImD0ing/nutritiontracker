@@ -27,8 +27,6 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from agents import Agent, MaxTurnsExceeded, ModelSettings, Runner, WebSearchTool, function_tool
-from openai.types.responses.web_search_tool import Filters as WebSearchFilters
 from pydantic import BaseModel
 
 import auth
@@ -51,6 +49,57 @@ from sources import fdc, web
 
 MODEL = "gpt-5.6-terra"
 MAX_TURNS = 6
+
+# The openai-agents SDK, loaded on first use instead of at module scope.
+# `import agents` pulls `openai` in with it — together ~1.1 s of the api
+# service's cold boot, which Vercel pays before the first request even for
+# requests that never reach tier 3, and this module IS on the boot path
+# (routes/foods, routes/resolve import it). The names stay module globals
+# rather than function locals for one reason: tests/test_tier3_hardening.py
+# swaps tier3.Runner for an offline stub, and monkeypatch can only reach a
+# module attribute. (The `-> Agent` annotation below is not a reason — line 18
+# imports __future__.annotations, so it is never evaluated.)
+Agent = ModelSettings = Runner = WebSearchTool = WebSearchFilters = function_tool = None
+MaxTurnsExceeded = None
+
+
+def _load_sdk() -> None:
+    """Bind the SDK names above and install its tracing hook, once. Every entry
+    point that builds or runs an agent calls this first; every call after the
+    names are bound returns at the guard."""
+    global Agent, MaxTurnsExceeded, ModelSettings, Runner, WebSearchTool
+    global WebSearchFilters, function_tool
+    bound = (
+        Agent, MaxTurnsExceeded, ModelSettings, Runner,
+        WebSearchTool, WebSearchFilters, function_tool,
+    )
+    if all(name is not None for name in bound):
+        return
+
+    import agents
+    from openai.types.responses.web_search_tool import Filters
+
+    # Every name is bound only while still unbound, so a test double installed
+    # on any of them survives. tests/test_tier3_hardening.py swaps tier3.Runner
+    # for an offline stub today; the seam has to hold for the rest too, or a
+    # stubbed name would be quietly replaced by the real SDK object — and the
+    # test would reach the network instead of failing loudly.
+    if Agent is None:
+        Agent = agents.Agent
+    if MaxTurnsExceeded is None:
+        MaxTurnsExceeded = agents.MaxTurnsExceeded
+    if ModelSettings is None:
+        ModelSettings = agents.ModelSettings
+    if Runner is None:
+        Runner = agents.Runner
+    if WebSearchTool is None:
+        WebSearchTool = agents.WebSearchTool
+    if WebSearchFilters is None:
+        WebSearchFilters = Filters
+    if function_tool is None:
+        function_tool = agents.function_tool
+    tracing.install_agents_hook()  # §10: the SDK's spans → this run's trace
+
 
 # ---------------------------------------------------------------------------
 # Cooked/raw — enforced in CODE after the run (§3.4a), never left to the prompt.
@@ -756,6 +805,7 @@ def _build_agent(
     persisted: dict,
     run_state: dict | None = None,
 ) -> Agent:
+    _load_sdk()  # @function_tool and Agent below are SDK names — bind them first
     # Run-local web-lane state: the pinned official domain + the hosts
     # fetch_page actually read — add_food's domain check and the post-run
     # evidence gate (_web_evidence_gap) both read it.

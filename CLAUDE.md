@@ -64,6 +64,6 @@ Non-obvious facts, each of which has already caused a bug:
 - Agents deploy previews only (`vercel deploy --yes`). Production changes only via a push
   the human asked for.
 - **Commit and push only outside working hours** (Mon–Fri 09:00–17:00 America/Los_Angeles —
-  the owner's rule, 2026-09-03; end hour corrected from 18:00 to 17:00 on 2026-09-08). A
-  local hook enforces it; inside the window, finish the work, run the suites, deploy a
-  preview, and leave the commit for after 17:00.
+  the owner's rule, 2026-09-03; the day ends at 5pm, 2026-09-08). A local hook enforces it;
+  inside the window, finish the work, run the suites, deploy a preview, and leave the
+  commit for after 17:00.

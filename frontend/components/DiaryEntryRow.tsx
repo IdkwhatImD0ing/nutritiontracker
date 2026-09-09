@@ -137,10 +137,15 @@ export default function DiaryEntryRow({
         <div className="row-info">
           <div className="row-name">
             {/* §7.4: food detail is a drill-in from any diary row. The row's
-                own tap still toggles the expander. */}
+                own tap still toggles the expander. prefetch off: this renders
+                once per diary row, and /library/food/[id] is a dynamic
+                auth-gated route, so the default viewport prefetch costs a
+                middleware invocation per row on screen for a page the user
+                only reaches by deliberately tapping the name. */}
             <Link
               className="name-btn food-name"
               href={`/library/food/${encodeURIComponent(entry.food.id)}`}
+              prefetch={false}
               onClick={(e) => e.stopPropagation()}
             >
               {entry.food.name}

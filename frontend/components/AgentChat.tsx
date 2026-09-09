@@ -8,11 +8,12 @@ import useVoiceCapture, {
 } from "./useVoiceCapture";
 
 /** One entry of the chat (§6.4, 2026-09-06). The parent (Today) owns the
- *  list — it outlives the sheet, so closing and reopening the lane keeps
- *  the conversation — and appends to it from the POST /api/agent stream:
- *  what you said (typed, or the transcript once it lands), each tool the
- *  agent called with what it answered, the agent's reply, and the staged
- *  result with its Review button. */
+ *  list — the staging sheet stacks over the chat, so the conversation
+ *  outlives that; opening the lane clears it (2026-09-08: every opening
+ *  is a new conversation) — and appends to it from the POST /api/agent
+ *  stream: what you said (typed, or the transcript once it lands), each
+ *  tool the agent called with what it answered, the agent's reply, and
+ *  the staged result with its Review button. */
 export type ChatMessage =
   | { kind: "user"; id: string; text: string; pending?: boolean }
   | {

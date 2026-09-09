@@ -26,13 +26,19 @@ routes/photo.py refuses it before a byte reaches this call.
 from __future__ import annotations
 
 import base64
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 import tracing
 from models import Meal
+
+# The client is built on first call (_get_client), so `import openai` — ~0.6 s
+# on a cold boot — stays off the boot path and off every request that never
+# looks at a photo. `from __future__ import annotations` above keeps the
+# AsyncOpenAI annotations below strings.
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 MODEL = "gpt-5.6-luna"  # pinned tier id — never the bare gpt-5.6 alias (§6)
 PROMPT_CACHE_KEY = "tally-vision-v1"
@@ -43,6 +49,8 @@ _client: AsyncOpenAI | None = None
 def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
+        from openai import AsyncOpenAI
+
         _client = AsyncOpenAI()  # reads OPENAI_API_KEY from the environment
     return _client
 

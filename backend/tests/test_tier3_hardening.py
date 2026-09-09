@@ -585,12 +585,27 @@ async def _offline_run(runner):
         yield _Run()
 
     tr = tier3.tracing
-    orig = (tier3.Runner, tr.init_tracing, tr.run, tr.flush)
-    tier3.Runner, tr.init_tracing, tr.run, tr.flush = runner, lambda: None, run, lambda: None
+    # Every SDK name _load_sdk binds, snapshotted and put back: this fixture's
+    # whole claim is that the module is left as it was found, and restoring
+    # Runner alone would leave the other six bound to the real SDK for whatever
+    # runs next. `install_agents_hook` joins init_tracing in the stubbed set —
+    # _load_sdk calls it directly, and the real one registers a live FireTrace
+    # processor on the SDK that no teardown here would remove.
+    sdk_names = (
+        "Agent", "MaxTurnsExceeded", "ModelSettings", "Runner",
+        "WebSearchTool", "WebSearchFilters", "function_tool",
+    )
+    sdk_orig = {name: getattr(tier3, name) for name in sdk_names}
+    orig = (tr.init_tracing, tr.install_agents_hook, tr.run, tr.flush)
+    tier3.Runner = runner
+    tr.init_tracing, tr.install_agents_hook = lambda: None, lambda: None
+    tr.run, tr.flush = run, lambda: None
     try:
         yield
     finally:
-        tier3.Runner, tr.init_tracing, tr.run, tr.flush = orig
+        for name, value in sdk_orig.items():
+            setattr(tier3, name, value)
+        tr.init_tracing, tr.install_agents_hook, tr.run, tr.flush = orig
 
 
 def test_run_tier3_drops_web_food_without_real_evidence():
