@@ -550,6 +550,22 @@ async def _stage_photo(
         ]
         lookup.set(output=cascade_summary(resolutions))
     for r, v in zip(resolutions, seen.items):
+        # A COUNT vision gave ("11 shrimp") lands on the count rule, which
+        # needs a count-type serving to divide by. The cached shrimp record
+        # carries only "100 g", so the count fell through as a multiplier of
+        # the mass default and 11 shrimp committed as 11 x 100 g — 1,089 kcal
+        # and 264 g of protein in Bill's diary, 2026-09-09. `_size_by_weight`
+        # exists for exactly this and `_stage_estimate` has always called it;
+        # this lane never did, and `_parsed_item` drops est_grams whenever a
+        # count is present, so the 90 g vision actually measured was thrown
+        # away before sizing. Same guard, same order as the estimate lane.
+        if (
+            _count(v) is not None
+            and _grams(v) is not None
+            and r.staged.serving is not None
+            and not cascade._is_count_serving(r.staged.serving.description)
+        ):
+            r.staged = _size_by_weight(r.staged, float(_grams(v)))
         r.staged = _flag(r.staged, v)
         # a published dish beats whatever the cascade guessed from its name:
         # the kitchen's own numbers for its own dish (§3.4a, 2026-09-09).

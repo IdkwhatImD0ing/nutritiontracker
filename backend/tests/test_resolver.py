@@ -617,6 +617,60 @@ def test_portion_spoken_qty_and_count_without_unit():
     asyncio.run(run())
 
 
+def test_a_spoken_weight_never_becomes_a_count_of_servings():
+    """Bill, 2026-09-09: "I tried to log one 30 gram protein shake, it logged
+    30 of those shakes."
+
+    decompose read it right — qty 30, unit "g" — and the portion rule then
+    used that 30 as the SERVING multiplier, because the slate shake is a
+    millilitre product whose every serving carries grams=None, so there was
+    no gram basis to divide by. 30 x "1 serving (325 ml)" = 3,900 kcal and
+    900 g of protein, one Commit tap from the diary. A weight is not a count:
+    with nothing to map it onto the row falls back to ONE serving, flagged.
+    """
+    ML_LABEL = {
+        "serving_id": "label",
+        "description": "1 serving (325 ml)",
+        "grams": None,
+        "macros": {"kcal": 130, "protein_g": 30, "carb_g": 3, "fat_g": 0.5},
+    }
+    ML_100 = {
+        "serving_id": "100ml",
+        "description": "100 ml",
+        "grams": None,
+        "macros": {"kcal": 40, "protein_g": 9.23, "carb_g": 0.92, "fat_g": 0.15},
+    }
+
+    async def run():
+        ml_only = {
+            "servings": [ML_LABEL, ML_100],
+            "food_default_serving_id": "label",
+            "default_serving_id": None, "default_qty": None,
+            "alias_id": None, "food_id": None,
+        }
+        sid, qty, verify = await cascade.resolve_portion(ml_only, 30, "g")
+        assert (sid, qty) == ("label", 1.0), "30 g must not mean 30 servings"
+        assert verify is True, "an unmappable weight is a verify-me row"
+
+        # the same food, sized by a VOLUME it does carry, still maps properly:
+        # the fuzzy branch finds "ml" in the description and divides by 325
+        sid, qty, verify = await cascade.resolve_portion(ml_only, 325, "ml")
+        assert (sid, qty, verify) == ("label", 1.0, False)
+
+        # and a food that DOES carry grams is unaffected — 40 g of a 100 g
+        # serving is still 0.4, not one serving
+        gram_food = {
+            "servings": [SCOOP, HUNDRED_G],
+            "food_default_serving_id": "srv-scoop",
+            "default_serving_id": None, "default_qty": None,
+            "alias_id": None, "food_id": None,
+        }
+        sid, qty, verify = await cascade.resolve_portion(gram_food, 40, "g")
+        assert (sid, qty, verify) == ("srv-100g", 0.4, False)
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # 5b. commit semantics: removed-vs-late rows, disambiguation, correction flow
 # ---------------------------------------------------------------------------

@@ -185,11 +185,27 @@ def _units_per(description: str, stem: str) -> float:
     """How many of the SPOKEN unit one serving holds, for the unit-word match:
     when the word after the leading number is that unit itself — measure or
     not — the number counts it ("1 tbsp" of a "2 tbsp (32 g)" serving is half
-    a serving, "1 cup" of "2 cups (85 g)" too); otherwise the serving's piece
-    count ("two scoops" of "2 scoops (64 g)" → 2, "1 can" of "12 fl oz can" → 1)."""
+    a serving, "1 cup" of "2 cups (85 g)" too); else the PARENTHETICAL measure
+    when it is in that unit ("1 serving (325 ml)" holds 325 ml, "1 bottle
+    (414 ml)" 414); otherwise the serving's piece count ("two scoops" of
+    "2 scoops (64 g)" → 2, "1 can" of "12 fl oz can" → 1).
+
+    The parenthetical arm is not a nicety: the fuzzy branch in resolve_portion
+    matches on the unit word appearing ANYWHERE in the description, so
+    "1 serving (325 ml)" matched a spoken "ml" and then divided by the leading
+    1 — making 325 ml of a 325 ml shake THREE HUNDRED AND TWENTY-FIVE
+    servings. Same shape as the weight bug beside it (Bill, 2026-09-09), and
+    the parenthetical is exactly where FDC and OFF put the measure."""
     m = _LEADING_PIECES_RE.match((description or "").lower())
     if m and _unit_stem(m.group(2)) == stem and float(m.group(1)) > 0:
         return float(m.group(1))
+    for num, word in re.findall(r"\(([\d.]+)\s*([a-z]+)", (description or "").lower()):
+        try:
+            n = float(num)
+        except ValueError:
+            continue
+        if n > 0 and _unit_stem(word) == stem:
+            return n
     return _pieces_per(description)
 
 
@@ -325,7 +341,14 @@ async def resolve_portion(
                         gram_servings, key=lambda s: not _is_count_serving(s.get("description", ""))
                     )
                     return base["serving_id"], round(grams / float(base["grams"]), 4), False
-                return default_id, qty, True  # no gram-based serving to map onto
+                # No gram-based serving to map the weight onto — a millilitre
+                # drink, say, whose every serving carries grams=None. The
+                # number is a WEIGHT, and using it as the serving multiplier
+                # is how "a 30 gram protein shake" became THIRTY shakes:
+                # 3,900 kcal and 900 g of protein, one tap from the diary
+                # (Bill, 2026-09-09). One serving, flagged for him to check,
+                # is wrong by a serving at worst instead of by 30x.
+                return default_id, 1.0, True
             # fuzzy: unit word appears in a serving description — divided by
             # how many of that unit the serving holds ("two scoops" of a "2
             # scoops" serving, "1 tbsp" of a "2 tbsp" serving: §7.3, never a
