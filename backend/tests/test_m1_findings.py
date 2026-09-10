@@ -337,11 +337,17 @@ def test_commit_route_surfaces_per_item_errors():
             assert rows1["status"] == "needs_input"  # verify-me, late path open
             assert rows1["committed_at"] is None
 
-            # idempotent replay still validates with an empty error channel
+            # An idempotent replay reports the SAME refusals the first commit
+            # did. This used to assert an empty list, which is what the code
+            # did — and it is how a refused row could be lost for good: the
+            # client builds its retry set from this channel alone, so a commit
+            # whose response never arrived (a timeout, a backgrounded phone)
+            # took the refusal with it when the user tapped Log again.
             replay = await commit_routes.commit_log(
                 log_id, CommitRequest(items=[item(0, pg, good, "Good Food", COMPLETE)])
             )
-            assert replay.errors == []
+            assert [e.item_index for e in replay.errors] == [1]
+            assert "missing core macros" in replay.errors[0].error
 
     asyncio.run(run())
 

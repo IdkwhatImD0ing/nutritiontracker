@@ -24,7 +24,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel
@@ -50,7 +50,7 @@ from resolver.commit import (
     with_loggable_servings,
 )
 from resolver.norm import norm
-from sources import fdc, web
+from sources import fdc, off, web
 
 MODEL = "gpt-5.6-terra"
 # The web lane needs seven: search_branded, an unpinned web_search to identify
@@ -179,12 +179,26 @@ def _needs_state_question(food: dict, phrase: str) -> bool:
 Source = Literal["fdc"]
 
 # The FINAL chosen food may additionally be "web" — but only for a food the
-# agent just created through add_food's web_transcribed mode (§3.4a mode 2).
-ChosenSource = Literal["fdc", "web"]
+# agent just created through add_food's web_transcribed mode (§3.4a mode 2) —
+# or "off", a barcode-lane row already in the cache. "off" is here so the
+# candidate list below can keep offering scanned foods: naming them is the
+# whole point of showing them, and dropping them instead meant a bar he had
+# already scanned came back from a fresh FDC search as a SECOND identity, with
+# its own alias and its own split history.
+ChosenSource = Literal["fdc", "web", "off"]
 
 # §4/BACKLOG 29: the full foods.source domain — the whitelist applied to every
 # client-supplied source entering this module.
 ALLOWED_SOURCES = ("fdc", "off", "web")
+
+# The sources a local candidate may carry, read off the output schema so the
+# two cannot drift apart. The agent answers with a (source, source_id) pair,
+# so a cached row from a lane ChosenSource has no name for is one it
+# structurally cannot pick — and showing it is worse than not showing it,
+# because the dedup instruction ("if one of these already-cached foods is the
+# same real-world food, choose it") is unfollowable for exactly the rows it is
+# aimed at.
+CANDIDATE_SOURCES = get_args(ChosenSource)
 
 
 class Tier3Alternate(BaseModel):
@@ -671,9 +685,11 @@ async def _apply_portion(
 
 
 async def _local_candidates(phrase: str) -> list[dict]:
-    # source='estimate' rows are the photo lane's numberless placeholders
-    # (routes/photo.py stage_estimate_food) — never a candidate for a spoken
-    # phrase: estimation is photo-only (R1).
+    # CANDIDATE_SOURCES is a whitelist where a source <> 'estimate' blacklist
+    # used to be. It still keeps out the photo lane's numberless placeholders
+    # (routes/photo.py stage_estimate_food — estimation is photo-only, R1), and
+    # with them the two lanes whose rows the agent cannot name back at all: the
+    # photo lane's 'menu' matches (§3.4b) and the barcode lane's 'off' rows.
     #
     # COMMITTABLE_FOOD_SQL drops cached rows with no loggable serving (BACKLOG
     # 169). Without it a thin row cached by an earlier run outranks everything
@@ -687,22 +703,23 @@ async def _local_candidates(phrase: str) -> list[dict]:
         SELECT id, source, source_id, display_name, brand,
                similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
         FROM foods
-        WHERE source <> 'estimate' AND {loggable}
+        WHERE source = ANY(%s) AND {loggable}
         ORDER BY sim DESC
         LIMIT 15
         """,
-        (phrase,),
+        (phrase, list(CANDIDATE_SOURCES)),
     )
     staples = await db.fetchall(
         f"""
         SELECT f.id, f.source, f.source_id, f.display_name, f.brand,
                sum(a.use_count) AS uses
         FROM foods f JOIN aliases a ON a.food_id = f.id
-        WHERE f.source <> 'estimate' AND {loggable_f}
+        WHERE f.source = ANY(%s) AND {loggable_f}
         GROUP BY f.id, f.source, f.source_id, f.display_name, f.brand
         ORDER BY uses DESC, max(a.last_used_at) DESC
         LIMIT 10
         """,
+        (list(CANDIDATE_SOURCES),),
     )
     out: list[dict] = []
     seen: set[str] = set()
@@ -799,16 +816,23 @@ _STALE_ID_ERROR = json.dumps({
 async def _get_food_cached(
     source: str, source_id: str, counter: dict, food_cache: dict
 ) -> dict | None:
-    """fdc.get_food through the run cache; None on 404, never cached as None.
+    """The adapters through the run cache; None on 404, never cached as None.
 
-    Only "fdc" ids are remotely fetchable — a "web" food exists solely in the
-    run cache (put there by add_food's web mode), so a cache miss is a miss.
+    "fdc" fetches by id; "off" fetches by barcode, which is what a barcode
+    row's source_id IS (routes/quick.py stores it that way) — that is how a
+    scanned food the agent picks out of the candidate list gets hydrated. A
+    "web" food exists solely in the run cache (put there by add_food's web
+    mode), so a cache miss is a miss.
     """
     key = (source, str(source_id))
     food = food_cache.get(key)
-    if food is None and source == "fdc":
+    if food is None and source in ("fdc", "off"):
         counter["network_calls"] += 1
-        food = await fdc.get_food(source, str(source_id))
+        food = (
+            await fdc.get_food(source, str(source_id))
+            if source == "fdc"
+            else await off.lookup_barcode(str(source_id))
+        )
         if food is not None:
             food_cache[key] = food
     return food
@@ -1322,6 +1346,12 @@ async def resolve_item_from_source(
     phrase, staged_prev = await _load_item(log_id, item_index)
     meal = staged_prev.get("meal") or "snack"
     spoken_qty, spoken_unit = _spoken(staged_prev)
+    # §3.4a: a cooked/raw/dry answer already given on this row is the row's
+    # memory, and every write below replaces the whole staged payload — carry
+    # it across like the spoken qty/unit, or it is gone: commit never reaches
+    # aliases.state_answer and the question returns on the next log of the
+    # same phrase.
+    state_answer = staged_prev.get("state_answer")
 
     food: dict | None = None
     food_row_id: str | None = None
@@ -1361,11 +1391,19 @@ async def resolve_item_from_source(
             resolve_ms=int((time.perf_counter() - t0) * 1000),
             spoken_qty=spoken_qty,
             spoken_unit=spoken_unit,
+            state_answer=state_answer,
         )
         return _stored_item(stored, item)
     food = dict(food)
     food.setdefault("source", source)
     food.setdefault("source_id", str(source_id))
+    # `display_name` is a caller's AUTHORITATIVE name for this food — the
+    # Library pick's chosen label (routes/foods.select_food, §8.9) — and it is
+    # the row's name for life, because persist_food's ON CONFLICT never
+    # rewrites it. So a caller holding only a per-answer string must pass
+    # nothing: the question-chip path deliberately does not (routes/resolve.py),
+    # since "Mixed berry" as the row's name is what the diary would render and
+    # what the duplicate-detection trigram would score the next mention against.
     foods_repo.apply_label(food, display_name)  # owner only: the cache is shared
     if food_row_id is None:
         food_row_id = await foods_repo.persist_food(food)
@@ -1381,6 +1419,10 @@ async def resolve_item_from_source(
         serving_id=serving_id, confidence="low" if verify else "high",
         alternates=None, question=None, tier=tier,
     )
+    if state_answer and item.state_question:
+        # already answered on this row — don't ask a second time (the rule
+        # run_tier3 applies to a refinement that answered it)
+        item = item.model_copy(update={"state_question": None})
     stored = await _write_item_row(
         log_id, item_index, item,
         network_calls=network_calls,
@@ -1389,6 +1431,7 @@ async def resolve_item_from_source(
         disambiguated=True,
         spoken_qty=spoken_qty,
         spoken_unit=spoken_unit,
+        state_answer=state_answer,
         tier=tier,
         web_source=_web_source(food),
     )
@@ -1427,6 +1470,12 @@ async def resolve_item_from_food(
         serving_id=serving_id, confidence="low" if verify else "high",
         alternates=None, question=None, tier=tier,
     )
+    # §3.4a: same as the id-bearing path above — an answered cooked/raw/dry
+    # question survives the chip tap that rewrites the payload, and is not
+    # asked a second time on a row that already carries its answer.
+    state_answer = staged_prev.get("state_answer")
+    if state_answer and item.state_question:
+        item = item.model_copy(update={"state_question": None})
     stored = await _write_item_row(
         log_id, item_index, item,
         resolve_ms=int((time.perf_counter() - t0) * 1000),
@@ -1434,6 +1483,7 @@ async def resolve_item_from_food(
         disambiguated=True,
         spoken_qty=spoken_qty,
         spoken_unit=spoken_unit,
+        state_answer=state_answer,
         tier=tier,
         web_source=_web_source(food),
     )
@@ -1498,9 +1548,18 @@ async def run_tier3(
             result = await Runner.run(agent, agent_input, max_turns=MAX_TURNS)
             out = result.final_output_as(Tier3Result)
             transcript = result.to_input_list()
-        except MaxTurnsExceeded:
+        except MaxTurnsExceeded as exc:
             # Deterministic failure — retrying identically would burn another
             # 6-turn run; fall through to the manual-search escape hatch.
+            # It is also the most expensive way a run can end — ten turns of
+            # hosted web_search, every action billed — so it is the last one
+            # that should have no record of what it did. The SDK hangs the run
+            # items off the exception (AgentsException.run_data): they are the
+            # same items result.to_input_list() converts on the success path,
+            # minus the prompt, which the trace already carries as the span's
+            # input. Archiving them keeps the transcript readable and lets
+            # _web_evidence below count the searches this run paid for. A
+            # stubbed Runner may raise without run_data.
             out = Tier3Result(
                 status="not_found",
                 source=None,
@@ -1511,6 +1570,9 @@ async def run_tier3(
                 alternates=[],
                 question=None,
             )
+            run_data = getattr(exc, "run_data", None)
+            if run_data is not None:
+                transcript = [it.to_input_item() for it in run_data.new_items]
             span.set(attributes={"max_turns_hit": True})
         span.set(output=out.model_dump(mode="json"))
 
@@ -1518,6 +1580,42 @@ async def run_tier3(
     # actions it ran — each one is a billed network call, counted like any other.
     web_evidence, web_searches = _web_evidence(transcript)
     counter["network_calls"] += web_searches
+
+    # §3.4a/§0 "estimation has no code path", enforced: a web food this run
+    # created must come from a page this run actually consulted (search
+    # sources / url_citations / fetch_page); otherwise the row goes. This runs
+    # over EVERY web food add_food persisted, not just a chosen one, and
+    # before the branch below, because add_food writes the row into the shared
+    # foods table the moment the model calls it — while the run can still end
+    # at the turn cap, with a question, or in not_found, none of which reach a
+    # chosen food. An un-evidenced row left behind by one of those exits is
+    # searchable, loggable and re-offered to later runs forever (BACKLOG 37's
+    # fix only ever covered the resolved path). The reason is archived with
+    # the transcript so the demotion is auditable (§10).
+    dropped_web: set[tuple] = set()
+    for key, row_id in persisted.items():
+        if key[0] != "web":
+            continue
+        gap = _web_evidence_gap(
+            (food_cache.get(key) or {}).get("source_url") or "", web_evidence, run_state
+        )
+        if gap is not None:
+            await _discard_web_food(row_id)
+            dropped_web.add(key)
+            transcript = list(transcript or []) + [
+                {"type": "usual_web_gate", "web_evidence_gap": gap}
+            ]
+
+    # A chip may not name a row the gate above just deleted. The model can
+    # offer a web food it created as an alternate or as an option on its
+    # question, and those two lists reach the user on exactly the exits the
+    # gate now covers (needs_input, not_found) — tapping one would call
+    # resolve_item_from_source against a foods row that no longer exists and
+    # turn a question into a bare not_found with nothing said about why. The
+    # estimate promotion just below reads the same two lists, so this is
+    # defined before it rather than beside the mapping it also guards.
+    def _alive(source: str | None, source_id) -> bool:
+        return (source, str(source_id)) not in dropped_web
 
     # Rule 6, enforced in code the way §3.4a's cooked/raw guard is rather than
     # left to the prompt: an estimate row must never come back as a question.
@@ -1535,8 +1633,12 @@ async def run_tier3(
         pool = [
             (o.source, o.source_id, o.label)
             for o in (out.question.options if out.question else [])
-            if o.source and o.source_id
-        ] + [(a.source, a.source_id, a.label) for a in out.alternates]
+            if o.source and o.source_id and _alive(o.source, o.source_id)
+        ] + [
+            (a.source, a.source_id, a.label)
+            for a in out.alternates
+            if _alive(a.source, a.source_id)
+        ]
         if pool:
             src, sid, label = pool[0]
             out = out.model_copy(
@@ -1561,54 +1663,63 @@ async def run_tier3(
     alternates = [
         Alternate(source=a.source, source_id=str(a.source_id), label=a.label)
         for a in out.alternates[:3]
+        if _alive(a.source, a.source_id)
     ] or None
     question = None
     if out.question is not None:
-        question = Question(
-            text=out.question.text,
-            options=[
-                QuestionOption(
-                    label=o.label,
-                    source=o.source,
-                    source_id=str(o.source_id) if o.source_id else None,
-                )
-                for o in out.question.options
-            ],
-        )
+        options = [
+            QuestionOption(
+                label=o.label,
+                source=o.source,
+                source_id=str(o.source_id) if o.source_id else None,
+            )
+            for o in out.question.options
+            if o.source_id is None or _alive(o.source, o.source_id)
+        ]
+        # every option was a dropped web food — there is nothing left to ask
+        question = Question(text=out.question.text, options=options) if options else None
 
     status = out.status
     if status == "resolved" and not (out.source and out.source_id):
         status = "not_found"  # malformed resolution — never render a food-less resolve
+    if status == "needs_input" and question is None:
+        # the gate took every option the question had — asking a question with
+        # nothing to tap is worse than the manual search box
+        status = "not_found"
 
     chosen: tuple | None = None
     food: dict | None = None
     if status == "resolved":
         # The chosen id can 404 (stale index entry, §3.4 adapter rules) —
         # retry the agent's alternates in order before giving up. A promoted
-        # alternate keeps its label as display name, drops the dead serving
-        # choice, and demotes confidence to low.
+        # alternate drops the dead serving choice and demotes confidence to low.
+        # A food the gate deleted is not a candidate at all — filtered out
+        # BEFORE the walk, not vetoed after it, so a live alternate further
+        # down the list still gets its turn instead of the whole resolution
+        # falling to not_found on the dead first choice.
+        #
+        # A promoted alternate carries None where the chosen food carries
+        # out.display_name: an alternate's `label` is the text of one chip
+        # ("Mixed berry"), not a name for a row every account reads back, and
+        # persist_food's ON CONFLICT never rewrites display_name — so a label
+        # promoted here would be that food's name, and the trigram's, for life.
+        # The adapter's own name is right. out.display_name stays: that is the
+        # model naming the food it went and found.
         chosen, food = await _first_live_food(
-            [(out.source, str(out.source_id), out.display_name, out.serving_id,
-              out.confidence)]
-            + [(a.source, str(a.source_id), a.label, None, "low")
-               for a in out.alternates],
+            [
+                cand
+                for cand in [
+                    (out.source, str(out.source_id), out.display_name,
+                     out.serving_id, out.confidence)
+                ]
+                + [(a.source, str(a.source_id), None, None, "low")
+                   for a in out.alternates]
+                if _alive(cand[0], cand[1])
+            ],
             counter, food_cache,
         )
         if food is None:
             status = "not_found"  # every candidate 404ed — manual search box
-        elif chosen[0] == "web" and (chosen[0], chosen[1]) in persisted:
-            # §3.4a/§0 "estimation has no code path", enforced: a web food this
-            # run created must come from a page this run actually consulted
-            # (search sources / url_citations / fetch_page); otherwise drop it
-            # and fall back to manual entry. The reason is archived with the
-            # transcript so the demotion is auditable (§10).
-            gap = _web_evidence_gap(food.get("source_url") or "", web_evidence, run_state)
-            if gap is not None:
-                await _discard_web_food(persisted[(chosen[0], chosen[1])])
-                transcript = list(transcript or []) + [
-                    {"type": "usual_web_gate", "web_evidence_gap": gap}
-                ]
-                status = "not_found"
 
     if status == "resolved":
         src, sid, display_name, chosen_serving_id, confidence = chosen

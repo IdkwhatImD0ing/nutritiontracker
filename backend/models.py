@@ -197,6 +197,12 @@ class LogResponse(BaseModel):
     log_id: UUID
     meal: Meal
     items: list[StagedItem]
+    # §7.2: the diary time these rows will commit to, when the utterance's time
+    # words moved it off the capture day ("yesterday", "last night"). It used to
+    # live ONLY in the staged jsonb — in no response field and on no card — so a
+    # day the model got wrong could not be caught before commit and could not be
+    # explained after. Null when nothing shifted, which is the ordinary case.
+    logged_at: datetime | None = None
 
 
 class CommitRequest(BaseModel):

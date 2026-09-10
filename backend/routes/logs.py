@@ -750,7 +750,7 @@ async def _stage_from_text(
     )
     return LogCreateResponse(
         log_id=body.id, meal=meal, items=[r.staged for r in resolutions],
-        saved_meal=saved_meal, note=note,
+        saved_meal=saved_meal, note=note, logged_at=when.logged_at,
     )
 
 
@@ -1742,11 +1742,17 @@ async def _load_log_response(
     )
     now = datetime.now(timezone.utc)
     items: list[StagedItemOut] = []
+    shifted: datetime | None = None  # §7.2: the diary day, if it moved
     for r in rows:
         # Mutate the raw payload, not a validated model: the staged jsonb can
         # carry extra keys (spoken_qty/spoken_unit, §7.3) a model round-trip
         # would silently drop.
         raw = dict(r["staged"])
+        if shifted is None and raw.get("logged_at"):
+            try:
+                shifted = datetime.fromisoformat(raw["logged_at"])
+            except ValueError:
+                pass
         stale = False
         if watchdog and r["status"] == "searching":
             # §3.4 failure lifecycle: a searching item is stale after 60s.
@@ -1769,7 +1775,7 @@ async def _load_log_response(
             item = item.model_copy(update={"stale": True})
         items.append(item)
     meal = Meal(log["meal_inferred"]) if log["meal_inferred"] else Meal.snack
-    return LogPollResponse(log_id=log["id"], meal=meal, items=items)
+    return LogPollResponse(log_id=log["id"], meal=meal, items=items, logged_at=shifted)
 
 
 @router.patch("/api/logs/{log_id}/timings", response_model=TimingsResponse)

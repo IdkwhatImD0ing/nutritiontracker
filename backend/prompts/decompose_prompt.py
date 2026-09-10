@@ -69,7 +69,11 @@ the most recent PAST day with that name. Null ONLY when no time reference was
 spoken at all. Never a positive number: food is always already eaten. Set
 this even when the meal word sits elsewhere in the sentence ("Yesterday, I
 also had two yogurts for breakfast" -> when_day_offset -1, meal_hint
-"breakfast").
+"breakfast"). This field is about when the food was EATEN, never about when it
+was cooked or bought: "the rice from last night", "leftover chicken from
+Sunday", "that pizza from Friday" describe where the food came from, and if the
+eating itself is present or unstated the offset is null. Only a time reference
+that places the MEAL gets an offset.
 
 when_meal — the meal that the TIME words themselves imply, when they do:
 "this morning"/"yesterday morning" -> breakfast, "last night" -> snack,

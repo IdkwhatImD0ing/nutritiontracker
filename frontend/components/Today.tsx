@@ -37,7 +37,9 @@ import WeightCard from "./WeightCard";
 
 const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
- *  真 retry-on-open — commit-item is idempotent, so a replayed item is safe. */
+ *  真 retry-on-open — commit-item is idempotent, so a replayed item is safe.
+ *  Holds a QUEUE, one entry per committed log: two logs committed inside the
+ *  same ~90s tier-3 window each need their own poll. */
 const PENDING_KEY = "usual.pending.v1";
 
 /** How long Today may sit in the background before a return to the foreground
@@ -47,6 +49,12 @@ const PENDING_KEY = "usual.pending.v1";
 const RESUME_STALE_MS = 60_000;
 
 type PendingState = { logId: string; items: StagedItem[] };
+
+const isPendingState = (p: unknown): p is PendingState =>
+  p != null &&
+  typeof (p as PendingState).logId === "string" &&
+  Array.isArray((p as PendingState).items) &&
+  (p as PendingState).items.length > 0;
 
 function localDateISO(): string {
   const d = new Date();
@@ -62,7 +70,13 @@ export default function Today() {
     log: LogResponse;
     restore: StagingSnapshot | null;
   } | null>(null);
-  const [pending, setPending] = useState<PendingState | null>(null);
+  // §3.5 stragglers, one entry per committed log. A single slot meant the
+  // second of two commits inside the tier-3 window overwrote the first, and
+  // remounting <PendingItems> under the new key cancelled the first log's
+  // poll on unmount — nothing else chases a late row, so it never arrived.
+  const [pending, setPending] = useState<PendingState[]>([]);
+  const pendingListRef = useRef(pending);
+  pendingListRef.current = pending;
   // BACKLOG 11: sheet close discards the log — but through an undo toast, so
   // a fat-fingered backdrop tap doesn't destroy a staged meal. The DELETE
   // only fires when the toast expires un-undone.
@@ -73,6 +87,13 @@ export default function Today() {
   const discardRef = useRef(discard);
   discardRef.current = discard;
   const discardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Which item_index values each log has had removed. The server keeps a
+  // removed row under its index but leaves it out of GET /api/logs/:id, so a
+  // sheet reopened from a chat card cannot see the hole — and its "+ add
+  // item" would hand /api/resolve a freed index, which 409s and then refuses
+  // the whole commit (§3.5). Remembered here, where the log outlives the
+  // sheet, for as long as a card can be reviewed.
+  const removedIndexesRef = useRef<Map<string, number[]>>(new Map());
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   // Demo accounts (GET /api/me): the banner's quota, re-read after every
@@ -284,17 +305,14 @@ export default function Today() {
     try {
       const raw = localStorage.getItem(PENDING_KEY);
       if (raw) {
-        const p = JSON.parse(raw) as PendingState;
-        if (
-          p != null &&
-          typeof p.logId === "string" &&
-          Array.isArray(p.items) &&
-          p.items.length > 0
-        ) {
-          setPending(p);
-        } else {
-          localStorage.removeItem(PENDING_KEY);
-        }
+        // A build before the queue stored one bare object under this key.
+        // That is still somebody's un-landed straggler, so it is read as a
+        // one-log queue rather than dropped on upgrade.
+        const stored = JSON.parse(raw) as unknown;
+        const list: unknown[] = Array.isArray(stored) ? stored : [stored];
+        const queue = list.filter(isPendingState);
+        if (queue.length > 0) setPending(queue);
+        else localStorage.removeItem(PENDING_KEY);
       }
     } catch {
       /* corrupt or unavailable storage — start clean */
@@ -361,19 +379,36 @@ export default function Today() {
         setMeals(d.meals);
       })
       .catch(() => {
-        /* totals from the commit response already rendered */
+        /* the tracker keeps what it has — nothing paints another day's numbers
+           over it, and the next read (or a foreground) corrects it */
       });
   };
 
-  const updatePending = (p: PendingState | null) => {
-    setPending(p);
+  // The queue is written through the ref, not through a functional setState:
+  // it is persisted in the same breath, and a state updater has to stay pure
+  // (StrictMode runs it twice).
+  const writePending = (next: PendingState[]) => {
+    pendingListRef.current = next;
+    setPending(next);
     try {
-      if (p) localStorage.setItem(PENDING_KEY, JSON.stringify(p));
+      if (next.length > 0)
+        localStorage.setItem(PENDING_KEY, JSON.stringify(next));
       else localStorage.removeItem(PENDING_KEY);
     } catch {
       /* storage unavailable — in-memory pending still works this session */
     }
   };
+
+  // One entry per log, newest last; a log already queued is replaced, never
+  // duplicated (React would key two rows the same).
+  const addPending = (entry: PendingState) =>
+    writePending([
+      ...pendingListRef.current.filter((p) => p.logId !== entry.logId),
+      entry,
+    ]);
+
+  const dropPendingLog = (logId: string) =>
+    writePending(pendingListRef.current.filter((p) => p.logId !== logId));
 
   const refreshMe = () => {
     getMe().then(setMe).catch(() => {});
@@ -905,6 +940,15 @@ export default function Today() {
   const closeStaging = (snap: StagingSnapshot) => {
     const current = staging;
     if (!current) return;
+    // A reopened sheet has no other way to learn these (see removedIndexesRef);
+    // each mount reports only what IT removed, so they accumulate.
+    if (snap.removed.length > 0) {
+      const prior = removedIndexesRef.current.get(current.log.log_id) ?? [];
+      removedIndexesRef.current.set(current.log.log_id, [
+        ...prior,
+        ...snap.removed.filter((i) => !prior.includes(i)),
+      ]);
+    }
     // §3.4b: closing the sheet over the plate this conversation is still
     // tuning means "back to the chat", not "throw the plate away". A photo
     // turn never auto-opens the sheet for exactly this reason; Review is the
@@ -976,14 +1020,20 @@ export default function Today() {
       log={staging.log}
       restore={staging.restore}
       docked={lane === "agent"}
+      removedIndexes={removedIndexesRef.current.get(staging.log.log_id)}
       onRendered={() => stagedRendered(staging.log.log_id)}
       onCommitted={(t, stragglers) => {
-        setTotals(t);
+        // The commit's totals are for the day the entries landed on (§7.2
+        // when-shift), which for a back-dated log is not the day this tracker
+        // shows. `totals_day` says which day they describe — null when the
+        // commit wrote to more than one — so a same-day commit still paints
+        // instantly and only the others wait for the diary read.
+        if (t.totals_day === localDateISO()) setTotals(t);
         reloadDiary();
         markResult(staging.log.log_id, "committed");
         setStaging(null);
         if (stragglers.length > 0) {
-          updatePending({ logId: staging.log.log_id, items: stragglers });
+          addPending({ logId: staging.log.log_id, items: stragglers });
         }
       }}
       onClose={closeStaging}
@@ -1006,18 +1056,18 @@ export default function Today() {
 
       <WeightCard refreshKey={weightsKey} />
 
-      {pending ? (
+      {pending.map((p) => (
         <PendingItems
-          key={pending.logId}
-          logId={pending.logId}
-          items={pending.items}
-          onTotals={(t) => {
-            setTotals(t);
-            reloadDiary(); // the straggler is a new diary row
-          }}
-          onDone={() => updatePending(null)}
+          key={p.logId}
+          logId={p.logId}
+          items={p.items}
+          // The straggler is a new diary row — and the totals the append
+          // answers with are for the day that ENTRY landed on, which for a
+          // when-shifted log is not today, so the read is what paints.
+          onTotals={() => reloadDiary()}
+          onDone={() => dropPendingLog(p.logId)}
         />
-      ) : null}
+      ))}
 
       {meals ? (
         <DiaryList

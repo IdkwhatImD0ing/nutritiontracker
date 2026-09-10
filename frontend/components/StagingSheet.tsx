@@ -11,7 +11,7 @@ import {
   resolveItem,
   selectFood,
   type AliasRow,
-  type DayTotals,
+  type CommitResult,
   type FoodSearchResult,
   type LogResponse,
   type Meal,
@@ -60,10 +60,16 @@ type Props = {
   log: LogResponse;
   /** undo-restore state; when set, initial state comes from here, not `log` */
   restore?: StagingSnapshot | null;
+  /** item_index values this log had removed before this mount. GET
+   *  /api/logs/:id does not return removed rows, so a sheet reopened from a
+   *  chat card cannot see the hole its own remove left — and "+ add item"
+   *  allocates from what it can see. */
+  removedIndexes?: number[];
   /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
   onRendered?: () => void;
-  /** `pending` = rows still searching at commit time (§3.5 late stragglers) */
-  onCommitted: (totals: DayTotals, pending: StagedItem[]) => void;
+  /** `pending` = every row the commit did not land: the §3.5 late stragglers
+   *  (still searching), the ones it refused, and the ones that never resolved */
+  onCommitted: (totals: CommitResult, pending: StagedItem[]) => void;
   onClose: (snapshot: StagingSnapshot) => void;
   /** Rendered as the upper pane of <SplitSheet> rather than as a sheet of its
    *  own: no backdrop and no rounded shell, so the chat stays visible and
@@ -75,6 +81,7 @@ type Props = {
 export default function StagingSheet({
   log,
   restore,
+  removedIndexes,
   onRendered,
   onCommitted,
   onClose,
@@ -251,16 +258,14 @@ export default function StagingSheet({
       timer = setTimeout(async () => {
         if (cancelled) return;
         if (!itemsRef.current.some((i) => i.status === "searching")) return;
-        if (Date.now() - start > POLL_STOP_MS) {
-          setItems((prev) =>
-            prev.map((i) =>
-              i.status === "searching"
-                ? { ...i, status: "not_found" as const }
-                : i,
-            ),
-          );
-          return;
-        }
+        // The hard stop is a LAST READ, not a verdict of its own. `start` is
+        // wall-clock and never restarted, so a phone that spent two minutes in
+        // a pocket lands straight on it — while tier 3, which runs server-side,
+        // may well have answered in the meantime. Flipping the rows without
+        // asking would throw that answer away twice over: once here, and again
+        // when the real one lands and resolveInto's merge guard finds the row
+        // no longer `searching`.
+        const stopping = Date.now() - start > POLL_STOP_MS;
         try {
           const fresh = await getLog(log.log_id);
           if (cancelled) return;
@@ -294,19 +299,37 @@ export default function StagingSheet({
               const merged = withOverrides(server);
               if (
                 server.status === "searching" &&
-                isStale(server) &&
-                (kickCountRef.current.get(i.item_index) ?? 0) >= 2
+                (stopping ||
+                  (isStale(server) &&
+                    (kickCountRef.current.get(i.item_index) ?? 0) >= 2))
               ) {
-                // Re-kicked once already — §3.4: flips to not_found.
+                // Re-kicked once already, or out of time — §3.4: not_found,
+                // and now only for a row the server itself still calls
+                // `searching`.
                 return { ...merged, status: "not_found" as const, stale: null };
               }
               return merged;
             }),
           );
-          rekicks.forEach(kick);
+          if (!stopping) rekicks.forEach(kick);
         } catch {
           /* transient poll failure — keep going until the stop */
+          if (stopping && !cancelled) {
+            // Out of time with the last read unanswered: there is nothing to
+            // merge, but no item may spin forever (§3.4). A row an inline
+            // /api/resolve owns is still that call's to settle, exactly as
+            // the merge above leaves it alone.
+            setItems((prev) =>
+              prev.map((i) =>
+                i.status === "searching" &&
+                !resolvingRef.current.has(i.item_index)
+                  ? { ...i, status: "not_found" as const }
+                  : i,
+              ),
+            );
+          }
         }
+        if (stopping) return;
         tick(POLL_NEXT_MS);
       }, delay);
     };
@@ -388,8 +411,18 @@ export default function StagingSheet({
   const addItem = () => {
     const phrase = addText.trim();
     if (!phrase) return;
+    // The index has to clear every index this log has EVER used, removed rows
+    // included: the server keeps a removed row under its index, refuses to
+    // re-resolve it (409 "item already removed"), and then refuses the WHOLE
+    // commit for naming it (§3.5, removed rows are never resurrected). A row
+    // removed in THIS mount is still in `items` — only `visible` hides it —
+    // so the gap that has to be closed is the one an earlier mount left.
     const idx =
-      itemsRef.current.reduce((max, i) => Math.max(max, i.item_index), -1) + 1;
+      Math.max(
+        -1,
+        ...itemsRef.current.map((i) => i.item_index),
+        ...(removedIndexes ?? []),
+      ) + 1;
     const m = mealRef.current;
     mealOverridesRef.current.items[idx] = m; // added rows keep the sheet's meal
     setItems((prev) => [
@@ -541,12 +574,18 @@ export default function StagingSheet({
       // them to PendingItems as needs-attention alongside the searching
       // stragglers instead of silently closing over them.
       const refused = new Set((totals.errors ?? []).map((e) => e.item_index));
+      // EVERY row the commit did not land goes over, not just the searching
+      // and refused ones. A row left `needs_input` (an unanswered question
+      // chip) or `not_found` is skipped server-side by design, with no errors
+      // entry to report it, so forwarding those two statuses is the only
+      // signal there will ever be: without it the sheet closes over a food
+      // with nothing mounted to chase it. PendingItems surfaces a
+      // non-searching row at once as a needs-attention pill — §7.1 says such
+      // a row must not block the commit of the rest, not that it may vanish.
       onCommitted(
         totals,
         payload
-          .filter(
-            (i) => i.status === "searching" || refused.has(i.item_index),
-          )
+          .filter((i) => i.status !== "resolved" || refused.has(i.item_index))
           .map((i) =>
             refused.has(i.item_index)
               ? { ...i, status: "needs_input" as const }

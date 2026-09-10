@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -59,6 +61,12 @@ class CommitResponse(DayTotals):
 
     errors: list[CommitItemError] = []
     saved_meal: SavedMealNote | None = None
+    # The diary day `totals` describes — null when this commit wrote to more
+    # than one day, because then no single set of totals describes it and the
+    # client must re-read the diary rather than paint. Without this the client
+    # could not tell a back-dated commit from a same-day one and had to give up
+    # painting entirely.
+    totals_day: date | None = None
 
 
 def _saved_meal(row: dict | None) -> SavedMealNote | None:
@@ -83,10 +91,15 @@ async def commit_log(log_id: UUID, body: CommitRequestIn) -> CommitResponse:
         raise HTTPException(422, str(e))
     day = await local_date(result["logged_at"])
     totals = await compute_day_totals(day)
+    # More than one day written means `totals` describes only part of what just
+    # happened — say so with a null day rather than let it be painted as the
+    # whole picture.
+    days = result.get("logged_at_days") or []
     return CommitResponse(
         **totals.model_dump(),
         errors=[CommitItemError(**e) for e in result.get("errors", [])],
         saved_meal=_saved_meal(result.get("meal")),
+        totals_day=day if len(days) <= 1 else None,
     )
 
 

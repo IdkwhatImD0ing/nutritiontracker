@@ -164,7 +164,9 @@ Tools:
   words imply a meal ("last night" -> snack). Nothing downstream parses the
   phrase, so the day comes from your number: omit it and the rows land today. Call it AT MOST
   ONCE, with all such items in one call. Never for a packaged product, a
-  chain menu item or a plain whole food — those go to log_food.
+  chain menu item or a plain whole food — those go to log_food. More than 8
+  components at once: the extras come back in `dropped` — name them and say
+  they were not staged.
 - web_search: research a product you need to understand before logging it —
   what it is, what it contains, how much it weighs, how many pieces, what
   comes with it. Use it to decide between log_food and log_estimate and to
@@ -547,6 +549,10 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
                 "message": "a count of pieces needs its total weight in `grams` "
                            f"(pieces × a typical piece weight): {uncounted}",
             })
+        # over the cap the extras are dropped — reported, never silently, the
+        # way save_meal reports its own: the tail of the plate is food the
+        # person said they ate, and only the model can tell them it is missing
+        dropped = [it.phrase for it in items[MAX_ESTIMATE_ITEMS:]]
         items = items[:MAX_ESTIMATE_ITEMS]
         state["estimate_calls"] += 1
         try:
@@ -558,6 +564,8 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
             state["estimate_calls"] -= 1
             raise
         state["estimate_done"] = True  # save_meal may now take this turn's log as its target
+        if dropped:
+            out["dropped"] = dropped
         return json.dumps(out, default=str)
 
     @function_tool(failure_error_function=_tool_error)

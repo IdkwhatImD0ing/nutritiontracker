@@ -798,8 +798,8 @@ def test_g2_estimate_food_never_resolves_at_tier_2b_or_tier_0():
                 conn, name=trigger, trigger_phrases=[trigger],
                 items=[{"food_id": est, "serving_id": "photo", "qty": 1}],
             )
-            rows, missing = await cascade.expand_macro(macro, Meal.snack, 0)
-            assert rows == [] and missing == 1
+            rows, broken = await cascade.expand_macro(macro, Meal.snack, 0)
+            assert rows == [] and len(broken) == 1
             res = await cascade.resolve_item(
                 ParsedItem(
                     phrase=trigger, phrase_kind="meal_ref", qty=None, unit=None, state=None,
