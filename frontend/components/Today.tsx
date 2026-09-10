@@ -28,6 +28,7 @@ import PendingItems from "./PendingItems";
 import { photoErrorMessage } from "./PhotoApi";
 import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
+import SplitSheet from "./SplitSheet";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import { useOnForeground } from "./useOnForeground";
@@ -966,6 +967,29 @@ export default function Today() {
     day: "numeric",
   });
 
+  // §7.1 (2026-09-09): the staged list is the Agent lane's upper pane and
+  // every other lane's own sheet, so it is built once here and placed twice —
+  // `docked` is the only difference. Defined after closeStaging, which it
+  // closes over.
+  const stageEl = staging ? (
+    <StagingSheet
+      log={staging.log}
+      restore={staging.restore}
+      docked={lane === "agent"}
+      onRendered={() => stagedRendered(staging.log.log_id)}
+      onCommitted={(t, stragglers) => {
+        setTotals(t);
+        reloadDiary();
+        markResult(staging.log.log_id, "committed");
+        setStaging(null);
+        if (stragglers.length > 0) {
+          updatePending({ logId: staging.log.log_id, items: stragglers });
+        }
+      }}
+      onClose={closeStaging}
+    />
+  ) : null;
+
   return (
     <main className="shell today">
       <header className="brand">
@@ -1023,38 +1047,52 @@ export default function Today() {
         />
       ) : null}
 
+      {/* §7.1 (2026-09-09): one sheet, two panes — the staged rows above the
+          conversation instead of over it. The chat is SplitSheet's child
+          whether or not anything is staged: taking it in and out of the split
+          as rows come and go would remount it, blanking the composer and
+          re-running the mount effect that picks the mic or the photo picker. */}
       {lane === "agent" ? (
-        <AgentChat
-          key={convoKey}
-          messages={chat}
-          busy={captureBusy}
-          error={captureError}
-          openWith={openWith}
-          onSubmit={submit}
-          onSubmitAudio={submitAudio}
-          onSubmitPhoto={submitPhoto}
-          onVoiceFailure={(e) => {
-            voiceFailRef.current = e;
-          }}
-          onReview={(log) => {
-            // Inside the 6 s undo window the sheet's log is about to be
-            // discarded: Review is the undo — the timer is cancelled and the
-            // sheet comes back with its local edits, exactly as the toast's
-            // Undo does. Otherwise reopen the staged log as first answered.
-            if (discardRef.current?.log.log_id === log.log_id) {
-              undoDiscard();
-              return;
-            }
-            if (staging?.log.log_id === log.log_id) return; // already open
-            setSavedNote(null);
-            setStaging({ log, restore: null });
-          }}
-          // Escape reaches every window listener: while the staging sheet (or
-          // one of its sub-sheets) is stacked above the chat it is theirs — the
-          // chat stays, as designed
-          onClose={() => {
+        <SplitSheet
+          stage={stageEl}
+          // Escape reaches every window listener: while a sub-sheet is stacked
+          // above the split it is theirs, and while rows are staged the staged
+          // list's own × is what acts (SplitSheet hides this one then).
+          onDismiss={() => {
             if (!staging) setLane(null);
           }}
+          chat={
+            <AgentChat
+              key={convoKey}
+              docked
+              messages={chat}
+              busy={captureBusy}
+              error={captureError}
+              openWith={openWith}
+              onSubmit={submit}
+              onSubmitAudio={submitAudio}
+              onSubmitPhoto={submitPhoto}
+              onVoiceFailure={(e) => {
+                voiceFailRef.current = e;
+              }}
+              onReview={(log) => {
+                // Inside the 6 s undo window the sheet's log is about to be
+                // discarded: Review is the undo — the timer is cancelled and
+                // the rows come back with their local edits, exactly as the
+                // toast's Undo does. Otherwise bring the staged log back up.
+                if (discardRef.current?.log.log_id === log.log_id) {
+                  undoDiscard();
+                  return;
+                }
+                if (staging?.log.log_id === log.log_id) return; // already up
+                setSavedNote(null);
+                setStaging({ log, restore: null });
+              }}
+              onClose={() => {
+                if (!staging) setLane(null);
+              }}
+            />
+          }
         />
       ) : null}
 
@@ -1080,23 +1118,7 @@ export default function Today() {
         />
       ) : null}
 
-      {staging ? (
-        <StagingSheet
-          log={staging.log}
-          restore={staging.restore}
-          onRendered={() => stagedRendered(staging.log.log_id)}
-          onCommitted={(t, stragglers) => {
-            setTotals(t);
-            reloadDiary();
-            markResult(staging.log.log_id, "committed");
-            setStaging(null);
-            if (stragglers.length > 0) {
-              updatePending({ logId: staging.log.log_id, items: stragglers });
-            }
-          }}
-          onClose={closeStaging}
-        />
-      ) : null}
+      {lane === "agent" ? null : stageEl}
 
       {discard ? (
         <div className="toast" role="status">

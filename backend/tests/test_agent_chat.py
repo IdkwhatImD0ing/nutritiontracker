@@ -11,7 +11,7 @@ transaction (isolated_db) against the live database.
    and the reply last.
 2. routes/logs: log_estimate stages component rows flagged estimated=
    "portion" with the note, after log_food's rows (item indexes never
-   collide); a flagged row commits only once confirmed and learns no alias.
+   collide); a flagged row commits on the first press and learns no alias.
 3. routes/agent: POST /api/agent streams tool_call → tool_result → reply →
    done as NDJSON; the voice variant leads with the transcript; a same-id
    retry re-attaches to the live run's stream (nothing runs twice), and once
@@ -57,7 +57,6 @@ from models import CommitRequest, LogCreate  # noqa: E402
 from routes import agent as agent_routes  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
-from routes.photo import ConfirmEstimateRequest, confirm_estimate  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
 from services import quota  # noqa: E402
 from test_agent import NOW, TZ, _deps, _fake_runner, _invoke, _parsed  # noqa: E402
@@ -596,7 +595,7 @@ def test_a_counted_estimate_is_sized_by_weight_when_the_food_has_no_count_servin
     _run(scenario())
 
 
-def test_flagged_estimate_row_commits_only_once_confirmed_and_learns_no_alias(monkeypatch):
+def test_flagged_estimate_row_commits_and_learns_no_alias(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
             food_id = await insert_food(conn)
@@ -616,14 +615,15 @@ def test_flagged_estimate_row_commits_only_once_confirmed_and_learns_no_alias(mo
             assert row.status == "resolved" and row.tier == 1 and row.estimated == "portion"
             assert row.confidence == "medium" and row.qty == 2
 
-            # §3.4a: the stored flag blocks the commit until the explicit confirm
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(body.id, CommitRequest(items=[row]))
-            assert ei.value.status_code == 409 and "confirm the estimated rows first: [0]" in ei.value.detail
-            ok = await confirm_estimate(ConfirmEstimateRequest(log_id=body.id, item_index=0))
-            assert ok.estimate_confirmed is True
+            # 2026-09-09: the flag no longer holds the commit up — it commits
+            # on the first press and the STORED flag rides into the row
             totals = await commit_route(body.id, CommitRequest(items=[row]))
             assert totals.errors == []
+            assert await _scalar(
+                conn,
+                "SELECT staged->>'estimated' FROM item_resolutions WHERE log_id = %s",
+                (body.id,),
+            ) == "portion"
 
             # the row learned nothing: no alias use, no alias on the entry
             assert await _scalar(conn, "SELECT use_count FROM aliases WHERE alias_norm = 'two eggs'") == use_before

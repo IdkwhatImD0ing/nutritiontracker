@@ -1761,28 +1761,12 @@ a {
   justify-content: space-between;
 }
 
-.pending-pill.failed button,
-.pending-pill.confirm button {
+.pending-pill.failed button {
   background: none;
   border: none;
   color: var(--faint);
   cursor: pointer;
   padding: 2px 6px;
-}
-
-/* §3.4b: a photo straggler that landed after commit — confirm, then it commits */
-.pending-pill.confirm {
-  color: var(--amber);
-  justify-content: space-between;
-}
-
-.pending-pill.confirm .confirm-btn {
-  margin-left: auto;
-  border: 1px solid var(--amber);
-  border-radius: 999px;
-  color: var(--amber);
-  font-weight: 650;
-  padding: 3px 10px;
 }
 
 /* the demo strip under the Today header */
@@ -2086,6 +2070,256 @@ a {
 
 .sheet.agent-sheet {
   z-index: 35;
+}
+
+/* ---------- the split: the staged tray over the chat (2026-09-09) ----------
+
+   Bill: "I just wanna chat with the stage window open." Review used to open
+   the staging sheet as a SECOND full sheet over this one, so fixing a row was
+   open → read → close → type → open again.
+
+   The first cut of this stacked two sheets' worth of chrome inside one sheet —
+   two header rows, a bordered seam bar, and the full-width apricot Commit slab
+   marooned in the middle — which broke this file's own opening rule: the accent
+   is RATIONED, structure is hairlines, and depth is a surface change. So the
+   staged rows are one object now: a tray on `--surface-2` resting on the
+   sheet's `--surface`, with no header of its own, its controls on a lip along
+   its bottom, and its edge as the drag handle. The boundary between staged and
+   said is a change of material, not a drawn line. `--stage-split` (set by
+   SplitSheet.tsx) sizes it. */
+.sheet.split-sheet {
+  z-index: 35;
+  overflow: hidden; /* the rounded top clips the panes' own edges */
+}
+
+/* the lane's one header: a grabber, a title, and — only while nothing is
+   staged — the ✕. Staged, the tray carries the ✕ that means anything. */
+.split-head {
+  padding: 8px 18px 10px;
+  border-bottom: none;
+}
+
+.split-head .sheet-title {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.split-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* without this the body never scrolls — it just grows */
+}
+
+/* The tray. Raised a step off the sheet and inset from its walls, so it reads
+   as a thing lying ON the conversation rather than a panel bolted above it. */
+.split-sheet > .stage-pane {
+  flex: 0 0 min(var(--stage-split, 48%), calc(100% - 220px));
+  margin: 0 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  overflow: hidden; /* the rows' hairlines stop at the tray's corners */
+}
+
+.split-sheet > .chat-pane {
+  /* basis 0, not auto: with `auto` the conversation's own height competes and
+     a long one squeezes the tray out of the share the divider was set to */
+  flex: 1 1 0;
+}
+
+/* a pane's chrome is fixed; only the list gives up height */
+.split-pane > .sheet-head,
+.split-pane > .sheet-foot {
+  flex: none;
+}
+
+.split-pane > .sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.split-sheet > .stage-pane > .sheet-body {
+  padding: 2px 14px;
+}
+
+/* the conversation starts clear of the tray's edge handle */
+.split-sheet > .chat-pane > .chat-body {
+  padding-top: 4px;
+}
+
+/* The lip: the batch's three controls on one row along the tray's bottom —
+   discard, the meal, and Commit. Commit is a PILL here, not the full-width
+   band it is when the staging sheet stands alone: there it ends the flow, here
+   the conversation carries on underneath it, and a band of apricot across the
+   middle of the sheet spends the accent on the wrong thing. */
+.split-sheet > .stage-pane > .sheet-foot {
+  padding: 10px 10px 10px 6px;
+  background: transparent;
+  border-top: 1px solid var(--line);
+}
+
+.stage-lip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* the discard ✕ is the quiet one on this row — it undoes, and it is undoable */
+.stage-lip .sheet-close {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  color: var(--faint);
+}
+
+.stage-lip .meal-chip {
+  margin-right: auto;
+}
+
+.commit-pill {
+  min-height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  font-family: inherit;
+  font-size: 0.94rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: transform 120ms var(--ease), filter 120ms var(--ease);
+}
+
+.commit-pill .num {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.commit-pill:active {
+  transform: translateY(1px);
+}
+
+.commit-pill:disabled {
+  background: var(--surface-3);
+  color: var(--faint);
+  cursor: default;
+}
+
+/* The tray's edge, not a divider component: no fill and no rules of its own,
+   just the sheet's own grabber shape sitting in the gap under the tray. Same
+   affordance the sheet itself uses at the top, so it reads as "this edge
+   moves" rather than "here is a seam". */
+.split-divider {
+  flex: none;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  cursor: row-resize;
+  touch-action: none; /* the drag is the divider's, never the scroller's */
+}
+
+.split-grip {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  /* brighter than the sheet's own grabber: this one sits in open space
+     between two surfaces rather than on one, so --line-strong vanishes */
+  background: rgba(255, 255, 255, 0.22);
+  transition: background 140ms var(--ease), width 140ms var(--ease);
+}
+
+.split-divider:hover .split-grip,
+.split-divider:focus-visible .split-grip {
+  background: var(--accent);
+  width: 48px;
+}
+
+.split-divider:focus-visible {
+  outline: none;
+}
+
+/* The two end stops are about chrome, not proportion: `peek` is the tray's
+   lip alone, `full` is the composer. Pixels, not a fraction — so the settled
+   state says which pane's body goes, and the fraction only drives the drag. */
+.split-sheet[data-snap="peek"] > .stage-pane {
+  flex: 0 0 auto; /* with the list gone, exactly the lip */
+}
+
+.split-sheet[data-snap="peek"] > .stage-pane > .sheet-body {
+  display: none;
+}
+
+.split-sheet[data-snap="peek"] > .stage-pane > .sheet-foot {
+  border-top: none;
+}
+
+/* at `full` the chat is exactly its composer, whatever height that composer
+   happens to be, and the tray takes everything else */
+.split-sheet[data-snap="full"] > .stage-pane {
+  flex: 1 1 auto;
+}
+
+.split-sheet[data-snap="full"] > .chat-pane {
+  flex: 0 0 auto;
+}
+
+.split-sheet[data-snap="full"] > .chat-pane > .chat-body {
+  display: none;
+}
+
+.chat-body {
+  display: none;
+}
+
+/* a pane's head and foot are fixed chrome — at the PEEK stop the stage is
+   exactly those two, and only the row list has given up its height */
+.split-pane > .sheet-head,
+.split-pane > .sheet-foot {
+  flex: none;
+}
+
+.split-pane > .sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* the safe-area inset belongs to the composer at the true bottom of the
+   sheet, not to the Commit button sitting in the middle of it */
+.split-sheet > .stage-pane > .sheet-foot {
+  padding-bottom: 12px;
+}
+
+.split-divider {
+  flex: none;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  cursor: row-resize;
+  touch-action: none; /* the drag is the divider's, never the scroller's */
+}
+
+.split-grip {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  transition: background 140ms var(--ease);
+}
+
+.split-divider:hover .split-grip,
+.split-divider:focus-visible .split-grip {
+  background: var(--accent);
+}
+
+.split-divider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .chat-body {

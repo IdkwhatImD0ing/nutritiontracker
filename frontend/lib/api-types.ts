@@ -289,28 +289,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/resolve/confirm-estimate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Confirm Estimate
-         * @description Set staged.estimate_confirmed on one live estimated row. Editing the
-         *     portion never confirms; only this does. A row without numbers (an
-         *     estimate food) has nothing to confirm — search first.
-         */
-        post: operations["confirm_estimate_api_resolve_confirm_estimate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/foods/search": {
         parameters: {
             query?: never;
@@ -1039,16 +1017,6 @@ export interface components {
              */
             errors: components["schemas"]["CommitItemError"][];
             saved_meal?: components["schemas"]["SavedMealNote"] | null;
-        };
-        /** ConfirmEstimateRequest */
-        ConfirmEstimateRequest: {
-            /**
-             * Log Id
-             * Format: uuid
-             */
-            log_id: string;
-            /** Item Index */
-            item_index: number;
         };
         /** DayStat */
         DayStat: {
@@ -1961,8 +1929,6 @@ export interface components {
             estimated: "none" | "portion" | "unresolved";
             /** Estimate Note */
             estimate_note?: string | null;
-            /** Estimate Confirmed */
-            estimate_confirmed?: boolean | null;
         };
         /**
          * StagedItemOut
@@ -2011,8 +1977,6 @@ export interface components {
             estimated: "none" | "portion" | "unresolved";
             /** Estimate Note */
             estimate_note?: string | null;
-            /** Estimate Confirmed */
-            estimate_confirmed?: boolean | null;
             /** Stale */
             stale?: boolean | null;
         };
@@ -2689,39 +2653,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LogCreateResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_estimate_api_resolve_confirm_estimate_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConfirmEstimateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StagedItem"];
                 };
             };
             /** @description Validation Error */

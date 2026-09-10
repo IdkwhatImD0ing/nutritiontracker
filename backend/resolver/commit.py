@@ -50,11 +50,9 @@ from resolver.norm import norm
 # "unresolved" (the numberless estimate row) becomes "portion" only when
 # vision actually sized the item (a count or est_grams — that portion rides
 # the spoken-quantity channel into the pick); otherwise the pick's qty is the
-# resolver's own and the row is "none". `estimate_confirmed` is deliberately
-# NOT carried — any re-resolution needs a fresh confirm (commit records the
-# stored value itself). `vision` rides OUTSIDE the strip_nulls wrapper:
-# jsonb_strip_nulls recurses, and the raw vision item legitimately carries
-# null qty/unit/est_grams that the eval loop must see intact.
+# resolver's own and the row is "none". `vision` rides OUTSIDE the strip_nulls
+# wrapper: jsonb_strip_nulls recurses, and the raw vision item legitimately
+# carries null qty/unit/est_grams that the eval loop must see intact.
 KEEP_LOG_KEYS_SQL = (
     " || jsonb_strip_nulls(jsonb_build_object("
     "'logged_at', item_resolutions.staged->'logged_at', "
@@ -79,17 +77,6 @@ class LogNotFound(Exception):
 
 class LogNotCommittable(Exception):
     """Log exists but is in a state the operation can't act on."""
-
-
-class EstimateUnconfirmed(LogNotCommittable):
-    """§3.4a: an estimated row (photo lane) has not been confirmed through
-    /api/resolve/confirm-estimate. The whole commit is refused before any
-    write (routes map LogNotCommittable to 409); `item_indexes` names the
-    offenders and str() carries them for the route's detail."""
-
-    def __init__(self, item_indexes: list[int]):
-        super().__init__(f"confirm the estimated rows first: {item_indexes}")
-        self.item_indexes = item_indexes
 
 
 class ItemRefused(Exception):
@@ -193,18 +180,6 @@ LEARNABLE_ROWS_SQL = (
 )
 
 
-def _unconfirmed_estimate(staged) -> bool:
-    """§3.4a: True when the STORED row is an estimate the user has not
-    confirmed. Only the stored row counts — `estimate_confirmed` is written by
-    /api/resolve/confirm-estimate alone; a client payload can rename, re-index
-    or relabel a row, never un-flag it."""
-    if not isinstance(staged, dict):
-        return False
-    return (staged.get("estimated") or "none") != "none" and (
-        staged.get("estimate_confirmed") is not True
-    )
-
-
 def _would_commit(item: StagedItem) -> bool:
     return item.status == "resolved" and item.food is not None
 
@@ -225,33 +200,31 @@ def _payload_by_index(items: list[StagedItem]) -> dict[int, StagedItem]:
     return payload
 
 
-def _estimate_gate(log: dict, res_rows: dict, payload: dict[int, StagedItem]) -> None:
+def _payload_gate(log: dict, res_rows: dict, payload: dict[int, StagedItem]) -> None:
     """The pre-write gate, decided by stored rows only (before any write, so
     a refusal rolls the CAS back with everything else).
 
     A payload item whose stored row is 'removed' is refused: the user took it
-    out of staging, and nothing commits or resurrects it. §3.4a: an
-    uncommitted stored row still carrying an unconfirmed estimate blocks when
-    it is resolved server-side — whatever the payload says about it or omits
-    — or when the payload would commit it as resolved (a photo row still in
-    tier 3 never blocks the rest, §7.1, but cannot be committed around
-    either). On a photo log a payload item with no stored row is refused
-    outright: the stored row is the only place an estimate flag lives, so
-    nothing commits around it."""
+    out of staging, and nothing commits or resurrects it. On a photo log a
+    payload item with no stored row is refused outright: the stored row is the
+    only place an estimate flag lives, so nothing commits around it.
+
+    §3.4a's per-row estimate confirm is gone (Bill, 2026-09-09): the commit IS
+    the confirmation. Six flagged rows off one photo meant six taps before the
+    button would light (trace 886b7b91), which bought nothing the person had
+    not already seen — the sheet renders every estimate amber with its note,
+    and the flag rides through to the diary, so an estimate stays visible and
+    editable after the fact. The other three §3.4a protections are untouched:
+    an estimated row still learns no alias and no portion default
+    (LEARNABLE_ROWS_SQL), still cannot carry a model's nutrition numbers, and
+    a numberless `estimated="unresolved"` row still cannot commit at all —
+    the core-macros guard refuses it, which is a fact about the row rather
+    than a tap it is waiting for."""
     removed = sorted(
         idx for idx in payload if idx in res_rows and res_rows[idx]["status"] == "removed"
     )
     if removed:
         raise LogNotCommittable(f"items {removed} were removed from staging")
-    unconfirmed = sorted(
-        idx
-        for idx, r in res_rows.items()
-        if r["committed_at"] is None
-        and _unconfirmed_estimate(r["staged"])
-        and (r["status"] == "resolved" or (idx in payload and _would_commit(payload[idx])))
-    )
-    if unconfirmed:
-        raise EstimateUnconfirmed(unconfirmed)
     if log.get("input_mode") == "photo":
         orphans = sorted(
             idx for idx, item in payload.items() if idx not in res_rows and _would_commit(item)
@@ -329,9 +302,9 @@ async def commit_log(
             ).fetchall()
         }
 
-        # §3.4a: nothing estimated commits unconfirmed — the stored rows
-        # decide, checked before any write (the 409 rolls the CAS back too).
-        _estimate_gate(log, res_rows, payload)
+        # §3.5: the payload rules, decided by the stored rows, before any
+        # write (the 409 rolls the CAS back with everything else).
+        _payload_gate(log, res_rows, payload)
 
         edited_count = 0
         committed: list[dict] = []  # {food_id, serving_id, qty} — step 4's input
@@ -422,7 +395,7 @@ async def commit_item(log_id: UUID, item: StagedItem) -> dict:
                 "logged_at": logged_at,
             }
         # the same gate as commit_log over this one row
-        _estimate_gate(
+        _payload_gate(
             log, {res["item_index"]: res} if res is not None else {}, _payload_by_index([item])
         )
         refused: str | None = None
@@ -533,16 +506,12 @@ async def _commit_one(
     was_edited = switched or serving_delta or qty_delta or prior_edit
 
     staged_prev = res["staged"] if res is not None and isinstance(res["staged"], dict) else {}
-    # §3.4a: the stored flag and confirmation are what the gate checked — the
-    # committed payload records THOSE, whatever the client sent (a row the
-    # server never stored carries none; the flag comes from the photo lane or
-    # the agent's log_estimate, §6.4).
-    item = item.model_copy(
-        update={
-            "estimated": staged_prev.get("estimated") or "none",
-            "estimate_confirmed": staged_prev.get("estimate_confirmed"),
-        }
-    )
+    # §3.4a: the STORED flag is what the committed payload records, whatever
+    # the client sent (a row the server never stored carries none; the flag
+    # comes from the photo lane or the agent's log_estimate, §6.4). It decides
+    # the alias gate below and rides into the diary, so a client may not
+    # un-flag its own estimate by relabelling the row.
+    item = item.model_copy(update={"estimated": staged_prev.get("estimated") or "none"})
 
     # 2. alias — for each item except tier-0 expansions, removed rows, rows
     # the user never spoke (photo/barcode/search logs: _NO_LEARN_MODES), and —
@@ -669,9 +638,8 @@ async def _refuse_item(conn, log: dict, item: StagedItem, res: dict | None, reas
         update={
             "status": "needs_input",
             "confidence": "low",
-            # §3.4a: the stored row's flags, never the client's (as in _commit_one)
+            # §3.4a: the stored row's flag, never the client's (as in _commit_one)
             "estimated": staged_prev.get("estimated") or "none",
-            "estimate_confirmed": staged_prev.get("estimate_confirmed"),
         }
     )
     staged_payload = refused.model_dump(mode="json", exclude_none=True)

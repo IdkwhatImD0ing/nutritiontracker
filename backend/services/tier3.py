@@ -518,6 +518,13 @@ Ranking and routing rules:
    return a question instead of guessing.
 5. Never mix sources for one food. A food identity lives in exactly one
    (source, source_id).
+6. An ESTIMATE row never asks. When the input says the row is a flagged estimate,
+   "needs_input" is not available to you: the amount is already a guess the person
+   is going to look at and correct, so a question buys precision the row does not
+   have and costs them a tap per item. Pick the best entry you saw and say how sure
+   you are — confidence "medium" for a refined guess, "low" for best-available —
+   and put the runners-up in alternates, which is where the sheet offers them as a
+   one-tap swap. Only "not_found" when nothing plausible matched at all.
 
 Local candidates: the input may list already-cached foods. If one of these
 already-cached foods is the same real-world food, choose it — do not create a second
@@ -538,7 +545,8 @@ Output contract:
   medium = refined guess, low = best available).
 - alternates: up to 3 plausible runners-up as (source, source_id, label) — only entries
   you actually saw in results.
-- "needs_input": set question with short text and 2–4 options; every option that refers
+- "needs_input": never on an estimate row (rule 6). Otherwise set question with short
+  text and 2–4 options; every option that refers
   to a candidate you already saw MUST carry its source and source_id so a tap resolves
   instantly without another search. Before asking a which-brand/flavor/variant question,
   run at least one search so the options are real candidates carrying ids — an id-less
@@ -733,10 +741,24 @@ def _agent_input(
     unit: str | None,
     candidates: list[dict],
     refinement: str | None,
+    note: str | None = None,
+    estimated: bool = False,
 ) -> str:
     lines = [f'Resolve this food phrase to a database entry: "{phrase}"']
     if qty is not None:
         lines.append(f"Spoken quantity: {qty}" + (f" {unit}" if unit else ""))
+    # The note is what the photo (or the agent's estimate) saw — including the
+    # menu page it cited. Without it this call asked "homemade, or a restaurant
+    # item?" about a dish vision had already tied to a cafeteria's own menu
+    # (trace 886b7b91, 2026-09-09), because the phrase alone says nothing about
+    # where the plate came from.
+    if note:
+        lines.append(f"Where this phrase came from: {note}")
+    if estimated:
+        lines.append(
+            "This row is already a flagged ESTIMATE the person will check and "
+            "adjust: rule 6 applies — resolve it, never ask."
+        )
     if refinement:
         lines.append(f'The user answered a clarifying question with: "{refinement}"')
     if candidates:
@@ -1439,9 +1461,20 @@ async def run_tier3(
     # carries it — persisted into the staged payload for commit → alias.
     answered_state = phrase_state(refinement) if refinement else None
     state_intent = answered_state or phrase_state(phrase)
+    # §3.4a rule 6: a flagged estimate (a photo row, an agent log_estimate row)
+    # resolves to a best guess and never asks — the amount is already one.
+    is_estimate = (staged_prev.get("estimated") or "none") != "none"
 
     candidates = await _local_candidates(phrase)
-    agent_input = _agent_input(phrase, spoken_qty, spoken_unit, candidates, refinement)
+    agent_input = _agent_input(
+        phrase,
+        spoken_qty,
+        spoken_unit,
+        candidates,
+        refinement,
+        note=staged_prev.get("estimate_note"),
+        estimated=is_estimate,
+    )
 
     tracing.init_tracing()
     counter = {"network_calls": 0}
@@ -1483,6 +1516,44 @@ async def run_tier3(
     # actions it ran — each one is a billed network call, counted like any other.
     web_evidence, web_searches = _web_evidence(transcript)
     counter["network_calls"] += web_searches
+
+    # Rule 6, enforced in code the way §3.4a's cooked/raw guard is rather than
+    # left to the prompt: an estimate row must never come back as a question.
+    # The amount is already a flagged guess the person is going to check, so a
+    # question costs a tap per item and buys precision the row does not have
+    # (trace 886b7b91: three of six photo rows asked, "which lettuce mix?"
+    # among them). Promote the best candidate this run actually saw — a
+    # question option carrying an id first, because a model that means to ask
+    # puts its real candidates there and leaves `alternates` empty — at low
+    # confidence, keeping the rest as alternates so the sheet still offers the
+    # one-tap swap. Nothing to promote means not_found: the manual search box,
+    # never a food this run did not see. Applied before the mapping below, so
+    # the StagedItem's alternates and question are built from what stands.
+    if out.status == "needs_input" and is_estimate:
+        pool = [
+            (o.source, o.source_id, o.label)
+            for o in (out.question.options if out.question else [])
+            if o.source and o.source_id
+        ] + [(a.source, a.source_id, a.label) for a in out.alternates]
+        if pool:
+            src, sid, label = pool[0]
+            out = out.model_copy(
+                update={
+                    "status": "resolved",
+                    "source": src,
+                    "source_id": sid,
+                    "display_name": label,
+                    "serving_id": None,  # the entry's default; this pick chose none
+                    "confidence": "low",
+                    "alternates": [
+                        Tier3Alternate(source=s, source_id=i, label=lab)
+                        for s, i, lab in pool[1:4]
+                    ],
+                    "question": None,
+                }
+            )
+        else:
+            out = out.model_copy(update={"status": "not_found", "question": None})
 
     # --- map the structured output to a StagedItem -------------------------
     alternates = [

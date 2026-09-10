@@ -607,10 +607,6 @@ def test_baseline_foreign_ids_are_invisible(monkeypatch):
                 ),
             )
             await status_of(
-                "confirm_estimate",
-                photo.confirm_estimate(photo.ConfirmEstimateRequest(log_id=log, item_index=0)),
-            )
-            await status_of(
                 "answer_food",
                 resolve_routes.answer_question(
                     resolve_routes.AnswerRequest(

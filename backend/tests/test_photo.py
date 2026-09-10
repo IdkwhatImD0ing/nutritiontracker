@@ -6,15 +6,15 @@
    with the estimate in spoken_qty/unit for tier 3; a row vision could not
    size keeps the resolver's usual portion, unflagged; raw vision output
    lands in staged->'vision'.
-2. Commit: 409 "confirm the estimated rows first" while any estimated row is
-   unconfirmed — the DB row is the authority, a client-forged
-   estimate_confirmed changes nothing — then commits after
-   /api/resolve/confirm-estimate; photo rows write NO aliases and NO
-   portion defaults; the late commit-item path has the same gate.
+2. Commit: an estimated row commits with no per-row confirm (2026-09-09 —
+   the commit is the confirmation); the STORED flag is what the committed
+   payload records, whatever the client sent; photo rows write NO aliases
+   and NO portion defaults; the §3.5 late commit-item path lands them too.
 3. The unresolvable item: a tier-3 not_found rewrite keeps the flag
    (KEEP_LOG_KEYS_SQL); stage_estimate_food() persists a source='estimate'
    foods row with provenance and NO macros, flagged "unresolved", which
-   neither confirms nor commits; a search pick swaps a database food in and
+   still cannot commit — the core-macros guard refuses that row and lets
+   the rest of the log through; a search pick swaps a database food in and
    the flag downgrades to "portion".
 4. Upload validation through the HTTP route: content type, magic bytes
    (HEIC named), the 12 MB cap — all before any DB or model spend.
@@ -129,7 +129,6 @@ from routes import resolve as resolve_routes  # noqa: E402
 from routes.commit import CommitItemRequest  # noqa: E402
 from routes.commit import commit_item as commit_item_route  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
-from routes.photo import ConfirmEstimateRequest, confirm_estimate  # noqa: E402
 
 TZ = "America/Los_Angeles"
 CAPTURED = datetime(2000, 1, 5, 20, 15, tzinfo=timezone.utc)  # 12:15 PT → lunch
@@ -268,10 +267,6 @@ async def alias_state(alias_norm):
     )
 
 
-async def confirm(log_id, idx):
-    return await confirm_estimate(ConfirmEstimateRequest(log_id=log_id, item_index=idx))
-
-
 async def plate(conn):
     """eggs ×2 (count), rice ~150 g, an unknown sauce ~30 g, coffee (no
     portion) — eggs/rice/coffee are aliased staples. Returns a namespace."""
@@ -381,9 +376,7 @@ def test_vision_item_rides_the_spoken_quantity_channel():
 
 
 def test_router_shape():
-    assert [r.path for r in photo.router.routes] == [
-        "/api/logs/photo", "/api/resolve/confirm-estimate",
-    ]
+    assert [r.path for r in photo.router.routes] == ["/api/logs/photo"]
     from auth import require_user
 
     assert any(d.dependency is require_user for d in photo.router.dependencies)
@@ -416,7 +409,7 @@ def test_photo_stages_staples_with_db_macros_and_flagged_portions():
             assert eggs.status == "resolved" and eggs.tier == 1
             assert eggs.food.id == p.eggs and eggs.serving.id == "srv-large"
             assert eggs.qty == 2 and eggs.macros.kcal == 156 and eggs.confidence == "high"
-            assert eggs.estimated == "portion" and eggs.estimate_confirmed is None
+            assert eggs.estimated == "portion"
             assert eggs.estimate_note == "Photo: two fried eggs (~100 g)"
 
             # rice: est_grams onto the 100 g serving, macros scaled from the cache
@@ -485,47 +478,23 @@ def test_photo_stages_staples_with_db_macros_and_flagged_portions():
 
 
 # ---------------------------------------------------------------------------
-# 2. commit: the confirm gate, then commit; photo rows learn nothing
+# 2. commit: estimated rows commit without a per-row confirm; they learn nothing
 # ---------------------------------------------------------------------------
 
 
-def test_commit_refuses_unconfirmed_estimates_then_commits_and_learns_nothing():
+def test_estimated_rows_commit_without_a_confirm_and_learn_nothing():
+    """2026-09-09: the commit IS the confirmation. Six flagged rows off one
+    photo used to mean six taps before the button lit; the flag is now a label
+    that rides into the diary, and the other three §3.4a protections stand —
+    nothing is learned, the numbers are still the database's, and a numberless
+    row still cannot commit (test 3)."""
     async def run():
         async with isolated_db() as conn:
             p = await plate(conn)
             eggs, rice, sauce, coffee = p.items
             before = {k: await alias_state(f"{k} {p.tag}") for k in ("eggs", "rice", "coffee")}
 
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(p.log_id, CommitRequest(items=[eggs, rice, sauce, coffee]))
-            assert ei.value.status_code == 409
-            assert ei.value.detail == "confirm the estimated rows first: [0, 1]"
-            # the CAS rolled back with the refusal — nothing committed, nothing written
-            assert (await db.fetchone("SELECT status FROM logs WHERE id = %s", (p.log_id,)))[
-                "status"
-            ] == "staged"
-            assert await db.fetchall("SELECT 1 FROM entries WHERE log_id = %s", (p.log_id,)) == []
-
-            # a client-forged confirmation changes nothing: the stored row decides
-            forged = [i.model_copy(update={"estimate_confirmed": True}) for i in (eggs, rice)]
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(p.log_id, CommitRequest(items=forged + [sauce, coffee]))
-            assert ei.value.detail == "confirm the estimated rows first: [0, 1]"
-
-            # confirm one → the other still blocks
-            ok = await confirm(p.log_id, 0)
-            assert ok.estimate_confirmed is True and ok.estimated == "portion"
-            assert ok.qty == 2 and ok.macros.kcal == 156
-            assert (await item_row(p.log_id, 0))["staged"]["estimate_confirmed"] is True
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(p.log_id, CommitRequest(items=[eggs, rice, sauce, coffee]))
-            assert ei.value.detail == "confirm the estimated rows first: [1]"
-            # an unflagged row has nothing to confirm
-            with pytest.raises(HTTPException) as ei:
-                await confirm(p.log_id, 3)
-            assert ei.value.status_code == 409 and "no estimate" in ei.value.detail
-
-            await confirm(p.log_id, 1)
+            assert eggs.estimated == "portion" and rice.estimated == "portion"
             totals = await commit_route(p.log_id, CommitRequest(items=[eggs, rice, sauce, coffee]))
             assert totals.errors == []
             entries = await db.fetchall(
@@ -552,30 +521,21 @@ def test_commit_refuses_unconfirmed_estimates_then_commits_and_learns_nothing():
             )
             assert [r["alias_id"] for r in rows] == [None] * 4
             assert [r["committed_at"] is not None for r in rows] == [True, True, False, True]
-            # the committed rows record the flag and the stored confirmation
+            # the committed rows record the STORED flag, whatever the client sent
             assert rows[0]["staged"]["estimated"] == "portion"
-            assert rows[0]["staged"]["estimate_confirmed"] is True
             assert rows[0]["staged"]["vision"]["note"] == "two fried eggs"
             assert rows[3]["staged"]["estimated"] == "none"
 
-            # idempotent replay, and a confirm on a committed row is refused
+            # idempotent replay
             replay = await commit_route(p.log_id, CommitRequest(items=[eggs, rice, sauce, coffee]))
             assert replay.errors == []
-            with pytest.raises(HTTPException) as ei:
-                await confirm(p.log_id, 0)
-            assert ei.value.status_code == 409 and "committed" in ei.value.detail
 
-            # the late commit-item path: same gate, same confirm
+            # the late commit-item path (§3.5): a flagged straggler lands too
             late = await tier3.resolve_item_from_food(str(p.log_id), 2, p.rice)
             assert late.status == "resolved" and late.serving.id == "srv-100g"
             assert late.qty == 0.3  # the ~30 g estimate applied to the picked food
             row2 = await item_row(p.log_id, 2)
             assert row2["staged"]["estimated"] == "portion"  # KEEP carried the flag
-            with pytest.raises(HTTPException) as ei:
-                await commit_item_route(p.log_id, CommitItemRequest(item_index=2, item=late))
-            assert ei.value.status_code == 409
-            assert ei.value.detail == "confirm the estimated rows first: [2]"
-            await confirm(p.log_id, 2)
             await commit_item_route(p.log_id, CommitItemRequest(item_index=2, item=late))
             e2 = await db.fetchone(
                 "SELECT qty, macros, alias_id FROM entries WHERE log_id = %s AND item_index = 2",
@@ -611,7 +571,6 @@ def test_not_found_photo_row_becomes_a_numberless_estimate_row_that_routes_to_se
             assert row["staged"]["estimated"] == "portion"
             assert row["staged"]["estimate_note"] == sauce.estimate_note
             assert row["staged"]["vision"]["note"] == "a brown sauce"
-            assert "estimate_confirmed" not in row["staged"]
 
             item = await photo.stage_estimate_food(str(p.log_id), 2)
             assert item is not None and item.status == "resolved"
@@ -640,29 +599,14 @@ def test_not_found_photo_row_becomes_a_numberless_estimate_row_that_routes_to_se
 
             assert all(h.food_id != item.food.id for h in await _local_hits(f"mystery sauce {p.tag}"))
 
-            # no numbers → nothing to confirm; the commit gate blocks it (the
-            # gate reads the STORED rows, so the plate's other estimates are
-            # confirmed first to isolate this row's refusal)
-            with pytest.raises(HTTPException) as ei:
-                await confirm(p.log_id, 2)
-            assert ei.value.status_code == 409 and "pick a database food" in ei.value.detail
-            await confirm(p.log_id, 0)
-            await confirm(p.log_id, 1)
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(p.log_id, CommitRequest(items=[item]))
-            assert ei.value.detail == "confirm the estimated rows first: [2]"
-
             # a search pick swaps a database food in: real numbers, the photo's
-            # portion, the flag downgraded to "portion", confirmation required afresh
+            # portion, the flag downgraded to "portion"
             picked = await tier3.resolve_item_from_food(str(p.log_id), 2, p.rice)
             assert picked.food.id == p.rice and picked.serving.id == "srv-100g"
             assert picked.qty == 0.3 and picked.macros.kcal == 39
             row = await item_row(p.log_id, 2)
             assert row["staged"]["estimated"] == "portion"
             assert row["staged"]["vision"]["note"] == "a brown sauce"
-            assert "estimate_confirmed" not in row["staged"]
-            confirmed = await confirm(p.log_id, 2)
-            assert confirmed.estimate_confirmed is True and confirmed.estimated == "portion"
             # the estimate food stays a cache row nothing references — never an entry
             assert await db.fetchall(
                 "SELECT 1 FROM entries WHERE food_id = %s", (item.food.id,)
@@ -695,11 +639,41 @@ def test_not_found_photo_row_becomes_a_numberless_estimate_row_that_routes_to_se
     asyncio.run(run())
 
 
-def test_diary_marks_confirmed_photo_portions_estimated():
+def test_a_numberless_estimate_row_still_cannot_commit():
+    """The one §3.4a protection that is not a tap: a row with no macros has
+    nothing to write into `entries.macros`, so the core-macros guard refuses
+    THAT row and lets the rest of the log through. Its own plate — a refusal
+    rewrites the staged row, which would take the spoken channel the search
+    pick above reads."""
+    async def run():
+        async with isolated_db() as conn:
+            p = await plate(conn)
+            not_found = StagedItem(
+                item_index=2, phrase=p.items[2].phrase, status="not_found", tier=3,
+                meal=Meal.lunch, confidence="low",
+            )
+            assert await tier3._write_item_row(
+                str(p.log_id), 2, not_found, tier=3, spoken_qty=30, spoken_unit="g"
+            )
+            item = await photo.stage_estimate_food(str(p.log_id), 2)
+            assert item is not None and item.macros is None
+
+            totals = await commit_route(p.log_id, CommitRequest(items=[item]))
+            assert [e.item_index for e in totals.errors] == [2]
+            assert await db.fetchall(
+                "SELECT 1 FROM entries WHERE log_id = %s AND item_index = 2", (p.log_id,)
+            ) == []
+
+    asyncio.run(run())
+
+
+def test_diary_marks_photo_portions_estimated():
     """Fix-pass P5 (§3.4a): estimated values render flagged like web-sourced
-    foods — the diary entry carries `estimated` ("portion" for a confirmed
-    photo portion, read off the entry's item_resolutions row), so a photo
-    entry never renders like any other."""
+    foods — the diary entry carries `estimated` ("portion" for a photo
+    portion, read off the entry's item_resolutions row), so a photo entry
+    never renders like any other. This is what the flag is FOR now that it
+    gates nothing: an estimate stays identifiable after it has committed.
+    """
     from routes.diary import DiaryEntry, get_diary, local_date
 
     assert DiaryEntry.model_fields["estimated"].default == "none"
@@ -708,8 +682,6 @@ def test_diary_marks_confirmed_photo_portions_estimated():
         async with isolated_db() as conn:
             p = await plate(conn)
             eggs, rice, sauce, coffee = p.items
-            await confirm(p.log_id, 0)
-            await confirm(p.log_id, 1)
             totals = await commit_route(p.log_id, CommitRequest(items=[eggs, rice, sauce, coffee]))
             assert totals.errors == []
             diary = await get_diary(date=await local_date(CAPTURED))
@@ -732,9 +704,9 @@ def test_diary_marks_confirmed_photo_portions_estimated():
 
 def test_resolution_responses_carry_the_stored_estimate_flag(monkeypatch):
     """Fix-pass finding: KEEP_LOG_KEYS_SQL kept estimated='portion' on the row
-    while the in-memory StagedItem the write path returned said 'none' — the
-    sheet merged it, rendered no confirm chip, and commit answered 409 with
-    nothing to tap. The kick, the answer (alternates chip), /api/foods/select
+    while the in-memory StagedItem the write path returned said 'none' — so
+    the sheet merged it and rendered the row unflagged. The kick, the answer
+    (alternates chip), /api/foods/select
     (resolve_item_from_food/source) and /api/resolve now return the row as
     stored."""
     from models import ResolveRequest, Tier3KickRequest
@@ -754,7 +726,6 @@ def test_resolution_responses_carry_the_stored_estimate_flag(monkeypatch):
                 row = await item_row(p.log_id, 2)
                 assert item.estimated == row["staged"]["estimated"] == "portion"
                 assert item.estimate_note == row["staged"]["estimate_note"] == sauce.estimate_note
-                assert item.estimate_confirmed is None and "estimate_confirmed" not in row["staged"]
 
             # a search pick / alternates chip on a cached food
             picked = await tier3.resolve_item_from_food(str(p.log_id), 2, p.rice)
@@ -996,16 +967,14 @@ def test_match_row_names_a_row_by_food_or_phrase_and_says_so_when_it_cannot():
 def test_adjust_photo_amount_lands_on_the_row_and_keeps_what_the_photo_saw():
     """The core of the feature. A corrected count re-maps onto the food's own
     serving with macros from the cache, the vision record and the diary-date
-    shift survive the rewrite (KEEP_LOG_KEYS_SQL, BACKLOG 57), the row is
-    flagged an estimate again and its confirmation is gone — a new amount
-    needs a new confirm (§3.4b rule 4)."""
+    shift survive the rewrite (KEEP_LOG_KEYS_SQL, BACKLOG 57), and the row
+    is flagged an estimate again."""
 
     async def run():
         async with isolated_db() as conn:
             p = await plate(conn)
             eggs = p.items[0]
             assert eggs.qty == 2 and eggs.estimated == "portion"
-            await confirm(p.log_id, 0)  # the user had already confirmed the photo's 2
             # a §7.2 shift on the row: the key KEEP_LOG_KEYS_SQL exists to save.
             # spoken_qty rides the same extra-key channel but KEEP does NOT
             # carry it, so a full payload rewrite has to re-apply it by hand.
@@ -1030,7 +999,6 @@ def test_adjust_photo_amount_lands_on_the_row_and_keeps_what_the_photo_saw():
             assert "there were three" in staged["estimate_note"]
             assert staged["vision"]["note"] == "two fried eggs"  # the record stands
             assert staged["logged_at"] == "2026-09-07T12:00:00+00:00"  # BACKLOG 57
-            assert "estimate_confirmed" not in staged  # must be confirmed again
             assert row["was_edited"] is True
             # a resolved row keeps the photo's own spoken estimate: it is what
             # a later search pick sizes the swapped-in food by (§3.4b rule 4)
@@ -1149,11 +1117,9 @@ def test_adjust_photo_does_not_promote_an_unresolved_row_to_a_portion():
             # and the corrected amount is on the channel the pick will read
             assert staged["spoken_qty"] == 90 and staged["spoken_unit"] == "g"
 
-            # it still cannot be confirmed — the gate that actually guards
-            # commit is the missing macros, and it is untouched by any of this
-            with pytest.raises(HTTPException) as exc:
-                await confirm(p.log_id, 2)
-            assert exc.value.status_code == 409
+            # and it still cannot commit — the guard is the missing macros,
+            # untouched by any of this
+            assert staged.get("macros") is None
 
     asyncio.run(run())
 

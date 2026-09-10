@@ -9,16 +9,16 @@ flagged estimates" — walked through the wired routes with vision MOCKED
      white rice ~200 g, broccoli ~80 g" → 3 rows; chicken and rice (and
      broccoli) resolve to DATABASE foods with cache macros scaled to the
      photo's portion, flagged estimated="portion". Wall time is printed.
-  2. Commit is refused (409 "confirm the estimated rows first") until every
-     estimated row is confirmed via /api/resolve/confirm-estimate; then it
-     commits with snapshot macros and writes ZERO aliases and ZERO portion
-     defaults (logs.input_mode='photo' → no learning).
+  2. Commit takes the flagged rows straight (2026-09-09: the commit is the
+     confirmation, no per-row tap) with snapshot macros, and writes ZERO
+     aliases and ZERO portion defaults (logs.input_mode='photo' → no
+     learning). The STORED flag is what the committed payload records.
   3. The §3.4b seam: a tier-3 not_found (run_tier3 stubbed) on a photo row
      comes back from the kick route as the numberless source='estimate' row,
-     which neither confirms nor commits.
+     which still cannot commit — it has no macros.
   4. Barcode → from-food (fdc.lookup_barcode stubbed) and search → from-food
      each stage ONE resolved row and commit with no learning.
-  5. main.app carries the four routes, barcode ahead of /api/foods/{id}.
+  5. main.app carries the routes, barcode ahead of /api/foods/{id}.
 
 Run:  uv run --project backend --with pytest pytest backend/tests/test_e2e_m4.py -q -s
 """
@@ -110,7 +110,6 @@ from resolver.norm import norm  # noqa: E402
 from routes import photo, quick  # noqa: E402
 from routes import resolve as resolve_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
-from routes.photo import ConfirmEstimateRequest, confirm_estimate  # noqa: E402
 from sources import fdc  # noqa: E402
 
 TZ = "America/Los_Angeles"
@@ -265,16 +264,12 @@ async def food_serving(food_id, serving_id):
     return cascade._serving_by_id(row["servings"], serving_id)
 
 
-async def confirm(log_id, idx):
-    return await confirm_estimate(ConfirmEstimateRequest(log_id=log_id, item_index=idx))
-
-
 # ---------------------------------------------------------------------------
-# 1 + 2. the plate: stages flagged, commit gated, learns nothing
+# 1 + 2. the plate: stages flagged, commits on the first press, learns nothing
 # ---------------------------------------------------------------------------
 
 
-def test_photographed_plate_stages_flagged_then_commits_after_confirm_and_learns_nothing():
+def test_photographed_plate_stages_flagged_then_commits_and_learns_nothing():
     async def run():
         async with isolated_db() as conn:
             chicken = await insert_food(conn, "grilled chicken breast", CHICKEN)
@@ -303,7 +298,7 @@ def test_photographed_plate_stages_flagged_then_commits_after_confirm_and_learns
             for item, (phrase, grams, note) in zip(resp.items, PLATE):
                 assert item.status == "resolved" and item.food is not None, item
                 assert item.tier in (1, 2)  # a database hit, never tier 3 / estimate
-                assert item.estimated == "portion" and item.estimate_confirmed is None
+                assert item.estimated == "portion"
                 assert item.estimate_note == f"Photo: {note} (~{grams} g)"
                 # the photo's grams on the food's own gram serving; macros = cache × qty
                 serving = await food_serving(item.food.id, item.serving.id)
@@ -324,23 +319,8 @@ def test_photographed_plate_stages_flagged_then_commits_after_confirm_and_learns
             assert rice_row.food.id == rice and rice_row.macros.kcal == 260
             assert resp.items[2].macros.kcal == 28
 
-            # --- 2. commit refused until every estimated row is confirmed
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(log_id, CommitRequest(items=resp.items))
-            assert ei.value.status_code == 409
-            assert ei.value.detail == "confirm the estimated rows first: [0, 1, 2]"
-            assert await db.fetchall("SELECT 1 FROM entries WHERE log_id = %s", (log_id,)) == []
-            forged = [i.model_copy(update={"estimate_confirmed": True}) for i in resp.items]
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(log_id, CommitRequest(items=forged))
-            assert ei.value.detail == "confirm the estimated rows first: [0, 1, 2]"
-            await confirm(log_id, 0)
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(log_id, CommitRequest(items=resp.items))
-            assert ei.value.detail == "confirm the estimated rows first: [1, 2]"
-            await confirm(log_id, 1)
-            await confirm(log_id, 2)
-
+            # --- 2. the flagged rows commit on the first press
+            assert all(i.estimated == "portion" for i in resp.items)
             totals = await commit_route(log_id, CommitRequest(items=resp.items))
             assert totals.errors == []
             entries = await db.fetchall(
@@ -367,7 +347,7 @@ def test_photographed_plate_stages_flagged_then_commits_after_confirm_and_learns
             )
             assert [r["alias_id"] for r in rows] == [None] * 3
             assert all(r["committed_at"] is not None for r in rows)
-            assert all(r["staged"]["estimate_confirmed"] is True for r in rows)
+            assert all(r["staged"]["estimated"] == "portion" for r in rows)
             assert (await db.fetchone("SELECT status FROM logs WHERE id = %s", (log_id,)))[
                 "status"
             ] == "committed"
@@ -413,13 +393,10 @@ def test_tier3_not_found_on_a_photo_row_becomes_a_numberless_estimate_row(monkey
                 (log_id,),
             )
             assert row["status"] == "resolved" and row["staged"]["estimated"] == "unresolved"
-            # neither confirms nor commits — search is its way out
-            with pytest.raises(HTTPException) as ei:
-                await confirm(log_id, 0)
-            assert ei.value.status_code == 409 and "pick a database food" in ei.value.detail
-            with pytest.raises(HTTPException) as ei:
-                await commit_route(log_id, CommitRequest(items=[item]))
-            assert ei.value.detail == "confirm the estimated rows first: [0]"
+            # still cannot commit — it has no macros, so the core-macros
+            # guard refuses the row and search is its way out
+            totals = await commit_route(log_id, CommitRequest(items=[item]))
+            assert [e.item_index for e in totals.errors] == [0]
             assert await db.fetchall("SELECT 1 FROM entries WHERE log_id = %s", (log_id,)) == []
 
     asyncio.run(run())
@@ -509,9 +486,9 @@ def test_main_app_carries_the_m4_routes_in_a_safe_order(monkeypatch):
     import auth
 
     paths = main.app.openapi()["paths"]
-    for p in ("/api/logs/photo", "/api/resolve/confirm-estimate",
-              "/api/foods/barcode", "/api/logs/from-food"):
+    for p in ("/api/logs/photo", "/api/foods/barcode", "/api/logs/from-food"):
         assert p in paths, p
+    assert "/api/resolve/confirm-estimate" not in paths  # gone 2026-09-09
     # Through the assembled app (auth overridden, lifespan's tracing stubbed):
     # every request below fails validation BEFORE any DB or model spend, and
     # the 422 shapes prove which route answered — quick's barcode route
@@ -524,8 +501,6 @@ def test_main_app_carries_the_m4_routes_in_a_safe_order(monkeypatch):
             r = client.get("/api/foods/barcode", params={"code": "no digits"})
             assert r.status_code == 422 and r.json()["detail"] == "barcode has no digits"
             r = client.post("/api/logs/photo", data={"id": str(uuid4())})  # no image part
-            assert r.status_code == 422
-            r = client.post("/api/resolve/confirm-estimate", json={"log_id": "x"})
             assert r.status_code == 422
             r = client.post("/api/logs/from-food", json={"id": str(uuid4())})
             assert r.status_code == 422

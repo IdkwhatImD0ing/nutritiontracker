@@ -19,12 +19,7 @@ import {
 } from "@/lib/api";
 import FoodEditSheet from "./FoodEditSheet";
 import ManualSearchSheet from "./ManualSearchSheet";
-import {
-  confirmEstimate,
-  isEstimateRefusal,
-  readEstimate,
-  withEstimate,
-} from "./PhotoApi";
+import { readEstimate } from "./PhotoApi";
 import PortionSheet, { type PortionChoice } from "./PortionSheet";
 import StagedRow, { type PickOption } from "./StagedRow";
 import "@/app/photo.css";
@@ -70,6 +65,11 @@ type Props = {
   /** `pending` = rows still searching at commit time (§3.5 late stragglers) */
   onCommitted: (totals: DayTotals, pending: StagedItem[]) => void;
   onClose: (snapshot: StagingSnapshot) => void;
+  /** Rendered as the upper pane of <SplitSheet> rather than as a sheet of its
+   *  own: no backdrop and no rounded shell, so the chat stays visible and
+   *  usable underneath (Bill, 2026-09-09). × still closes the staged list —
+   *  in the split that collapses the pane and leaves the conversation up. */
+  docked?: boolean;
 };
 
 export default function StagingSheet({
@@ -78,6 +78,7 @@ export default function StagingSheet({
   onRendered,
   onCommitted,
   onClose,
+  docked = false,
 }: Props) {
   const [items, setItems] = useState<StagedItem[]>(restore?.items ?? log.items);
   const [meal, setMeal] = useState<Meal>(restore?.meal ?? log.meal);
@@ -358,30 +359,6 @@ export default function StagingSheet({
     }
   };
 
-  // §3.4a photo lane: the explicit confirm on an estimated row. Only the
-  // flag comes back onto the local row — a portion the user already fixed in
-  // the portion sheet must survive (C3: editing never confirms, confirming
-  // never reverts the edit; commit re-derives macros from the foods cache).
-  const confirm = async (item: StagedItem) => {
-    setRowBusy(item.item_index, true);
-    setError(null);
-    try {
-      const updated = await confirmEstimate(log.log_id, item.item_index);
-      const confirmed = readEstimate(updated).confirmed;
-      setItems((prev) =>
-        prev.map((i) =>
-          i.item_index === item.item_index
-            ? withEstimate(i, { estimate_confirmed: confirmed })
-            : i,
-        ),
-      );
-    } catch {
-      setError("Couldn't confirm that estimate.");
-    } finally {
-      setRowBusy(item.item_index, false);
-    }
-  };
-
   const pickMeal = (m: Meal) => {
     // Log-level chip propagates to ALL rows — searching ones included — and
     // survives kick/poll refreshes via the override merge (§7.1, BACKLOG 8).
@@ -537,25 +514,18 @@ export default function StagingSheet({
 
   const visible = items.filter((i) => !removed.has(i.item_index));
   const totalKcal = visible.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
-  // §3.4a: nothing estimated commits unconfirmed — the button says why, and
-  // the commit transaction refuses the same way (C4) if it ever gets there.
-  // Only RESOLVED rows count, the same rows the server gate checks: a photo
-  // row still in tier 3 carries the flag too, but it commits as a §3.5
-  // straggler (never blocking the rest, §7.1) and gets its confirm in the
-  // pending pill once it lands.
-  const unconfirmedRows = visible.filter((i) => {
-    const e = readEstimate(i);
-    return i.status === "resolved" && e.estimated !== "none" && !e.confirmed;
-  });
-  const unconfirmed = unconfirmedRows.length;
-  // A numberless estimate row (no database match) cannot be confirmed — it
-  // needs a food picked through Search, or removing.
-  const confirmFirst =
-    unconfirmed === 0
+  // 2026-09-09: an estimated row no longer blocks the button — the commit is
+  // the confirmation. What still cannot commit is a NUMBERLESS estimate row
+  // (no database match, so no macros): the server's core-macros guard refuses
+  // that one item and lets the rest through, so this is a heads-up rather
+  // than a gate — the row itself already offers "search instead".
+  const numberless = visible.filter(
+    (i) => i.status === "resolved" && readEstimate(i).estimated !== "none" && i.macros == null,
+  ).length;
+  const searchFirst =
+    numberless === 0
       ? null
-      : unconfirmedRows.some((i) => i.macros == null)
-        ? "Pick a food for the unmatched row with Search, or remove it."
-        : `Confirm the ${unconfirmed === 1 ? "estimated row" : `${unconfirmed} estimated rows`} first.`;
+      : `Pick a food with Search for the unmatched ${numberless === 1 ? "row" : `${numberless} rows`}, or it won't be counted.`;
 
   const commit = async () => {
     setCommitting(true);
@@ -583,12 +553,8 @@ export default function StagingSheet({
               : i,
           ),
       );
-    } catch (e) {
-      setError(
-        isEstimateRefusal(e)
-          ? "Confirm the estimated rows first."
-          : "Commit failed — nothing was saved. Try again.",
-      );
+    } catch {
+      setError("Commit failed — nothing was saved. Try again.");
       setCommitting(false);
     }
   };
@@ -604,45 +570,63 @@ export default function StagingSheet({
   const editItem =
     editFor != null ? items.find((i) => i.item_index === editFor) : undefined;
 
+  // The staged batch's own controls. They sit in the sheet header standalone
+  // and on the tray's lip when docked — one definition, so the two placements
+  // cannot drift.
+  const mealChip = (
+    <button
+      type="button"
+      className="meal-chip"
+      aria-expanded={mealPickerOpen}
+      onClick={() => setMealPickerOpen((o) => !o)}
+    >
+      {meal}
+    </button>
+  );
+  const discardBtn = (
+    <button
+      type="button"
+      className="sheet-close"
+      aria-label="Discard these staged items"
+      onClick={close}
+    >
+      ✕
+    </button>
+  );
+  const mealPicker = mealPickerOpen ? (
+    <div className="meal-picker">
+      {MEALS.map((m) => (
+        <button
+          key={m}
+          type="button"
+          className={m === meal ? "active" : undefined}
+          onClick={() => pickMeal(m)}
+        >
+          {m}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   return (
     <>
-      <div className="sheet-backdrop" onClick={close} />
-      <div className="sheet" role="dialog" aria-label="Staged items">
-        <div className="sheet-head">
-          <div className="grabber" />
-          <div className="sheet-head-row">
-            <span className="sheet-title">Staged</span>
-            <button
-              type="button"
-              className="meal-chip"
-              onClick={() => setMealPickerOpen((o) => !o)}
-            >
-              {meal}
-            </button>
-            <button
-              type="button"
-              className="sheet-close"
-              aria-label="Close"
-              onClick={close}
-            >
-              ✕
-            </button>
-          </div>
-          {mealPickerOpen ? (
-            <div className="meal-picker">
-              {MEALS.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className={m === meal ? "active" : undefined}
-                  onClick={() => pickMeal(m)}
-                >
-                  {m}
-                </button>
-              ))}
+      {docked ? null : <div className="sheet-backdrop" onClick={close} />}
+      <div
+        className={docked ? "split-pane stage-pane" : "sheet"}
+        role="dialog"
+        aria-label="Staged items"
+      >
+        {docked ? null : (
+          <div className="sheet-head">
+            <div className="grabber" />
+            <div className="sheet-head-row">
+              <span className="sheet-title">Staged</span>
+              {mealChip}
+              {discardBtn}
             </div>
-          ) : null}
-        </div>
+            {mealPicker}
+          </div>
+        )}
 
         <div className="sheet-body">
           {visible.map((item) => (
@@ -662,7 +646,6 @@ export default function StagingSheet({
               onManualSearch={() => setManualFor(item.item_index)}
               onMeal={(m) => pickItemMeal(item.item_index, m)}
               onEditFood={() => setEditFor(item.item_index)}
-              onConfirmEstimate={() => confirm(item)}
             />
           ))}
           {visible.length === 0 ? (
@@ -693,21 +676,26 @@ export default function StagingSheet({
 
         <div className="sheet-foot">
           {error ? <p className="sheet-error">{error}</p> : null}
-          {confirmFirst && !error ? (
-            <p className="sheet-reason">{confirmFirst}</p>
+          {searchFirst && !error ? (
+            <p className="sheet-reason">{searchFirst}</p>
           ) : null}
-          <button
-            type="button"
-            className="commit-btn"
-            disabled={committing || visible.length === 0 || unconfirmed > 0}
-            onClick={commit}
-          >
-            {committing ? (
-              "Committing…"
-            ) : (
-              <span className="num">Commit · {fmt.format(totalKcal)} kcal</span>
-            )}
-          </button>
+          {docked ? mealPicker : null}
+          <div className={docked ? "stage-lip" : undefined}>
+            {docked ? discardBtn : null}
+            {docked ? mealChip : null}
+            <button
+              type="button"
+              className={docked ? "commit-pill" : "commit-btn"}
+              disabled={committing || visible.length === 0}
+              onClick={commit}
+            >
+              {committing ? (
+                "Committing…"
+              ) : (
+                <span className="num">Commit · {fmt.format(totalKcal)} kcal</span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

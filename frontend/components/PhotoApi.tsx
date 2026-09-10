@@ -1,13 +1,12 @@
 "use client";
 
 /**
- * M4 photo-lane seams (DESIGN.md §3.4b, §12 M4) — routes/photo.py's two
- * routes plus the §3.4b flag trio on the generated StagedItem. `multipart`
- * mirrors lib/api.ts's unexported copy (same Bearer scheme), like the other
- * *Api.tsx seams.
+ * M4 photo-lane seams (DESIGN.md §3.4b, §12 M4) — routes/photo.py's route
+ * plus the §3.4b flag pair on the generated StagedItem. `multipart` mirrors
+ * lib/api.ts's unexported copy (same Bearer scheme), like the other *Api.tsx
+ * seams.
  *
- *   POST /api/logs/photo               multipart {image, id, captured_at, meal_hint?} → LogCreateResponse
- *   POST /api/resolve/confirm-estimate {log_id, item_index} → StagedItem
+ *   POST /api/logs/photo   multipart {image, id, captured_at, meal_hint?} → LogCreateResponse
  */
 
 import {
@@ -18,10 +17,10 @@ import {
   type StagedItem,
 } from "@/lib/api";
 import { getToken } from "@/lib/auth/token";
-import { apiFetch } from "./LibraryApi";
 
 // ---------------------------------------------------------------------------
-// the §3.4b flag: estimated rows render flagged and commit only once confirmed
+// the §3.4b flag: estimated rows render flagged — a label, not a gate
+// (2026-09-09: the commit is the confirmation)
 // ---------------------------------------------------------------------------
 
 /** models.py StagedItem.estimated, as generated. */
@@ -30,17 +29,15 @@ export type Estimated = StagedItem["estimated"];
 /** models.py StagedItem (M4): `estimated` says what vision guessed —
  *  "portion" on a database-resolved food whose amount came from the photo,
  *  "unresolved" on a photo item with no database match: it carries NO
- *  numbers, cannot be confirmed or committed, and routes the user to Search.
- *  `estimate_note` is user-facing (what vision saw / why it is a guess);
- *  `estimate_confirmed` is set only by confirmEstimate(). */
+ *  numbers, cannot commit, and routes the user to Search.
+ *  `estimate_note` is user-facing (what vision saw / why it is a guess). */
 export type EstimateFields = Partial<
-  Pick<StagedItem, "estimated" | "estimate_note" | "estimate_confirmed">
+  Pick<StagedItem, "estimated" | "estimate_note">
 >;
 
 export type EstimateState = {
   estimated: Estimated;
   note: string | null;
-  confirmed: boolean;
 };
 
 /** Read the trio off any staged row defensively — a pre-M4 payload restored
@@ -54,22 +51,13 @@ export function readEstimate(item: StagedItem): EstimateState {
       typeof item.estimate_note === "string" && item.estimate_note.trim()
         ? item.estimate_note
         : null,
-    confirmed: item.estimate_confirmed === true,
   };
 }
 
 /** Stamp estimate fields onto a local row without touching anything else —
- *  the confirm response must not clobber local portion/meal edits (C3:
- *  editing the portion does not confirm; confirming does not undo the edit). */
+ *  a re-resolution must not clobber local portion/meal edits. */
 export function withEstimate(item: StagedItem, fields: EstimateFields): StagedItem {
   return { ...item, ...fields };
-}
-
-/** C4: the commit transaction refuses with 409 "confirm the estimated rows
- *  first" while any estimated row is unconfirmed — belt and braces over the
- *  disabled Commit button. ApiError keeps the first 200 bytes of the body. */
-export function isEstimateRefusal(e: unknown): boolean {
-  return e instanceof ApiError && e.status === 409 && /estimat/i.test(e.message);
 }
 
 /** What went wrong sending a plate, in the user's words. The upload's own
@@ -145,14 +133,3 @@ export async function createLogPhoto(args: {
   return (await res.json()) as LogCreateResponse;
 }
 
-/** C3: POST /api/resolve/confirm-estimate — the explicit confirm on an
- *  estimated row; returns the row with estimate_confirmed=true. */
-export function confirmEstimate(
-  logId: string,
-  itemIndex: number,
-): Promise<StagedItem> {
-  return apiFetch("/api/resolve/confirm-estimate", {
-    method: "POST",
-    body: JSON.stringify({ log_id: logId, item_index: itemIndex }),
-  });
-}
