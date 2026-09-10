@@ -483,17 +483,37 @@ _QUERY_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _brand_overlap(query_tokens: set[str], hit: dict) -> int:
-    """§3.4 rule 2: query tokens found in the hit's brand fields.
+    """§3.4 rule 2: query tokens matching the LEADING word of a brand field.
 
     brandOwner is the corporate name ("Quest Nutrition, LLC"); brandName the
     consumer-facing one ("fairlife" under brandOwner "Coca-Cola") — both count,
     or either a "quest bar" or a "fairlife" query would miss its own brand.
+
+    Only each field's first word counts, because that word is the brand and
+    what trails it is category or corporate filler — "Bar", "Nutrition",
+    "Foods", "Company", "LLC". Scoring every brand word instead let the rank
+    turn on words that name a product rather than a maker, and §3.4 rule 4
+    tells the agent to add exactly those: "protein bar" refines to "Quest
+    protein bar chocolate chip cookie dough", where (live, 2026-09-09) "The
+    Truth Bar LLC" and "Perfect Bar, LLC" both scored on the word "bar" while
+    Quest scored once on its own name — so refining the query pushed the brand
+    the user actually named down to third. On leading words Quest ranks first,
+    and 14 live queries naming their brand (fairlife, Oikos, Kirkland, Clif,
+    Coca-Cola, Chobani, Hershey, Premier, Great Value, Ben & Jerry's, Trader
+    Joe's, Starbucks, Nature Valley, Celsius) each still rank it first.
+
+    A leading article is stepped over: FDC stores "The Hershey Company", and a
+    live KISSES record pairs it with brandName "KISSES", so "hershey kisses"
+    would otherwise match the leading word of neither field.
     """
-    brand_tokens: set[str] = set()
+    lead_tokens: set[str] = set()
     for field in (hit.get("brand_owner"), hit.get("brand_name")):
-        if field:
-            brand_tokens.update(_QUERY_TOKEN_RE.findall(str(field).lower()))
-    return len(query_tokens & brand_tokens)
+        tokens = _QUERY_TOKEN_RE.findall(str(field).lower()) if field else []
+        if tokens:
+            lead_tokens.add(tokens[0])
+            if tokens[0] == "the" and len(tokens) > 1:
+                lead_tokens.add(tokens[1])
+    return len(query_tokens & lead_tokens)
 
 
 async def search_branded(query: str) -> list[dict]:
@@ -592,10 +612,21 @@ async def get_food(source: str, source_id: str) -> dict | None:
         brand = (payload.get("brandName") or payload.get("brandOwner") or "").strip() or None
         servings, default_id = _branded_servings(payload, per_100)
         food_type = "branded"
+        # A packaged product has exactly one state — as sold — so §3.4a's
+        # cooked/raw question has nothing to ask about, and sources/off.py
+        # hardcodes these same two values for the same reason. Run over a
+        # branded description the term lists misfire on the food inside the
+        # box: "FROZEN ENTREE SALISBURY STEAK" came back state_sensitive with
+        # no state (verified live 2026-09-09), which is exactly the shape that
+        # asks the question — and the toggle then fires one search_generic for
+        # a counterpart the boxed meal has none of, swapping the entree for
+        # plain cooked beef.
+        state, state_sensitive = None, False
     else:
         brand = None
         servings, default_id = _generic_servings(payload, per_100)
         food_type = "generic"
+        state, state_sensitive = _parse_state(name), _state_sensitive(name)
 
     return {
         "source": "fdc",
@@ -604,8 +635,8 @@ async def get_food(source: str, source_id: str) -> dict | None:
         "display_name": _display_name(name, data_type),
         "brand": brand,
         "food_type": food_type,
-        "state": _parse_state(name),
-        "state_sensitive": _state_sensitive(name),
+        "state": state,
+        "state_sensitive": state_sensitive,
         "servings": servings,
         "default_serving_id": default_id,
         "per_100g": per_100 or None,

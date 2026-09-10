@@ -903,7 +903,9 @@ def test_partial_macro_is_surfaced_not_silently_truncated():
         async with isolated_db() as conn:
             tag = uuid4().hex[:6]
             fx = await broken_macro(conn, tag, keep=1)
-            expected = cascade.MEAL_BROKEN_GUARD.format(name=fx.name, missing=1, total=2)
+            expected = cascade.MEAL_BROKEN_GUARD.format(
+                name=fx.name, missing=1, total=2, which=cascade.MEAL_MISSING_FOOD
+            )
 
             # single-row path (/api/resolve): the one surviving item must NOT
             # take the len(rows) == 1 shortcut and log half the meal
@@ -934,7 +936,10 @@ def test_macro_with_no_expandable_foods_is_not_denied():
         async with isolated_db() as conn:
             tag = uuid4().hex[:6]
             fx = await broken_macro(conn, tag, keep=0)
-            expected = cascade.MEAL_BROKEN_GUARD.format(name=fx.name, missing=2, total=2)
+            expected = cascade.MEAL_BROKEN_GUARD.format(
+                name=fx.name, missing=2, total=2,
+                which=", ".join([cascade.MEAL_MISSING_FOOD] * 2),
+            )
             live = await db.fetchone(
                 "SELECT is_active FROM meal_macros WHERE id = %s", (fx.macro_id,)
             )

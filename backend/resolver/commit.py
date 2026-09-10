@@ -23,6 +23,7 @@ entries.logged_at — metrics keep reading captured_at untouched.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from datetime import datetime
 from uuid import UUID
@@ -315,7 +316,8 @@ async def commit_log(
         if cur.rowcount == 0:
             if log["status"] == "committed":
                 return {
-                    "log": log, "replayed": True, "scores": [], "errors": [],
+                    "log": log, "replayed": True, "scores": [],
+                    "errors": await _stored_refusals(conn, log_id),
                     "logged_at": logged_at,
                 }
             raise LogNotCommittable(f"log is {log['status']}")
@@ -388,9 +390,15 @@ async def commit_log(
         log = dict(log, status="committed", edited_items=edited_count)
 
     _post_scores(log, scores)
+    # Which diary days this commit actually wrote to. One log is usually one
+    # day, but not always: the agent lane can call log_food and log_estimate in
+    # a single turn and each shifts its own rows, so the entries land on two.
+    # A caller told only `logged_at` would compute one day's totals and paint
+    # them over a tracker that is now wrong about both.
+    days = sorted({o["logged_at"].date() for o in scores if o.get("logged_at")})
     return {
         "log": log, "replayed": False, "scores": scores, "errors": errors, "meal": meal,
-        "logged_at": logged_at,
+        "logged_at": logged_at, "logged_at_days": days,
     }
 
 
@@ -429,6 +437,20 @@ async def commit_item(log_id: UUID, item: StagedItem) -> dict:
         try:
             outcome = await _commit_one(conn, log, item, res, logged_at)
             scores.append(outcome)
+            try:
+                await _extend_saved_meal(conn, log_id, res, outcome)
+            except MealInvalid:
+                # Saved-meal bookkeeping is a side effect of the entry, never a
+                # condition of it. validate_meal_items re-checks the WHOLE
+                # stored list, so a food deleted out of the macro since it was
+                # saved raises here — and an uncaught raise inside this tx
+                # would roll back the diary row that just committed, losing the
+                # very item the late path exists to save. The meal keeps what
+                # it had; the entry stands. (MealInvalid only: a psycopg error
+                # has already aborted the transaction and must propagate.)
+                logging.getLogger(__name__).warning(
+                    "late item %s committed; saved meal left unchanged", item.item_index
+                )
         except ItemRefused as e:
             # mark the row inside the tx so the verify-me state persists,
             # then surface the per-item error (route maps to 409)
@@ -444,6 +466,59 @@ async def commit_item(log_id: UUID, item: StagedItem) -> dict:
     }
 
 
+async def _extend_saved_meal(conn, log_id: UUID, res: dict | None, outcome: dict) -> None:
+    """§3.5: the late path finishes what step 4 started.
+
+    Step 4 builds the macro from the rows that had resolved by commit time, so
+    "save this as my usual lunch" said while tier 3 is still searching stores a
+    lunch missing whatever it was searching for — and because save_meal_macro
+    REPLACES the item list, re-saving over a complete meal shrinks it. An item
+    that lands afterwards has to join the meal too, or the saved meal is
+    permanently whatever happened to be fast enough.
+
+    Silent when the log carried no save intent, or when the macro it named is
+    gone (deleted or renamed in Library between the two calls) — a late item is
+    not a reason to resurrect a meal the user removed."""
+    # The stamp is on every non-removed row of the log (logs.py
+    # _stamp_save_intent), so the row this call already holds answers it — no
+    # read at all on the ordinary late item, which is almost all of them. Only
+    # an ADDED row (res is None) has to go looking.
+    intent = _staged_save_intent({0: res} if res is not None else {})
+    if intent is None and res is None:
+        rows = await (
+            await conn.execute(
+                "SELECT item_index, staged FROM item_resolutions "
+                "WHERE log_id = %s AND staged ? 'save_intent' LIMIT 1",
+                (log_id,),
+            )
+        ).fetchall()
+        intent = _staged_save_intent({r["item_index"]: r for r in rows})
+    if intent is None:
+        return
+    existing = await (
+        await conn.execute(
+            "SELECT id, items FROM meal_macros WHERE is_active AND lower(name) = lower(%s) "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (intent["name"].strip(),),
+        )
+    ).fetchone()
+    if existing is None:
+        return
+    item = {k: outcome[k] for k in ("food_id", "serving_id", "qty")}
+    items = list(existing["items"] or ())
+    if any(
+        str(i.get("food_id")) == str(item["food_id"])
+        and i.get("serving_id") == item["serving_id"]
+        for i in items
+        if isinstance(i, dict)
+    ):
+        return  # already in the meal — a re-run must not duplicate the row
+    await conn.execute(
+        "UPDATE meal_macros SET items = %s, updated_at = now() WHERE id = %s",
+        (Json(await validate_meal_items(conn, items + [item])), existing["id"]),
+    )
+
+
 async def _log_logged_at(conn, log: dict) -> datetime:
     """§7.2: the diary time for this log's entries — the when-hint's shifted
     `logged_at` carried on any of the log's item rows (routes/logs.py
@@ -452,7 +527,12 @@ async def _log_logged_at(conn, log: dict) -> datetime:
     row = await (
         await conn.execute(
             "SELECT staged->>'logged_at' AS logged_at FROM item_resolutions "
-            "WHERE log_id = %s AND staged ? 'logged_at' LIMIT 1",
+            "WHERE log_id = %s AND staged ? 'logged_at' "
+            # ORDER BY, because an unordered LIMIT 1 is a coin flip when the
+            # rows disagree — the agent lane can stamp two (log_food and
+            # log_estimate each run their own when-shift in one turn), and the
+            # first row is at least a stable, explainable choice
+            "ORDER BY item_index LIMIT 1",
             (log["id"],),
         )
     ).fetchone()
@@ -462,6 +542,23 @@ async def _log_logged_at(conn, log: dict) -> datetime:
         except ValueError:
             pass
     return log["captured_at"]
+
+
+def _row_logged_at(res: dict | None, fallback: datetime) -> datetime:
+    """The diary time for ONE entry: its own row's shifted `logged_at` when it
+    has one, else the log's.
+
+    A log is not always one moment. The agent lane can call log_food and
+    log_estimate in a single turn, each shifting its own items, so stamping
+    every entry with one row's value silently moved food onto another day."""
+    staged = res["staged"] if res is not None and isinstance(res.get("staged"), dict) else None
+    stamped = staged.get("logged_at") if staged else None
+    if stamped:
+        try:
+            return datetime.fromisoformat(stamped)
+        except ValueError:
+            pass
+    return fallback
 
 
 async def _commit_one(
@@ -585,7 +682,7 @@ async def _commit_one(
         ON CONFLICT (log_id, item_index) DO NOTHING
         """,
         (
-            logged_at,
+            _row_logged_at(res, logged_at),
             item.meal.value,
             item.food.id,
             serving_id,
@@ -656,7 +753,32 @@ async def _commit_one(
         "food_id": item.food.id,
         "serving_id": serving_id,
         "qty": qty,
+        # the day THIS entry landed on — rows of one log can disagree, so the
+        # caller has to know which days it actually touched, not just one
+        "logged_at": _row_logged_at(res, logged_at),
     }
+
+
+async def _stored_refusals(conn, log_id: UUID) -> list[dict]:
+    """The refusals a PREVIOUS commit of this log recorded, in the shape the
+    live path returns them.
+
+    A retried commit used to answer `errors: []` without reading a row, so a
+    lost response (a timeout, a backgrounded phone) took every refusal with it:
+    the client builds its retry set from this list alone, and a row nothing
+    forwards is a row nothing ever chases. `_refuse_item` parks the reason in
+    the staged jsonb, so the second answer can be the same as the first."""
+    rows = await (
+        await conn.execute(
+            "SELECT item_index, staged->>'commit_error' AS commit_error "
+            "FROM item_resolutions "
+            "WHERE log_id = %s AND committed_at IS NULL AND status = 'needs_input' "
+            "  AND staged ? 'commit_error' "
+            "ORDER BY item_index",
+            (log_id,),
+        )
+    ).fetchall()
+    return [{"item_index": r["item_index"], "error": r["commit_error"]} for r in rows]
 
 
 async def _refuse_item(conn, log: dict, item: StagedItem, res: dict | None, reason: str) -> None:

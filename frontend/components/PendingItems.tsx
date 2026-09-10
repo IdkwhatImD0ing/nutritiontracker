@@ -16,7 +16,8 @@ const STOP_MS = 90_000; // same ~90s ceiling as the staging poll (§5)
 
 type Props = {
   logId: string;
-  /** rows that were still `searching` when the log committed (§3.5) */
+  /** every row the commit did not land (§3.5): still `searching`, refused, or
+   *  never resolved at all */
   items: StagedItem[];
   onTotals: (t: DayTotals) => void;
   /** everything landed or was dismissed — parent can drop this component */
@@ -29,7 +30,9 @@ type Props = {
  *  without this a committed-then-resolved fairlife would silently leave a
  *  ~42g protein hole in the day. Rows the commit REFUSED (core-macros guard,
  *  §3.5 — they arrive here as needs_input) surface immediately as failed
- *  pills: the same silent-hole class, so never dropped without a signal. */
+ *  pills: the same silent-hole class, so never dropped without a signal. So do
+ *  rows that never resolved — an unanswered question chip, a not_found — which
+ *  the commit skips server-side without an errors entry of their own. */
 export default function PendingItems({ logId, items, onTotals, onDone }: Props) {
   // `resolved` rows arrive on a reopen (persisted stragglers whose commit-item
   // failed last session) — they retry on mount, not surface as failed.

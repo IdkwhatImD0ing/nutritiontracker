@@ -178,13 +178,24 @@ async def _kick_tier3(body: Tier3KickRequest) -> StagedItem:
 _EXACT_ALIAS_SQL = "SELECT 1 AS hit FROM aliases WHERE alias_norm = %s LIMIT 1"
 
 
+class _TooManyFoods(Exception):
+    """The micro-call parsed the typed text into more than one food. Carried as
+    an exception only so the reason survives the `except` that turns every
+    other failure into a silent None — the caller notes it on the row."""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(str(count))
+        self.count = count
+
+
 async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
     """§5 / BACKLOG 24: the single-item decompose micro-call, so tier 2b works
     for edited/added text exactly as it does at staging. Same context assembly,
     prompt, and cache key as logs.py's call — hence the same cached prefix
     (§6.1) — with the edited phrase as the whole utterance. Any failure (LLM
-    outage, empty parse) degrades to tiers 1/2a: /api/resolve keeps working
-    without the model. Returns (parsed item, inlined index ids) or None."""
+    outage, empty parse, text that is more than one food) degrades to tiers
+    1/2a: /api/resolve keeps working without the model. Returns (parsed item,
+    inlined index ids) or None."""
     try:
         from services.context import build_agent_context
         from services.decompose import decompose
@@ -193,11 +204,29 @@ async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
         parsed = await decompose(phrase, ctx)  # its span rides in this run's trace (§10)
         if not parsed.items:
             return None
+        if len(parsed.items) > 1:
+            # Typed text that decomposes into SEVERAL foods ("chicken and
+            # rice") has nowhere to put the others: /api/resolve answers with
+            # ONE StagedItem for ONE item_index, and only the client allocates
+            # indices. Taking items[0] dropped the rest with no signal — the
+            # rice left the row, which then simply read "chicken". So the whole
+            # phrase degrades to tiers 1/2a (else tier 3) exactly as an outage
+            # does: every word the user typed stays on the row, and nothing
+            # disappears unseen. Splitting it into real rows needs a wire
+            # contract that can answer with more than one item.
+            #
+            # It is not the same as an outage to whoever reads this later,
+            # though, so it says so: this decline is a deliberate refusal with a
+            # known cause and a known cost (the row goes to tier 3 for a phrase
+            # that is not one food), and an outage is neither.
+            raise _TooManyFoods(len(parsed.items))
         # every id the prompt offered for library_match: the index and the
         # recently logged foods (§6.1)
         return parsed.items[0], {
             index_id for index_id, _, _ in (*ctx.food_index, *ctx.recent_foods)
         }
+    except _TooManyFoods:
+        raise
     except Exception:
         return None
 
@@ -239,9 +268,16 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
     # the same tier-2b library matching as staging. Skipped when the phrase
     # already exact-matches an alias — tier 1 resolves that locally.
     micro = None
+    micro_note: str | None = None
     key = norm(body.phrase)
     if not key or await db.fetchone(_EXACT_ALIAS_SQL, (key,)) is None:
-        micro = await _micro_decompose(body.phrase)
+        try:
+            micro = await _micro_decompose(body.phrase)
+        except _TooManyFoods as e:
+            micro_note = (
+                f"read as {e.count} foods; kept on one row — "
+                "add the others as their own items"
+            )
 
     index_ids: set[str] | None = None
     phrase = body.phrase
@@ -283,6 +319,10 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
     staged_payload = searching.model_dump(mode="json", exclude_none=True)
     staged_payload["spoken_qty"] = spoken_qty
     staged_payload["spoken_unit"] = spoken_unit
+    if micro_note:
+        # same extra-key channel as when_hint_note (routes/logs.py _persist):
+        # a refusal the user cannot otherwise see, kept with the row
+        staged_payload["micro_decompose_note"] = micro_note
     # §3.5/§3.2: on an existing row, the ORIGINAL phrase/phrase_norm and the
     # original proposed_* are preserved — commit learns the alias for what was
     # actually spoken, and `explicit` compares the final food against what the
@@ -394,9 +434,70 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
 _STATE_WORDS = ("cooked", "raw", "dry")
 
 
-async def _find_counterpart(phrase: str, state: str) -> str | None:
+# How much of the row's food must survive in a hit for it to be the same food
+# wearing a different state. Below 1.0 on purpose: see _plausible_counterpart.
+_COUNTERPART_OVERLAP = 0.6
+
+
+def _identity_tokens_ordered(text: str) -> list[str]:
+    """The words that say WHICH food this is, in the order they were written:
+    norm()'s tokens (§3.0), minus the cooked/raw/dry ones — the words a
+    counterpart is *supposed* to differ in. fdc._parse_state does the dropping,
+    so the list cannot drift from the one that stamps foods.state. norm()
+    deliberately leaves plural/singular variance alone because tier 2a's
+    trigram absorbs it; there is no trigram on this path, so cascade's stemmer
+    stands in for it on both sides. Order is kept because the first of them is
+    the head noun, which carries more weight than the rest."""
+    return [
+        cascade._unit_stem(t)
+        for t in norm(text).split()
+        if fdc._parse_state(t) is None
+    ]
+
+
+def _identity_tokens(text: str) -> set[str]:
+    return set(_identity_tokens_ordered(text))
+
+
+def _plausible_counterpart(food_name: str, description: str) -> bool:
+    """Is this hit the same food as the one already on the row, differing only
+    in its state?
+
+    The toggle fires one search for "{phrase} {state}" and FDC's ranking is
+    quirky — §3.4 rule 4 records that "chicken breast cooked" surfaces breaded
+    tenders above plain roasted breast. Taking the first state-matching hit
+    therefore swapped the row onto a *different food*, and because the swap is
+    recorded as a deliberate disambiguation, commit stamped that food as an
+    explicit choice: the phrase's default for the next 90 days.
+
+    So a hit has to look like the same food — but "every identity word" is too
+    strict to be that test. FDC words one food several ways across its own
+    records ("broilers or fryers" beside "broiler or fryers", "skinless,
+    boneless" present on one and absent on the other), so demanding a full
+    subset fails on phrasing rather than on identity, and the toggle then does
+    nothing at all: the user taps "raw" and the row does not move. That is a
+    quieter failure than the wrong swap, not a better one.
+
+    Two things instead, both about identity rather than wording: the HEAD noun
+    — the first identity word, the thing the food actually is — must appear,
+    and most of the rest must too. "chicken, breaded tenders" keeps the head
+    but loses "breast", so it still fails; a differently-worded roasted breast
+    keeps both and passes.
+    """
+    wanted = list(_identity_tokens_ordered(food_name))
+    if not wanted:
+        return False
+    got = _identity_tokens(description)
+    if wanted[0] not in got:
+        return False
+    overlap = len(set(wanted) & got) / len(set(wanted))
+    return overlap >= _COUNTERPART_OVERLAP
+
+
+async def _find_counterpart(phrase: str, state: str, food_name: str) -> str | None:
     """§3.4a: ONE targeted search_generic for the counterpart entry. Returns
-    the first hit whose adapter-parsed state matches the answer, else None.
+    the first hit whose adapter-parsed state matches the answer AND which is
+    plausibly the same food as the row's current one, else None.
     Uses fdc._parse_state — the same parser that stamps foods.state at cache
     time, so the match criterion cannot drift from what gets cached."""
     try:
@@ -404,7 +505,10 @@ async def _find_counterpart(phrase: str, state: str) -> str | None:
     except Exception:
         return None  # search outage degrades to keeping the current food
     for h in hits:
-        if fdc._parse_state(h.get("description", "")) == state:
+        description = h.get("description", "")
+        if fdc._parse_state(description) == state and _plausible_counterpart(
+            food_name, description
+        ):
             return str(h["fdc_id"])
     return None
 
@@ -428,12 +532,20 @@ async def _answer_state_toggle(
     if staged.get("status") != "resolved" or not (staged.get("food") or {}).get("id"):
         return None
     food_row = await db.fetchone(
-        "SELECT state FROM foods WHERE id = %s", (staged["food"]["id"],)
+        "SELECT state, display_name FROM foods WHERE id = %s", (staged["food"]["id"],)
     )
     food_state = _col(food_row, 0, "state") if food_row is not None else None
+    # the row's own food is what a counterpart has to be a counterpart OF: the
+    # stored display_name ("chicken breast, roasted") is the name the adapters
+    # condense from the same catalog the search reads, so it is the comparable
+    # side of _plausible_counterpart. A food row deleted under us leaves no
+    # identity words, and no swap can be justified.
+    food_name = _col(food_row, 1, "display_name") if food_row is not None else None
 
     if food_state != state:
-        counterpart = await _find_counterpart(staged.get("phrase") or "", state)
+        counterpart = await _find_counterpart(
+            staged.get("phrase") or "", state, food_name or ""
+        )
         if counterpart is not None:
             item = await tier3.resolve_item_from_source(
                 str(log_id), item_index, "fdc", counterpart
@@ -510,12 +622,19 @@ async def _answer(body: AnswerRequest) -> StagedItem:
 
     if body.answer.source and body.answer.source_id:
         # Id-bearing option: one get_food + persist, no second agent run.
+        # The chip's label is NOT passed as display_name: it is the text of one
+        # answer ("Mixed berry"), not a name for a food every account reads back.
+        # persist_food's ON CONFLICT never rewrites display_name, so whatever
+        # lands on the insert is the row's name for life — the diary's, and the
+        # text the duplicate-detection trigram scores — and the next mention of
+        # that yogurt would fail to match it. The adapter's own name is right
+        # here; a caller with an authoritative label (the Library pick,
+        # routes/foods.select_food) still passes one.
         return await tier3.resolve_item_from_source(
             str(body.log_id),
             body.item_index,
             body.answer.source,
             body.answer.source_id,
-            display_name=body.answer.label,
         )
 
     text = (body.answer.text or body.answer.label or "").strip()

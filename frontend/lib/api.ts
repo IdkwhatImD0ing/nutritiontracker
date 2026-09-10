@@ -142,10 +142,17 @@ export function getLog(logId: string): Promise<LogResponse> {
   return request(`/api/logs/${logId}`);
 }
 
+/** A commit's day totals plus `totals_day` — the diary day they describe, or
+ *  null when the commit wrote to more than one day and no single set of totals
+ *  describes it. */
+export type CommitResult = Ok<
+  operations["commit_log_api_logs__log_id__commit_post"]
+>;
+
 export function commitLog(
   logId: string,
   items: StagedItem[],
-): Promise<Ok<operations["commit_log_api_logs__log_id__commit_post"]>> {
+): Promise<CommitResult> {
   return request(`/api/logs/${logId}/commit`, {
     method: "POST",
     body: JSON.stringify({ items }),

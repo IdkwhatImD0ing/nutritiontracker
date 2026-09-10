@@ -1039,6 +1039,8 @@ export interface components {
              */
             errors: components["schemas"]["CommitItemError"][];
             saved_meal?: components["schemas"]["SavedMealNote"] | null;
+            /** Totals Day */
+            totals_day?: string | null;
         };
         /** ConfirmEstimateRequest */
         ConfirmEstimateRequest: {
@@ -1483,6 +1485,8 @@ export interface components {
             meal: components["schemas"]["Meal"];
             /** Items */
             items: components["schemas"]["StagedItem"][];
+            /** Logged At */
+            logged_at?: string | null;
             saved_meal?: components["schemas"]["SavedMealNote"] | null;
             /** Note */
             note?: string | null;
@@ -1501,6 +1505,8 @@ export interface components {
             meal: components["schemas"]["Meal"];
             /** Items */
             items: components["schemas"]["StagedItemOut"][];
+            /** Logged At */
+            logged_at?: string | null;
         };
         /** LogResponse */
         LogResponse: {
@@ -1512,6 +1518,8 @@ export interface components {
             meal: components["schemas"]["Meal"];
             /** Items */
             items: components["schemas"]["StagedItem"][];
+            /** Logged At */
+            logged_at?: string | null;
         };
         /** MacroSums */
         MacroSums: {

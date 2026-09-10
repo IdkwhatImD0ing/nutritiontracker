@@ -42,6 +42,7 @@ from models import (
 from resolver.commit import (
     COMMITTABLE_FOOD_SQL,
     LEARNABLE_ROWS_SQL,
+    food_committable,
     with_loggable_servings,
 )
 from resolver.norm import norm
@@ -163,7 +164,32 @@ def _scale_macros(macros: dict, qty: float) -> dict:
     }
 
 
-_LEADING_PIECES_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s+([a-z]+)")
+# The leading amount accepts the fraction and mixed-number forms a label
+# actually prints ("1/2 cup", "1 1/2 cups"): FDC passes householdServingFullText
+# through verbatim (sources/fdc.py _branded_servings), so "1/2 cup (55 g)" is
+# the serving text, and a digits-then-space-only pattern matched none of it —
+# the divisor fell back to 1.0 and a spoken cup amount staged at half.
+_LEADING_PIECES_RE = re.compile(r"^\s*(\d+(?:\.\d+)?(?:\s+\d+/\d+)?|\d+/\d+)\s+([a-z]+)")
+
+
+def _amount(text: str) -> float:
+    """The leading amount as a number: "2" → 2.0, "1/2" → 0.5, "1 1/2" → 1.5.
+
+    0.0 for anything that will not divide — a "1/0" in provider text reaches
+    here verbatim (fdc.py passes householdServingFullText straight through), and
+    both callers already treat a non-positive amount as "no usable count" and
+    fall back to 1.0. Crashing the whole staging request over one malformed
+    label would be the one response neither of them can recover from."""
+    total = 0.0
+    for part in text.split():
+        if "/" in part:
+            num, _, den = part.partition("/")
+            if float(den) == 0:
+                return 0.0
+            total += float(num) / float(den)
+        else:
+            total += float(part)
+    return total
 
 
 def _pieces_per(description: str) -> float:
@@ -177,7 +203,7 @@ def _pieces_per(description: str) -> float:
     m = _LEADING_PIECES_RE.match((description or "").lower())
     if not m or m.group(2) in _MEASURE_WORDS:
         return 1.0
-    n = float(m.group(1))
+    n = _amount(m.group(1))
     return n if n > 0 else 1.0
 
 
@@ -188,8 +214,10 @@ def _units_per(description: str, stem: str) -> float:
     a serving, "1 cup" of "2 cups (85 g)" too); otherwise the serving's piece
     count ("two scoops" of "2 scoops (64 g)" → 2, "1 can" of "12 fl oz can" → 1)."""
     m = _LEADING_PIECES_RE.match((description or "").lower())
-    if m and _unit_stem(m.group(2)) == stem and float(m.group(1)) > 0:
-        return float(m.group(1))
+    if m and _unit_stem(m.group(2)) == stem:
+        amount = _amount(m.group(1))
+        if amount > 0:
+            return amount
     return _pieces_per(description)
 
 
@@ -199,6 +227,28 @@ def _is_count_serving(description: str) -> bool:
     main = re.sub(r"\(.*?\)", " ", description.lower())
     tokens = re.findall(r"[a-z]+", main)
     return any(t not in _MEASURE_WORDS for t in tokens)
+
+
+_LEADING_UNIT_RE = re.compile(r"^\s*(?:\d+(?:[./]\d+)?(?:\s+\d+/\d+)?\s+)?([a-z]+)")
+
+
+def _counts_pieces(description: str) -> bool:
+    """True when a serving counts household PIECES ("1 large", "1 bottle"), as
+    opposed to measuring ("1 cup, whole", "12 fl oz can").
+
+    Narrower than `_is_count_serving`, and only the §7.3 spoken-count rule uses
+    it. `_is_count_serving` asks whether SOME token is not a measure word, which
+    is the right question for ordering gram servings but the wrong one here:
+    FDC builds a portion as "{amount} {measureUnit} {modifier}"
+    (sources/fdc.py _portion_description), so "1 cup, whole" keeps a
+    preparation modifier that is not a measure word, and a cup read as a
+    countable piece silently multiplied ("eight almonds" → eight cups). The
+    unit HEAD decides instead: a measure word there means the leading number
+    measures that unit, not pieces of it."""
+    if not _is_count_serving(description):
+        return False
+    m = _LEADING_UNIT_RE.match(re.sub(r"\(.*?\)", " ", (description or "").lower()))
+    return bool(m) and m.group(1) not in _MEASURE_WORDS
 
 
 def _serving_by_id(servings: list[dict], serving_id: str | None) -> dict | None:
@@ -341,7 +391,12 @@ async def resolve_portion(
         count_servings = [s for s in servings if _is_count_serving(s.get("description", ""))]
         if count_servings:
             base = _serving_by_id(count_servings, default_id) or count_servings[0]
-            return base["serving_id"], qty / _pieces_per(base.get("description", "")), False
+            desc = base.get("description", "")
+            # §7.3: only a serving that really counts pieces may stage
+            # unverified. A measuring serving still gets picked — it is the
+            # best guess and the portion sheet opens on it — but the count is
+            # a guess, so it rides as verify-me rather than confidence "high".
+            return base["serving_id"], qty / _pieces_per(desc), not _counts_pieces(desc)
         # only mass servings: never silently multiply the mass default (§7.3)
         return default_id, qty, True
 
@@ -651,6 +706,12 @@ ORDER BY updated_at DESC
 
 # A saved meal pointing at a source='estimate' placeholder (it has no numbers
 # to log — R1) expands as a missing food: MEAL_BROKEN_GUARD, fix it in Library.
+# A food with no loggable serving is broken the same way, but the row is READ
+# here and judged in Python (food_committable, expand_macro below) rather than
+# filtered out in SQL. Filtering hid it: the guard could then say only how MANY
+# foods were wrong, and the one thing it tells the user to do — fix it in
+# Library — needs the name of the food to fix. Reading it costs nothing; the
+# rows are fetched by id either way.
 _MACRO_FOODS_SQL = """
 SELECT id AS food_id, display_name, brand, servings,
        default_serving_id AS food_default_serving_id
@@ -663,9 +724,12 @@ MEAL_REF_GUARD = "No saved meal called '{phrase}' — log the items, then tap Sa
 # §3.1: the saved meal matched, but stored items point at foods rows that are
 # gone. Never silently log the remainder, and never claim the meal is missing.
 MEAL_BROKEN_GUARD = (
-    "Saved meal '{name}' is missing {missing} of its {total} foods — "
+    "Saved meal '{name}' can't log {missing} of its {total} foods ({which}) — "
     "fix it in Library, then log it again."
 )
+# What `which` says for a stored item whose foods row is gone: there is no name
+# left to give. An unloggable food still present is named outright.
+MEAL_MISSING_FOOD = "a food that is no longer in your library"
 
 
 async def find_macro(keys: list[str]) -> dict | None:
@@ -704,6 +768,7 @@ def _stage_tier0_item(
     {serving_id, qty} verbatim — no portion inference — with the §4
     dangling-serving and partial-core-macros guards (verify-me, never a
     zero-macro row). phrase = the food's display name (§5)."""
+    stored_servings: list[dict] = food.get("servings") or []  # before the filter
     food = with_loggable_servings(food, default_key="food_default_serving_id")  # BACKLOG 184
     servings: list[dict] = food["servings"]
     serving_id = item.get("serving_id")
@@ -711,9 +776,20 @@ def _stage_tier0_item(
     verify = False
     serving = _serving_by_id(servings, serving_id)
     if serving is None:  # dangling id never renders (§4)
+        dropped = _serving_by_id(stored_servings, serving_id)
         serving = _serving_by_id(servings, food["food_default_serving_id"])
         if serving is None and servings:
             serving = servings[0]
+        # The substitute is a different SIZE. Carrying the stored qty across
+        # untouched logs a different AMOUNT than the meal was saved at — a
+        # meal saved as one 414 ml bottle became one 100 g serving, a quarter
+        # of it, while Library still showed the bottle. Rescale by gram weight
+        # when both sides have one; when they do not, the qty is a guess and
+        # the verify-me badge below is the only honest answer.
+        if serving is not None and dropped is not None:
+            was, now = dropped.get("grams"), serving.get("grams")
+            if isinstance(was, (int, float)) and isinstance(now, (int, float)) and was > 0 and now > 0:
+                qty = round(qty * float(was) / float(now), 4)
         verify = True
     if serving is not None:
         serving_id = serving["serving_id"]
@@ -752,9 +828,11 @@ async def expand_macro(
     each expanded item gets its own index so per-item remove, commit, and
     telemetry work on it like any other row.
 
-    Returns (rows, missing): `missing` counts the stored items whose foods row
-    is gone. Callers must surface it — a partial expansion would silently log
-    half a saved meal, and an empty one is not the same as "no such meal"."""
+    Returns (rows, broken): `broken` NAMES the stored items that cannot be
+    logged — the foods row is gone, or it survives with no serving carrying the
+    core four, which is the same dead end to the person holding the phone.
+    Callers must surface it — a partial expansion would silently log half a
+    saved meal, and an empty one is not the same as "no such meal"."""
     t0 = time.monotonic() if t0 is None else t0
     items: list[dict] = macro["items"] or []
     food_ids = sorted({str(i["food_id"]) for i in items if i.get("food_id")})
@@ -764,14 +842,19 @@ async def expand_macro(
         else {}
     )
     out: list[Resolution] = []
-    missing = 0
+    broken: list[str] = []
     for item in items:
         food = foods.get(str(item.get("food_id")))
         if food is None:  # foods are cache-forever, so this is a broken macro
-            missing += 1
+            broken.append(MEAL_MISSING_FOOD)
+            continue
+        if not food_committable(food):
+            # present, but nothing on it can be logged — name it, because
+            # "fix it in Library" is useless without knowing which one
+            broken.append(food["display_name"])
             continue
         out.append(_stage_tier0_item(food, item, start_index + len(out), meal, t0))
-    return out, missing
+    return out, broken
 
 
 def _meal_ref_guard(phrase: str, item_index: int, meal: Meal, t0: float, text: str) -> Resolution:
@@ -789,14 +872,17 @@ def _meal_ref_guard(phrase: str, item_index: int, meal: Meal, t0: float, text: s
 
 
 def _macro_broken_guard(
-    macro: dict, expanded: int, missing: int, phrase: str, item_index: int,
+    macro: dict, expanded: int, broken: list[str], phrase: str, item_index: int,
     meal: Meal, t0: float,
 ) -> Resolution:
     """A matched macro that cannot expand in full stops here (§3.1)."""
     return _meal_ref_guard(
         phrase, item_index, meal, t0,
         MEAL_BROKEN_GUARD.format(
-            name=macro["name"], missing=missing, total=expanded + missing
+            name=macro["name"],
+            missing=len(broken),
+            total=expanded + len(broken),
+            which=", ".join(broken),
         ),
     )
 
@@ -815,9 +901,9 @@ async def short_circuit_all(raw_input: str, meal: Meal) -> list[Resolution] | No
         return None
     macro = await find_macro([key])
     if macro is not None:
-        rows, missing = await expand_macro(macro, meal, 0, t0)
-        if missing:
-            return [_macro_broken_guard(macro, len(rows), missing, raw_input, 0, meal, t0)]
+        rows, broken = await expand_macro(macro, meal, 0, t0)
+        if broken:
+            return [_macro_broken_guard(macro, len(rows), broken, raw_input, 0, meal, t0)]
         if rows:
             return rows
     sc = await short_circuit(raw_input, meal)
@@ -856,11 +942,11 @@ async def resolve_items(
         nxt = start_index + len(out)
         macro = await find_macro(_macro_keys(parsed))
         if macro is not None:
-            rows, missing = await expand_macro(macro, meal, nxt, t0)
-            if missing:
+            rows, broken = await expand_macro(macro, meal, nxt, t0)
+            if broken:
                 out.append(
                     _macro_broken_guard(
-                        macro, len(rows), missing, parsed.phrase, nxt, meal, t0
+                        macro, len(rows), broken, parsed.phrase, nxt, meal, t0
                     )
                 )
                 continue
@@ -897,10 +983,10 @@ async def resolve_item(
     if not skip_tier0:
         macro = await find_macro(_macro_keys(parsed))
         if macro is not None:
-            rows, missing = await expand_macro(macro, meal, item_index, t0)
-            if missing:
+            rows, broken = await expand_macro(macro, meal, item_index, t0)
+            if broken:
                 return _macro_broken_guard(
-                    macro, len(rows), missing, parsed.phrase, item_index, meal, t0
+                    macro, len(rows), broken, parsed.phrase, item_index, meal, t0
                 )
             if len(rows) == 1:
                 return rows[0]
