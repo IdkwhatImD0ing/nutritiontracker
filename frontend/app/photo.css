@@ -91,7 +91,10 @@
 }
 
 /* ---------- §3.4a estimated rows (the photo lane, and the agent's
-   log_estimate rows, §6.4 — same flag, same confirm) ---------- */
+   log_estimate rows, §6.4 — same flag). Since 2026-09-09 the flag is a
+   label, not a gate: the commit is the confirmation, so there is no
+   confirmed/unconfirmed pair any more — an estimate reads as an
+   estimate for as long as it is one. ---------- */
 
 /* same amber family as needs-input/verify: attention, not error */
 .badge.estimate {
@@ -99,19 +102,33 @@
   color: var(--amber);
 }
 
-.badge.estimate.confirmed {
-  background: var(--surface-3);
-  color: var(--muted);
+/* On a STAGED row the badge goes and the amount carries the flag instead.
+   A photographed plate is estimates all the way down — six identical amber
+   caps pills stacked down the tray shout over the calorie figure, which this
+   file's own rule makes the headline of a row. And they label the wrong
+   thing: the food is the database's, only the AMOUNT is a guess, and the
+   amount is right there in the sub-line. So mark that: a tilde and the amber.
+   Says more, an order of magnitude quieter, and it survives a list where
+   every row is flagged. The diary keeps its badge (History mixes estimated
+   rows in among ordinary ones, so there the word is the exception). */
+.row.estimated .badge.estimate {
+  display: none;
 }
 
-/* numbers are a guess until confirmed — muted, never the bold headline */
-.row.estimated .row-kcal .n {
-  color: var(--muted);
+.row.estimated .row-sub {
+  color: var(--amber);
 }
 
-.row.estimated.confirmed .row-kcal .n {
-  color: var(--text);
+.row.estimated .row-sub::before {
+  content: "~";
+  margin-right: 1px;
 }
+
+/* The figure is NOT muted any more. Muting it made sense when an estimate was
+   the odd row out; on a photographed plate every row is one, so muting every
+   figure left the tray with no headline at all — and the amber amount above
+   already says the guess is a guess, more precisely than a grey number did.
+   One signal, on the thing that is actually estimated. */
 
 .estimate-note {
   font-size: 0.78rem;
@@ -119,16 +136,7 @@
   margin: 4px 0 0;
 }
 
-.row.estimated.confirmed .estimate-note {
-  color: var(--muted);
-}
-
-.chip.confirm-estimate {
-  border-color: var(--amber);
-  color: var(--amber);
-}
-
-/* the one-line reason the Commit button is disabled */
+/* the one-line heads-up under Commit (a numberless row will not count) */
 .sheet-reason {
   color: var(--amber);
   font-size: 0.82rem;

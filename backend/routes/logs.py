@@ -826,8 +826,8 @@ async def _stage_estimate(
 ) -> list[StagedItem]:
     """§6.4 log_estimate: the components of an unlabeled dish through the
     identical tiers 1–3 (tier 0 skipped — a saved-meal trigger is something
-    you say), each row flagged estimated="portion": it renders as a guess and
-    cannot commit unconfirmed (§3.4a), and it learns nothing (the flag —
+    you say), each row flagged estimated="portion": it renders as a guess
+    (§3.4a) and it learns nothing (the flag —
     LEARNABLE_ROWS_SQL on the read side, commit's alias gate on the write
     side). The numbers are the database's; only the amount is the agent's.
     The spoken meal and time words ride in as the agent's `meal_hint` /
@@ -1222,7 +1222,7 @@ async def _run_agent_lane(
             "meal": (rows[0].meal if rows else fallback).value,
             "basis": basis,
             "items": summary(rows),
-            "note": "Each row is flagged as an estimate; the user confirms or adjusts it in the list.",
+            "note": "Each row is flagged as an estimate; the user adjusts it in the list or in chat.",
         }
 
     async def adjust_photo(changes: list) -> dict:

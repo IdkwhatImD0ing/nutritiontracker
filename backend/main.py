@@ -65,7 +65,7 @@ app.include_router(diary.router)
 app.include_router(entries.router)
 # M4 (§12): the + sheet's four lanes. quick (GET /api/foods/barcode) must
 # precede foods, whose GET /api/foods/{food_id} would otherwise claim the
-# path; photo owns /api/logs/photo + /api/resolve/confirm-estimate (§3.4b).
+# path; photo owns /api/logs/photo (§3.4b).
 app.include_router(quick.router)
 app.include_router(photo.router)
 app.include_router(foods.router)

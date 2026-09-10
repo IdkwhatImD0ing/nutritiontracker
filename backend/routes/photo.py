@@ -1,4 +1,4 @@
-"""POST /api/logs/photo + POST /api/resolve/confirm-estimate (DESIGN.md §3.4a, §12 M4).
+"""POST /api/logs/photo (DESIGN.md §3.4a, §12 M4).
 
 The photo lane — the one place estimation is permitted, and only for what a
 photo cannot tell us: portions, and items no database resolves.
@@ -19,9 +19,11 @@ with source='estimate' and provenance = the vision output, WITHOUT macros,
 because the model must not invent calories; flagged estimated="unresolved",
 it routes the user to search and can never commit (the core-macros guard).
 
-Nothing estimated commits without an explicit confirm: confirm-estimate sets
-staged.estimate_confirmed server-side and resolver/commit.py refuses (409)
-while any estimated row lacks it. The image bytes are never persisted; each
+An estimated row no longer waits for a per-row confirm (Bill, 2026-09-09):
+the commit is the confirmation, and the flag's job is to render the row amber
+with its note in the sheet and in the diary. A numberless `unresolved` row
+still cannot commit — the core-macros guard refuses it, and Search is the way
+out. The image bytes are never persisted; each
 row's `vision` jsonb key keeps the raw structured output for the eval loop.
 Photo rows learn no aliases and no portion defaults (commit.py reads
 logs.input_mode).
@@ -82,8 +84,8 @@ _HEIC_BRANDS = frozenset(
     {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs", b"mif1", b"msf1"}
 )
 
-# Same live-row guard as tier3._write_item_row (BACKLOG 27): a confirm or an
-# estimate-row write never resurrects a removed row or clobbers a committed one.
+# Same live-row guard as tier3._write_item_row (BACKLOG 27): an estimate-row
+# write never resurrects a removed row or clobbers a committed one.
 _LIVE_STATUSES = ("searching", "needs_input", "not_found", "resolved")
 _LIVE_SQL = (
     "status IN ('searching', 'needs_input', 'not_found', 'resolved') "
@@ -548,6 +550,36 @@ async def _stage_photo(
         ]
         lookup.set(output=cascade_summary(resolutions))
     for r, v in zip(resolutions, seen.items):
+        # A COUNT vision gave ("11 shrimp") lands on the count rule, which
+        # needs a count-type serving to divide by. The cached shrimp record
+        # carries only "100 g", so the count fell through as a multiplier of
+        # the mass default and 11 shrimp committed as 11 x 100 g — 1,089 kcal
+        # and 264 g of protein in Bill's diary, 2026-09-09. `_size_by_weight`
+        # exists for exactly this and `_stage_estimate` has always called it;
+        # this lane never did, and `_parsed_item` drops est_grams whenever a
+        # count is present, so the 90 g vision actually measured was thrown
+        # away before sizing.
+        #
+        # BOTH of routes/logs._stage_estimate's branches are needed, and the
+        # first is the one that matters here: a photo row that needs tier 3
+        # leaves this loop as `searching` with serving=None, which is what
+        # every row of the shrimp plate was. Handling only the resolved case
+        # would leave the count on the spoken channel for tier 3 to multiply
+        # again — the original bug, untouched. So a still-searching row hands
+        # tier 3 the WEIGHT instead of the count, and a row already resolved
+        # onto a non-count serving is re-sized from that weight.
+        grams = _grams(v)
+        counted = _count(v) is not None and grams is not None and grams > 0
+        if counted and r.staged.status == "searching":
+            r.staged = r.staged.model_copy(update={"qty": float(grams)})
+            r.unit = "g"
+        elif (
+            counted
+            and r.staged.status == "resolved"
+            and r.staged.serving is not None
+            and not cascade._is_count_serving(r.staged.serving.description)
+        ):
+            r.staged = _size_by_weight(r.staged, float(grams))
         r.staged = _flag(r.staged, v)
         # a published dish beats whatever the cascade guessed from its name:
         # the kitchen's own numbers for its own dish (§3.4a, 2026-09-09).
@@ -615,9 +647,8 @@ async def stage_estimate_food(log_id: str, item_index: int) -> StagedItem | None
     foods row with source='estimate' and provenance = the vision output —
     no macros, because the model must not invent calories — and stage it
     resolved, flagged estimated="unresolved", search_instead, numbers absent.
-    Commit can never take it (core-macros guard) and confirm-estimate refuses
-    it; a search pick swaps a database food in, and KEEP_LOG_KEYS_SQL
-    downgrades the flag to "portion".
+    Commit can never take it (core-macros guard); a search pick swaps a
+    database food in, and KEEP_LOG_KEYS_SQL downgrades the flag to "portion".
 
     Seam: the tier-3 kick (routes/resolve.py) or run_tier3's not_found branch
     calls this when the row's staged jsonb carries `vision`. Returns None for
@@ -812,9 +843,7 @@ async def adjust_rows(
     live-row `WHERE` (`_LIVE_SQL`: never a removed row, never a committed one)
     and `KEEP_LOG_KEYS_SQL` on every `staged` rewrite (BACKLOG 57), with the
     flag and the new note re-applied *after* it, as `stage_estimate_food` does,
-    because KEEP carries the row's OLD note over the payload. `estimate_confirmed`
-    is deliberately not carried by KEEP (§3.4b rule 4), so a corrected amount
-    goes back to needing its confirm — which is the point."""
+    because KEEP carries the row's OLD note over the payload."""
     log = await db.fetchone("SELECT status FROM logs WHERE id = %s", (str(log_id),))
     if log is None:
         return {"error": "unknown_log", "message": "that plate is not here"}
@@ -878,11 +907,6 @@ async def adjust_rows(
         if unresolved:
             note += " — still no database match; search to pick a food and get its numbers"
         payload = updated.model_dump(mode="json", exclude_none=True)
-        # §3.4b rule 4: a new amount needs a fresh confirm. KEEP_LOG_KEYS_SQL
-        # deliberately does not carry estimate_confirmed, but this payload was
-        # round-tripped through the STORED row, so a row the user had already
-        # confirmed would carry its own True straight back through.
-        payload.pop("estimate_confirmed", None)
         # The §7.3 spoken channel, the way stage_estimate_food carries it: a
         # full payload rewrite drops these extras and KEEP_LOG_KEYS_SQL does
         # not carry them, so they are re-applied here. A row with nothing to
@@ -948,47 +972,5 @@ async def adjust_rows(
             }
             for it in items
         ],
-        "note": "Every corrected row is flagged as an estimate again — the user confirms it in the list.",
+        "note": "Every corrected row stays flagged as an estimate — the user adjusts it in the list or in chat.",
     }
-
-
-# ---------------------------------------------------------------------------
-# POST /api/resolve/confirm-estimate — the explicit confirm (§3.4a)
-# ---------------------------------------------------------------------------
-
-
-class ConfirmEstimateRequest(BaseModel):
-    log_id: UUID
-    item_index: int
-
-
-@router.post("/api/resolve/confirm-estimate", response_model=StagedItem)
-async def confirm_estimate(body: ConfirmEstimateRequest) -> StagedItem:
-    """Set staged.estimate_confirmed on one live estimated row. Editing the
-    portion never confirms; only this does. A row without numbers (an
-    estimate food) has nothing to confirm — search first."""
-    row = await db.fetchone(
-        "SELECT staged, status, committed_at FROM item_resolutions "
-        "WHERE log_id = %s AND item_index = %s",
-        (str(body.log_id), body.item_index),
-    )
-    if row is None:
-        raise HTTPException(404, "unknown log item")
-    if row["committed_at"] is not None:
-        raise HTTPException(409, "item already committed")
-    if row["status"] not in _LIVE_STATUSES:
-        raise HTTPException(409, "item already removed")
-    staged = row["staged"] if isinstance(row["staged"], dict) else {}
-    if (staged.get("estimated") or "none") == "none":
-        raise HTTPException(409, "row carries no estimate")
-    if staged.get("status") != "resolved" or not staged.get("macros"):
-        raise HTTPException(409, "nothing to confirm yet — pick a database food first")
-    updated = await db.execute(
-        "UPDATE item_resolutions "
-        f"SET staged = (staged || jsonb_build_object('estimate_confirmed', true)){KEEP_LOG_KEYS_SQL} "
-        f"WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}",
-        (str(body.log_id), body.item_index),
-    )
-    if not updated:
-        raise HTTPException(409, "item no longer live")
-    return StagedItem.model_validate({**staged, "estimate_confirmed": True})

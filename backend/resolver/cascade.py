@@ -211,14 +211,49 @@ def _units_per(description: str, stem: str) -> float:
     """How many of the SPOKEN unit one serving holds, for the unit-word match:
     when the word after the leading number is that unit itself — measure or
     not — the number counts it ("1 tbsp" of a "2 tbsp (32 g)" serving is half
-    a serving, "1 cup" of "2 cups (85 g)" too); otherwise the serving's piece
-    count ("two scoops" of "2 scoops (64 g)" → 2, "1 can" of "12 fl oz can" → 1)."""
+    a serving, "1 cup" of "2 cups (85 g)" too); else the PARENTHETICAL measure
+    when it is in that unit ("1 serving (325 ml)" holds 325 ml, "1 bottle
+    (414 ml)" 414); otherwise the serving's piece count ("two scoops" of
+    "2 scoops (64 g)" → 2, "1 can" of "12 fl oz can" → 1).
+
+    The parenthetical arm is not a nicety: the fuzzy branch in resolve_portion
+    matches on the unit word appearing ANYWHERE in the description, so
+    "1 serving (325 ml)" matched a spoken "ml" and then divided by the leading
+    1 — making 325 ml of a 325 ml shake THREE HUNDRED AND TWENTY-FIVE
+    servings. Same shape as the weight bug beside it (Bill, 2026-09-09), and
+    the parenthetical is exactly where FDC and OFF put the measure."""
     m = _LEADING_PIECES_RE.match((description or "").lower())
     if m and _unit_stem(m.group(2)) == stem:
         amount = _amount(m.group(1))
         if amount > 0:
             return amount
+    paren = _paren_measure(description, stem)
+    if paren is not None:
+        return paren
     return _pieces_per(description)
+
+
+# A measure inside a serving description's parentheses, in the unit asked for:
+# "1 serving (325 ml)" holds 325 ml, "1 bottle (16.9 fl oz)" 16.9 oz. Every
+# occurrence is scanned and only one whose unit MATCHES is returned, so a
+# description carrying two ("1 cup (240 ml) (8 fl oz)") answers whichever was
+# asked rather than whichever came first. The unit is captured as up to two
+# words because "fl oz" is two, and both the joined form ("floz") and the last
+# word ("oz") are tried against the stem — `[a-z]+` alone silently missed
+# every fl-oz serving.
+_PAREN_MEASURE_RE = re.compile(r"\((\d+(?:\.\d+)?)\s*([a-z]+(?:\s+[a-z]+)?)")
+
+
+def _paren_measure(description: str, stem: str) -> float | None:
+    for num, phrase in _PAREN_MEASURE_RE.findall((description or "").lower()):
+        n = float(num)
+        if n <= 0:
+            continue
+        words = phrase.split()
+        forms = {phrase.replace(" ", ""), words[-1]}
+        if any(_unit_stem(f) == stem for f in forms):
+            return n
+    return None
 
 
 def _is_count_serving(description: str) -> bool:
@@ -355,8 +390,17 @@ async def resolve_portion(
 ) -> tuple[str, float, bool]:
     """Resolve (serving_id, qty, verify_me) for a picked alias row (alias ⋈ food).
 
-    Order: spoken quantity always wins (with the count-without-unit rule) →
-    alias mode-of-last-10 → food's most-logged portion → provider default × 1.
+    Order: the spoken quantity wins WHEN IT MAPS onto a serving (with the
+    count-without-unit rule) → alias mode-of-last-10 → food's most-logged
+    portion → provider default × 1.
+
+    "When it maps" is the whole safety property: a spoken amount that nothing
+    can size — 30 g of a food whose every serving is measured in millilitres,
+    50 of a food with no count-type serving — must NOT be used as the serving
+    multiplier. Doing that is how "a 30 gram protein shake" became thirty
+    shakes and 11 photographed shrimp became 11 × 100 g (Bill, 2026-09-09).
+    Both fall back to ONE serving, flagged verify-me: wrong by a serving at
+    worst instead of by 30×.
     """
     servings: list[dict] = row["servings"]
     default_id: str = row["food_default_serving_id"]
@@ -375,7 +419,20 @@ async def resolve_portion(
                         gram_servings, key=lambda s: not _is_count_serving(s.get("description", ""))
                     )
                     return base["serving_id"], round(grams / float(base["grams"]), 4), False
-                return default_id, qty, True  # no gram-based serving to map onto
+                # No serving carries a `grams` COLUMN — but plenty state the
+                # weight in the description instead ("2 tbsp (32 g)", common
+                # in OFF records), so read that before giving up.
+                for s_ in servings:
+                    per = _paren_measure(s_.get("description", ""), stem)
+                    if per:
+                        return s_["serving_id"], round(qty / per, 4), False
+                # Nothing at all to map the weight onto — a millilitre drink,
+                # say. The number is a WEIGHT, and using it as the serving
+                # multiplier is how "a 30 gram protein shake" became THIRTY
+                # shakes: 3,900 kcal and 900 g of protein, one tap from the
+                # diary (Bill, 2026-09-09). One serving, flagged for him to
+                # check, is wrong by a serving at worst instead of by 30x.
+                return default_id, 1.0, True
             # fuzzy: unit word appears in a serving description — divided by
             # how many of that unit the serving holds ("two scoops" of a "2
             # scoops" serving, "1 tbsp" of a "2 tbsp" serving: §7.3, never a
@@ -396,8 +453,25 @@ async def resolve_portion(
             # unverified. A measuring serving still gets picked — it is the
             # best guess and the portion sheet opens on it — but the count is
             # a guess, so it rides as verify-me rather than confidence "high".
+            # Same reasoning as the mass-default note below, one step earlier:
+            # "1 cup, whole" is a measure wearing a descriptor, and multiplying
+            # it by a spoken count is the 5 kg-of-shrimp mistake in miniature.
             return base["serving_id"], qty / _pieces_per(desc), not _counts_pieces(desc)
-        # only mass servings: never silently multiply the mass default (§7.3)
+        # No count-type serving to divide by, so the count multiplies the mass
+        # default and the row is flagged verify-me. The comment here used to
+        # claim it "never silently multiplies", which was simply false — but
+        # the behaviour is deliberate, not an oversight: BACKLOG's thin-default
+        # case wants "two of those yogurts" to stage 2 × 100 g with REAL
+        # numbers rather than a blank card, and for a food whose piece is
+        # roughly one serving that is a fair guess.
+        #
+        # It is a fair guess only while the count is small. A piece of shrimp
+        # is ~9 g against a 100 g serving, so "fifty shrimp" resolves to 5 kg,
+        # and nothing here can know a piece weight to catch that. What DOES
+        # know one is vision: both lanes that carry an est_grams re-size the
+        # row through routes/logs._size_by_weight (the photo lane finally does
+        # too, 2026-09-09). The uncovered case is a large spoken count with no
+        # weight anywhere, where the verify-me flag is the only defence.
         return default_id, qty, True
 
     # 2. alias default: mode of the last 10 committed portions for this alias
