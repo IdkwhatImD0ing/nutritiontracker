@@ -1,0 +1,1421 @@
+{
+  "description": "200 food-logging utterances in the owner's own voice: lazy, unpunctuated, and damaged the way Deepgram nova-3 damages real speech. Written to be the input distribution for issue #21 - the tests were consistent with the fixtures and wrong about the world. style is one of speech (messy but correctly transcribed), stt (mis-transcribed), typed (keyboard typos). hazard names what this specific phrase can break downstream.",
+  "generated": "2026-09-09",
+  "count": 200,
+  "lanes": {
+    "morning": "Morning — the first log of the day",
+    "shakes": "Shakes, powder, and a weigh-in in the same breath",
+    "chains": "Drive-thru and coffee chains",
+    "grocery": "Packaged groceries — Costco, Trader Joe's, the fridge",
+    "time": "Backdated — a day word and a meal word, in either order",
+    "usual": "The usual — saved meals and repeats",
+    "amounts": "Amounts — counts, containers, fractions, made-up units",
+    "fixes": "Corrections and follow-up turns",
+    "homemade": "Unlabeled food — homemade, restaurant, leftovers",
+    "mangled": "Pure speech-to-text wreckage",
+    "notlogs": "Not a food log at all",
+    "nasty": "Nasty edges a real person still says"
+  },
+  "phrases": [
+    {
+      "id": "P001",
+      "lane": "morning",
+      "style": "speech",
+      "text": "shake",
+      "hazard": "Bare noun with no brand, size, or scoop count — nothing to anchor macros to unless it resolves to a saved meal."
+    },
+    {
+      "id": "P002",
+      "lane": "morning",
+      "style": "speech",
+      "text": "um two eggs and uh some rice from last night i think thats it for now",
+      "hazard": "\"some rice from last night\" has no weight and its \"last night\" may be read as a diary-date shift on a breakfast log."
+    },
+    {
+      "id": "P003",
+      "lane": "morning",
+      "style": "speech",
+      "text": "just coffee so far like the big one from starbucks the usual",
+      "hazard": "Drink identity unresolved — Venti size plus milk and syrup choices decide every macro, and \"the usual\" needs history lookup."
+    },
+    {
+      "id": "P004",
+      "lane": "morning",
+      "style": "speech",
+      "text": "okay so the yogurt thing and a banana and uh also i weighed like one seventy eight this morning",
+      "hazard": "Body weight is crammed into a food log with no unit; 178 must become a weight entry, not a food row with 178 grams."
+    },
+    {
+      "id": "P005",
+      "lane": "morning",
+      "style": "speech",
+      "text": "three eggs no wait four eggs scrambled with a handful of cheddar and uh some hot sauce doesnt count right",
+      "hazard": "Spoken self-correction must replace the count, not sum to seven eggs; \"a handful of cheddar\" has no gram estimate."
+    },
+    {
+      "id": "P006",
+      "lane": "morning",
+      "style": "speech",
+      "text": "oatmeal with peanut butter in it like a big scoop and half a scoop of the powder the vanilla one",
+      "hazard": "Two different \"scoop\" units in one breath — a PB spoonful versus a fractional protein-powder scoop of an unnamed brand."
+    },
+    {
+      "id": "P007",
+      "lane": "morning",
+      "style": "speech",
+      "text": "same as always",
+      "hazard": "Pure back-reference with zero items named; requires resolving his usual breakfast from history or the log is empty."
+    },
+    {
+      "id": "P008",
+      "lane": "morning",
+      "style": "speech",
+      "text": "premier protein on the way out the door thats it im gonna eat real food when i get there",
+      "hazard": "Premier Protein size and flavor unresolved (11oz vs 14oz), and the \"gonna eat later\" clause is future intent that must not be logged."
+    },
+    {
+      "id": "P009",
+      "lane": "morning",
+      "style": "speech",
+      "text": "i think i ate a bowl of cereal at like four am does that go on today or yesterday cause i hadnt slept yet",
+      "hazard": "4am log straddles the calendar boundary — his subjective day versus the America/Los_Angeles date, and the question needs an answer not a row."
+    },
+    {
+      "id": "P010",
+      "lane": "morning",
+      "style": "stt",
+      "text": "to eggs and won fair life shake the chocolate one i had it in bed",
+      "hazard": "\"to\" and \"won\" are number-word homophones for 2 and 1; \"fair life\" must alias to Fairlife or the brand lookup fails."
+    },
+    {
+      "id": "P011",
+      "lane": "morning",
+      "style": "stt",
+      "text": "i coast triple zero and ate almonds maybe more than ate whatever",
+      "hazard": "\"i coast\" is Oikos mangled and \"ate\" is the number 8 twice; \"maybe more than ate\" leaves the almond count non-deterministic."
+    },
+    {
+      "id": "P012",
+      "lane": "morning",
+      "style": "stt",
+      "text": "a big bowl of oh cost with granola on top and a la kwa after",
+      "hazard": "Two mangled brands (Oikos, La Croix) plus \"big bowl\" with no gram weight, and granola is a second unpriced item hiding in a modifier."
+    },
+    {
+      "id": "P013",
+      "lane": "morning",
+      "style": "stt",
+      "text": "guest bar in the car and coffee no sugar kirk land the big bag one",
+      "hazard": "\"guest\" is Quest with no flavor picked, and \"kirk land the big bag one\" describes coffee beans rather than a servable portion."
+    },
+    {
+      "id": "P014",
+      "lane": "morning",
+      "style": "stt",
+      "text": "chick filet chicken minis this morning the ate count and a large coffee",
+      "hazard": "\"the ate count\" is an 8-piece order transcribed as a verb; needs a restaurant-item match, not generic chicken plus bread."
+    },
+    {
+      "id": "P015",
+      "lane": "morning",
+      "style": "stt",
+      "text": "wait was one seventy seven this morning and then i had to scrambled eggs and half a bagel",
+      "hazard": "weight/wait homophone can drop the body-weight reading entirely, while \"to scrambled eggs\" is really a count of two."
+    },
+    {
+      "id": "P016",
+      "lane": "morning",
+      "style": "stt",
+      "text": "fah gay yogurt with honey like a spoonful and a sigh bowl thing my girlfriend made",
+      "hazard": "\"fah gay\" is Fage and \"a sigh\" is acai; a girlfriend-made bowl means an unknown recipe and an unknown split portion."
+    },
+    {
+      "id": "P017",
+      "lane": "morning",
+      "style": "stt",
+      "text": "um i just had like 8 protein shake and uh whatever was left of the rice from last night",
+      "hazard": "The article \"a\" was heard as the digit 8, so quantity reads as eight shakes; \"whatever was left\" has no measurable amount."
+    },
+    {
+      "id": "P018",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "the usual shake and creatine",
+      "hazard": "\"usual\" needs a Tier-0 saved-meal hit; creatine has no macros so it becomes a 0-kcal row or is silently dropped."
+    },
+    {
+      "id": "P019",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "um my shake but i only drank like half of it cause it tasted weird so half a shake i guess",
+      "hazard": "Portion is 0.5 of an unknown baseline; the restated \"half a shake\" risks halving twice to 0.25."
+    },
+    {
+      "id": "P020",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "protein shake last night around midnight i forgot to log it two scoops chocolate with fairlife and a spoon of peanut butter and a banana in the blender and also im 183 this morning",
+      "hazard": "One breath yields four food rows plus a weight entry, and \"last night around midnight\" straddles two diary dates."
+    },
+    {
+      "id": "P021",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "one scoop no wait two scoops i did two",
+      "hazard": "Spoken self-correction — naive extraction sums 1+2 and logs three scoops."
+    },
+    {
+      "id": "P022",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "me and her split a premier protein so half a bottle",
+      "hazard": "Halving a fixed-size bottle whose label is per-container, so 0.5 must scale the package panel, not a serving."
+    },
+    {
+      "id": "P023",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "shake and im 182 today",
+      "hazard": "182 must route to body weight in pounds, not become the shake's grams or calories."
+    },
+    {
+      "id": "P024",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "pre workout only the powder no calories right just log it anyway",
+      "hazard": "User demands a row with all-zero macros; a 0-kcal item may fail validation or disappear from the diary total."
+    },
+    {
+      "id": "P025",
+      "lane": "shakes",
+      "style": "speech",
+      "text": "big scoop like a heaping one not the flat scoop it says on the tub",
+      "hazard": "\"Heaping\" is a multiplier on the tub's serving grams with no number and no named product to look up."
+    },
+    {
+      "id": "P026",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "to scoops of way protein with fair life whole milk and ate ounces of water",
+      "hazard": "\"to\"=2, \"ate\"=8, \"way\"=whey, \"fair life\"=fairlife, and milk plus water both claim the liquid base."
+    },
+    {
+      "id": "P027",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "i had my guest powder shake and my wait was won eighty won this morning",
+      "hazard": "\"guest\"=Quest, \"wait\"=weight, \"won eighty won\"=181 — the number can be misread as a food quantity."
+    },
+    {
+      "id": "P028",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "kirk land way vanilla to scoops in the shaker and a little a sigh packet thing",
+      "hazard": "\"kirk land\" and \"a sigh\" are Kirkland and acai; the acai packet has no size, so grams are unknowable."
+    },
+    {
+      "id": "P029",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "creating five grams and pre workout the blue one before the gym",
+      "hazard": "\"creating\"=creatine at 0 kcal; \"the blue one\" gives no brand to match a pre-workout row."
+    },
+    {
+      "id": "P030",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "premier protein caramel won bottle and i ate half of another won",
+      "hazard": "\"won\" is one twice while \"ate\" is the verb, not eight — the real quantity is 1.5 bottles."
+    },
+    {
+      "id": "P031",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "shake with fah gay yogurt in it and a scoop of chocolate way",
+      "hazard": "\"fah gay\"=Fage; the yogurt amount is missing and it is blended in, so one composite row or two separate ones is undecided."
+    },
+    {
+      "id": "P032",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "casey in shake before bed to scoops in water",
+      "hazard": "\"casey in\"=casein, different macros than whey; \"to\"=2 and a bedtime log can land on the wrong diary date."
+    },
+    {
+      "id": "P033",
+      "lane": "shakes",
+      "style": "stt",
+      "text": "8 scoop and a half of the chocolate one and some milk whatever was left in the jug",
+      "hazard": "\"8\" is a misheard \"a\", so 1.5 scoops not 8.5; \"whatever was left\" gives no milk volume."
+    },
+    {
+      "id": "P034",
+      "lane": "chains",
+      "style": "speech",
+      "text": "uh chick fil a nuggets the twelve piece and a large fry and the sauce like two of the chick fil a sauces",
+      "hazard": "12-count could be grilled or breaded (about 100 kcal apart) and two sauce packets are their own ~280 kcal row that gets dropped as a condiment"
+    },
+    {
+      "id": "P035",
+      "lane": "chains",
+      "style": "stt",
+      "text": "chick filet grilled chicken sammich no pickles and a lemonade i think it was the small won",
+      "hazard": "'won' parses as quantity 1 instead of drink size small; 'no pickles' is a zero-macro modifier that should not force a different food match"
+    },
+    {
+      "id": "P036",
+      "lane": "chains",
+      "style": "typed",
+      "text": "went thru the cfa drive thru aroubd 11 last nite and got the 30 count nuggets for me n her so i had like half of that plus 2 sauces",
+      "hazard": "'cfa' abbreviation plus 'last nite' at an after-midnight log means the diary date shifts back a day, and 30-count split in half is 15 nuggets not 30"
+    },
+    {
+      "id": "P037",
+      "lane": "chains",
+      "style": "speech",
+      "text": "ok im reading off the receipt uh eight count grilled nuggets a market salad large diet lemonade and a cool wrap but the cool wrap was hers so dont count that one",
+      "hazard": "four line items read in a row with an exclusion instruction attached only to the last one; market salad also has a dressing that is unnamed"
+    },
+    {
+      "id": "P038",
+      "lane": "chains",
+      "style": "speech",
+      "text": "venti iced brown sugar shaken espresso with oat milk and i had one of those bacon gouda egg bites no like two of them",
+      "hazard": "self-correction changes egg bite count 1 to 2 but egg bites ship as a 2-pack, so 'two' may mean one package; oat milk is already the default for that drink"
+    },
+    {
+      "id": "P039",
+      "lane": "chains",
+      "style": "stt",
+      "text": "grand day caramel macchiato with skim and ate pumps of vanilla no wait for pumps",
+      "hazard": "'grand day' is grande, 'ate' and 'for' are 8 and 4 pumps at ~20 kcal each, and the corrected number comes after the wrong one"
+    },
+    {
+      "id": "P040",
+      "lane": "chains",
+      "style": "typed",
+      "text": "sbux grande cold brew w sf vanilla and a splash of heavy cream mabye 2 splashes",
+      "hazard": "'sf' means sugar free so the syrup is zero-cal, but 'splash' of heavy cream has no unit and 2 splashes could be 30 or 100 kcal"
+    },
+    {
+      "id": "P041",
+      "lane": "chains",
+      "style": "speech",
+      "text": "oh yeah i forgot yesterday like two in the morning we hit in n out i got a double double protein style and animal fries but she ate half the fries",
+      "hazard": "2am yesterday is two diary dates back from a 1am log; protein style drops the bun; animal fries are shared so the portion is 0.5"
+    },
+    {
+      "id": "P042",
+      "lane": "chains",
+      "style": "stt",
+      "text": "in and out cheese burger no onion and mustard grilled and a neopolitan shake wait it was chocolate",
+      "hazard": "'mustard grilled' is a cooking modifier not an added condiment, and the shake flavor is corrected mid-utterance so the first flavor must not become a second row"
+    },
+    {
+      "id": "P043",
+      "lane": "chains",
+      "style": "speech",
+      "text": "double double",
+      "hazard": "two words, no chain named, no size or drink; could match a saved meal or a bare burger with no fries context"
+    },
+    {
+      "id": "P044",
+      "lane": "chains",
+      "style": "stt",
+      "text": "chip hotel burrito bowl steak brown rice black beans queso blanco on top and chips on the side but she got most of the chips",
+      "hazard": "'chip hotel' is Chipotle mangled; queso and chips are separately priced add-ons, and 'most of the chips' leaves an undefined fraction under 0.5 for me"
+    },
+    {
+      "id": "P045",
+      "lane": "chains",
+      "style": "speech",
+      "text": "weighed in at like one eighty two this morning and then for lunch i had a chipotle chicken burrito the whole thing with everything on it",
+      "hazard": "body weight in pounds and a food share one utterance; 'everything on it' is not an ingredient list so rice, beans, salsa, cheese, sour cream all have to be assumed"
+    },
+    {
+      "id": "P046",
+      "lane": "chains",
+      "style": "speech",
+      "text": "the usual chipotle one with the double steak",
+      "hazard": "saved-meal lookup plus a modifier that changes the saved meal's protein; unclear whether to log the tier-0 row as-is or a variant"
+    },
+    {
+      "id": "P047",
+      "lane": "chains",
+      "style": "speech",
+      "text": "mcdonalds like a mcchicken and a ten piece nugget and a medium fry and a diet coke thats it",
+      "hazard": "'ten piece' could be the 10-piece nuggets alone or the 10-piece meal that already includes the fry and drink, which would double-count them"
+    },
+    {
+      "id": "P048",
+      "lane": "chains",
+      "style": "stt",
+      "text": "mick donalds sausage egg mcmuffin to of them and a hash brown and a large coffee black",
+      "hazard": "'to' is quantity 2 sitting after the food name; sausage egg mcmuffin vs plain sausage mcmuffin differ by an egg"
+    },
+    {
+      "id": "P049",
+      "lane": "chains",
+      "style": "typed",
+      "text": "mcdicks large fry and a mcflurry oreo i only ate like half the flurry befoer it melted",
+      "hazard": "slang brand 'mcdicks' will not string-match McDonald's, and the 0.5 multiplier applies to only one of the two items"
+    },
+    {
+      "id": "P050",
+      "lane": "chains",
+      "style": "typed",
+      "text": "panda express plate orange chickenn and beijing beef w chow mein and a springroll",
+      "hazard": "a plate is 2 entrees plus 1 side, so the entree portions are half-size each, and the spring roll count is unstated"
+    },
+    {
+      "id": "P051",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "um two of those little oikos cups the triple zero ones and uh half a premier protein i couldnt finish it",
+      "hazard": "half of an 11oz shake bottle needs a 0.5 multiplier on a container-unit food, and the yogurt flavor is never named"
+    },
+    {
+      "id": "P052",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "whole tub of the fage plain the big one no wait not the whole thing like two thirds",
+      "hazard": "spoken self-correction must overwrite the first quantity, and big one is a 32oz vs 17.6oz tub"
+    },
+    {
+      "id": "P053",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "a bag of the trader joes cauliflower gnocchi the whole bag which is like i dunno two servings whatever put down the whole bag",
+      "hazard": "label is per-serving so the bag needs a serving-count multiply, and the user asserts a count that may not match the package"
+    },
+    {
+      "id": "P054",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "instant ramen but i only used like half the seasoning packet so probably less sodium idk",
+      "hazard": "partial condiment changes sodium and fat but not calories, and there is no sub-component field on the ramen row"
+    },
+    {
+      "id": "P055",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "costco eggs i had three and then like a coupla those chicken bakes no scratch the chicken bakes that was yesterday",
+      "hazard": "the retraction moves only the second item to a different diary date while the eggs stay on today"
+    },
+    {
+      "id": "P056",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "i split a bag of the trader joes mandarin orange chicken with her so half a bag for me and the rice was separate ill do that later",
+      "hazard": "half-bag split with another person plus an explicit deferral of a second food that must not be logged"
+    },
+    {
+      "id": "P057",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "quest bar the cookies and cream one and also like four of those kirkland mixed nut packets the little ones",
+      "hazard": "little ones means 1oz snack packs, not the bulk jar serving, so count four against the wrong base unit"
+    },
+    {
+      "id": "P058",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "the usual costco yogurt thing",
+      "hazard": "usual alias with no brand and two candidates in history, Kirkland tub vs Oikos cups, with different macros"
+    },
+    {
+      "id": "P059",
+      "lane": "grocery",
+      "style": "speech",
+      "text": "like a third of the bag of trader joes dark chocolate peanut butter cups i was coding",
+      "hazard": "fraction of a countable candy bag with unknown gram weight, so no piece count to anchor calories"
+    },
+    {
+      "id": "P060",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "won hole fair life to percent chocolate and 8 scoop of that kirk land shake mix",
+      "hazard": "won hole is one whole, to percent is 2% milkfat which changes fat, and 8 scoop is really a scoop"
+    },
+    {
+      "id": "P061",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "ate a guest bar and to of the oh cost cups",
+      "hazard": "ate reads as eight or as the verb, to is two, and guest and oh cost are Quest and Oikos"
+    },
+    {
+      "id": "P062",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "half the tub of the fah gay total zero and a la kwa",
+      "hazard": "Fage Total 0% mangled beyond brand match, and La Croix is a genuine all-zero row that a lookup miss will drop"
+    },
+    {
+      "id": "P063",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "i coast triple zero strawberry to cups no wait won cup and the other won was hers",
+      "hazard": "count drops from two to one because the second cup belongs to the girlfriend, stated after the number"
+    },
+    {
+      "id": "P064",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "a sigh bowl from the costco freezer the hole packet plus i put kirk land granola on there like a quarter cup i gues",
+      "hazard": "one utterance is two rows, an acai packet and an eyeballed quarter cup of granola with no weight"
+    },
+    {
+      "id": "P065",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "the frozen street tacos from costco i had like ate of them there small",
+      "hazard": "ate is eight or the verb, and there small is a size qualifier that changes per-taco grams"
+    },
+    {
+      "id": "P066",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "coupla those trader joes chicken burger patties the chili lime won and 8 whole wheat bun",
+      "hazard": "coupla is an imprecise 2, won is the flavor one, and 8 bun is a single bun that becomes a count of eight"
+    },
+    {
+      "id": "P067",
+      "lane": "grocery",
+      "style": "stt",
+      "text": "won of them big fair life core power the 42 gram won after i lifted",
+      "hazard": "the 42g SKU must be told apart from the 26g bottle, and 42 gram could be parsed as a portion weight"
+    },
+    {
+      "id": "P068",
+      "lane": "time",
+      "style": "speech",
+      "text": "um yesterday i had like chicken and rice for lunch and a shake after i lifted i forgot to log any of it",
+      "hazard": "One day word covers two items, and \"after i lifted\" is a time cue with no clock, so the shake may collapse into the lunch row."
+    },
+    {
+      "id": "P069",
+      "lane": "time",
+      "style": "speech",
+      "text": "ok its like one am so this is for yesterday not today two eggs and toast and uh a premier protein",
+      "hazard": "\"yesterday\" at 1am America/Los_Angeles is wall-clock minus one day; a UTC day boundary shifts the diary date two days back."
+    },
+    {
+      "id": "P070",
+      "lane": "time",
+      "style": "stt",
+      "text": "last night ate to bowls of ramen at like 3am i think it was won of those spicy ones",
+      "hazard": "\"ate to\" is the quantity two and \"won\" is one, while a 3am \"last night\" already sits on today's calendar date."
+    },
+    {
+      "id": "P071",
+      "lane": "time",
+      "style": "typed",
+      "text": "sundya breakfsat 3 eggs and a fairlife shake",
+      "hazard": "Misspelled weekday token won't hit a day regex, and past Sunday vs upcoming Sunday is undecidable."
+    },
+    {
+      "id": "P072",
+      "lane": "time",
+      "style": "speech",
+      "text": "the day before yesterday i went to chick filet got the spicy deluxe and a large fry i dont remember what else",
+      "hazard": "Three-word relative date needs arithmetic, and \"dont remember what else\" invites the resolver to invent a phantom item."
+    },
+    {
+      "id": "P073",
+      "lane": "time",
+      "style": "stt",
+      "text": "on friday night me and my girlfriend split a chip hotel burrito bowl and i had like half the chips",
+      "hazard": "\"friday night\" could be one day back or eight, and \"split\" means half macros that get logged whole."
+    },
+    {
+      "id": "P074",
+      "lane": "time",
+      "style": "speech",
+      "text": "saturday nothing much just a guest bar and a coffee whenever that was",
+      "hazard": "Weekday with no meal word at all, and \"whenever that was\" removes any basis for picking a meal slot."
+    },
+    {
+      "id": "P075",
+      "lane": "time",
+      "style": "stt",
+      "text": "two days ago whatever i had that morning like the i coast yogurt with granola on it",
+      "hazard": "\"two days ago\" and \"that morning\" double-anchor the timestamp, and the granola has no portion."
+    },
+    {
+      "id": "P076",
+      "lane": "time",
+      "style": "typed",
+      "text": "yestreday dinner was inn out double double no fries adn a diet coke",
+      "hazard": "Typo'd day word plus a negation, so \"no fries\" can be parsed as a fries row."
+    },
+    {
+      "id": "P077",
+      "lane": "time",
+      "style": "stt",
+      "text": "earlier i had a la kwa and uh nothing else really oh and a banana",
+      "hazard": "\"earlier\" is unbounded and may mean before midnight; \"nothing else\" is then contradicted by the banana in the same breath."
+    },
+    {
+      "id": "P078",
+      "lane": "time",
+      "style": "speech",
+      "text": "over the weekend i mean saturday and sunday i had the same thing both days panda express two entree plate",
+      "hazard": "One utterance has to fan out into duplicate rows on two different diary dates."
+    },
+    {
+      "id": "P079",
+      "lane": "time",
+      "style": "stt",
+      "text": "this morning i wait 187 and had my shake before the gym",
+      "hazard": "wait/weight homophone sits right next to 187, so the body weight can be read as a food quantity."
+    },
+    {
+      "id": "P080",
+      "lane": "time",
+      "style": "speech",
+      "text": "put this on thursday no wait wednesday lunch the leftover chicken and rice like a big bowl",
+      "hazard": "Spoken day self-correction; if both weekdays get extracted the row lands on Thursday instead of Wednesday."
+    },
+    {
+      "id": "P081",
+      "lane": "time",
+      "style": "typed",
+      "text": "log teh oikos to lastnight i forgot",
+      "hazard": "\"lastnight\" is one unsplit token, there is no meal or quantity, and \"to\" reads like a destination field."
+    },
+    {
+      "id": "P082",
+      "lane": "time",
+      "style": "stt",
+      "text": "a while ago i had a sigh bowl from that place i dunno maybe like for in the afternoon on tuesday",
+      "hazard": "\"a while ago\" fights with \"on tuesday\", and \"for\" is four o'clock rather than a count."
+    },
+    {
+      "id": "P083",
+      "lane": "time",
+      "style": "speech",
+      "text": "at like 3am i ate a coupla eggs and the rest of the rice so gonna say two servings",
+      "hazard": "3am belongs to the previous eating day even though the calendar date already rolled over."
+    },
+    {
+      "id": "P084",
+      "lane": "time",
+      "style": "typed",
+      "text": "monday kirkland trail mix like a handfull",
+      "hazard": "Bare weekday with no meal slot and no gram weight, so both the date bucket and the portion are guesses."
+    },
+    {
+      "id": "P085",
+      "lane": "usual",
+      "style": "speech",
+      "text": "the usual",
+      "hazard": "Bare alias with no meal slot and no saved-meal name; at 1am it also has to guess today vs yesterday for the diary date."
+    },
+    {
+      "id": "P086",
+      "lane": "usual",
+      "style": "speech",
+      "text": "uh yeah the usual breakfast but i skipped the rice part i think",
+      "hazard": "Subtractive edit on a saved meal: rice component must be dropped and macros recomputed, and \"i think\" is hedged confidence on the removal."
+    },
+    {
+      "id": "P087",
+      "lane": "usual",
+      "style": "speech",
+      "text": "same as yesterday",
+      "hazard": "Copy scope undefined - all of yesterday's rows, or only the meal slot matching right now?"
+    },
+    {
+      "id": "P088",
+      "lane": "usual",
+      "style": "speech",
+      "text": "lemme just do my post workout one, prolly like an hour ago",
+      "hazard": "Fuzzy alias plus a relative time that should set logged_at, not shift the diary date."
+    },
+    {
+      "id": "P089",
+      "lane": "usual",
+      "style": "speech",
+      "text": "the shake thing again",
+      "hazard": "\"again\" is either a second serving stacked onto today's existing row or a fresh repeat of an older day."
+    },
+    {
+      "id": "P090",
+      "lane": "usual",
+      "style": "speech",
+      "text": "save this as my usual lunch",
+      "hazard": "save_meal with no items named - must bind to the prior turn's staged rows or it writes an empty saved meal."
+    },
+    {
+      "id": "P091",
+      "lane": "usual",
+      "style": "speech",
+      "text": "ok so i had my usual dinner the chicken and rice thing but she ate like a third of it so whatever thats on her and then i also had that yogurt thing after so add that too and uh i was 188 this morning",
+      "hazard": "Three intents in one breath: a saved meal scaled to two thirds, a second aliased item, and a 188 lb body-weight entry."
+    },
+    {
+      "id": "P092",
+      "lane": "usual",
+      "style": "speech",
+      "text": "whatever i logged last thursday for lunch just do that again",
+      "hazard": "Needs a diary query by date and meal slot, then re-logging rows whose underlying foods may have been edited since."
+    },
+    {
+      "id": "P093",
+      "lane": "usual",
+      "style": "speech",
+      "text": "the usual but like a big bowl of it not the normal amount",
+      "hazard": "Portion override on a saved meal with a fixed serving size; \"big bowl\" gives no unit or gram weight to scale by."
+    },
+    {
+      "id": "P094",
+      "lane": "usual",
+      "style": "stt",
+      "text": "same thing i had on munday for dinner i dont remember what it was",
+      "hazard": "\"munday\" needs a weekday-to-date lookup (this Monday or last) against the diary, not a saved-meal name match."
+    },
+    {
+      "id": "P095",
+      "lane": "usual",
+      "style": "stt",
+      "text": "my usual chick filet order the spicy won",
+      "hazard": "Saved restaurant meal vs a live Chick-fil-A menu lookup, and \"the spicy won\" picks which sandwich inside it."
+    },
+    {
+      "id": "P096",
+      "lane": "usual",
+      "style": "stt",
+      "text": "to scoops of the fair life shake thing like usual",
+      "hazard": "\"to scoops\" is 2 or a mis-heard two/too; \"fair life\" may resolve to generic milk instead of the saved fairlife shake."
+    },
+    {
+      "id": "P097",
+      "lane": "usual",
+      "style": "stt",
+      "text": "the usual but ate it at like won am so put it on yesterday",
+      "hazard": "Explicit backdate to yesterday - the staged rewrite must re-append the log keys or the diary-date shift is silently lost."
+    },
+    {
+      "id": "P098",
+      "lane": "usual",
+      "style": "stt",
+      "text": "usual brekfast wait no not brekfast the post work out one",
+      "hazard": "Spoken retraction: the first saved meal must be discarded, not logged alongside the second."
+    },
+    {
+      "id": "P099",
+      "lane": "usual",
+      "style": "stt",
+      "text": "i coast and eggs same as always",
+      "hazard": "\"i coast\" has to map to Oikos; Tier-0 saved rows never learn aliases, so this mishearing can never be remembered."
+    },
+    {
+      "id": "P100",
+      "lane": "usual",
+      "style": "stt",
+      "text": "do my usual but from chip hotel not the one i make",
+      "hazard": "\"chip hotel\" is Chipotle; the same alias points at both a homemade saved meal and a restaurant bowl with different macros."
+    },
+    {
+      "id": "P101",
+      "lane": "usual",
+      "style": "stt",
+      "text": "my usual shake but with ate ounces of milk not twelve",
+      "hazard": "Ingredient swap inside a saved meal - \"ate ounces\" is 8 oz, and changing milk volume moves all four macro totals."
+    },
+    {
+      "id": "P102",
+      "lane": "amounts",
+      "style": "speech",
+      "text": "uh two of the yogurt cups and like a handful of almonds i dunno maybe more than a handful",
+      "hazard": "\"two cups\" is a container count not a mass, and \"handful\" has no gram value so almond fat/cal is a free variable"
+    },
+    {
+      "id": "P103",
+      "lane": "amounts",
+      "style": "stt",
+      "text": "ate ounces of chicken breast i think and to scoops of rice",
+      "hazard": "\"ate\"=8 oz and \"to\"=2 both parse as words, and a rice \"scoop\" is not a label serving"
+    },
+    {
+      "id": "P104",
+      "lane": "amounts",
+      "style": "typed",
+      "text": "abowl of instant ramen and half the seasoing packet only",
+      "hazard": "halving only the packet changes sodium and some cal but not the noodle block, so the row can't scale as one multiplier"
+    },
+    {
+      "id": "P105",
+      "lane": "amounts",
+      "style": "speech",
+      "text": "a couple three eggs whatever it was like three",
+      "hazard": "\"a couple three\" collides 2 and 3 in one phrase with no resolution rule"
+    },
+    {
+      "id": "P106",
+      "lane": "amounts",
+      "style": "stt",
+      "text": "won hundred and fifty grahams of ground beef",
+      "hazard": "\"grahams\" must map to grams not graham crackers, and \"won hundred\" is a spelled number"
+    },
+    {
+      "id": "P107",
+      "lane": "amounts",
+      "style": "typed",
+      "text": "2 servigns of the kirkland trail mix which is probly more like 3",
+      "hazard": "\"servings\" needs the product's own serving size to become grams, and he immediately overrides 2 with 3"
+    },
+    {
+      "id": "P108",
+      "lane": "amounts",
+      "style": "speech",
+      "text": "like a slice and a half of the pizza from last night maybe two slices",
+      "hazard": "a pizza slice has no fixed mass and 1.5 vs 2 slices is a 33% cal swing left unresolved"
+    },
+    {
+      "id": "P109",
+      "lane": "amounts",
+      "style": "stt",
+      "text": "300 to 400 g of rice depending on how hungry i was",
+      "hazard": "an explicit range needs a midpoint or a prompt, and cooked vs dry rice at 350 g differs about threefold in calories"
+    },
+    {
+      "id": "P110",
+      "lane": "amounts",
+      "style": "speech",
+      "text": "scoop and a half",
+      "hazard": "a unit with no food attached, and \"scoop\" only means anything after resolving which powder he means"
+    },
+    {
+      "id": "P111",
+      "lane": "amounts",
+      "style": "typed",
+      "text": "half a bag of the frozen dumplingss no idea how many that is like 8 or 10",
+      "hazard": "half a bag and 8-10 pieces are two different quantity systems for the same item and may not agree"
+    },
+    {
+      "id": "P112",
+      "lane": "amounts",
+      "style": "stt",
+      "text": "to fair life bottles the big ones not the little ones",
+      "hazard": "\"to\"=2 plus a size qualifier that maps to 52 oz vs 11.5 oz, a 4x protein difference"
+    },
+    {
+      "id": "P113",
+      "lane": "amounts",
+      "style": "speech",
+      "text": "a plate of chicken and rice you know like a normal plate not a huge one",
+      "hazard": "one container amount has to be split across two foods with no ratio given"
+    },
+    {
+      "id": "P114",
+      "lane": "amounts",
+      "style": "stt",
+      "text": "8 sigh bowl from the place my girlfriend and i split it so half",
+      "hazard": "\"8 sigh\"=acai with a stray 8 that reads as quantity, and the real amount is half of one bowl"
+    },
+    {
+      "id": "P115",
+      "lane": "amounts",
+      "style": "typed",
+      "text": "threequarters of a chipotle bowl the rest went in the fridge",
+      "hazard": "0.75 of a multi-ingredient bowl scales every component, and the bowl's own contents are unknown"
+    },
+    {
+      "id": "P116",
+      "lane": "amounts",
+      "style": "speech",
+      "text": "one packet of oatmeal or was it two packets i think two",
+      "hazard": "spoken self-correction 1 then 2, and \"packet\" only works if the packet weight is known"
+    },
+    {
+      "id": "P117",
+      "lane": "amounts",
+      "style": "stt",
+      "text": "a few slices of the sourdough like for or five",
+      "hazard": "\"for\"=four, \"a few\" conflicts with 4-5, and slice thickness sets the carb count"
+    },
+    {
+      "id": "P118",
+      "lane": "amounts",
+      "style": "typed",
+      "text": "like 1.5 chicken thighs cus i ate part of hers too",
+      "hazard": "a fractional count of a variable-weight item with bone-in vs boneless unknown"
+    },
+    {
+      "id": "P119",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "no wait not two scoops one scoop i already had a shake earlier so just one",
+      "hazard": "Portion edit names no food; resolver must pick which prior row and decide if \"shake earlier\" is a separate row to keep."
+    },
+    {
+      "id": "P120",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "scratch that whole breakfast thing lemme start over",
+      "hazard": "Bulk delete scoped to a meal slot, but at a 1am logging time the breakfast slot boundary and diary date are undefined."
+    },
+    {
+      "id": "P121",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "actually i only ate like half that burrito so uh cut it in half i guess",
+      "hazard": "Halving is ambiguous between servings and grams, and \"that burrito\" collides if a bowl and a burrito are both logged."
+    },
+    {
+      "id": "P122",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "hold on i split that with my girlfriend so only half of it counts for me",
+      "hazard": "Pronoun \"that\" has no antecedent in this turn; halving a saved meal must scale its components, not delete the row."
+    },
+    {
+      "id": "P123",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "um the ramen was two packs not one i always do two you know",
+      "hazard": "Unit is \"packs\" not grams, and doubling has to include the seasoning packet sodium, not just noodle macros."
+    },
+    {
+      "id": "P124",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "wait no the weight thing was one eighty seven not one seventy eight i flipped it",
+      "hazard": "Targets a body-weight entry, not a food row; the transposed digits mean both values are plausible so it can't self-validate."
+    },
+    {
+      "id": "P125",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "delete everything after the eggs that was me talking to my girlfriend not logging",
+      "hazard": "Positional delete needs stable row ordering from one utterance, and the cutoff row itself must survive."
+    },
+    {
+      "id": "P126",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "no no the milk is the fairlife not regular whole milk i never buy regular",
+      "hazard": "Brand swap with no quantity restated; portion must carry over while the food identity and macros are re-resolved."
+    },
+    {
+      "id": "P127",
+      "lane": "fixes",
+      "style": "speech",
+      "text": "the yogurt one change it to two i had the other one at like midnight whatever",
+      "hazard": "Two yogurt rows make the target ambiguous, and \"at like midnight\" may mean a second row on the previous diary date instead of a count bump."
+    },
+    {
+      "id": "P128",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "that was yesterday not today the chicken and rice thing was last night",
+      "hazard": "Whole-utterance date shift; moving the row must preserve log keys or the diary-date change is silently dropped."
+    },
+    {
+      "id": "P129",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "i said fair life not far life the protein is way higher on the fair life",
+      "hazard": "\"far life\" is not in the alias table, so the fix has to rewrite an already-resolved wrong brand and its stored macros."
+    },
+    {
+      "id": "P130",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "make it ate ounces not to ounces",
+      "hazard": "Homophone digits: 8 vs 2 ounces is a fourfold portion error with no food named to sanity-check against."
+    },
+    {
+      "id": "P131",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "i said chicken not kitchen",
+      "hazard": "Corrects the food identity, but \"kitchen\" likely resolved to nothing so there may be no row to patch."
+    },
+    {
+      "id": "P132",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "change the oh cost to won not three my bad i only ate won",
+      "hazard": "Both the brand alias (Oikos) and the count (1 vs 3) are corrupted, so quantity and item resolution fail together."
+    },
+    {
+      "id": "P133",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "not chip hotel it was panda express i mixed them up delete the chip hotel one",
+      "hazard": "One turn asks for a delete plus a replacement at a different restaurant with no menu item named."
+    },
+    {
+      "id": "P134",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "put the chick filet back i did eat it i deleted it by accident",
+      "hazard": "Requires undoing a delete, so rows need soft-delete history and the original macros must be restorable, not re-resolved."
+    },
+    {
+      "id": "P135",
+      "lane": "fixes",
+      "style": "stt",
+      "text": "the guest bar from tuesday delete it i never opened it",
+      "hazard": "Delete targeted by weekday plus a mangled brand; two Quest bars on Tuesday leave the target ambiguous."
+    },
+    {
+      "id": "P136",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "um so my mom made like a beef stew thing last night with potatoes in it and i had probably two bowls maybe three i dont know it was a lot",
+      "hazard": "\"two bowls maybe three\" is a range with no bowl volume, and a homemade stew has no per-serving macro basis to scale."
+    },
+    {
+      "id": "P137",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "leftover chicken and rice from whatever my gf made",
+      "hazard": "No ingredient list, no cooking method, no portion, and no date anchor for the leftovers."
+    },
+    {
+      "id": "P138",
+      "lane": "homemade",
+      "style": "stt",
+      "text": "had a big plate of that curry at the place on sepulveda i dont even know whats in it like coconut milky and won piece of naan or maybe to",
+      "hazard": "Restaurant identified by street, not menu; \"won ... or maybe to\" is 1-vs-2 naan as word-numbers inside one item."
+    },
+    {
+      "id": "P139",
+      "lane": "homemade",
+      "style": "typed",
+      "text": "gf made pasta thing w ground beef and creaam sauce i ate like a plate and a hlaf",
+      "hazard": "\"plate and a hlaf\" is a fractional non-unit; cream-sauce fat can vary 3x with no recipe to pin it."
+    },
+    {
+      "id": "P140",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "ok so uh yesterday i had my dads adobo over rice like a big bowl of it and then also a coupla lumpia and i weighed one seventy eight this morning",
+      "hazard": "Body weight 178 lb hidden mid-food-list, and \"yesterday\" must retro-date the food rows but not the weigh-in."
+    },
+    {
+      "id": "P141",
+      "lane": "homemade",
+      "style": "stt",
+      "text": "went to my aunts for dinner and there was some kind of braised pork with like ate different sides and i just ate whatever whole plate",
+      "hazard": "\"ate\" is eight; eight unnamed side dishes become one unspecifiable diary row."
+    },
+    {
+      "id": "P142",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "smoothie i made with banana peanut butter spinach oats fair life and like a scoop of whatever protein was open, blender was full",
+      "hazard": "Six ingredients, one quantity; \"whatever protein was open\" has no SKU and \"blender was full\" is the only serving size."
+    },
+    {
+      "id": "P143",
+      "lane": "homemade",
+      "style": "typed",
+      "text": "potluck at works had somoene's enchilada casserole thing 2 squares maybe 3",
+      "hazard": "\"squares\" depends on an unknown pan size and cut count; recipe is a stranger's."
+    },
+    {
+      "id": "P144",
+      "lane": "homemade",
+      "style": "stt",
+      "text": "she made a stir fry with tofu and to kinds of veggies and i think sesame oil idk how much oil like a lot",
+      "hazard": "\"to kinds\" is two unnamed vegetables, and unquantified cooking oil dominates the calorie estimate."
+    },
+    {
+      "id": "P145",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "two tacos from that little place by the laundromat no wait three tacos carne asada with the onions and cilantro",
+      "hazard": "Spoken self-correction must replace the quantity 2 with 3, not sum to five tacos."
+    },
+    {
+      "id": "P146",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "mystery curry",
+      "hazard": "Two words with no protein, no base, no portion: nothing to estimate from and no prior row to alias to."
+    },
+    {
+      "id": "P147",
+      "lane": "homemade",
+      "style": "typed",
+      "text": "leftovres from the birthday dinner some kind of lamb and rice pilaff no idea portions i just ate til i was full",
+      "hazard": "\"til i was full\" supplies zero quantity signal; both components are unlabeled restaurant food."
+    },
+    {
+      "id": "P148",
+      "lane": "homemade",
+      "style": "stt",
+      "text": "the deli platter at the party had like turkey and hole wheat rolls and some pasta salad thing and i ate maybe won plate maybe too plates",
+      "hazard": "\"hole wheat\" homophone, \"won/too plates\" number-words, and a platter is 3+ foods collapsed into one utterance."
+    },
+    {
+      "id": "P149",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "so uh this is for last night i forgot, my gf made a chicken thing baked with cheese on top and i had half the pan basically and some green beans",
+      "hazard": "\"half the pan\" needs a pan size the model cannot know, and \"for last night\" shifts the diary date at 1am."
+    },
+    {
+      "id": "P150",
+      "lane": "homemade",
+      "style": "stt",
+      "text": "made a a sigh bowl at home with frozen a sigh packets and granola and honey and a banana like a big bowl",
+      "hazard": "\"a sigh\" is acai twice; the packets are labeled but the assembled bowl is not, so lanes conflict."
+    },
+    {
+      "id": "P151",
+      "lane": "homemade",
+      "style": "typed",
+      "text": "moms oxtail soup like 2 bowls plus the rice she puts in it dont know how much rice",
+      "hazard": "Rice is a nested sub-item inside the soup portion with an explicitly unknown amount."
+    },
+    {
+      "id": "P152",
+      "lane": "homemade",
+      "style": "speech",
+      "text": "same soup as always the one my mom makes with the noodles, big bowl, and i think there was pork in it",
+      "hazard": "\"same as always\" implies an alias lookup, but a homemade dish has no saved-meal row to resolve to."
+    },
+    {
+      "id": "P153",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "won of those oh cost triple zero yogurts and to hard boiled eggs and a fair life",
+      "hazard": "\"won\"/\"to\" are digits, and \"a fair life\" gives no size, so quantities and brand both need repair before lookup"
+    },
+    {
+      "id": "P154",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "ate ounces of chicken and like a cup of rice period",
+      "hazard": "\"ate\" reads as a verb but means 8 oz; trailing \"period\" is dictated punctuation that will land in the food name"
+    },
+    {
+      "id": "P155",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "i had guest bar the chocolate chip won and a la kwa",
+      "hazard": "\"guest bar\" is Quest bar and \"la kwa\" is La Croix; both mangled brands miss the food DB, and a sparkling water is a zero-cal row"
+    },
+    {
+      "id": "P156",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "chick filet sandwich and 8 medium fry and a diet lemonade",
+      "hazard": "\"8\" is the article \"a\" misheard as a number, so fries could get logged as eight servings"
+    },
+    {
+      "id": "P157",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "so uh i think i ate the hole thing the whole bag of the kirk land trail mix",
+      "hazard": "hole/whole homophone plus a mid-sentence restart; portion is \"whole bag\" with no gram weight for the Kirkland SKU"
+    },
+    {
+      "id": "P158",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "chip hotel bowl with double chicken white rice black beans no wait pinto beans and guac",
+      "hazard": "\"chip hotel\" is Chipotle and the bean line self-corrects, so the resolver must drop black beans and keep pinto"
+    },
+    {
+      "id": "P159",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "morning wait was one eighty to this morning",
+      "hazard": "wait/weight homophone and \"one eighty to\" means 182 lb; a body-weight entry could be parsed as a food quantity"
+    },
+    {
+      "id": "P160",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "premier protein shake the caramel and half a fah gay",
+      "hazard": "\"fah gay\" is Fage yogurt; half of an unspecified container size gives no denominator for macros"
+    },
+    {
+      "id": "P161",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "a sigh bowl from the place by the gym with granola and banana on top i guess medium size",
+      "hazard": "\"a sigh\" is acai and the vendor is unnamed, so calories depend on an unresolvable restaurant portion"
+    },
+    {
+      "id": "P162",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "eco's triple zero to of them the vanilla ones",
+      "hazard": "\"eco's\" is Oikos and \"to of them\" is a count of 2, so the multiplier hides inside a mangled preposition"
+    },
+    {
+      "id": "P163",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "in and out double double no wait it was 8 cheeseburger only",
+      "hazard": "\"8 cheeseburger\" mixes a misheard article with a correction; two different menu items compete for one row"
+    },
+    {
+      "id": "P164",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "starbucks venti cold brew with to pumps vanilla and a splash of oat",
+      "hazard": "\"to pumps\" is 2 pumps of syrup; syrup pumps and a \"splash\" of oat milk are both unquantified add-ons"
+    },
+    {
+      "id": "P165",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "okay babe i'm coming uh panda express orange chicken plate with chow main",
+      "hazard": "hot-mic speech to his girlfriend prefixes the log, and \"chow main\" must map to chow mein as a plate side"
+    },
+    {
+      "id": "P166",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "i coast yogurt and honey plus won scoop of that vanilla wei protein",
+      "hazard": "\"i coast\" is Oikos and \"wei\" is whey; a generic scoop has no brand, so protein grams are a guess"
+    },
+    {
+      "id": "P167",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "instant rah men the spicy chicken won and 8 egg cracked in it",
+      "hazard": "\"rah men\" splits ramen into two words and \"8 egg\" is one egg misheard as eight"
+    },
+    {
+      "id": "P168",
+      "lane": "mangled",
+      "style": "stt",
+      "text": "for lunch yesterday chicken and rice like every day and to bananas comma also a protein shake",
+      "hazard": "spoken \"comma\" becomes a token, and \"yesterday\" must shift the diary date on an after-midnight log"
+    },
+    {
+      "id": "P169",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "how much protein do i have left today",
+      "hazard": "Read query with no food entity; resolver may invent a protein-named item row"
+    },
+    {
+      "id": "P170",
+      "lane": "notlogs",
+      "style": "typed",
+      "text": "181.4",
+      "hazard": "Bare number could be parsed as a portion or calories instead of a pounds weigh-in"
+    },
+    {
+      "id": "P171",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "how many calories was that shake",
+      "hazard": "Question about an existing row, but 'that shake' looks like a Tier-0 saved-meal alias and may re-log it"
+    },
+    {
+      "id": "P172",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "show me yesterday",
+      "hazard": "App navigation command; the diary-date shift is the payload, not a food, so a log write would create an empty row"
+    },
+    {
+      "id": "P173",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "trying to hit 180 by december",
+      "hazard": "Goal statement; 180 could be misread as grams of protein or a weight log for today"
+    },
+    {
+      "id": "P174",
+      "lane": "notlogs",
+      "style": "stt",
+      "text": "uh so like whats my protein at right now cause i think i had the fair life already but i dont remember if i logged it or not",
+      "hazard": "Question plus an uncertain past item; risks double-logging fairlife when the real ask is a dedupe check"
+    },
+    {
+      "id": "P175",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "wait did i already log the chicken and rice",
+      "hazard": "Existence check phrased with a food; wait/weight homophone plus a food name invites a duplicate insert"
+    },
+    {
+      "id": "P176",
+      "lane": "notlogs",
+      "style": "typed",
+      "text": "nvm",
+      "hazard": "Two-letter cancel token with no nutrition content; may become a food-name lookup that fuzzy-matches something"
+    },
+    {
+      "id": "P177",
+      "lane": "notlogs",
+      "style": "typed",
+      "text": "hows my week looking",
+      "hazard": "Aggregate report request with no date range or item; no macros to write"
+    },
+    {
+      "id": "P178",
+      "lane": "notlogs",
+      "style": "stt",
+      "text": "whats the protein in oh cost triple zero again",
+      "hazard": "Nutrition lookup about mangled Oikos, not a consumption event; would log a yogurt he never ate"
+    },
+    {
+      "id": "P179",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "um",
+      "hazard": "Filler-only transcript; empty intent but nonzero string passes an emptiness guard"
+    },
+    {
+      "id": "P180",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "delete the last thing i added",
+      "hazard": "Destructive edit command; 'last thing' has no id and the pipeline has no food to resolve"
+    },
+    {
+      "id": "P181",
+      "lane": "notlogs",
+      "style": "speech",
+      "text": "gonna try to keep it under like 2200 today",
+      "hazard": "Calorie-budget intent; 2200 could be written as a row's calorie value"
+    },
+    {
+      "id": "P182",
+      "lane": "notlogs",
+      "style": "stt",
+      "text": "i weighed 179 8 this morning",
+      "hazard": "Split decimal from STT reads as two numbers, so 179.8 lb may land as 1798 or as a quantity"
+    },
+    {
+      "id": "P183",
+      "lane": "notlogs",
+      "style": "stt",
+      "text": "why does it keep saying chip hotel bowl when i say burrito",
+      "hazard": "Bug report naming a mangled Chipotle item; alias-learning could bind burrito to the wrong food"
+    },
+    {
+      "id": "P184",
+      "lane": "notlogs",
+      "style": "stt",
+      "text": "is guest bar actually 20 grams or is that marketing bs",
+      "hazard": "Skeptical nutrition question with brand plus grams; the 20 g could be logged as a protein value"
+    },
+    {
+      "id": "P185",
+      "lane": "nasty",
+      "style": "speech",
+      "text": "uh nothing yet today just water like a bunch of water thats it",
+      "hazard": "Zero-food log: pipeline may invent a water row with 0/0/0/0 or an empty meal instead of recording no intake."
+    },
+    {
+      "id": "P186",
+      "lane": "nasty",
+      "style": "speech",
+      "text": "i didnt finish the chicken and rice like maybe half of it and no fries i gave those to her",
+      "hazard": "Negation scope: \"no fries\" must suppress a row while \"half\" scales only the chicken and rice."
+    },
+    {
+      "id": "P187",
+      "lane": "nasty",
+      "style": "stt",
+      "text": "split a chip hotel bowl with her so half a bowl i guess chicken and to tortillas no wait won tortilla",
+      "hazard": "\"chip hotel\"=Chipotle plus \"to\"/\"won\" as digits, a spoken self-correction, and a 50% split all multiplying the same portion."
+    },
+    {
+      "id": "P188",
+      "lane": "nasty",
+      "style": "speech",
+      "text": "just black coffee and a vitamin and some gum thats all so far",
+      "hazard": "Three near-zero-macro items; resolver may attach USDA default calories for coffee or drop the whole log as unloggable."
+    },
+    {
+      "id": "P189",
+      "lane": "nasty",
+      "style": "stt",
+      "text": "had like for beers at joes last night maybe five i lost count and a shot of whatever",
+      "hazard": "\"for\"=4 contradicted by the later 5, unnamed shot, and alcohol grams that map to none of the four macro columns."
+    },
+    {
+      "id": "P190",
+      "lane": "nasty",
+      "style": "speech",
+      "text": "ate half the burrito at like nine and then the other half at one am its the same burrito dont log it twice",
+      "hazard": "One food across two sittings crossing midnight: needs two half rows on the right diary dates, not a duplicated whole."
+    },
+    {
+      "id": "P191",
+      "lane": "nasty",
+      "style": "speech",
+      "text": "ok so yesterday i had two premier proteins and a bowl of oikos with granola and then chicken and rice for lunch like a big plate and a coupla eggs later and instant ramen at like midnight and half a bag of kirkland trail mix and i weighed 181 point 4 in the morning",
+      "hazard": "Six foods, a bodyweight, and a \"yesterday\" date shift in one breath: 181.4 must not become a food row and every item must move to the prior diary date."
+    },
+    {
+      "id": "P192",
+      "lane": "nasty",
+      "style": "typed",
+      "text": "2 eggs 1 fairlife shke half a bagle 🙃 no butter no cream cheese",
+      "hazard": "Emoji token mid-list plus two trailing negations that must remove condiments rather than add butter and cream cheese rows."
+    },
+    {
+      "id": "P193",
+      "lane": "nasty",
+      "style": "speech",
+      "text": "the ramen i only drank the broth i didnt eat the noodles",
+      "hazard": "Partial consumption of a composite food: macros must come from broth alone, but the ramen food row has no per-component split."
+    },
+    {
+      "id": "P194",
+      "lane": "nasty",
+      "style": "stt",
+      "text": "she 8 most of the pizza i had like to slices maybe three of the pepperoni won",
+      "hazard": "\"8\"=ate, \"to\"=two, \"won\"=one, and only my 2-3 slices count while \"most\" belongs to someone else."
+    },
+    {
+      "id": "P195",
+      "lane": "nasty",
+      "style": "typed",
+      "text": "havent eaten all day just diet coke n water. 3 cans",
+      "hazard": "\"3 cans\" could attach to the diet coke, the water, or both, on top of an explicit no-food-today claim."
+    },
+    {
+      "id": "P196",
+      "lane": "nasty",
+      "style": "stt",
+      "text": "won guest bar but i threw like a third of it in the trash it was nasty",
+      "hazard": "\"guest\"=Quest and \"won\"=1, and the consumed amount is two thirds, so the bar's macros need a 0.67 multiplier."
+    },
+    {
+      "id": "P197",
+      "lane": "nasty",
+      "style": "stt",
+      "text": "won eighty to point for this morning and i havent had anything yet",
+      "hazard": "Weight digits arrive as words (\"won eighty to point for\"=182.4) with no food at all, so the parser must write a weight and zero rows."
+    },
+    {
+      "id": "P198",
+      "lane": "nasty",
+      "style": "typed",
+      "text": "3 whiskey cokes n a hard seltzer idk stopped countin",
+      "hazard": "Mixed drinks with unstated pour size and an unbranded seltzer; alcohol calories have no protein/carb/fat home."
+    },
+    {
+      "id": "P199",
+      "lane": "nasty",
+      "style": "speech",
+      "text": "no shake today skip it i just had eggs",
+      "hazard": "Mentions the saved-meal shake only to deny it; naming a tier-0 meal must not create its row, and the egg count is missing."
+    },
+    {
+      "id": "P200",
+      "lane": "nasty",
+      "style": "typed",
+      "text": "ignore the chickfila i logged earlier i never actually got it",
+      "hazard": "Retraction of an existing diary row rather than a new log; needs a delete and needs \"earlier\" resolved to a specific row id."
+    }
+  ]
+}
