@@ -73,8 +73,13 @@ type Props = {
   /** Client-detected capture failure (permission, recorder, invalid blob) —
    *  parent stamps it onto the next text log (§13 telemetry). */
   onVoiceFailure: (error: VoiceFailure) => void;
-  /** the result card's Review: reopen the staging sheet over the chat */
+  /** the result card's Review: bring the staged list back into the split */
   onReview: (log: LogCreateResponse) => void;
+  /** Rendered as the lower pane of <SplitSheet> rather than as a sheet of its
+   *  own: no backdrop and no rounded shell — the split owns both — so the
+   *  staged list stays on screen while the conversation continues under it
+   *  (Bill, 2026-09-09: "I just wanna chat with the stage window open"). */
+  docked?: boolean;
   /** backdrop / × / Escape. A recording in progress is dropped — unmount
    *  stops the tracks (useVoiceCapture's cleanup). */
   onClose: () => void;
@@ -379,6 +384,7 @@ export default function AgentChat({
   onVoiceFailure,
   onReview,
   onClose,
+  docked = false,
 }: Props) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -503,22 +509,28 @@ export default function AgentChat({
 
   return (
     <>
-      <div className="agent-backdrop" onClick={onClose} />
-      <div className="sheet agent-sheet" role="dialog" aria-label="Agent">
-        <div className="sheet-head">
-          <div className="grabber" />
-          <div className="sheet-head-row">
-            <span className="sheet-title">Agent</span>
-            <button
-              type="button"
-              className="sheet-close"
-              aria-label="Close"
-              onClick={onClose}
-            >
-              ✕
-            </button>
+      {docked ? null : <div className="agent-backdrop" onClick={onClose} />}
+      <div
+        className={docked ? "split-pane chat-pane" : "sheet agent-sheet"}
+        role="dialog"
+        aria-label="Agent"
+      >
+        {docked ? null : (
+          <div className="sheet-head">
+            <div className="grabber" />
+            <div className="sheet-head-row">
+              <span className="sheet-title">Agent</span>
+              <button
+                type="button"
+                className="sheet-close"
+                aria-label="Close"
+                onClick={onClose}
+              >
+                ✕
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="sheet-body chat-body" ref={bodyRef} aria-live="polite">
           {messages.length === 0 ? (

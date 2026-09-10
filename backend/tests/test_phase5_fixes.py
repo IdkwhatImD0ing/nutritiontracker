@@ -224,7 +224,7 @@ async def committed_row(conn, input_mode, food_id, serving_id, qty, *, age_min, 
 
 
 def item(idx, phrase, food_id, name, *, serving=EGG, qty=2.0, status="resolved",
-         estimated="none", confirmed=None, meal=Meal.lunch):
+         estimated="none", meal=Meal.lunch):
     resolved = status == "resolved"
     return StagedItem(
         item_index=idx, phrase=phrase, status=status, tier=1 if resolved else None,
@@ -233,7 +233,6 @@ def item(idx, phrase, food_id, name, *, serving=EGG, qty=2.0, status="resolved",
         if resolved else None,
         qty=qty if resolved else None, meal=meal,
         estimated=estimated, estimate_note=f"Photo: {phrase}" if estimated != "none" else None,
-        estimate_confirmed=confirmed,
     )
 
 
@@ -243,15 +242,13 @@ def photo_staged(it: StagedItem, vision=VISION_EGGS, **extra) -> dict:
     return {**it.model_dump(mode="json", exclude_none=True), "vision": vision, **extra}
 
 
-async def photo_log(conn, eggs, *, confirmed=False, with_searching=False):
-    """A photo log with row 0 = eggs ×2 flagged 'portion' (unconfirmed unless
-    told), optionally row 1 = a flagged row still in tier 3 (searching)."""
+async def photo_log(conn, eggs, *, with_searching=False):
+    """A photo log with row 0 = eggs ×2 flagged 'portion', optionally row 1 =
+    a flagged row still in tier 3 (searching)."""
     log_id = await insert_log(conn, "photo")
     tag = uuid4().hex[:6]
     row0 = item(0, f"eggs {tag}", eggs, "egg", estimated="portion")
     staged0 = photo_staged(row0, spoken_qty=2)
-    if confirmed:
-        staged0["estimate_confirmed"] = True
     await seed_row(conn, log_id, 0, staged0, food_id=eggs, serving_id="srv-large", qty=2)
     if with_searching:
         row1 = item(1, f"sauce {tag}", None, None, status="searching", estimated="portion")
@@ -282,7 +279,13 @@ async def log_status(log_id):
 
 
 # ---------------------------------------------------------------------------
-# E1 — the estimate gate is decided by stored rows only
+# E1 — the stored row decides what a commit records
+#
+# 2026-09-09: the per-row estimate CONFIRM is gone (the commit is the
+# confirmation), so these no longer test a gate that refuses. What they still
+# test is the property that gate was protecting: a client cannot relabel,
+# re-index or un-flag its way into a commit the server did not stage. An
+# estimate commits — flagged, as the server stored it.
 # ---------------------------------------------------------------------------
 
 
@@ -293,30 +296,26 @@ def test_e1_index_shift_attack_refused_on_commit():
             log_id, row0 = await photo_log(conn, eggs)
 
             # the reproduced attack: the flagged row resubmitted under an unused
-            # index, with the client's own flags saying "none"
+            # index, with the client's own flags saying "none". A photo log has
+            # no stored row for index 10, and nothing commits around one.
             shifted = row0.model_copy(update={"item_index": 10, "estimated": "none",
                                               "estimate_note": None})
-            with pytest.raises(commit_tx.EstimateUnconfirmed) as ei:
+            with pytest.raises(commit_tx.LogNotCommittable, match="no staged row"):
                 await commit_tx.commit_log(log_id, [shifted])
-            assert ei.value.item_indexes == [0]
             assert await entries_of(log_id) == []
             assert await log_status(log_id) == "staged"
             assert (await row_of(log_id, 0))["status"] == "resolved"  # not marked removed
 
-            # the attacker first removes the flagged row server-side, then
-            # commits the shifted copy: a photo log has no row for index 10
+            # a removed row is gone: neither the shifted copy nor its own index
             await conn.execute(
                 "UPDATE item_resolutions SET status = 'removed' WHERE log_id = %s", (log_id,)
             )
             with pytest.raises(commit_tx.LogNotCommittable, match="no staged row"):
                 await commit_tx.commit_log(log_id, [shifted])
-            assert await entries_of(log_id) == []
-            assert await log_status(log_id) == "staged"
-            # ...and resubmitting the removed row under its own index is refused
-            # too (G1: a removed row is gone — before the estimate question)
             with pytest.raises(commit_tx.LogNotCommittable, match="removed"):
                 await commit_tx.commit_log(log_id, [row0])
             assert await entries_of(log_id) == []
+            assert await log_status(log_id) == "staged"
 
     asyncio.run(run())
 
@@ -338,58 +337,27 @@ def test_e1_index_shift_attack_refused_on_commit_item():
             assert await entries_of(log_id) == []
             assert await row_of(log_id, 10) is None  # nothing inserted either
 
-            # same index: the stored row decides, whatever the client claims
-            for forged in (
-                row0.model_copy(update={"estimated": "none", "estimate_note": None}),
-                row0.model_copy(update={"estimate_confirmed": True}),
-            ):
-                with pytest.raises(commit_tx.EstimateUnconfirmed) as ei:
-                    await commit_tx.commit_item(log_id, forged)
-                assert ei.value.item_indexes == [0]
-            assert await entries_of(log_id) == []
+            # same index: it commits now, but the STORED flag is what is
+            # recorded — a client that says "none" does not un-flag its row
+            await commit_tx.commit_item(
+                log_id, row0.model_copy(update={"estimated": "none", "estimate_note": None})
+            )
+            assert [e["item_index"] for e in await entries_of(log_id)] == [0]
+            assert (await row_of(log_id, 0))["staged"]["estimated"] == "portion"
 
     asyncio.run(run())
 
 
-def test_e1_same_index_paths_still_refused_and_replay_works():
+def test_e1_stored_flag_survives_every_relabelling_and_replay_works():
     async def run():
         async with isolated_db() as conn:
             eggs = await insert_food(conn, "egg", [EGG])
             log_id, row0 = await photo_log(conn, eggs, with_searching=True)
             sauce_searching = item(1, "sauce", None, None, status="searching")
 
-            refused = [
-                row0.model_copy(update={"estimate_confirmed": True}),  # forged flag
-                row0.model_copy(update={"qty": 3.0, "estimated": "none",
-                                        "estimate_note": None}),  # portion-sheet edit
-                row0.model_copy(update={"status": "searching", "food": None,
-                                        "serving": None}),  # relabelled as searching
-            ]
-            for payload_item in refused:
-                with pytest.raises(commit_tx.EstimateUnconfirmed) as ei:
-                    await commit_tx.commit_log(log_id, [payload_item, sauce_searching])
-                assert ei.value.item_indexes == [0]
-            assert await log_status(log_id) == "staged"
-
-            # the searching flagged row never blocks the rest (§7.1) — but the
-            # payload cannot commit it as resolved either
-            sauce_forced = item(1, "sauce", eggs, "egg", qty=0.3, estimated="none")
-            with pytest.raises(commit_tx.EstimateUnconfirmed) as ei:
-                await commit_tx.commit_log(log_id, [row0, sauce_forced])
-            assert ei.value.item_indexes == [0, 1]
-
-            # confirm row 0 the way /api/resolve/confirm-estimate does (stored)
-            await conn.execute(
-                "UPDATE item_resolutions SET staged = staged || '{\"estimate_confirmed\": true}' "
-                "WHERE log_id = %s AND item_index = 0",
-                (log_id,),
-            )
-            with pytest.raises(commit_tx.EstimateUnconfirmed) as ei:
-                await commit_tx.commit_log(log_id, [row0, sauce_forced])
-            assert ei.value.item_indexes == [1]
-
-            # the client's flags are irrelevant once the stored row is confirmed;
-            # the committed payload records the STORED flag + confirmation
+            # a portion-sheet edit that also claims the row is not an estimate:
+            # the qty is the client's (that is what the sheet is for), the flag
+            # is the server's
             result = await commit_tx.commit_log(
                 log_id,
                 [row0.model_copy(update={"estimated": "none", "estimate_note": None}),
@@ -399,8 +367,9 @@ def test_e1_same_index_paths_still_refused_and_replay_works():
             assert [(e["item_index"], float(e["qty"]), e["macros"]["kcal"])
                     for e in await entries_of(log_id)] == [(0, 2.0, 156)]
             stored0 = (await row_of(log_id, 0))["staged"]
-            assert stored0["estimated"] == "portion" and stored0["estimate_confirmed"] is True
+            assert stored0["estimated"] == "portion"
             assert stored0["vision"] == VISION_EGGS
+            # the searching flagged row never blocks the rest (§7.1) and stays
             row1 = await row_of(log_id, 1)
             assert row1["status"] == "searching" and row1["committed_at"] is None
 
@@ -409,26 +378,16 @@ def test_e1_same_index_paths_still_refused_and_replay_works():
             assert replay["replayed"] is True
 
             # late path: the searching row lands resolved+flagged via tier 3's
-            # write (a re-resolution never carries the confirmation) → refused
-            # until confirmed, then commits with the DB numbers
+            # write, then commits with the DB numbers and keeps its flag
             landed = item(1, "sauce", eggs, "egg", qty=0.6, estimated="none")
             assert await tier3._write_item_row(
                 str(log_id), 1, landed, tier=3, spoken_qty=30, spoken_unit="g"
             )
             assert (await row_of(log_id, 1))["staged"]["estimated"] == "portion"
-            with pytest.raises(commit_tx.EstimateUnconfirmed) as ei:
-                await commit_tx.commit_item(log_id, landed)
-            assert ei.value.item_indexes == [1]
-            await conn.execute(
-                "UPDATE item_resolutions SET staged = staged || '{\"estimate_confirmed\": true}' "
-                "WHERE log_id = %s AND item_index = 1",
-                (log_id,),
-            )
             late = await commit_tx.commit_item(log_id, landed)
             assert late["replayed"] is False
             assert [e["item_index"] for e in await entries_of(log_id)] == [0, 1]
-            stored1 = (await row_of(log_id, 1))["staged"]
-            assert stored1["estimated"] == "portion" and stored1["estimate_confirmed"] is True
+            assert (await row_of(log_id, 1))["staged"]["estimated"] == "portion"
 
     asyncio.run(run())
 
@@ -456,7 +415,6 @@ def test_e1_client_flags_never_persist_on_a_spoken_log():
             for idx in (0, 1):
                 staged = (await row_of(log_id, idx))["staged"]
                 assert staged["estimated"] == "none"
-                assert staged.get("estimate_confirmed") is None
 
             # the core-macros refusal path persists the payload too — same rule
             partial = await insert_food(conn, "partial", [{
@@ -465,13 +423,11 @@ def test_e1_client_flags_never_persist_on_a_spoken_log():
             }])
             log2 = await insert_log(conn, "text")
             forged = item(0, f"c{p}", partial, "partial", qty=1.0, estimated="portion",
-                          confirmed=True,
                           serving={"serving_id": "srv-partial", "description": "1 bottle"})
             result = await commit_tx.commit_log(log2, [forged])
             assert [e["item_index"] for e in result["errors"]] == [0]
             refused = (await row_of(log2, 0))["staged"]
             assert refused["status"] == "needs_input" and refused["estimated"] == "none"
-            assert "estimate_confirmed" not in refused
 
     asyncio.run(run())
 
@@ -500,7 +456,7 @@ def test_e2_resolve_portion_step3_ignores_no_learn_and_estimated_rows():
             # the reproduced poisoning: a confirmed photo portion (1.5 × 100 g)
             # and a barcode pick were the only history for this food
             await committed_row(conn, "photo", food, "srv-100g", 1.5, age_min=1,
-                                staged={"estimated": "portion", "estimate_confirmed": True})
+                                staged={"estimated": "portion"})
             await committed_row(conn, "barcode", food, "srv-100g", 2.0, age_min=2)
             assert await cascade.resolve_portion(row, None, None) == ("srv-scoop", 1.0, False)
 
@@ -511,7 +467,7 @@ def test_e2_resolve_portion_step3_ignores_no_learn_and_estimated_rows():
             # a row still carrying an estimate flag is out whatever its log says
             # (a tie here would go to the most recent — this one — if it counted)
             await committed_row(conn, "text", food, "srv-scoop", 5.0, age_min=0,
-                                staged={"estimated": "portion", "estimate_confirmed": True})
+                                staged={"estimated": "portion"})
             assert await cascade.resolve_portion(row, None, None) == ("srv-100g", 3.0, False)
 
     asyncio.run(run())
@@ -535,7 +491,7 @@ def test_e2_pick_rule3_ignores_no_learn_rows():
             # the photo lane's phrase happens to norm() to the same key and its
             # row committed food B — it must not count as "his" choice
             await committed_row(conn, "photo", b, "srv-scoop", 1.0, age_min=1, phrase=key,
-                                staged={"estimated": "portion", "estimate_confirmed": True})
+                                staged={"estimated": "portion"})
             await committed_row(conn, "search", b, "srv-scoop", 1.0, age_min=2, phrase=key)
             assert str((await cascade.pick(rows))["food_id"]) == a  # rule 4: use_count
 
@@ -673,7 +629,7 @@ def test_g1_duplicate_item_index_cannot_defeat_the_gate():
 
             # (1) the stored flagged row is still in tier 3: a resolved forgery
             # + a searching twin under its index committed the forgery unconfirmed
-            log_id, row0 = await photo_log(conn, eggs, confirmed=True, with_searching=True)
+            log_id, row0 = await photo_log(conn, eggs, with_searching=True)
             forged = item(1, "sauce", eggs, "egg", qty=0.6)
             with pytest.raises(HTTPException) as ei:
                 await commit_route(
@@ -686,7 +642,7 @@ def test_g1_duplicate_item_index_cannot_defeat_the_gate():
 
             # (2) a brand-new unstored item on a photo log rode the same trick
             # into the res-is-None INSERT branch
-            log_id, row0 = await photo_log(conn, eggs, confirmed=True)
+            log_id, row0 = await photo_log(conn, eggs)
             new = item(7, "brand new", eggs, "egg", qty=1.0)
             with pytest.raises(HTTPException) as ei:
                 await commit_route(
@@ -725,7 +681,7 @@ def test_g1_removed_rows_are_never_committed_or_resurrected():
             # (4) a confirmed photo row the user then removed: resubmitted as-is
             # it passed the estimate gate and _commit_one flipped it back to
             # resolved + committed
-            log_id, row0 = await photo_log(conn, eggs, confirmed=True)
+            log_id, row0 = await photo_log(conn, eggs)
             await logs_routes.remove_staged_item(log_id, 0)
             with pytest.raises(HTTPException) as ei:
                 await commit_route(log_id, CommitRequest(items=[row0]))
@@ -768,7 +724,7 @@ def test_g1_legitimate_commits_still_pass():
             eggs = await insert_food(conn, "egg", [EGG])
 
             # photo: the normal commit, the §8.6 replay, the straggler's late path
-            log_id, row0 = await photo_log(conn, eggs, confirmed=True, with_searching=True)
+            log_id, row0 = await photo_log(conn, eggs, with_searching=True)
             payload = CommitRequest(items=[row0, searching(1, "sauce")])
             totals = await commit_route(log_id, payload)
             assert totals.errors == []
@@ -780,11 +736,6 @@ def test_g1_legitimate_commits_still_pass():
             landed = item(1, "sauce", eggs, "egg", qty=0.6)
             assert await tier3._write_item_row(
                 str(log_id), 1, landed, tier=3, spoken_qty=30, spoken_unit="g"
-            )
-            await conn.execute(
-                "UPDATE item_resolutions SET staged = staged || '{\"estimate_confirmed\": true}' "
-                "WHERE log_id = %s AND item_index = 1",
-                (log_id,),
             )
             await commit_item_route(log_id, CommitItemRequest(item_index=1, item=landed))
             assert [e["item_index"] for e in await entries_of(log_id)] == [0, 1]
@@ -968,7 +919,7 @@ def test_g4_from_food_without_serving_uses_his_spoken_portion_of_that_food():
             await committed_row(conn, "barcode", bar, "srv-scoop", 2.0, age_min=1)
             await committed_row(
                 conn, "photo", bar, "srv-scoop", 2.0, age_min=2,
-                staged={"estimated": "portion", "estimate_confirmed": True},
+                staged={"estimated": "portion"},
             )
             picked = await pick(req(bar))
             assert (picked.serving.id, picked.qty) == ("srv-100g", 1.0)

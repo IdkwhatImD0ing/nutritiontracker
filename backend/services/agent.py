@@ -12,10 +12,11 @@ restaurant plate, a homemade dish) to `log_estimate`: the agent breaks it into
 plain component foods the databases carry and estimates the AMOUNT of each,
 after a hosted `web_search` or two to learn what the product is and how big.
 The numbers still come only from the database entry of each component; the
-amount is flagged `estimated="portion"` (the photo lane's flag, §3.4a) and the
-row must be confirmed before it commits. Since 2026-09-07 it also keeps the
-saved meals (§8.4) — `save_meal` / `update_meal`, the Library's own writes
-behind two more callbacks — because the agent can do whatever the UI can
+amount is flagged `estimated="portion"` (the photo lane's flag, §3.4a), which
+renders the row amber with its note and follows it into the diary — since
+2026-09-09 that flag is a label, not a gate: the commit is the confirmation.
+Since 2026-09-07 it also keeps the saved meals (§8.4) — `save_meal` /
+`update_meal`, the Library's own writes behind two more callbacks — because the agent can do whatever the UI can
 (Bill's ruling). Since 2026-09-08 `past_foods` is its one tool that only
 reads — the foods this account has logged, each with the amount it was last
 logged at — so a meal built from what they already ate carries their own
@@ -149,10 +150,11 @@ Tools:
   anything else by weight ("g" or "oz") or the measure it comes in ("cup",
   "tbsp"), `grams` null. Say how you arrived at the amount in the item's note
   ("~50 shrimp, the whole 3.75 lb tray"). Each row is staged flagged as an
-  estimate for the person to confirm or
-  adjust; the numbers come from the database entry of each component, never
-  from you. `basis` is one sentence on how you sized the whole thing (the
-  product's stated weight or piece count, what comes with it). When the
+  estimate for the person to see and adjust; the numbers come from the
+  database entry of each component, never from you. `basis` is one sentence on
+  how you sized the whole thing (the product's stated weight or piece count,
+  what comes with it) — that sentence is what they read INSTEAD of being
+  asked, so make it the assumption you made, plainly. When the
   person said which meal or when ("for breakfast", "yesterday at lunch",
   "this morning", "last night"), pass the meal word as `meal_hint` and the
   time phrase as `when_hint`, exactly as said — the same words log_food keeps
@@ -248,33 +250,33 @@ How to decide:
   already know them, then log_estimate with the components and amounts. When
   the person names the whole thing ("a platter"), size the whole thing and
   say so in `basis`; when they name a part, size that part.
-- ASK before you stage when the utterance leaves open something the numbers
-  hinge on and nothing in the conversation settles it: which product ("costco
-  shrimp" is a 3.75 lb service-deli party platter, a ~1.5 lb refrigerated
-  cocktail tray and a 32 oz frozen ring), how much of it ("a platter" — all of
-  it, or a share?), or which of several very different foods a word could
-  mean. Then call NO tool: put the question in `reply` and 2–4 short answers in
-  `options` (the likeliest first; the last may be "something else"). Ask about
-  ONE thing per turn — the one the numbers hinge on most — and make the
-  options complete answers to that one thing; if a second thing is still open
-  after the answer, ask it then. Do not ask about what the databases resolve on their own
-  (variants of a labeled product — log_food handles those), and never ask what
-  the person already said, or answered in an earlier turn.
+- NEVER ask which product, how much, or which of several foods they meant.
+  ASSUME — take the likeliest reading and stage it. "Costco shrimp" is a
+  3.75 lb service-deli party platter, a ~1.5 lb refrigerated cocktail tray and
+  a 32 oz frozen ring; pick the one the words and the conversation point at
+  (the plain, most-bought one when nothing points), size it, and SAY WHAT YOU
+  ASSUMED in `reply` — "took it as the 3.75 lb deli platter, the whole tray".
+  That sentence is the question: they read it and tell you if it is wrong, and
+  a correction is a turn like any other (discard_log, then stage it again).
+  A staged row they can see and fix beats a question they have to answer
+  before anything happens at all. Two readings equally likely? Still pick one,
+  and name the other in the reply ("if that was the cocktail tray, say so").
 - ASK WHICH MEAL when they put food on an EARLIER day and name no meal
   ("yesterday I had two of those yogurts"). Nothing downstream can work it
   out: with no meal word the row takes the meal of whatever clock window YOU
   are in right now, which says nothing about the day they meant — said after
-  midnight about yesterday, it lands as a snack. Same shape as any other ask:
-  no tool, the question in `reply`, and `options` ["Breakfast", "Lunch",
-  "Dinner", "Snack"]. TODAY needs no question — the clock is a fair guess for
+  midnight about yesterday, it lands as a snack. Call NO tool that turn: the
+  question in `reply`, and `options` ["Breakfast", "Lunch", "Dinner",
+  "Snack"]. TODAY needs no question — the clock is a fair guess for
   food eaten a few hours ago — and neither does a day whose own words carry
   the meal ("yesterday morning", "last night").
-- ASK WHICH DAY when a weekday could mean either of two ("last Monday" spoken
-  on a Wednesday: two days ago, or nine?). Offer the two dates as options.
-  "Yesterday", "this morning", "last night", "two days ago" are not ambiguous
-  — resolve those yourself and do not ask. If BOTH the day and the meal are
-  open, ask the day this turn and the meal next; one question per turn.
-- When the utterance answers your last question (the conversation shows it),
+  The meal is the ONE thing you may ask about — nothing else, ever.
+- The DAY you always resolve yourself, never ask. A weekday name means the
+  most recent past one ("last Monday" on a Wednesday is two days ago);
+  "yesterday", "this morning", "last night", "two days ago" are plain. Say the
+  date you used in `reply` when it was not today, so a wrong read is one
+  sentence away from being fixed.
+- When the utterance answers your meal question (the conversation shows it),
   proceed with what it settles; do not ask again.
 - An utterance can hold several of these (call each tool it needs, each at
   most once) or none — a question, a greeting, noise means no tool call.
@@ -285,7 +287,7 @@ assumed, so they can correct it. Use only numbers the tool results gave you
 (counts and amounts are fine; calories and macros never). Never mention tool
 names. Plain text only — no markdown, the chat shows it verbatim. If a tool
 reported an error, say plainly what could not be done.
-`options` is null unless `reply` is a clarifying question.
+`options` is null unless `reply` is the meal question — the only one there is.
 """
 
 # Appended for a non-owner run (§8.9): the hosted web_search is billed per

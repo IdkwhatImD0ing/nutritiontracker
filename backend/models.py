@@ -106,13 +106,11 @@ class StagedItem(BaseModel):
     # §3.4a photo lane (M4) — what vision guessed: "portion" on a database
     # food whose amount came from the photo, "unresolved" on an item no
     # database matched (its foods row is source='estimate'; it carries NO
-    # numbers, cannot be confirmed or committed, and routes the user to
-    # Search). Renders flagged; the commit transaction refuses the row until
-    # estimate_confirmed is set, and only POST /api/resolve/confirm-estimate
-    # sets it (routes/photo.py).
+    # numbers, cannot commit, and routes the user to Search). Renders flagged
+    # in the sheet and in the diary; since 2026-09-09 the commit is its own
+    # confirmation, so the flag is a label, not a gate (resolver/commit.py).
     estimated: Literal["none", "portion", "unresolved"] = "none"
     estimate_note: str | None = None  # user-facing: what vision saw / why it is a guess
-    estimate_confirmed: bool | None = None
 
 
 # ---------------------------------------------------------------------------

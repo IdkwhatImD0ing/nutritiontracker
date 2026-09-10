@@ -370,10 +370,12 @@ def test_costco_shrimp_platter_is_estimated_from_database_components(client: Tes
         # a count multiplied onto a 100 g serving either (133 × 100 g was 13,167 kcal)
         assert shrimp["macros"]["protein_g"] >= 40, shrimp
         assert shrimp["macros"]["kcal"] < 6000, shrimp
-        # §3.4a: nothing estimated commits unconfirmed, server-side
+        # 2026-09-09: the flagged rows commit on the first press — the commit
+        # is the confirmation — and the stored flag rides into the diary
         resolved = [it for it in final if it["status"] == "resolved"]
         r = client.post(f"/api/logs/{log_id}/commit", json={"items": resolved})
-        assert r.status_code == 409 and "confirm the estimated rows first" in r.text, r.text
+        assert r.status_code == 200, r.text
+        assert r.json()["errors"] == [], r.text
     finally:
         _run(_cleanup(t0, [log_id, *question_ids]))
 
