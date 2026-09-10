@@ -604,7 +604,14 @@ def test_portion_spoken_qty_and_count_without_unit():
         sid, qty, verify = await cascade.resolve_portion(peanut_butter, 1, "tbsp")
         assert (sid, qty, verify) == ("srv-2tbsp", 0.5, False)
 
-        # qty + no unit but ONLY mass servings → never silently multiplied: verify-me
+        # qty + no unit but ONLY mass servings → the count multiplies the mass
+        # default, flagged verify-me. Deliberate: the thin-default case wants
+        # "two of those yogurts" to carry real numbers rather than a blank
+        # card. Its known limit is a large count of a small piece — 50 shrimp
+        # against a 100 g serving is 5 kg — which only a weight can catch, and
+        # the lanes that have one (photo, log_estimate) re-size through
+        # routes/logs._size_by_weight. Changing this to a flat 1.0 was tried
+        # and regressed test_tier3_hardening's thin-default card.
         mass_only = {
             "servings": [HUNDRED_G],
             "food_default_serving_id": "srv-100g",

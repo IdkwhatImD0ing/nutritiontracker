@@ -631,7 +631,9 @@ async def _apply_portion(
     """The resolver's full §7.3 portion order for tier-3 paths (BACKLOG 25),
     via the SAME cascade.resolve_portion the tier-1/2 staging path uses:
 
-    1. spoken quantity always wins (incl. the count-without-unit rule)
+    1. the spoken quantity wins WHEN IT MAPS onto a serving (incl. the
+       count-without-unit rule); one that maps onto nothing falls back to a
+       single serving rather than becoming the multiplier (cascade.py)
     2. alias default — mode of the last 10 committed portions for
        (norm(phrase) → this food), when that alias exists
     3. the food's most-logged portion across all aliases

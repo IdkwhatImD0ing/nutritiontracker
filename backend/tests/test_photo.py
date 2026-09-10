@@ -477,6 +477,53 @@ def test_photo_stages_staples_with_db_macros_and_flagged_portions():
     asyncio.run(run())
 
 
+def test_a_counted_photo_item_is_sized_by_weight_not_by_the_mass_default():
+    """The photo lane's half of the count rule (Bill, 2026-09-09).
+
+    Vision saw "11 shrimp, ~90 g" and 11 x 100 g committed: 1,089 kcal and
+    264 g of protein. `_size_by_weight` exists for this and
+    `routes/logs._stage_estimate` has always called it; this lane did not.
+
+    BOTH of the estimate lane's branches are asserted, because the first cut
+    of the fix ported only the second and was therefore inert: a photo row
+    that needs tier 3 leaves staging as `searching` with serving=None, which
+    is what every row of the real shrimp plate was, so a guard predicated on
+    a resolved serving never fired at all.
+    """
+    async def run():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            # a mass-only record, like FDC's cooked shrimp: no count serving
+            shrimp = await insert_food(conn, f"shrimp {tag}", [RICE_100])
+            await insert_alias(conn, f"shrimp {tag}", shrimp)
+            install_vision([
+                # resolves at tier 1 (aliased) -> the `resolved` branch
+                vitem(f"shrimp {tag}", qty=11, unit="shrimp", est_grams=90,
+                      note="eleven shrimp"),
+                # nothing knows this phrase -> stays `searching` for tier 3
+                vitem(f"unknown thing {tag}", qty=11, est_grams=90,
+                      confidence="low", note="eleven of something"),
+            ])
+            log_id = uuid4()
+            resp = await post_photo(log_id)
+            landed, searching = resp.items
+
+            # resolved: sized by the 90 g, NOT 11 x the 100 g default
+            assert landed.status == "resolved"
+            assert landed.serving.id == "srv-100g"
+            assert landed.qty == 0.9, "11 shrimp must not become 11 x 100 g"
+            assert landed.macros.kcal == pytest.approx(117)  # 130 * 0.9
+
+            # searching: tier 3 must be handed the WEIGHT, not the count, or
+            # it re-multiplies on the far side where nothing re-sizes it
+            assert searching.status == "searching"
+            row = await item_row(log_id, 1)
+            assert row["staged"]["spoken_qty"] == 90
+            assert row["staged"]["spoken_unit"] == "g"
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # 2. commit: estimated rows commit without a per-row confirm; they learn nothing
 # ---------------------------------------------------------------------------

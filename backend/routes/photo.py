@@ -558,14 +558,28 @@ async def _stage_photo(
         # exists for exactly this and `_stage_estimate` has always called it;
         # this lane never did, and `_parsed_item` drops est_grams whenever a
         # count is present, so the 90 g vision actually measured was thrown
-        # away before sizing. Same guard, same order as the estimate lane.
-        if (
-            _count(v) is not None
-            and _grams(v) is not None
+        # away before sizing.
+        #
+        # BOTH of routes/logs._stage_estimate's branches are needed, and the
+        # first is the one that matters here: a photo row that needs tier 3
+        # leaves this loop as `searching` with serving=None, which is what
+        # every row of the shrimp plate was. Handling only the resolved case
+        # would leave the count on the spoken channel for tier 3 to multiply
+        # again — the original bug, untouched. So a still-searching row hands
+        # tier 3 the WEIGHT instead of the count, and a row already resolved
+        # onto a non-count serving is re-sized from that weight.
+        grams = _grams(v)
+        counted = _count(v) is not None and grams is not None and grams > 0
+        if counted and r.staged.status == "searching":
+            r.staged = r.staged.model_copy(update={"qty": float(grams)})
+            r.unit = "g"
+        elif (
+            counted
+            and r.staged.status == "resolved"
             and r.staged.serving is not None
             and not cascade._is_count_serving(r.staged.serving.description)
         ):
-            r.staged = _size_by_weight(r.staged, float(_grams(v)))
+            r.staged = _size_by_weight(r.staged, float(grams))
         r.staged = _flag(r.staged, v)
         # a published dish beats whatever the cascade guessed from its name:
         # the kitchen's own numbers for its own dish (§3.4a, 2026-09-09).

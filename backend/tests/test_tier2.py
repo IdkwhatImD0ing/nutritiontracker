@@ -551,7 +551,10 @@ def test_resolve_route_count_without_unit_mass_only_verify_me():
                 item = await rr.resolve_item(
                     ResolveRequest(log_id=log_id, item_index=0, phrase=phrase, qty=2)
                 )
-                # §7.3: only mass servings → never silently multiplied
+                # §7.3: only mass servings → the count multiplies the mass
+                # default and the row is verify-me. Deliberate (the thin-
+                # default card), with a known limit for a large count of a
+                # small piece; see cascade.resolve_portion's comment.
                 assert item.serving.id == "srv-100g" and item.qty == 2
                 assert item.confidence == "low"  # verify-me styling
 
