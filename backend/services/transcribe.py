@@ -6,7 +6,8 @@ Blob in, text out — nothing downstream knows which provider ran (§8.1a).
 
 Primary: **Deepgram nova-3 prerecorded** — one raw-binary POST to /v1/listen
 with ?model=nova-3&smart_format=true plus repeated ?keyterm= params fed from
-the top aliases/brands (§8.1b: transcription improves as the library grows).
+the brands, top aliases and diary foods (§8.1b: transcription improves as the
+library grows).
 Fallback: **OpenAI gpt-transcribe** via POST /v1/audio/transcriptions
 (multipart) with the same vocabulary as a free-text prompt.
 
@@ -99,7 +100,7 @@ def is_near_empty(text: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# vocabulary biasing (§8.1b): top aliases + brands, capped under the limit
+# vocabulary biasing (§8.1b): brands + top aliases + diary foods, capped under the limit
 # ---------------------------------------------------------------------------
 
 
@@ -139,9 +140,13 @@ def cap_keyterms(
 
 async def build_keyterms() -> list[str]:
     """Candidate vocabulary from the library: brands first (§8.1 — brand-name
-    accuracy is the stated priority), then the most-used alias phrases.
-    Biasing is an accuracy bonus, never a hard dependency: any DB failure
-    degrades to an unbiased transcription."""
+    accuracy is the stated priority), then the most-used alias phrases, then
+    the names of the foods in his diary, most-logged first. The diary names
+    are there because a barcode, search or photo row learns no alias (§3.5):
+    the tonkotsu ramen he had scanned was not in the list the day Deepgram
+    wrote "Tom Katsu, Winston Roman" (2026-09-10; Bill: "food memory should be
+    independent of source"). Biasing is an accuracy bonus, never a hard
+    dependency: any DB failure degrades to an unbiased transcription."""
     import db  # lazy: shared interface, stubbed in tests
 
     try:
@@ -155,10 +160,18 @@ async def build_keyterms() -> list[str]:
             "ORDER BY use_count DESC, last_used_at DESC LIMIT %s",
             (KEYTERM_MAX_TERMS,),
         )
+        diary = await db.fetchall(
+            "SELECT f.display_name FROM entries e JOIN foods f ON f.id = e.food_id "
+            "WHERE f.source <> 'estimate' GROUP BY f.id, f.display_name "
+            "ORDER BY count(*) DESC, max(e.logged_at) DESC LIMIT %s",
+            (KEYTERM_MAX_TERMS,),
+        )
     except Exception:
         return []
     return cap_keyterms(
-        [r["brand"] for r in brands] + [r["alias_norm"] for r in aliases]
+        [r["brand"] for r in brands]
+        + [r["alias_norm"] for r in aliases]
+        + [r["display_name"] for r in diary]
     )
 
 

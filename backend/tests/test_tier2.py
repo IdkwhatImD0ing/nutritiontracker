@@ -1,5 +1,7 @@
-"""W1 (M1) tests — tier 2 (§3.3 rules 1–5), resolver unification (BACKLOG 6),
-and §3.4a state-question alignment (BACKLOG 13), against the live Neon DB.
+"""W1 (M1) tests — tier 2 (§3.3: decompose's library match, the only matcher
+since the trigram one was removed 2026-09-10), resolver unification
+(BACKLOG 6), and §3.4a state-question alignment (BACKLOG 13), against the
+live Neon DB.
 
 Every test runs inside a transaction that is ROLLED BACK (isolated_db patches
 backend/db.py onto one connection with force_rollback) — nothing persists.
@@ -278,126 +280,76 @@ def log_body(text, log_id=None):
 
 
 # ---------------------------------------------------------------------------
-# 1. tier 2a — trigram absorbs plural variance ("protein shakes" → "protein
-#    shake" alias); strong 2a alone is §3.3 rule 2 → "verify me" (low)
+# 1. no fuzzy matching (2026-09-10, Bill: "we should remove fuzzy matching in
+#    its entirety") — a phrase that is merely SPELLED like one of his aliases
+#    is not that food: with no library match it goes to tier 3. Both pairs
+#    below used to resolve locally, one strong and one weak on pg_trgm.
 # ---------------------------------------------------------------------------
 
 
-def test_tier2a_trigram_plural_match():
+def test_near_miss_spelling_is_not_a_match():
     async def run():
         async with isolated_db() as conn:
             t = tok()
-            alias_norm = f"{t} protein shake"
-            query = f"{t} protein shakes"
-            await assert_sim_band(0.75, 1.0, alias_norm, query)
+            pairs = (
+                (f"{t} protein shake", f"{t} protein shakes", 0.75, 1.0),
+                (f"{t} beef stew", f"{t} beef chop", 0.55, 0.75),
+            )
+            for idx, (alias_norm, query, lo, hi) in enumerate(pairs):
+                await assert_sim_band(lo, hi, alias_norm, query)
+                food = await insert_food(conn, alias_norm)
+                await insert_alias(conn, alias_norm, food)
 
-            food = await insert_food(conn, "Core Power Elite", brand="Fairlife")
-            alias_id = await insert_alias(conn, alias_norm, food)
+                res = await cascade.resolve_item(parsed(query), idx, Meal.snack)
+                assert res.staged.status == "searching", query  # tier 3, not a guess
+                assert res.staged.food is None and res.alias_id is None
 
-            res = await cascade.resolve_item(parsed(query), 0, Meal.snack)
-            item = res.staged
-            assert item.status == "resolved"
-            assert item.tier == 2
-            assert item.food.id == food
-            assert item.confidence == "low"  # rule 2: one strong matcher → verify me
-            assert res.search_instead is False
-            assert res.alias_id == alias_id  # the matched alias resolved it
-            assert item.serving.id == "srv-scoop" and item.qty == 1.0
+                # the exact phrase is still tier 1
+                res = await cascade.resolve_item(parsed(alias_norm), idx, Meal.snack)
+                assert res.staged.tier == 1 and res.staged.food.id == food
 
     asyncio.run(run())
 
 
 # ---------------------------------------------------------------------------
-# 2. §3.3 rule 1 — 2a and 2b agree on food_id → corroboration → high confidence
+# 2. §3.3 — decompose's library match resolves the row, "verify me" (one
+#    uncorroborated matcher), with no spelling-alike alternate beside it
 # ---------------------------------------------------------------------------
 
 
-def test_tier2_rule1_corroboration():
+def test_tier2_library_match_resolves_verify_me():
     async def run():
         async with isolated_db() as conn:
             t = tok()
-            alias_norm = f"{t} protein shake"
-            query = f"{t} protein shakes"
-            food = await insert_food(conn, "Core Power Elite", brand="Fairlife")
-            await insert_alias(conn, alias_norm, food)
-
-            # library_match validated against the passed index
-            res = await cascade.resolve_item(
-                parsed(query, library_match=food), 0, Meal.snack, index_ids={food}
-            )
-            assert res.staged.status == "resolved"
-            assert res.staged.tier == 2
-            assert res.staged.food.id == food
-            assert res.staged.confidence == "high"  # two independent matchers agree
-            assert res.alias_id is not None  # rule 1 resolves the ALIAS row
-
-            # without a passed index, validation falls back to cache existence
-            res2 = await cascade.resolve_item(
-                parsed(query, library_match=food), 1, Meal.snack
-            )
-            assert res2.staged.confidence == "high"
-
-    asyncio.run(run())
-
-
-# ---------------------------------------------------------------------------
-# 3. §3.3 rule 4 — disagreement: 2b (semantic) wins, 2a top is the alternate
-# ---------------------------------------------------------------------------
-
-
-def test_tier2_rule4_disagreement_prefers_2b():
-    async def run():
-        async with isolated_db() as conn:
-            t = tok()
-            alias_norm = f"{t} protein shake"
             query = f"{t} protein shakes"
             food_a = await insert_food(conn, "2% Milk", brand="Fairlife")
             food_b = await insert_food(conn, "Core Power Elite", brand="Fairlife")
-            await insert_alias(conn, alias_norm, food_a)  # 2a → A
+            await insert_alias(conn, f"{t} protein shake", food_a)  # spelled alike, other food
 
+            # library_match validated against the passed index
             res = await cascade.resolve_item(
-                parsed(query, library_match=food_b),  # 2b → B
-                0, Meal.snack, index_ids={food_a, food_b},
+                parsed(query, library_match=food_b), 0, Meal.snack,
+                index_ids={food_a, food_b},
             )
             item = res.staged
             assert item.status == "resolved" and item.tier == 2
-            assert item.food.id == food_b  # semantic beats lexical
-            assert item.confidence == "low"
-            assert item.alternates is not None
-            assert item.alternates[0].food_id == food_a  # 2a top, one tap away
+            assert item.food.id == food_b
+            assert item.confidence == "low"  # verify me
+            assert item.alternates is None  # no spelling-alike chip
             assert res.alias_id is None  # resolved from the library food row
+            assert item.serving.id == "srv-scoop" and item.qty == 1.0
+
+            # without a passed index, validation falls back to cache existence
+            res2 = await cascade.resolve_item(
+                parsed(query, library_match=food_b), 1, Meal.snack
+            )
+            assert res2.staged.food.id == food_b and res2.staged.tier == 2
 
     asyncio.run(run())
 
 
 # ---------------------------------------------------------------------------
-# 4. §3.3 rule 3 — only weak 2a (0.55–0.75): resolve top + search-instead
-# ---------------------------------------------------------------------------
-
-
-def test_tier2_rule3_weak_2a_search_instead():
-    async def run():
-        async with isolated_db() as conn:
-            t = tok()
-            alias_norm = f"{t} beef stew"
-            query = f"{t} beef chop"
-            await assert_sim_band(0.55, 0.75, alias_norm, query)
-
-            food = await insert_food(conn, "Beef Stew")
-            await insert_alias(conn, alias_norm, food)
-
-            res = await cascade.resolve_item(parsed(query), 0, Meal.snack)
-            item = res.staged
-            assert item.status == "resolved" and item.tier == 2
-            assert item.food.id == food
-            assert item.confidence == "low"
-            assert res.search_instead is True  # the rule-3 affordance
-
-    asyncio.run(run())
-
-
-# ---------------------------------------------------------------------------
-# 5. §3.3 rule 5 — neither matcher fires → tier 3; invalid 2b ids are discarded
+# 5. no library match → tier 3; invalid library ids are discarded
 # ---------------------------------------------------------------------------
 
 
@@ -407,7 +359,7 @@ def test_tier2_rule5_and_invalid_library_match():
             t = tok()
             nonsense = f"{t} qwvvxk"
 
-            # neither matcher → searching (tier-3 handoff)
+            # no library match → searching (tier-3 handoff)
             res = await cascade.resolve_item(parsed(nonsense, qty=2, unit="scoop"), 0, Meal.snack)
             assert res.staged.status == "searching"
             assert res.staged.qty == 2 and res.unit == "scoop"  # §7.3 rides along
@@ -605,31 +557,36 @@ def test_pick_parity_between_cascade_and_resolve():
 
 
 # ---------------------------------------------------------------------------
-# 9. /api/resolve reaches tier 2 (an edited "protein shakes" stays local)
+# 9. /api/resolve: an edited "protein shakes" used to resolve locally on
+#    spelling; with no library match it is tier 3's now (2026-09-10)
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_route_tier2_trigram():
+def test_resolve_route_near_miss_goes_to_tier3():
     async def run():
         async with isolated_db() as conn:
             async with resolve_routes() as rr:
                 t = tok()
-                alias_norm = f"{t} protein shake"
                 food = await insert_food(conn, "Core Power Elite", brand="Fairlife")
-                await insert_alias(conn, alias_norm, food)
+                await insert_alias(conn, f"{t} protein shake", food)
                 log_id = await insert_dummy_log(conn, status="staged")
+                kicked = []
 
-                item = await rr.resolve_item(
+                async def fake_tier3(log_id_, item_index, refinement=None):
+                    kicked.append((log_id_, item_index))
+                    return "tier3-result"
+
+                rr._run_tier3 = fake_tier3
+                result = await rr.resolve_item(
                     ResolveRequest(log_id=log_id, item_index=0,
                                    phrase=f"{t} protein shakes")
                 )
-                assert item.status == "resolved" and item.tier == 2
-                assert item.food.id == food
+                assert kicked == [(str(log_id), 0)] and result == "tier3-result"
                 row = await db.fetchone(
                     "SELECT tier, status FROM item_resolutions "
                     "WHERE log_id = %s AND item_index = 0",
                     (log_id,),
                 )
-                assert row["tier"] == 2 and row["status"] == "resolved"
+                assert row["tier"] is None and row["status"] == "searching"
 
     asyncio.run(run())

@@ -2,7 +2,8 @@
 
 1. BACKLOG 24 (§5): POST /api/resolve runs the single-item decompose
    micro-call so tier 2b works for edited text — fires for novel phrases,
-   skipped for exact alias matches, degrades to tiers 1/2a on LLM failure.
+   skipped for exact alias matches, degrades to tier 1, else tier 3, on LLM
+   failure.
 2. BACKLOG 28 (§3.5): entries qty-PATCH scales from a base frozen in the
    macros jsonb sidecar — repeated edits are round-trip exact; lossless
    scales keep the stored snapshot clean (no sidecar keys).
@@ -337,9 +338,10 @@ def test_micro_decompose_skipped_for_exact_alias():
     asyncio.run(run())
 
 
-def test_micro_decompose_outage_degrades_to_tier2a():
-    """A decompose failure must not break /api/resolve — tiers 1/2a still run
-    (the pre-BACKLOG-24 behavior is the floor, not a regression)."""
+def test_micro_decompose_outage_degrades_to_tier3():
+    """A decompose failure must not break /api/resolve — tier 1 still runs,
+    and a phrase it does not know goes to tier 3. (Until 2026-09-10 a trigram
+    matcher caught "protein shakes" here; fuzzy matching is gone.)"""
 
     async def run():
         async with isolated_db() as conn:
@@ -349,21 +351,26 @@ def test_micro_decompose_outage_degrades_to_tier2a():
                 await insert_alias(conn, f"{t} protein shake", food)
                 log_id = await insert_dummy_log(conn)
                 calls: list[str] = []
+                kicked: list[int] = []
 
                 async def fake_decompose(text, ctx, **kw):
                     calls.append(text)
                     raise RuntimeError("LLM outage")
 
+                async def fake_tier3(log_id_, item_index, refinement=None):
+                    kicked.append(item_index)
+                    return "tier3-result"
+
+                rr._run_tier3 = fake_tier3
                 with llm(fake_decompose):
-                    item = await rr.resolve_item(
+                    result = await rr.resolve_item(
                         ResolveRequest(
                             log_id=log_id, item_index=0, phrase=f"{t} protein shakes"
                         )
                     )
 
                 assert calls  # the micro-call was attempted...
-                assert item.status == "resolved" and item.tier == 2  # ...and 2a resolved
-                assert item.food.id == food
+                assert kicked == [0] and result == "tier3-result"  # ...and tier 3 took it
 
     asyncio.run(run())
 

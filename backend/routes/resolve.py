@@ -2,11 +2,11 @@
 
 DESIGN.md §5, §3.4. Exposes an APIRouter; the integrator wires it into main.py.
 POST /api/resolve runs the SAME cascade as staging (resolver.cascade: tier-1
-pick(), tier-2 trigram, §7.3 portion resolution incl. spoken qty+unit), now
-preceded by the single-item decompose micro-call (BACKLOG 24) so tier 2b works
-for edited text too. The micro-call is skipped when the phrase already
+pick(), tier-2 library match, §7.3 portion resolution incl. spoken qty+unit),
+now preceded by the single-item decompose micro-call (BACKLOG 24) so tier 2b
+works for edited text too. The micro-call is skipped when the phrase already
 exact-matches an alias (tier 1 resolves it locally; the model would be pure
-latency), and any decompose failure degrades to tiers 1/2a, else tier 3.
+latency), and any decompose failure degrades to tier 1, else tier 3.
 """
 
 from __future__ import annotations
@@ -193,9 +193,9 @@ async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
     for edited/added text exactly as it does at staging. Same context assembly,
     prompt, and cache key as logs.py's call — hence the same cached prefix
     (§6.1) — with the edited phrase as the whole utterance. Any failure (LLM
-    outage, empty parse, text that is more than one food) degrades to tiers
-    1/2a: /api/resolve keeps working without the model. Returns (parsed item,
-    inlined index ids) or None."""
+    outage, empty parse, text that is more than one food) degrades to tier 1,
+    else tier 3: /api/resolve keeps working without the model. Returns (parsed
+    item, inlined index ids) or None."""
     try:
         from services.context import build_agent_context
         from services.decompose import decompose
@@ -210,7 +210,7 @@ async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
             # ONE StagedItem for ONE item_index, and only the client allocates
             # indices. Taking items[0] dropped the rest with no signal — the
             # rice left the row, which then simply read "chicken". So the whole
-            # phrase degrades to tiers 1/2a (else tier 3) exactly as an outage
+            # phrase degrades to tier 1 (else tier 3) exactly as an outage
             # does: every word the user typed stays on the row, and nothing
             # disappears unseen. Splitting it into real rows needs a wire
             # contract that can answer with more than one item.
@@ -393,9 +393,6 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
     if res.state_answer:
         # §3.4a seam: commit persists this to aliases.state_answer (W2)
         resolved_payload["state_answer"] = res.state_answer
-    if res.search_instead:
-        # §3.3 rule 3 affordance (StagedItem wire field is an integrator seam)
-        resolved_payload["search_instead"] = True
     # proposed_* keep the FIRST proposal (COALESCE): a re-resolution after an
     # edit must not erase the baseline that commit's explicit-choice and
     # rejected_count semantics compare against (§3.5).
@@ -444,9 +441,8 @@ def _identity_tokens_ordered(text: str) -> list[str]:
     norm()'s tokens (§3.0), minus the cooked/raw/dry ones — the words a
     counterpart is *supposed* to differ in. fdc._parse_state does the dropping,
     so the list cannot drift from the one that stamps foods.state. norm()
-    deliberately leaves plural/singular variance alone because tier 2a's
-    trigram absorbs it; there is no trigram on this path, so cascade's stemmer
-    stands in for it on both sides. Order is kept because the first of them is
+    deliberately leaves plural/singular variance alone (§3.0), so cascade's
+    stemmer stands in for it on both sides. Order is kept because the first of them is
     the head noun, which carries more weight than the rest."""
     return [
         cascade._unit_stem(t)

@@ -680,7 +680,12 @@ async def _apply_portion(
 
 # ---------------------------------------------------------------------------
 # Local candidates — threshold-free (§3.4): top-N trigram matches however weak,
-# plus his top-10 staples by use_count.
+# plus his top-10 staples. "His" means his diary (2026-09-10, Bill: "food
+# memory should be independent of source"): the staples are the foods he has
+# logged most, however he logged them, and every candidate says how often he
+# has logged it — a barcode, search or photo row learns no alias (§3.5), so the
+# alias-built staples list never carried the ramen he had scanned, and the run
+# that met "Tonkatsu" saw that ramen only as an anonymous sim-0.22 cache row.
 # ---------------------------------------------------------------------------
 
 
@@ -701,7 +706,8 @@ async def _local_candidates(phrase: str) -> list[dict]:
     trigram = await db.fetchall(
         f"""
         SELECT id, source, source_id, display_name, brand,
-               similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
+               similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim,
+               (SELECT count(*) FROM entries e WHERE e.food_id = foods.id) AS logged
         FROM foods
         WHERE source = ANY(%s) AND {loggable}
         ORDER BY sim DESC
@@ -712,11 +718,11 @@ async def _local_candidates(phrase: str) -> list[dict]:
     staples = await db.fetchall(
         f"""
         SELECT f.id, f.source, f.source_id, f.display_name, f.brand,
-               sum(a.use_count) AS uses
-        FROM foods f JOIN aliases a ON a.food_id = f.id
+               count(*) AS uses
+        FROM entries e JOIN foods f ON f.id = e.food_id
         WHERE f.source = ANY(%s) AND {loggable_f}
         GROUP BY f.id, f.source, f.source_id, f.display_name, f.brand
-        ORDER BY uses DESC, max(a.last_used_at) DESC
+        ORDER BY uses DESC, max(e.logged_at) DESC
         LIMIT 10
         """,
         (list(CANDIDATE_SOURCES),),
@@ -735,6 +741,7 @@ async def _local_candidates(phrase: str) -> list[dict]:
                 "display_name": _col(row, 3, "display_name"),
                 "brand": _col(row, 4, "brand"),
                 "sim": float(_col(row, 5, "sim") or 0.0),
+                "logged": int(_col(row, 6, "logged") or 0),
             }
         )
     for row in staples:
@@ -749,6 +756,7 @@ async def _local_candidates(phrase: str) -> list[dict]:
                 "display_name": _col(row, 3, "display_name"),
                 "brand": _col(row, 4, "brand"),
                 "sim": None,
+                "logged": int(_col(row, 5, "uses") or 0),
             }
         )
     return out
@@ -784,19 +792,29 @@ def _agent_input(
         lines.append("")
         lines.append(
             "Already-cached local candidates (local foods table — threshold-free "
-            "trigram matches plus frequent staples):"
+            "trigram matches plus the foods this person logs most):"
         )
         for c in candidates:
             sim = f" — sim {c['sim']:.2f}" if c["sim"] is not None else " — staple"
             brand = f" ({c['brand']})" if c.get("brand") else ""
+            logged = c.get("logged") or 0
+            mine = f" — THEY HAVE LOGGED THIS {logged}×" if logged else ""
             lines.append(
                 f"- source={c['source']} source_id={c['source_id']}: "
-                f"{c['display_name']}{brand}{sim}"
+                f"{c['display_name']}{brand}{sim}{mine}"
             )
         lines.append(
             "If one of these already-cached foods is the same real-world food, choose "
             "it — do not create a second identity for the same food."
         )
+        if any(c.get("logged") for c in candidates):
+            lines.append(
+                "A food marked THEY HAVE LOGGED THIS is in their own diary, however "
+                "they logged it (voice, typing, barcode, photo). A phrase that is close "
+                "to one of those in sound or spelling most likely means it — spoken "
+                "phrases are transcribed and typed ones are misspelled — so choose it "
+                "over a new search unless the phrase clearly names a different food."
+            )
     return "\n".join(lines)
 
 
@@ -935,18 +953,24 @@ def _build_agent(
 
     @function_tool(failure_error_function=_tool_error)
     async def get_food_history(n: int = 20) -> str:
-        """The user's top-n foods by recency/use (his personal history)."""
+        """The foods this user has logged — by voice, typing, barcode, search or
+        photo alike — most-logged first (his personal history)."""
         n = max(1, min(int(n), 100))
+        # His diary, not his aliases (2026-09-10, Bill: "food memory should be
+        # independent of source"): a barcode, search or photo row learns no
+        # alias (§3.5), so the alias table never listed the ramen he scanned.
+        # Only sources the answer schema can name back (CANDIDATE_SOURCES).
         rows = await db.fetchall(
             """
             SELECT f.source, f.source_id, f.display_name, f.brand,
-                   sum(a.use_count) AS uses, max(a.last_used_at) AS last_used
-            FROM aliases a JOIN foods f ON f.id = a.food_id
+                   count(*) AS uses, max(e.logged_at) AS last_used
+            FROM entries e JOIN foods f ON f.id = e.food_id
+            WHERE f.source = ANY(%s)
             GROUP BY f.source, f.source_id, f.display_name, f.brand
             ORDER BY uses DESC, last_used DESC
             LIMIT %s
             """,
-            (n,),
+            (list(CANDIDATE_SOURCES), n),
         )
         return json.dumps(
             [
@@ -955,7 +979,7 @@ def _build_agent(
                     "source_id": _col(r, 1, "source_id"),
                     "display_name": _col(r, 2, "display_name"),
                     "brand": _col(r, 3, "brand"),
-                    "use_count": int(_col(r, 4, "uses") or 0),
+                    "times_logged": int(_col(r, 4, "uses") or 0),
                 }
                 for r in rows
             ],

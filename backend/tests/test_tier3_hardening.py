@@ -836,6 +836,69 @@ def test_local_candidates_hides_a_cached_food_with_no_loggable_serving():
     run(scenario())
 
 
+def test_local_candidates_mark_his_diary_foods_whatever_the_lane():
+    """2026-09-10 (Bill: "food memory should be independent of source"): the
+    staples were built from aliases, and a scanned food learns none, so the
+    run that met "Tonkatsu" saw the ramen he had scanned only as an anonymous
+    sim-0.22 cache row. Candidates now come with how often he logged each,
+    the staples are his most-logged diary foods, and the input says so."""
+    async def scenario():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:8]
+            ramen = await insert_food(conn, f"tonkotsu ramen {tag}", [MASS], "100g")
+            staple = await insert_food(conn, f"zz staple {tag}", [MASS], "100g")
+            await insert_food(conn, f"tonkotsu broth {tag}", [MASS], "100g")  # never logged
+            log_id = str(uuid4())
+            await conn.execute(
+                "INSERT INTO logs (id, input_mode, raw_input, captured_at) "
+                "VALUES (%s, 'barcode', 'x', now())",
+                (log_id,),
+            )
+            for idx, fid in enumerate((ramen, staple, staple)):
+                await conn.execute(
+                    "INSERT INTO entries (logged_at, meal, food_id, serving_id, qty, "
+                    "macros, log_id, item_index) "
+                    "VALUES (now(), 'dinner', %s, '100g', 1, '{}'::jsonb, %s, %s)",
+                    (fid, log_id, idx),
+                )
+            # spy on the two reads: the staples one must come off the diary
+            inner, reads = db.fetchall, []
+
+            async def spy(sql, params=()):
+                rows = await inner(sql, params)
+                reads.append((sql, rows))
+                return rows
+
+            db.fetchall = spy
+            try:
+                cands = await tier3._local_candidates(f"tonkatsu {tag}")
+            finally:
+                db.fetchall = inner
+            staples = next(rows for sql, rows in reads if "FROM entries e JOIN foods f" in sql)
+            uses = {str(r["id"]): int(r["uses"]) for r in staples}
+            assert uses[staple] == 2 and uses[ramen] == 1  # no alias anywhere
+            assert list(uses).index(staple) < list(uses).index(ramen)  # most-logged first
+
+            by_name = {c["display_name"]: c for c in cands}
+            assert by_name[f"tonkotsu ramen {tag}"]["logged"] == 1
+            assert by_name[f"tonkotsu ramen {tag}"]["sim"] is not None  # a trigram hit
+            assert by_name[f"tonkotsu broth {tag}"]["logged"] == 0
+            assert by_name[f"zz staple {tag}"]["logged"] == 2
+
+            text = tier3._agent_input("Tonkatsu", None, None, cands, None)
+            assert f"tonkotsu ramen {tag} — sim" in text
+            assert "THEY HAVE LOGGED THIS 1×" in text and "THEY HAVE LOGGED THIS 2×" in text
+            broth_line = next(ln for ln in text.splitlines() if f"tonkotsu broth {tag}" in ln)
+            assert "LOGGED" not in broth_line
+            assert "however they logged it" in text
+            # nothing of his among the candidates → no diary paragraph
+            assert "however they logged it" not in tier3._agent_input(
+                "x", None, None, [dict(c, logged=0) for c in cands], None
+            )
+
+    run(scenario())
+
+
 def test_answer_tap_on_a_thin_record_restores_the_question_instead_of_staging_blank():
     """The exact path the Oikos flavor tap took: the option's id resolves, but
     the record cannot be logged — so the row must go back to needs_input with

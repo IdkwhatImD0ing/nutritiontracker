@@ -101,7 +101,7 @@ class StagedItem(BaseModel):
     question: Question | None = None
     confidence: Literal["high", "medium", "low"] | None = None
     servings: list[ServingOption] | None = None  # the food's serving list (§7.1 portion sheet)
-    search_instead: bool | None = None  # §3.3 rule 3 "search instead" affordance
+    search_instead: bool | None = None  # "search instead" affordance (§3.4b placeholder row)
     web_source: WebSource | None = None  # §3.4a citation link (web-transcribed foods)
     # §3.4a photo lane (M4) — what vision guessed: "portion" on a database
     # food whose amount came from the photo, "unresolved" on an item no
