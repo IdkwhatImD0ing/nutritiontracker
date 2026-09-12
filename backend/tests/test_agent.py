@@ -317,8 +317,12 @@ def test_log_food_failure_frees_the_slot_and_is_not_reported_as_staged():
         # a row still being looked up is never reported as staged
         assert (state["food_found"], state["food_pending"], state["food_missing"]) == (0, 1, 0)
         assert agent_svc._fallback_reply(state) == "I am still looking up what you ate — check the list."
-        assert agent_svc._fallback_reply({"food_calls": 1, "food_missing": 2}) == (
+        assert agent_svc._fallback_reply({"food_calls": 1, "food_done": True, "food_missing": 2}) == (
             "I couldn't find what you ate — check the list.")
+        # log_food that never returned (the run stopped during its lookups):
+        # its rows are unknown here, so never "staged what you ate"
+        assert agent_svc._fallback_reply({"food_calls": 1}) == (
+            "I am still looking up what you ate — check the list.")
 
     _run(scenario())
 
@@ -387,7 +391,9 @@ def test_run_agent_reports_tool_state_and_survives_max_turns(monkeypatch):
             "I staged an estimate for you to check and logged your weight — check the list."
         )
         # never "staged" for a food the lookup did not find (trace 30e72425)
-        assert agent_svc._fallback_reply({"food_calls": 1, "food_found": 1, "food_missing": 1}) == (
+        assert agent_svc._fallback_reply(
+            {"food_calls": 1, "food_done": True, "food_found": 1, "food_missing": 1}
+        ) == (
             "I staged what you ate and couldn't find 1 of the foods — check the list."
         )
 
@@ -526,8 +532,8 @@ def test_agent_lane_logs_his_own_food_by_id_and_keeps_the_note(monkeypatch):
     and the agent names it by id — staged resolved from his own row, tier 2,
     confident, no search. An id that is not one of his foods is dropped and
     its phrase goes to tier 3 with the agent's note on the row (tier 3 reads
-    it as what the person meant). A saved_meal name that matches no saved
-    meal is a plain food, never the "no saved meal called…" question row.
+    it as context). A saved_meal name that matches no active saved meal is
+    the §3.1 "no saved meal called…" row — never a food search.
     The meal the agent heard applies to every row."""
     async def scenario():
         async with isolated_db() as conn:
@@ -555,7 +561,8 @@ def test_agent_lane_logs_his_own_food_by_id_and_keeps_the_note(monkeypatch):
             got = rows["tonkotsu ramen"]
             assert (got.status, got.tier, got.confidence, got.food.id) == ("resolved", 2, "high", ramen)
             assert rows["pork buns"].status == "searching" and rows["pork buns"].food is None
-            assert rows["usual lunch"].status == "searching" and rows["usual lunch"].question is None
+            guard = rows["usual lunch"]
+            assert guard.status == "needs_input" and "No saved meal" in guard.question.text
             assert resp.meal.value == "breakfast" and {it.meal.value for it in resp.items} == {"breakfast"}
             # the agent's note rides the row that still needs looking up — only that one
             stored = await (await conn.execute(

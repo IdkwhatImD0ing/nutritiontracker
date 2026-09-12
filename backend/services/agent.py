@@ -955,7 +955,11 @@ def _fallback_reply(state: dict) -> str:
     """The reply when the model never produced one (max turns): what the
     tools did, said in code."""
     parts = []
-    if state.get("food_calls"):
+    if state.get("food_calls") and not state.get("food_done"):
+        # log_food never returned (the run stopped during its lookups): its
+        # rows are staged but unknown here — never "staged what you ate"
+        parts.append("am still looking up what you ate")
+    elif state.get("food_calls"):
         # what the lookups actually found — never "staged" for a food that
         # was not (trace 30e72425: "I logged tonkatsu" over a searching row)
         found = state.get("food_found", 0)

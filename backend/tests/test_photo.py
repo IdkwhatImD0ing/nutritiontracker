@@ -701,6 +701,9 @@ def test_the_photo_turn_looks_every_row_up_before_the_card(monkeypatch):
 
             async def kick_row(log_id, item_index, *, claim=True):
                 kicked.append((item_index, claim))
+                if item_index == 2:  # nothing matched: the numberless §3.4b placeholder
+                    return StagedItem(item_index=item_index, phrase="odd garnish", status="resolved",
+                                      meal=Meal.lunch, estimated="unresolved")
                 return StagedItem(item_index=item_index, phrase="brown sauce", status="resolved",
                                   tier=3, meal=Meal.lunch, confidence="low")
 
@@ -711,6 +714,7 @@ def test_the_photo_turn_looks_every_row_up_before_the_card(monkeypatch):
             install_vision([
                 vitem(f"eggs {tag}", qty=2, unit="egg", est_grams=100, note="two fried eggs"),
                 vitem(f"mystery sauce {tag}", est_grams=30, confidence="low", note="a brown sauce"),
+                vitem(f"odd garnish {tag}", est_grams=5, confidence="low", note="a green garnish"),
             ])
             events: list[dict] = []
 
@@ -719,13 +723,14 @@ def test_the_photo_turn_looks_every_row_up_before_the_card(monkeypatch):
 
             log_id = uuid4()
             resp = await photo._stage_photo(PNG, "image/png", log_id, CAPTURED, None, TZ, emit)
-            assert kicked == [(1, False)]  # the aliased eggs were never looked up
-            assert [it.status for it in resp.items] == ["resolved", "resolved"]
+            assert kicked == [(1, False), (2, False)]  # the aliased eggs were never looked up
+            assert [it.status for it in resp.items] == ["resolved", "resolved", "resolved"]
             names = [(e["type"], e.get("name")) for e in events]
             assert names == [("tool_call", "read_photo"), ("tool_result", "read_photo"),
                              ("tool_call", "look_up"), ("tool_result", "look_up")]
-            assert events[2]["args"] == {"items": [f"mystery sauce {tag}"]}
-            assert events[3]["output"] == {"found": 1, "looked_up": 1}
+            assert events[2]["args"] == {"items": [f"mystery sauce {tag}", f"odd garnish {tag}"]}
+            # the placeholder is "resolved" with no database food: not found
+            assert events[3]["output"] == {"found": 1, "looked_up": 2}
             assert "Still looking" not in resp.agent.reply
 
     asyncio.run(run())

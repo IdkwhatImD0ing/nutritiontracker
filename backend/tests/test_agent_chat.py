@@ -712,6 +712,53 @@ def test_the_agent_answers_on_rows_already_looked_up(monkeypatch):
     _run(scenario())
 
 
+def test_log_estimate_rows_are_looked_up_before_the_reply_and_stay_flagged(monkeypatch):
+    """§3.4 for log_estimate too: a component no alias knows is looked up in
+    the turn, and the row the tool result and the done log carry is tier 3's
+    — still flagged an estimate (tier 3's rewrite keeps the flag through
+    KEEP_LOG_KEYS_SQL; the fake below writes the same way)."""
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            monkeypatch.setenv("TALLY_INLINE_TIER3", "1")
+            food_id = await insert_food(conn)
+            import routes.resolve as rr
+
+            kicked: list[int] = []
+
+            async def kick_row(log_id, item_index, *, claim=True):
+                kicked.append(item_index)
+                stored = await _scalar(
+                    conn, "SELECT staged FROM item_resolutions WHERE log_id = %s AND item_index = %s",
+                    (log_id, item_index),
+                )
+                row = StagedItem.model_validate({
+                    **stored, "status": "resolved", "tier": 3,
+                    "food": {"id": food_id, "name": "Shrimp, cooked"},
+                    "serving": {"id": "s", "description": "1 egg"},
+                })
+                await db.execute(
+                    "UPDATE item_resolutions SET status = 'resolved', tier = 3, staged = %s::jsonb "
+                    "WHERE log_id = %s AND item_index = %s",
+                    (row.model_dump_json(), str(log_id), item_index),
+                )
+                return row
+
+            monkeypatch.setattr(rr, "kick_row", kick_row)
+            runner = _fake_runner([("log_estimate", {"items": [SHRIMP], "basis": BASIS})],
+                                  "Staged the platter.")
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(id=uuid4(), text="a costco shrimp platter", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body))
+            assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
+            assert kicked == [0]
+            assert [it["status"] for it in events[1]["output"]["items"]] == ["resolved"]
+            [row] = events[3]["log"]["items"]
+            assert row["status"] == "resolved" and row["estimated"] == "portion"
+
+    _run(scenario())
+
+
 def test_agent_stream_retry_attaches_to_the_live_run(monkeypatch):
     """A phone that lost the response mid-run sends the same id again (§8.6):
     while the run is live it follows the same stream — the events it missed,
@@ -1128,6 +1175,90 @@ def test_a_photo_conversation_carries_its_plate_into_the_next_turn(monkeypatch):
             assert updated["log_id"] == str(plate_id)
             assert updated["items"][0]["qty"] == 3
             assert updated["items"][0]["estimated"] == "portion"
+
+    _run(scenario())
+
+
+def test_adjust_photo_looks_up_only_what_it_added_and_tells_the_model(monkeypatch):
+    """§3.4 in the tuning turn: a food the photo missed is looked up before the
+    reply, and the model reads what was found — not the "searching" the add
+    staged. A row an earlier turn left searching is NOT looked up again: the
+    phone's kick owns it, and a second run here would race it."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "photo-owner", is_owner=True)
+            egg = await insert_food(conn)
+            await insert_alias(conn, egg)  # 'two eggs' → tier 1
+
+            import services.vision as vision_mod
+
+            async def fake_analyze(image, mime, **kw):
+                return vision_mod.VisionResult(
+                    items=[
+                        vision_mod.VisionItem(
+                            phrase="two eggs", qty=2, unit="egg", est_grams=100,
+                            confidence="high", note="two fried eggs", menu=None,
+                        ),
+                        vision_mod.VisionItem(
+                            phrase="mystery sauce", qty=None, unit=None, est_grams=30,
+                            confidence="low", note="a brown sauce", menu=None,
+                        ),
+                    ],
+                    meal_hint=None,
+                )
+
+            monkeypatch.setattr(vision_mod, "analyze", fake_analyze)
+
+            class _NoModel:
+                def run_streamed(self, *a, **k):
+                    raise AssertionError("no model on the photo turn")
+
+            monkeypatch.setattr(agent_svc, "Runner", _NoModel())
+            plate_id = uuid4()
+            # inline lookups off for this turn (the suite's default): the sauce
+            # is left searching, as a lookup the clock could not fit would be
+            await _drain(
+                await agent_routes.agent_voice(image=_image(), log_id=plate_id, captured_at=NOW, tz=TZ)
+            )
+
+            monkeypatch.setenv("TALLY_INLINE_TIER3", "1")
+            import routes.resolve as rr
+
+            kicked: list[int] = []
+
+            async def kick_row(log_id, item_index, *, claim=True):
+                kicked.append(item_index)
+                row = StagedItem(
+                    item_index=item_index, phrase="toast", status="resolved", tier=3,
+                    food=FoodRef(id=egg, name="Toast"), serving=ServingRef(id="s", description="1 egg"),
+                    qty=1, meal=Meal.lunch, confidence="high",
+                )
+                await db.execute(
+                    "UPDATE item_resolutions SET status = 'resolved', tier = 3, staged = %s::jsonb "
+                    "WHERE log_id = %s AND item_index = %s",
+                    (row.model_dump_json(), str(log_id), item_index),
+                )
+                return row
+
+            monkeypatch.setattr(rr, "kick_row", kick_row)
+            runner = _fake_runner(
+                [("adjust_photo", {"changes": [{
+                    "op": "add", "item": "toast", "qty": 30, "unit": "g", "grams": None,
+                    "note": "the photo missed it",
+                }]})],
+                "Added the toast.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(
+                id=uuid4(), text="there was toast too", captured_at=NOW, tz=TZ, photo_log_id=plate_id,
+            )
+            events = await _drain(await agent_routes.agent_text(body))
+            assert kicked == [2]  # the toast only — never the sauce an earlier turn left
+            seen = {it["phrase"]: it["status"] for it in events[1]["output"]["items"]}
+            assert seen["toast"] == "resolved" and seen["mystery sauce"] == "searching"
+            updated = {it["phrase"]: it["status"] for it in events[3]["log"]["agent"]["updated"]["items"]}
+            assert updated["toast"] == "resolved" and updated["mystery sauce"] == "searching"
 
     _run(scenario())
 

@@ -619,8 +619,8 @@ def test_run_tier3_never_asks_on_any_row_and_reads_the_agents_note():
     clarifying questions?"): a run that answers needs_input on a plain,
     non-estimate row is promoted to the first option it saw, the rest kept as
     alternates, no question; with nothing to promote it is not_found. And the
-    chat agent's `lookup_note` on the row reaches the input as what the
-    person meant (trace 30e72425: "ramen" and "Costco" never reached tier 3)."""
+    chat agent's `lookup_note` on the row reaches the input as context
+    (trace 30e72425: "ramen" and "Costco" never reached tier 3)."""
     tag = uuid4().hex[:8]
     ids = (f"zz-loin-{tag}", f"zz-tenderloin-{tag}")
     seen_inputs: list[str] = []
@@ -668,8 +668,11 @@ def test_run_tier3_never_asks_on_any_row_and_reads_the_agents_note():
             assert item.food.name == f"pork {ids[0]}" and item.confidence == "low"
             assert [a.label for a in item.alternates or []] == ["Pork tenderloin cutlet"]
             assert (await item_row(conn, log_id, 0))["status"] == "resolved"
-            assert "What the person meant: the tonkotsu ramen they had at Costco this morning" in seen_inputs[0]
-            assert "What the person meant" not in seen_inputs[1]  # no note on that row
+            # labelled as context, never as the food itself ("Costco" is where)
+            assert ("Context from the conversation (where it was from, the brand, what the dish is"
+                    " — the phrase above is still the food): the tonkotsu ramen they had at Costco"
+                    " this morning") in seen_inputs[0]
+            assert "Context from the conversation" not in seen_inputs[1]  # no note on that row
             assert bare.status == "not_found" and bare.question is None
 
     run(scenario())
@@ -713,6 +716,47 @@ def test_run_tier3_inside_a_request_stops_at_its_budget_and_writes_nothing():
                 "SELECT count(*) AS n FROM foods WHERE source = 'web' AND source_url = %s", (CALC_URL,)
             )).fetchone()
             assert gone["n"] == 0, "an unevidenced web food must not outlive the cut run"
+
+    run(scenario())
+
+
+def test_run_tier3_cancelled_from_outside_still_drops_its_unproven_web_food():
+    """A cancel that is not the lookup's own budget (the agent run's deadline,
+    a cancelled run task) propagates — but the web-evidence gate runs first,
+    so a web food add_food wrote before the cancel, from a page the run never
+    consulted, does not stay in the shared table."""
+    added = asyncio.Event()
+
+    def stalling():
+        class Stalling:
+            @staticmethod
+            async def run(agent, agent_input, max_turns):
+                args = json.dumps({"domain": "mcdonalds.com"})
+                await _tool(agent, "pin_chain_domain").on_invoke_tool(_ctx("pin_chain_domain", args), args)
+                args = json.dumps({"source": "web", "source_id": None, "display_name": "Big Mac",
+                                   "web": _web_payload(url=CALC_URL)})
+                out = json.loads(await _tool(agent, "add_food").on_invoke_tool(_ctx("add_food", args), args))
+                assert "error" not in out, out
+                added.set()
+                await asyncio.sleep(5)  # cancelled here
+                raise AssertionError("the cancel should have ended this run")
+        return Stalling
+
+    async def scenario():
+        async with isolated_db() as conn:
+            log_id = await insert_log(conn)
+            await seed_item(conn, log_id, 0, "Big Mac", status="searching")
+            async with _offline_run(stalling()):
+                task = asyncio.create_task(tier3.run_tier3(log_id, 0))
+                await added.wait()
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert (await item_row(conn, log_id, 0))["status"] == "searching"
+            gone = await (await conn.execute(
+                "SELECT count(*) AS n FROM foods WHERE source = 'web' AND source_url = %s", (CALC_URL,)
+            )).fetchone()
+            assert gone["n"] == 0, "an unevidenced web food must not outlive a cancelled run"
 
     run(scenario())
 

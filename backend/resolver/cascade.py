@@ -308,6 +308,14 @@ def _unit_stem(unit: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _explicit_rows(rows: list[dict]) -> list[dict]:
+    """pick() rule 2's rows: a choice he made explicitly within 90 days."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    return [
+        r for r in rows if r["last_explicit_at"] is not None and r["last_explicit_at"] >= cutoff
+    ]
+
+
 async def pick(rows: list[dict]) -> dict:
     """Recency-and-intent aware selection over the alias rows for one key.
 
@@ -324,10 +332,7 @@ async def pick(rows: list[dict]) -> dict:
     if pinned:
         return max(pinned, key=lambda r: r["last_used_at"])
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-    explicit = [
-        r for r in rows if r["last_explicit_at"] is not None and r["last_explicit_at"] >= cutoff
-    ]
+    explicit = _explicit_rows(rows)
     if explicit:
         return max(explicit, key=lambda r: r["last_explicit_at"])
 
@@ -617,18 +622,25 @@ async def _stage_tier1(
     unit: str | None,
     state: str | None,
     t0: float,
+    picked: dict | None = None,
 ) -> Resolution:
-    picked = await pick(rows)
+    """`picked`: the row the chat agent named by id (§3.3), in place of
+    pick(); the other rows stay one-tap alternates either way."""
+    picked = picked or await pick(rows)
+    return await _stage_resolved(
+        picked, phrase, item_index, meal, qty, unit, state, t0,
+        tier=1, alternates=_alias_alternates(rows, picked["alias_id"]),
+    )
+
+
+def _alias_alternates(rows: list[dict], exclude_alias_id: object = None) -> list[Alternate] | None:
+    """Up to three alias rows (not `exclude_alias_id`) as one-tap alternates."""
     others = sorted(
-        (r for r in rows if r["alias_id"] != picked["alias_id"]),
+        (r for r in rows if r["alias_id"] != exclude_alias_id),
         key=lambda r: (r["use_count"], r["last_used_at"]),
         reverse=True,
     )[:3]
-    alternates = [_alternate(r) for r in others] or None
-    return await _stage_resolved(
-        picked, phrase, item_index, meal, qty, unit, state, t0,
-        tier=1, alternates=alternates,
-    )
+    return [_alternate(r) for r in others] or None
 
 
 # ---------------------------------------------------------------------------
@@ -652,14 +664,17 @@ async def _library_food(library_match: str | None, index_ids: set[str] | None) -
 
 
 async def _stage_tier2(
-    lib: dict, parsed: ParsedItem, item_index: int, meal: Meal, t0: float
+    lib: dict, parsed: ParsedItem, item_index: int, meal: Meal, t0: float,
+    alternates: list[Alternate] | None = None,
 ) -> Resolution:
     """§3.3: one of his own foods, named by a model reading his food list —
     since 2026-09-11 the chat agent's `food_id` (§6.4). Staged "high": it is
     a food he has logged, picked with the whole conversation in view, and
     the list is his to approve, not to double-check (Bill: "the agent should
     make the list using its tools then I just approve"). Portion verify-me
-    still applies.
+    still applies. `alternates`: the foods his own phrase history names for
+    these words — the pick overrode them, so the row says "medium" and keeps
+    them one tap away.
 
     It was one of two matchers. The other, a pg_trgm similarity() test of the
     phrase against his alias phrases, was removed 2026-09-10 (Bill: "we should
@@ -670,7 +685,7 @@ async def _stage_tier2(
     """
     return await _stage_resolved(
         lib, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0,
-        tier=2, confidence="high",
+        tier=2, confidence="medium" if alternates else "high", alternates=alternates,
     )
 
 
@@ -996,12 +1011,24 @@ async def resolve_item(
     lib = await _library_food(parsed.library_match, index_ids)
 
     # tier 1 — exact alias match (§3.2). When the chat agent named one of his
-    # foods by id (§6.4), an alias row for THAT food still wins (it carries
-    # the portion default and the state answer), but an alias pointing at
-    # another food does not overrule the agent's explicit pick.
+    # foods by id (§6.4): a pinned alias or a choice he made explicitly
+    # (pick() rules 1–2) still wins — his decision outranks a model's; else
+    # his alias row for THAT food is the pick (it carries the portion default
+    # and the state answer); else the id's food at tier 2, with the foods his
+    # history names for these words kept as one-tap alternates.
     rows = await db.fetchall(_ALIAS_SQL, (key,))
-    if rows and lib is not None:
-        rows = [r for r in rows if str(r["food_id"]) == str(lib["food_id"])]
+    if rows and lib is not None and not (
+        any(r["pinned"] for r in rows) or _explicit_rows(rows)
+    ):
+        same = next((r for r in rows if str(r["food_id"]) == str(lib["food_id"])), None)
+        if same is None:
+            return await _stage_tier2(
+                lib, parsed, item_index, meal, t0, alternates=_alias_alternates(rows)
+            )
+        return await _stage_tier1(
+            rows, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0,
+            picked=same,
+        )
     if rows:
         return await _stage_tier1(
             rows, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0

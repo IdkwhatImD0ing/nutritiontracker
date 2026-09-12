@@ -348,6 +348,35 @@ def test_q3_foreign_and_stored_ids_are_answered_before_any_spend(monkeypatch):
     _run(run())
 
 
+def test_the_voice_route_starts_the_request_clock_before_speech_to_text(monkeypatch):
+    """§3.4: POST /api/logs with audio starts deadline.py's clock at the route,
+    so STT is on it. Started in the pipeline instead, the agent and its inline
+    lookups would get a fresh 105 s after a slow transcription (up to 30 s a
+    provider) and run past vercel's maxDuration."""
+    import deadline
+    from services import transcribe as stt_mod
+
+    _stub_pipeline(monkeypatch, runs=[])
+    seen: list = []
+
+    async def fake(audio_bytes, mime):
+        seen.append(deadline.left())
+        return stt_mod.Transcription(text="two eggs", transcribe_ms=1, provider="deepgram")
+
+    monkeypatch.setattr(stt_mod, "transcribe", fake)
+
+    async def run():
+        async with isolated_db() as conn:
+            await _become(conn, "clock-owner", is_owner=True)
+            await logs_routes.create_log_voice(
+                audio=_upload(AUDIO, "audio/webm"), log_id=uuid4(), captured_at=NOW, tz="UTC"
+            )
+
+    _run(run())
+    assert len(seen) == 1 and seen[0] is not None
+    assert 0 < seen[0] <= deadline.REQUEST_BUDGET_S
+
+
 # ---------------------------------------------------------------------------
 # Q4. /api/resolve (and the kick, the free-text answer) on a foreign item
 # ---------------------------------------------------------------------------

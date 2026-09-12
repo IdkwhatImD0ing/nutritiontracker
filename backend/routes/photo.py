@@ -651,7 +651,10 @@ async def _stage_photo(
         staged = await _resolve_inline(log_id, staged, reserve=_PHOTO_RESERVE_S)
         if emit is not None:
             looked = {p.item_index for p in pending}
-            found = sum(1 for it in staged if it.item_index in looked and it.status == "resolved")
+            # a numberless placeholder (§3.4b rule 2) is "resolved" with no
+            # database food — not found
+            found = sum(1 for it in staged if it.item_index in looked
+                        and it.status == "resolved" and it.estimated != "unresolved")
             await emit({"type": "tool_result", "id": look_id, "name": "look_up",
                         "output": {"found": found, "looked_up": len(pending)}})
     return LogCreateResponse(log_id=log_id, meal=meal, items=staged, agent=outcome(staged))

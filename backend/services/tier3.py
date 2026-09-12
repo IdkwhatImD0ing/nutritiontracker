@@ -767,7 +767,7 @@ def _agent_input(
     refinement: str | None,
     note: str | None = None,
     estimated: bool = False,
-    meant: str | None = None,
+    context: str | None = None,
 ) -> str:
     lines = [f'Resolve this food phrase to a database entry: "{phrase}"']
     if qty is not None:
@@ -775,8 +775,12 @@ def _agent_input(
     # What the chat agent understood about this food from the conversation —
     # the store, the brand, what the dish is — which the phrase alone cannot
     # carry (trace 30e72425: "at a Costco" and "ramen" never reached tier 3).
-    if meant:
-        lines.append(f"What the person meant: {meant}")
+    # Labelled as context, not as the food: "Costco" is where, not what.
+    if context:
+        lines.append(
+            f"Context from the conversation (where it was from, the brand, what the dish is"
+            f" — the phrase above is still the food): {context}"
+        )
     # The note is what the photo (or the agent's estimate) saw — including the
     # menu page it cited. Without it this call asked "homemade, or a restaurant
     # item?" about a dish vision had already tied to a cafeteria's own menu
@@ -1555,7 +1559,7 @@ async def run_tier3(
         estimated=is_estimate,
         # what the chat agent knew about this food (the store, the kind of
         # dish) — stored on the row so the phone's fallback kick has it too
-        meant=staged_prev.get("lookup_note"),
+        context=staged_prev.get("lookup_note"),
     )
 
     tracing.init_tracing()
@@ -1595,7 +1599,27 @@ async def run_tier3(
                 status="not_found", source=None, source_id=None, serving_id=None,
                 display_name=None, confidence="low", alternates=[], question=None,
             )
-            span.set(attributes={"inline_timeout_s": budget})
+            # §10: the transcript died with the cancelled run, so the trace
+            # keeps what the tools recorded — what it spent and what it read
+            span.set(attributes={
+                "inline_timeout_s": budget,
+                "network_calls": counter["network_calls"],
+                "fetched_hosts": sorted(run_state.get("fetched_hosts") or ()),
+                "foods_seen": [f"{source}:{source_id}" for source, source_id in food_cache],
+            })
+        except asyncio.CancelledError:
+            # Cancelled from OUTSIDE — the agent run's own deadline, a
+            # cancelled run task; the timeout above turns only its own
+            # deadline into TimeoutError. The gate below would never run, so
+            # it runs here on what the tools recorded (no transcript survives
+            # a cancel) before the cancellation goes on: an unproven web food
+            # never outlives its run (§3.4a).
+            for key, row_id in persisted.items():
+                if key[0] == "web" and _web_evidence_gap(
+                    (food_cache.get(key) or {}).get("source_url") or "", {}, run_state
+                ) is not None:
+                    await _discard_web_food(row_id)
+            raise
         except MaxTurnsExceeded as exc:
             # Deterministic failure — retrying identically would burn another
             # 6-turn run; fall through to the manual-search escape hatch.
@@ -1622,7 +1646,9 @@ async def run_tier3(
             if run_data is not None:
                 transcript = [it.to_input_item() for it in run_data.new_items]
             span.set(attributes={"max_turns_hit": True})
-        span.set(output=out.model_dump(mode="json"))
+        # a cut run produced no result: the row stays searching, and says so
+        span.set(output={"status": "searching", "timed_out": True} if timed_out
+                 else out.model_dump(mode="json"))
 
     # §3.4/§9: what the hosted web_search consulted, and how many search
     # actions it ran — each one is a billed network call, counted like any other.

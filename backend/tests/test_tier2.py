@@ -313,21 +313,37 @@ def test_tier2_library_match_resolves_and_beats_an_alias_for_another_food():
                 parsed(said, library_match=theirs), 0, Meal.dinner, index_ids={theirs},
             )
             assert res.staged.food.id == theirs and res.staged.tier == 2
-            assert res.alias_id is None and res.staged.confidence == "high"
+            # it overrode what his own phrase history says: "medium", with that
+            # food one tap away
+            assert res.alias_id is None and res.staged.confidence == "medium"
+            assert [a.food_id for a in res.staged.alternates] == [other]
 
-            # an alias for the SAME food wins: tier 1, the alias row
+            # an alias for the SAME food wins: tier 1, the alias row, the
+            # other alias still a chip
             alias_id = await insert_alias(conn, said, theirs)
             res = await cascade.resolve_item(
                 parsed(said, library_match=theirs), 1, Meal.dinner, index_ids={theirs},
             )
             assert res.staged.food.id == theirs and res.staged.tier == 1
-            assert res.alias_id == alias_id and res.staged.alternates is None
+            assert res.alias_id == alias_id
+            assert [a.food_id for a in res.staged.alternates] == [other]
 
             # an id that is not his (outside the index) is dropped: the alias decides
             res = await cascade.resolve_item(
                 parsed(said, library_match=str(uuid4())), 2, Meal.dinner, index_ids={theirs},
             )
             assert res.staged.tier == 1 and res.staged.food.id in {other, theirs}
+
+            # his own decision outranks the model's: a pinned alias (or a
+            # choice he made explicitly) is pick()'s, whatever the id says
+            await conn.execute(
+                "UPDATE aliases SET pinned = true WHERE alias_norm = %s AND food_id = %s",
+                (said, other),
+            )
+            res = await cascade.resolve_item(
+                parsed(said, library_match=theirs), 3, Meal.dinner, index_ids={theirs},
+            )
+            assert res.staged.food.id == other and res.staged.tier == 1
 
     asyncio.run(run())
 

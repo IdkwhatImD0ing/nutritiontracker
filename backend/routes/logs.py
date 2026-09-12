@@ -279,6 +279,32 @@ def when_shift(
     return WhenShift(logged_at=shifted, meal=when_meal)
 
 
+def _when_and_meal(
+    body: LogCreate,
+    meal: Meal,
+    meal_hint: str | None,
+    when_hint: str | None,
+    when_day_offset: int | None,
+    when_meal: str | None,
+) -> tuple[WhenShift, Meal]:
+    """§7.2 for the agent's staging tools (log_food, log_estimate): its meal
+    and time fields → the day shift and the rows' meal. An explicit meal word
+    outranks the shift's; a value outside the Meal enum is dropped."""
+    try:
+        shift_meal = Meal(when_meal) if when_meal else None
+    except ValueError:
+        shift_meal = None
+    try:
+        spoken_meal = Meal(meal_hint) if meal_hint else None
+    except ValueError:
+        spoken_meal = None
+    when = when_shift(
+        when_day_offset, shift_meal, spoken_meal,
+        body.captured_at, body.tz, when_hint=when_hint,
+    )
+    return when, spoken_meal or when.meal or meal
+
+
 async def infer_meal(captured_at: datetime, tz: str | None) -> Meal:
     """§7.2: configurable clock windows from settings; no model involved."""
     row = await db.fetchone("SELECT value FROM settings WHERE key = 'meal_windows'")
@@ -492,6 +518,11 @@ async def create_log_voice(
     The LogCreate fields ride as form fields minus `text` — the transcript
     supplies it."""
     import tracing  # lazy: stubbed in route tests
+
+    # §3.4: the request's clock starts here, so speech-to-text (up to 30 s a
+    # provider) is on it — started later, the pipeline would budget 105 s
+    # after STT and run past maxDuration
+    deadline.start()
 
     # §10: one trace per run, the log id as its session (STT is its first span)
     async with tracing.run(
@@ -773,19 +804,7 @@ async def _stage_items(
     Returns (rows, the rows' meal, logged_at)."""
     import tracing
 
-    try:
-        shift_meal = Meal(when_meal) if when_meal else None
-    except ValueError:
-        shift_meal = None
-    try:
-        spoken_meal = Meal(meal_hint) if meal_hint else None
-    except ValueError:
-        spoken_meal = None
-    when = when_shift(
-        when_day_offset, shift_meal, spoken_meal,
-        body.captured_at, body.tz, when_hint=when_hint,
-    )
-    row_meal = spoken_meal or when.meal or meal  # an explicit meal word outranks the shift
+    when, row_meal = _when_and_meal(body, meal, meal_hint, when_hint, when_day_offset, when_meal)
     # A food_id proves nothing on its own (`foods` is global): only the ids
     # that are this tenant's own diary foods may name a row (_MY_FOODS_SQL).
     # An id that fails is dropped, and its phrase takes tiers 1 and 3.
@@ -794,10 +813,11 @@ async def _stage_items(
     parsed = [
         ParsedItem(
             phrase=it.phrase.strip(),
-            phrase_kind="food",
-            # a saved meal stores its own portions, and a spoken amount would
-            # stand tier 0 aside (§3.1); one that matches no saved meal is a
-            # plain food, never the "no saved meal called…" question row
+            # §3.1: a saved meal's name is a meal reference — it expands, or,
+            # matching no active saved meal (the agent also sees inactive
+            # ones), becomes the "no saved meal called…" row; it never enters
+            # food search. A macro stores its own portions, so no amount.
+            phrase_kind="meal_ref" if it.saved_meal else "food",
             qty=None if it.saved_meal else (float(it.qty) if it.qty is not None else None),
             unit=None if it.saved_meal else ((it.unit or "").strip() or None),
             state=None,
@@ -907,19 +927,7 @@ async def _stage_estimate(
     `when_hint`, and the agent — a model, like decompose — resolves the time
     words itself into `when_day_offset` / `when_meal`, so "yesterday I had a
     platter…" lands on yesterday's diary, not today's (BACKLOG 189)."""
-    try:
-        shift_meal = Meal(when_meal) if when_meal else None
-    except ValueError:
-        shift_meal = None
-    try:
-        spoken_meal = Meal(meal_hint) if meal_hint else None
-    except ValueError:
-        spoken_meal = None
-    when = when_shift(
-        when_day_offset, shift_meal, spoken_meal,
-        body.captured_at, body.tz, when_hint=when_hint,
-    )
-    row_meal = spoken_meal or when.meal or meal  # an explicit meal word outranks the shift
+    when, row_meal = _when_and_meal(body, meal, meal_hint, when_hint, when_day_offset, when_meal)
     import tracing
 
     async with tracing.run(
@@ -1318,17 +1326,31 @@ async def _run_agent_lane(
         from routes import photo as photo_route  # lazy: photo imports this module
 
         async with staging:
+            # every row this call adds lands above the plate's highest index
+            last = await db.fetchone(
+                "SELECT coalesce(max(item_index), -1) AS n FROM item_resolutions WHERE log_id = %s",
+                (str(body.photo_log_id),),
+            )
             out = await photo_route.adjust_rows(body.photo_log_id, changes, body)
             if "error" not in out:
                 # read twice on purpose: `out` is the model's view (no macros,
                 # ever — the reply must not state them), this is the client's
                 result["updated"] = await _load_log_response(body.photo_log_id)
         # §3.4: a food the photo missed ("add") is looked up now like any row —
-        # after the lock, then the plate is read again for the card
+        # after the lock, then the plate is read again for the card. Only the
+        # rows THIS call added: one an earlier turn left searching is the
+        # phone's kick's to finish, and a second run here would race it.
         plate = result["updated"] if "error" not in out else None
-        if plate is not None and any(r.status == "searching" for r in plate.items):
-            await _resolve_inline(body.photo_log_id, plate.items, reserve=_AGENT_RESERVE_S)
+        added = [
+            r for r in (plate.items if plate is not None else [])
+            if r.item_index > last["n"] and r.status == "searching"
+        ]
+        if added:
+            await _resolve_inline(body.photo_log_id, added, reserve=_AGENT_RESERVE_S)
             result["updated"] = await _load_log_response(body.photo_log_id)
+            # the model's view too, or its reply says "still looking" (or
+            # "added") over what the lookup actually found
+            out["items"] = summary(result["updated"].items)
         return out
 
     async def record_weight(value: float, unit: str, day) -> dict:

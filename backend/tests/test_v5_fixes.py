@@ -267,6 +267,62 @@ def test_resolve_novel_text_goes_to_tier3_as_typed():
     asyncio.run(run())
 
 
+def test_resolve_takes_a_typed_amount_off_the_phrase():
+    """The sheet sends the text as typed. "2 eggs" is 2 of "eggs": the number
+    comes off the phrase (no alias could ever match it, and commit would learn
+    "2 eggs") and beats the pre-edit utterance's amount — what the decompose
+    micro-call did until 2026-09-11. A phrase said as a whole is left whole."""
+
+    async def run():
+        async with isolated_db() as conn:
+            async with resolve_routes() as rr:
+                phrase = f"eggs {tok()}"
+                food = await insert_food(conn, "Large Egg")
+                await insert_alias(conn, phrase, food)
+                log_id = await insert_dummy_log(conn)
+
+                item = await rr.resolve_item(
+                    ResolveRequest(log_id=log_id, item_index=0, phrase=f"2 {phrase}")
+                )
+                assert item.status == "resolved" and item.tier == 1 and item.food.id == food
+                assert item.qty == 2
+                row = await db.fetchone(
+                    "SELECT phrase FROM item_resolutions WHERE log_id = %s AND item_index = 0",
+                    (log_id,),
+                )
+                assert row["phrase"] == phrase  # the alias commit learns
+
+                # the parser on its own: leading amounts only, a unit when one
+                # follows, "7up" and "2% milk" left whole
+                assert rr._typed_amount("30g whey") == (30.0, "g", "whey")
+                assert rr._typed_amount("two scoops of whey") == (2.0, "scoops", "whey")
+                assert rr._typed_amount("1/2 cup rice") == (0.5, "cup", "rice")
+                assert rr._typed_amount("7up") is None and rr._typed_amount("2% milk") is None
+
+    asyncio.run(run())
+
+
+def test_resolve_names_his_own_food_by_its_exact_diary_name():
+    """A food of his typed by its name (brand first or not) is that food at
+    tier 2 — the edit's analogue of the chat agent's food_id — with no
+    tier-3 run (the stub raises if reached). Exact, never fuzzy."""
+
+    async def run():
+        async with isolated_db() as conn:
+            async with resolve_routes() as rr:
+                name = f"Core Power Elite {tok()}"
+                food = await insert_food(conn, name, brand="Fairlife")
+                await insert_manual_entry(conn, food, 1, SCOOP["macros"])  # it is in his diary
+                log_id = await insert_dummy_log(conn)
+
+                item = await rr.resolve_item(
+                    ResolveRequest(log_id=log_id, item_index=0, phrase=f"fairlife {name.lower()}")
+                )
+                assert item.status == "resolved" and item.tier == 2 and item.food.id == food
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # 2. BACKLOG 28 — qty-PATCH scales from a stored base (round-trip exact)
 # ---------------------------------------------------------------------------
