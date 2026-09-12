@@ -7,6 +7,9 @@ harness (`backend/evals/`) still depend on and FireTrace's API (`/api/v1/openapi
 read 2026-09-06) does not offer. Each says what the code does today and the smallest API
 that would let it move. In priority order.
 
+*2026-09-11:* the eval harness was removed with decompose, which it replayed (BACKLOG 196).
+Items 2 and 3 describe code that is gone; they are what an agent-level eval would need.
+
 ## 1. Find traces by score — blocks the §10 loop
 
 **Today.** At commit, `resolver/commit.py` posts `user_edited` (0/1), `was_disambiguated`

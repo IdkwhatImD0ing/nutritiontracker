@@ -18,7 +18,7 @@ was written from the code as it landed, and §8 has not been walked from an empt
 | **Stack** | Next.js 16 (App Router, TS) PWA + Python FastAPI, deployed as **two Vercel Services on one origin** |
 | **Database** | Neon Postgres (`pg_trgm`, `pgvector` available) — Vercel-Marketplace-managed. Row-Level Security scopes every user-owned table to `app.user_id`; `foods` is shared |
 | **Auth** | Neon Managed Better Auth; Next holds the session cookie, the client sends a 15-min EdDSA JWT, FastAPI verifies it via JWKS. Any verified account may sign in: `ALLOWED_EMAIL` is the owner, everyone else is a demo (`GET /api/me` says which) |
-| **LLM** | `gpt-5.6-luna` (decompose), `gpt-6-astra` at effort `medium` (photo vision), `gpt-5.6-terra` (the front-door agent behind the Agent chat, and the tier-3 agent), `gpt-5.6-sol` at effort `low` (a chat conversation with a photo in it). **Always pin the full model id**, never a bare family alias |
+| **LLM** | `gpt-6-astra` at effort `medium` (photo vision), `gpt-5.6-terra` (the front-door agent — every text and voice log since decompose was removed, 2026-09-11 — and the tier-3 agent), `gpt-5.6-sol` at effort `low` (a chat conversation with a photo in it). **Always pin the full model id**, never a bare family alias |
 | **Speech** | Deepgram `nova-3` primary, OpenAI `gpt-transcribe` fallback |
 | **Food data** | USDA FDC (generic + branded + barcodes) primary, Open Food Facts quality-gated fallback, chain restaurants only via web transcription with a stored source URL |
 | **Tracing** | FireTrace (self-hosted; `backend/tracing.py` POSTs one trace per model/agent run, stdlib only). `FIRETRACE_API_KEY` decides the environment — one key per Vercel scope. Langfuse survives only in the eval harness |
@@ -75,7 +75,8 @@ committed — keep it that way. `.env.example` lists the canonical variable name
 `DEEPGRAM_API_KEY`, `FDC_API_KEY`, `OFF_USER_AGENT`, `FIRETRACE_API_KEY` (a development
 key — the key decides the environment; unset, tracing is simply off), `FIRECRAWL_API_KEY`
 (the photo lane's web tools; unset, the lane keeps hosted search alone), the `LANGFUSE_*`
-set (the eval harness only, §6), plus the Neon-managed `POSTGRES_*`/`PG*` set.
+set (unused since the eval harness was removed, 2026-09-11), plus the Neon-managed
+`POSTGRES_*`/`PG*` set.
 
 Two deliberate omissions:
 
@@ -245,7 +246,7 @@ regression even when tests pass.
    RLS policies to make a query work, and never run request code without `app.user_id` set.
    A new table that holds user data gets the same `user_id` default + policy as the tables in
    migration 002 (the app role's privileges follow from 002's default privileges). Code with
-   no request (evals, migrations) binds the owner explicitly.
+   no request (migrations) binds the owner explicitly.
 
 ---
 
@@ -257,23 +258,21 @@ backend/
   models.py            pydantic contracts — the single source of truth for API types
   auth.py              JWT verification, owner-vs-demo, Origin check
   db.py  tracing.py    connection; binds tally_app + app.user_id per transaction; the FireTrace tracer (§10)
+  deadline.py          the request's 105 s clock, so inline tier-3 lookups and the agent fit under Vercel's 120 s (§3.4)
   migrations/          001_init.sql, 002_multiuser.sql, 003_weights.sql, apply.py (`--dry-run` verifies + rolls back)
   resolver/
     cascade.py         the resolver cascade: tier 0 → 1 → 2 → 3, and macro expansion
     commit.py          §3.5 idempotent commit transaction, alias/portion learning
     norm.py            phrase normalization (used by every tier)
   services/
-    agent.py           the Agent lane's front door (§6.4): log_food → the pipeline, log_estimate,
-                       log_weight → weights, save_meal / update_meal → saved meals (§8.4)
-    decompose.py       utterance → items (Luna, structured output)
+    agent.py           the front door for every text/voice log (§6.4): log_food (the foods it names,
+                       by id when they are his), log_estimate, log_weight → weights,
+                       save_meal / update_meal → saved meals (§8.4)
     tier3.py           the OpenAI-Agents food-resolution agent + its tools (web lane: chains + retail products)
     transcribe.py      Deepgram/OpenAI behind one interface
-    context.py         what the LLM is told about your history
     quota.py           demo quota: one log a day, ten paid re-resolutions (§5 of DESIGN)
   sources/             fdc.py (USDA), web.py (restaurant transcription lane)
   routes/              one module per API surface (me.py: GET /api/me; weights.py: the weigh-in log)
-  evals/               Langfuse dataset collection + replay harness (runs as the owner; `uv run --group evals`,
-                       parked on Langfuse until FireTrace has datasets — docs/FIRETRACE_FEEDBACK.md)
   tests/               pytest; `-m live` marks the ones that spend money; tenancy_harness.py
                        binds every isolated_db to a tenant
 frontend/
@@ -366,6 +365,22 @@ the next utterance would flush — deleting the log being tuned. The card's *Rev
 `POST /api/logs/photo` is unchanged and still tested; the UI no longer calls it.
 `tests/test_photo_chat.py` (9, offline), the new §6 block in `tests/test_photo.py` and three stream tests in `test_agent_chat.py`. **Measured on the live gate: astra at effort `medium` took 16.8–19.6s against luna's 3.1s**, and at effort `low` 10.9s. Astra is clearly the sharper read at either effort; `medium` has not yet been shown to earn its extra ~6s (on the test plate it called the same white slabs "cheese" on one run and "butter" on the next). `medium` is what Bill asked for and what shipped — read BACKLOG 170 before touching it.
 
+**2026-09-10/11 — the agent builds the finished list** (DESIGN §3.3, §3.4, §6.2, §6.4; BACKLOG
+195–196). Trace `30e72425`: "tonkotsu ramen at Costco" was transcribed "Tom Katsu, Winston
+Roman", the agent gave up, then said "logged" over a row still `searching`, and tier 3 asked a
+question. Food memory is now the diary, whatever lane logged a food, and the trigram matcher
+is gone (PR #28). Then: **tier 3 never asks** (it promotes the likeliest candidate); **the chat
+agent names the foods itself** — `log_food(items)`, with the `food_id` of one of his own foods
+(its input lists the 40 he logged last) and the words he *meant* when the transcript misheard
+them; and **tier 3 runs inside the request**, before the agent replies, under a 105 s clock
+(`deadline.py`), with the phone's kick as the fallback. Decompose is deleted — the service,
+`services/context.py`, `prompts/`, the `evals/` harness that replayed it, and `LogCreate.agent`.
+`tests/test_inline_lookup.py` (5, offline) covers the inline step; the offline suites set
+`TALLY_INLINE_TIER3=0` so no fake agent reaches the real tier 3. The offline suite shows only
+the ten known failures (368 pass). Live, as the owner: the trace's utterance now stages the
+ramen by id in 10.4 s with no question; a Big Mac's web-lane lookup runs 35–40 s, right at the
+40 s inline cap (BACKLOG 196).
+
 What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
 (18, now 100), the preview-protection bypass token (19), the input-hardening pass (98), the
 open-sourcing follow-ups (99–111), and whatever real use turns up.
@@ -415,7 +430,6 @@ person. DESIGN §0.5 has the *why* for each.
 | USDA FDC | free key: https://fdc.nal.usda.gov/api-key-signup | `FDC_API_KEY` |
 | Firecrawl | optional. A key from [firecrawl.dev](https://firecrawl.dev) gives the owner's photo lane its hosted MCP tools — finding and reading a menu page for the dish in the picture (DESIGN §3.4b). Without it the lane still has hosted `web_search`; demo accounts never get either | `FIRECRAWL_API_KEY` |
 | FireTrace | a project on your FireTrace deployment, one write key per environment (the key decides which). Unset, tracing is off and nothing else changes | `FIRETRACE_API_KEY` |
-| Langfuse | only the eval harness (`backend/evals`, `uv run --group evals`), until FireTrace has datasets (docs/FIRETRACE_FEEDBACK.md) | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`, `LANGFUSE_TRACING_ENVIRONMENT=test` |
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |
 
 `OFF_USER_AGENT` is read by `backend/sources/off.py`, the barcode miss-fallback (DESIGN
