@@ -92,6 +92,19 @@ Tally caps strings at 4,000 characters and lists at 100 items, and truncates eve
 input/output when the body passes 1.5 MiB. A `413` whose `message` names the offending
 span id would let the client truncate only that span.
 
+## 8. Streaming fixes a trace's input at the start — blocks streaming
+
+Added 2026-09-11, after the streaming routes shipped. **Today.** Tally still sends one
+whole trace per run (DESIGN.md §10). It records a trace only once a model runs, so the
+earliest it could send a streamed start is the first model span. In the voice lanes
+that span is `transcribe`, and its result, the transcript, becomes the trace's `input`.
+**FireTrace now.** `input`, `sessionId` and `userId` go only in the start request; the
+end request has no `input`, and `PATCH /api/v1/traces/{id}` merges `metadata` only. A
+streamed voice trace would keep `{mime, bytes}` as its input for good.
+
+**Ask.** Accept `input` (and `sessionId`, `userId`) on `POST /api/v1/traces/{id}/end`,
+settable once if the start left them out.
+
 ## What moved without any gap
 
 - Traces with a nested span tree; `kind`, `status`, ISO timestamps, `provider`/`model`
