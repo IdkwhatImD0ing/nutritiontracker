@@ -614,6 +614,67 @@ async def _offline_run(runner):
         tr.init_tracing, tr.install_agents_hook, tr.run, tr.flush = orig
 
 
+def test_run_tier3_never_asks_on_any_row_and_reads_the_agents_note():
+    """Rule 6 for every row (2026-09-10, Bill: "why am I still being asked
+    clarifying questions?"): a run that answers needs_input on a plain,
+    non-estimate row is promoted to the first option it saw, the rest kept as
+    alternates, no question; with nothing to promote it is not_found. And the
+    chat agent's `lookup_note` on the row reaches the input as what the
+    person meant (trace 30e72425: "ramen" and "Costco" never reached tier 3)."""
+    tag = uuid4().hex[:8]
+    ids = (f"zz-loin-{tag}", f"zz-tenderloin-{tag}")
+    seen_inputs: list[str] = []
+
+    def asking(options):
+        class Asking:
+            @staticmethod
+            async def run(agent, agent_input, max_turns):
+                seen_inputs.append(agent_input)
+                return _FakeRun(tier3.Tier3Result(
+                    status="needs_input", source=None, source_id=None, serving_id=None,
+                    display_name=None, confidence="low", alternates=[],
+                    question=tier3.Tier3Question(text="Which cut was the tonkatsu?", options=options),
+                ), [])
+        return Asking
+
+    async def fake_get_food(source, source_id):
+        return {"source": "fdc", "source_id": str(source_id), "name": f"pork {source_id}",
+                "display_name": f"pork {source_id}", "brand": None, "food_type": "generic",
+                "state": "cooked", "state_sensitive": False, "servings": [MASS],
+                "default_serving_id": "100g", "per_100g": MASS["macros"], "payload": {}}
+
+    async def scenario():
+        async with isolated_db() as conn:
+            log_id = await insert_log(conn)
+            await seed_item(conn, log_id, 0, "Tonkatsu", status="searching", staged={
+                "item_index": 0, "phrase": "Tonkatsu", "status": "searching", "meal": "breakfast",
+                "lookup_note": "the tonkotsu ramen they had at Costco this morning",
+            })
+            await seed_item(conn, log_id, 1, "Tonkatsu", status="searching")
+            orig = tier3.fdc.get_food
+            tier3.fdc.get_food = fake_get_food
+            try:
+                options = [tier3.Tier3Option(label="Pork loin cutlet", source="fdc", source_id=ids[0]),
+                           tier3.Tier3Option(label="Pork tenderloin cutlet", source="fdc", source_id=ids[1])]
+                async with _offline_run(asking(options)):
+                    item = await tier3.run_tier3(log_id, 0)
+                # nothing to promote (an id-less question) → not_found, never a question
+                async with _offline_run(asking([tier3.Tier3Option(label="Homemade", source=None, source_id=None)])):
+                    bare = await tier3.run_tier3(log_id, 1)
+            finally:
+                tier3.fdc.get_food = orig
+
+            assert item.status == "resolved" and item.question is None
+            assert item.food.name == f"pork {ids[0]}" and item.confidence == "low"
+            assert [a.label for a in item.alternates or []] == ["Pork tenderloin cutlet"]
+            assert (await item_row(conn, log_id, 0))["status"] == "resolved"
+            assert "What the person meant: the tonkotsu ramen they had at Costco this morning" in seen_inputs[0]
+            assert "What the person meant" not in seen_inputs[1]  # no note on that row
+            assert bare.status == "not_found" and bare.question is None
+
+    run(scenario())
+
+
 def test_run_tier3_drops_web_food_without_real_evidence():
     """Major: 'estimation has no code path' enforced after the run — a web
     food whose page the run never searched/cited/fetched is demoted to
