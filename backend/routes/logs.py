@@ -7,8 +7,8 @@ capture_failure status — never an empty staged log.
 
 Agent mode (§6.4, 2026-09-06): `agent: true` (JSON field / form field) routes
 the utterance through services/agent.py after the §3.0 short-circuit — the
-agent hands the food part to the unchanged decompose → cascade → staging
-pipeline (_stage_from_text), an unlabeled dish's components to
+agent names the foods itself and hands them to the cascade → staging pipeline
+(_stage_items; no decompose step since 2026-09-11), an unlabeled dish's components to
 _stage_estimate (flagged rows, §3.4a) and a spoken weight to routes/weights;
 the response reports what it did under `agent`. routes/agent.py streams the
 same pipeline event by event for the chat window; the claim, transcription
@@ -45,7 +45,7 @@ from routes.commit import SavedMealNote
 from services import quota
 
 if TYPE_CHECKING:  # the service is imported lazily at call time (route tests stub it)
-    from services.agent import EstimateItem, MealFood
+    from services.agent import EstimateItem, FoodItem, MealFood
 
 # routes/agent.py's stream callback: one wire event (a dict) per call
 Emit = Callable[[dict], Awaitable[None]]
@@ -754,6 +754,83 @@ async def _stage_from_text(
     )
 
 
+async def _stage_items(
+    body: LogCreate,
+    meal: Meal,
+    items: list[FoodItem],
+    *,
+    start_index: int,
+    meal_hint: str | None = None,
+    when_hint: str | None = None,
+    when_day_offset: int | None = None,
+    when_meal: str | None = None,
+) -> tuple[list[StagedItem], Meal, datetime | None]:
+    """§6.4 log_food (2026-09-11): the foods the chat agent named, through the
+    cascade — tier 0 for a saved meal it named, tier 1 for a phrase he has
+    said before, tier 2 for one of his foods it named by id, else searching
+    for tier 3 — then persisted. This replaced decompose in the agent lane:
+    the agent already read the utterance with the whole conversation in view,
+    and a second, weaker model re-reading it cost 1.5–4 s and lost what the
+    conversation held (trace 30e72425: "ramen"). The meal and day come from
+    the agent's meal_hint / when_* exactly as log_estimate's do.
+
+    Returns (rows, the rows' meal, logged_at)."""
+    import tracing
+
+    try:
+        shift_meal = Meal(when_meal) if when_meal else None
+    except ValueError:
+        shift_meal = None
+    try:
+        spoken_meal = Meal(meal_hint) if meal_hint else None
+    except ValueError:
+        spoken_meal = None
+    when = when_shift(
+        when_day_offset, shift_meal, spoken_meal,
+        body.captured_at, body.tz, when_hint=when_hint,
+    )
+    row_meal = spoken_meal or when.meal or meal  # an explicit meal word outranks the shift
+    # A food_id proves nothing on its own (`foods` is global): only the ids
+    # that are this tenant's own diary foods may name a row (_MY_FOODS_SQL).
+    # An id that fails is dropped, and its phrase takes tiers 1 and 3.
+    wanted = sorted({fid for it in items if (fid := _uuid_or_none(it.food_id)) is not None})
+    mine = {r["id"] for r in await db.fetchall(_MY_FOODS_SQL, (wanted,))} if wanted else set()
+    parsed = [
+        ParsedItem(
+            phrase=it.phrase.strip(),
+            phrase_kind="food",
+            # a saved meal stores its own portions, and a spoken amount would
+            # stand tier 0 aside (§3.1); one that matches no saved meal is a
+            # plain food, never the "no saved meal called…" question row
+            qty=None if it.saved_meal else (float(it.qty) if it.qty is not None else None),
+            unit=None if it.saved_meal else ((it.unit or "").strip() or None),
+            state=None,
+            brand=None,
+            library_match=_uuid_or_none(it.food_id),
+            meal_ref=it.phrase.strip() if it.saved_meal else None,
+        )
+        for it in items
+    ]
+    async with tracing.run("cascade", kind="retriever", input=[p.phrase for p in parsed]) as lookup:
+        resolutions = await cascade.resolve_items(parsed, row_meal, mine, start_index=start_index)
+        lookup.set(output=cascade_summary(resolutions))
+    # the agent's note for a food it could not name by id rides the row that
+    # still needs looking up (a saved meal's expanded rows carry food names,
+    # never the phrase, and are already resolved)
+    notes = {it.phrase.strip(): it.note.strip() for it in items if (it.note or "").strip()}
+    lookup_notes = {
+        r.staged.item_index: notes[r.staged.phrase]
+        for r in resolutions
+        if r.staged.status == "searching" and r.staged.phrase in notes
+    }
+    await _persist(
+        body.id, resolutions, row_meal, short_circuit=False,
+        trace_id=tracing.current_trace_id(),
+        logged_at=when.logged_at, when_hint_note=when.note, lookup_notes=lookup_notes,
+    )
+    return [r.staged for r in resolutions], row_meal, when.logged_at
+
+
 def _estimate_parsed(it: EstimateItem) -> ParsedItem:
     """The cascade's input for one agent-sized component: the amount rides the
     §7.3 spoken-quantity channel, as the photo lane's does; nothing else is
@@ -1106,8 +1183,8 @@ async def _run_agent_lane(
     body: LogCreate, meal: Meal, emit: Emit | None = None, image: str | None = None
 ) -> LogCreateResponse:
     """§6.4: the front-door agent. Its effects are closures over this log:
-    the food part of the utterance goes through _stage_from_text exactly as
-    a plain log would, an unlabeled dish's components through
+    the foods the agent names go through _stage_items (the cascade, no
+    decompose), an unlabeled dish's components through
     _stage_estimate (flagged rows), a spoken weight through
     routes/weights.record_weight under this log's id. The two staging
     closures append to one log, so they allocate item indexes in turn (one
@@ -1127,8 +1204,8 @@ async def _run_agent_lane(
     # route tests swap tests/tracing_stub.py in, which has no hook.
     tracing.install_agents_hook()
     result: dict = {
-        "items": [], "food": None, "weight": None, "basis": None,
-        "estimate_meal": None, "next_index": 0, "discarded": [],
+        "items": [], "food_meal": None, "logged_at": None, "weight": None,
+        "basis": None, "estimate_meal": None, "next_index": 0, "discarded": [],
         "saved_meal": None, "note": None, "updated": None,
     }
     staging = asyncio.Lock()
@@ -1186,18 +1263,21 @@ async def _run_agent_lane(
             for it in items
         ]
 
-    async def stage_food(text: str) -> dict:
+    async def stage_food(
+        items: list[FoodItem], meal_hint: str | None, when_hint: str | None,
+        when_day_offset: int | None = None, when_meal: str | None = None,
+    ) -> dict:
         async with staging:
-            staged = await _stage_from_text(body, meal, text, start_index=result["next_index"])
-            result["next_index"] += len(staged.items)
-            result["items"].extend(staged.items)
-            result["food"] = staged
-        return {
-            "meal": staged.meal.value,
-            "items": summary(staged.items),
-            "saved_meal": staged.saved_meal.name if staged.saved_meal else None,
-            "note": staged.note,
-        }
+            rows, food_meal, logged_at = await _stage_items(
+                body, meal, items, start_index=result["next_index"],
+                meal_hint=meal_hint, when_hint=when_hint,
+                when_day_offset=when_day_offset, when_meal=when_meal,
+            )
+            result["next_index"] += len(rows)
+            result["items"].extend(rows)
+            result["food_meal"] = food_meal
+            result["logged_at"] = logged_at
+        return {"meal": food_meal.value, "items": summary(rows)}
 
     async def stage_estimate(
         items: list[EstimateItem], basis: str, meal_hint: str | None,
@@ -1207,7 +1287,7 @@ async def _run_agent_lane(
         async with staging:
             # with no hint of its own, the meal log_food's hints moved the log
             # to (when it ran first), else the clock's
-            fallback = result["food"].meal if result["food"] is not None else meal
+            fallback = result["food_meal"] or meal
             rows = await _stage_estimate(
                 body, fallback, items, start_index=result["next_index"],
                 meal_hint=meal_hint, when_hint=when_hint,
@@ -1357,8 +1437,8 @@ async def _run_agent_lane(
                 if target is None:
                     async with staging:
                         # anything this turn staged — log_food's rows OR
-                        # log_estimate's (which never set `food`)
-                        if result["food"] is not None or result["items"]:
+                        # log_estimate's
+                        if result["items"]:
                             target = str(body.id)
                     target = target or newest_conversation_log()
                 if target is None:
@@ -1466,6 +1546,12 @@ async def _run_agent_lane(
         photo_chat=body.photo_log_id is not None,
         adjust_photo=adjust_photo if body.photo_log_id is not None else None,
         saved_meals=[_meal_words(m) for m in await meals_route.list_meals(include_inactive=True)],
+        # §6.4: their diary foods, any lane — what a misheard name is matched
+        # against and what log_food names by id
+        my_foods=[
+            f"{r['id']}: {r['display_name']}" + (f" ({r['brand']})" if r["brand"] else "")
+            for r in await foods_repo.recent_foods(agent_svc.MY_FOODS_IN_CONTEXT)
+        ],
         history=history,
         now_local=now_local,
         unit_pref=unit_pref,
@@ -1482,7 +1568,7 @@ async def _run_agent_lane(
         web_lane=auth.is_owner(),  # §8.9: the hosted search is billed — the owner's
     )
     # §10: the agent's step in this run's trace — the SDK's model turns and
-    # tool calls nest under it, decompose and the cascade under log_food
+    # tool calls nest under it, the cascade under log_food
     async with tracing.run(
         "agent", kind="agent", provider="openai",
         # the tier this run actually used — a photo conversation is Sol, not
@@ -1514,9 +1600,8 @@ async def _run_agent_lane(
         discarded=[UUID(x) for x in result["discarded"]] or None,
         updated=result["updated"],
     )
-    food = result["food"]
     if (
-        run.options and food is None and not result["items"]
+        run.options and not result["items"]
         and result["weight"] is None and not result["discarded"] and not run.meal_calls
         and not run.photo_calls
     ):
@@ -1525,10 +1610,9 @@ async def _run_agent_lane(
         # client id) can claim it, a capped number of times a day (§8.9)
         await quota.refund_question()
     items = sorted(result["items"], key=lambda it: it.item_index)
-    # the §8.4 outcome: the meal tools' (code-side), else decompose's save_intent
-    saved_meal = result["saved_meal"] or (food.saved_meal if food is not None else None)
-    note = result["note"] or (food.note if food is not None else None)
-    if food is None and not items:
+    # the §8.4 outcome: what the meal tools did (code-side)
+    saved_meal, note = result["saved_meal"], result["note"]
+    if not items:
         # nothing staged: the row stays an itemless staged log, as the §8.4
         # save-intent path leaves it — nothing counts it (§9)
         return LogCreateResponse(
@@ -1536,10 +1620,11 @@ async def _run_agent_lane(
         )
     return LogCreateResponse(
         log_id=body.id,
-        meal=food.meal if food is not None else (result["estimate_meal"] or meal),
+        meal=result["food_meal"] or result["estimate_meal"] or meal,
         items=items,
         saved_meal=saved_meal,
         note=note,
+        logged_at=result["logged_at"],
         agent=outcome,
     )
 
@@ -1647,6 +1732,7 @@ async def _persist(
     logged_at: datetime | None = None,
     when_hint_note: str | None = None,
     save_intent: str | None = None,
+    lookup_notes: dict[int, str] | None = None,
 ) -> None:
     """All staged state is persisted server-side (§3): the client is a renderer.
 
@@ -1677,6 +1763,11 @@ async def _persist(
                 # staged jsonb (extra keys; StagedItem validation ignores them).
                 staged_payload["spoken_qty"] = item.qty
                 staged_payload["spoken_unit"] = r.unit
+                if lookup_notes and lookup_notes.get(item.item_index):
+                    # §6.4: what the chat agent knew about this food (the
+                    # store, the dish) — tier 3 reads it as "what the person
+                    # meant". Not in KEEP_LOG_KEYS_SQL: a rewrite drops it.
+                    staged_payload["lookup_note"] = lookup_notes[item.item_index]
             if r.state_answer:
                 # §3.4a: known cooked/raw intent rides the staged jsonb —
                 # commit persists it to aliases.state_answer (asked once, ever)

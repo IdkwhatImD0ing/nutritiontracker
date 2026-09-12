@@ -235,9 +235,22 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       break;
     }
     case "log_food": {
-      const n = out ? count(out.items) : null;
-      doing = `Looking up “${str(a.text)}”`;
-      ok = n == null ? "Done" : n === 0 ? "Nothing to stage" : `Staged ${n} item${n === 1 ? "" : "s"}`;
+      // §6.4 (2026-09-11): the agent names each food itself — items, not text
+      const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
+      const rows = out && Array.isArray(out.items) ? (out.items as Record<string, unknown>[]) : null;
+      doing = `Looking up ${items.map((it) => `“${str(it.phrase)}”`).join(", ") || "food"}`;
+      // what the lookups found, never "staged" for a food that was not
+      const found = rows ? rows.filter((r) => r.status === "resolved").length : 0;
+      const pending = rows ? rows.filter((r) => r.status === "searching").length : 0;
+      const missing = rows ? rows.length - found - pending : 0;
+      ok =
+        rows == null
+          ? "Done"
+          : rows.length === 0
+            ? "Nothing to stage"
+            : `Staged ${found} item${found === 1 ? "" : "s"}` +
+              (pending ? ` — still looking up ${pending}` : "") +
+              (missing ? ` — ${missing} not found, pick ${missing === 1 ? "it" : "them"} in the list` : "");
       break;
     }
     case "log_estimate": {

@@ -636,8 +636,9 @@ async def _stage_tier1(
 
 
 async def _library_food(library_match: str | None, index_ids: set[str] | None) -> dict | None:
-    """§3.3 2b: the decompose-tagged library match, validated. An id outside the
-    passed index (when supplied), a non-uuid, or an unknown food is discarded."""
+    """§3.3: the library match (the chat agent's `food_id`), validated. An id
+    outside the passed index (when supplied), a non-uuid, or an unknown food
+    is discarded."""
     if not library_match:
         return None
     if index_ids is not None and library_match not in index_ids:
@@ -650,28 +651,25 @@ async def _library_food(library_match: str | None, index_ids: set[str] | None) -
 
 
 async def _stage_tier2(
-    parsed: ParsedItem,
-    item_index: int,
-    meal: Meal,
-    index_ids: set[str] | None,
-    t0: float,
-) -> Resolution | None:
-    """§3.3: the decompose-tagged library match, resolved "verify me". Returns
-    None when there is none (→ tier 3).
+    lib: dict, parsed: ParsedItem, item_index: int, meal: Meal, t0: float
+) -> Resolution:
+    """§3.3: one of his own foods, named by a model reading his food list —
+    since 2026-09-11 the chat agent's `food_id` (§6.4). Staged "high": it is
+    a food he has logged, picked with the whole conversation in view, and
+    the list is his to approve, not to double-check (Bill: "the agent should
+    make the list using its tools then I just approve"). Portion verify-me
+    still applies.
 
-    This was one of two matchers. The other, a pg_trgm similarity() test of the
+    It was one of two matchers. The other, a pg_trgm similarity() test of the
     phrase against his alias phrases, was removed 2026-09-10 (Bill: "we should
     remove fuzzy matching in its entirety"): spelling distance is not what a
     person meant — "Tonkatsu" scores 0.33 against the "tonkotsu ramen" he meant,
     under the 0.55 bar — so a food is now named only by an exact phrase
     (tier 1), a model reading his foods (here), or tier 3.
     """
-    lib = await _library_food(parsed.library_match, index_ids)
-    if lib is None:
-        return None
     return await _stage_resolved(
         lib, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0,
-        tier=2, confidence="low",
+        tier=2, confidence="high",
     )
 
 
@@ -957,11 +955,11 @@ async def resolve_item(
     """Per-item cascade after decomposition: tier 0 → tier 1 → tier 2 →
     tier-3 handoff, as ONE Resolution (single-row callers: /api/resolve).
 
-    `index_ids` is the set of foods.id strings inlined into the decompose
-    prompt (§3.3 2b) — library_match is validated against it when supplied;
-    when None (current logs.py wiring), validation falls back to the food
-    existing in the cache. `skip_tier0` is resolve_items' flag: it already
-    ran the macro check.
+    `index_ids` is the set of foods.id strings the library match may name —
+    the chat agent's ids that proved to be this tenant's own diary foods
+    (routes/logs._stage_items) — validated against it when supplied; when
+    None, validation falls back to the food existing in the cache.
+    `skip_tier0` is resolve_items' flag: it already ran the macro check.
     """
     t0 = time.monotonic()
 
@@ -994,18 +992,23 @@ async def resolve_item(
         )
 
     key = norm(parsed.phrase)
+    lib = await _library_food(parsed.library_match, index_ids)
 
-    # tier 1 — exact alias match (§3.2)
+    # tier 1 — exact alias match (§3.2). When the chat agent named one of his
+    # foods by id (§6.4), an alias row for THAT food still wins (it carries
+    # the portion default and the state answer), but an alias pointing at
+    # another food does not overrule the agent's explicit pick.
     rows = await db.fetchall(_ALIAS_SQL, (key,))
+    if rows and lib is not None:
+        rows = [r for r in rows if str(r["food_id"]) == str(lib["food_id"])]
     if rows:
         return await _stage_tier1(
             rows, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0
         )
 
-    # tier 2 — novel phrasing, known food: decompose's library match (§3.3)
-    tier2 = await _stage_tier2(parsed, item_index, meal, index_ids, t0)
-    if tier2 is not None:
-        return tier2
+    # tier 2 — one of his foods, named by id (§3.3)
+    if lib is not None:
+        return await _stage_tier2(lib, parsed, item_index, meal, t0)
 
     # tier 3 — cold start: staged as searching, client kicks /api/resolve/tier3.
     # Spoken qty/unit ride along (§7.3 rule 1: spoken quantity always wins) —

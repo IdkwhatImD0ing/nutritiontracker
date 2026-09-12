@@ -312,12 +312,46 @@ def test_near_miss_spelling_is_not_a_match():
 
 
 # ---------------------------------------------------------------------------
-# 2. §3.3 — decompose's library match resolves the row, "verify me" (one
-#    uncorroborated matcher), with no spelling-alike alternate beside it
+# 2. §3.3 — the library match (since 2026-09-11 the chat agent's food_id)
+#    resolves the row, confident, with no spelling-alike alternate beside it;
+#    an exact alias for ANOTHER food does not overrule it, one for the same
+#    food still wins (it carries the alias's defaults)
 # ---------------------------------------------------------------------------
 
 
-def test_tier2_library_match_resolves_verify_me():
+def test_tier2_library_match_resolves_and_beats_an_alias_for_another_food():
+    async def run():
+        async with isolated_db() as conn:
+            t = tok()
+            said = f"{t} ramen"
+            other = await insert_food(conn, "Shin Ramyun", brand="Nongshim")
+            theirs = await insert_food(conn, "Tonkotsu Ramen", brand="Nongshim")
+            await insert_alias(conn, said, other)  # the exact phrase, learned for another food
+
+            res = await cascade.resolve_item(
+                parsed(said, library_match=theirs), 0, Meal.dinner, index_ids={theirs},
+            )
+            assert res.staged.food.id == theirs and res.staged.tier == 2
+            assert res.alias_id is None and res.staged.confidence == "high"
+
+            # an alias for the SAME food wins: tier 1, the alias row
+            alias_id = await insert_alias(conn, said, theirs)
+            res = await cascade.resolve_item(
+                parsed(said, library_match=theirs), 1, Meal.dinner, index_ids={theirs},
+            )
+            assert res.staged.food.id == theirs and res.staged.tier == 1
+            assert res.alias_id == alias_id and res.staged.alternates is None
+
+            # an id that is not his (outside the index) is dropped: the alias decides
+            res = await cascade.resolve_item(
+                parsed(said, library_match=str(uuid4())), 2, Meal.dinner, index_ids={theirs},
+            )
+            assert res.staged.tier == 1 and res.staged.food.id in {other, theirs}
+
+    asyncio.run(run())
+
+
+def test_tier2_library_match_resolves_confident():
     async def run():
         async with isolated_db() as conn:
             t = tok()
@@ -334,7 +368,7 @@ def test_tier2_library_match_resolves_verify_me():
             item = res.staged
             assert item.status == "resolved" and item.tier == 2
             assert item.food.id == food_b
-            assert item.confidence == "low"  # verify me
+            assert item.confidence == "high"  # his own food, named by id — no verify-me (2026-09-11)
             assert item.alternates is None  # no spelling-alike chip
             assert res.alias_id is None  # resolved from the library food row
             assert item.serving.id == "srv-scoop" and item.qty == 1.0

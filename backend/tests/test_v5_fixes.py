@@ -291,7 +291,7 @@ def test_micro_decompose_fires_for_novel_text():
                 assert calls == [f"2 {t} shakes"]  # micro-call fired, raw text in
                 assert item.status == "resolved" and item.tier == 2
                 assert item.food.id == food  # 2b library match, not the network
-                assert item.confidence == "low"  # §3.3 rule 2: 2b alone = verify me
+                assert item.confidence == "high"  # a library match is his own food (2026-09-11)
                 assert item.qty == 2  # decompose-parsed qty applied (§7.3 rule 1)
                 assert item.macros.kcal == 240  # 2 x 120
 

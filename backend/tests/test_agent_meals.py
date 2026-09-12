@@ -50,7 +50,7 @@ from routes import agent as agent_routes  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
-from test_agent import NOW, TZ, _ctx, _deps, _fake_runner, _log, _parsed, _tool  # noqa: E402
+from test_agent import NOW, TZ, _ctx, _deps, _fake_runner, _log, _tool, food  # noqa: E402
 from test_meals import breakfast_fixture  # noqa: E402
 from test_meals import insert_alias as insert_named_alias  # noqa: E402
 from test_meals import insert_food as insert_named_food  # noqa: E402
@@ -390,15 +390,12 @@ def test_save_in_the_same_turn_stamps_the_staged_rows_and_commit_builds_the_macr
             egg = await insert_food(conn)
             await insert_alias(conn, egg)  # "two eggs" → tier 1, resolved
 
-            async def decompose(text, ctx, **kw):
-                return _parsed(("two eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)
             tag = uuid4().hex[:6]
             name = f"Same turn {tag}"
             triggers = [f"Same-Turn {tag}", f"st {tag}"]
             runner = _fake_runner(
-                [("log_food", {"text": "two eggs"}),
+                [("log_food", {"items": [food("two eggs", qty=2)]}),
                  ("save_meal", {"name": name, "trigger_phrases": triggers})],
                 "Staged the eggs — saved as a meal when you commit.",
             )
