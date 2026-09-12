@@ -45,6 +45,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, RootModel, TypeAdapter, ValidationError
 
 import db
+import deadline
 from auth import require_user
 from models import AgentTurn, LogCreate, LogResponse, Meal
 from routes.logs import (
@@ -113,9 +114,9 @@ class AgentTranscriptEvent(BaseModel):
 class AgentToolCallEvent(BaseModel):
     """The agent called a tool: `name` (log_food, log_estimate, log_weight,
     discard_log, past_foods, save_meal, update_meal, adjust_photo, web_search)
-    with `args` as the model passed them. `read_photo` is the exception — no
-    model called it: the photo turn (§3.4b) emits the pair itself so the chat
-    can show the vision call while it runs."""
+    with `args` as the model passed them. `read_photo` and `look_up` are the
+    exceptions — no model called them: the photo turn (§3.4b) emits each pair
+    itself so the chat can show the vision call and the lookups while they run."""
 
     type: Literal["tool_call"] = "tool_call"
     id: str
@@ -323,6 +324,9 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
     replacement, whose entry and log must stand."""
     run = _LiveRun(owner=db.current_user_id.get())
     _RUNS[log_id] = run
+    # §3.4: the request's clock (deadline.py) starts here, before the task —
+    # which inherits it — so speech-to-text is on it too
+    deadline.start()
 
     async def emit(event: dict) -> None:
         run.append(event)

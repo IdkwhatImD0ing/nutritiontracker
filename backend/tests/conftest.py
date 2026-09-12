@@ -2,12 +2,19 @@
 modules import backend code directly (``import auth``, ``import tracing``, ...)
 without per-file shims."""
 
+import os
 import sys
 from pathlib import Path
 
 BACKEND = str(Path(__file__).resolve().parents[1])
 if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
+
+# §3.4 (2026-09-11): the chat and photo lanes look every searching row up
+# before they answer (routes/logs._resolve_inline). The fake Runners drive the
+# REAL tool closures, so without this an offline test would reach the real
+# tier 3; the tests of the inline step turn it on themselves and fake the run.
+os.environ.setdefault("TALLY_INLINE_TIER3", "0")
 
 # The route tests swap the `services` package for a stub with an empty
 # __path__ (no live decompose/STT/tier 3). The routes' `from services import

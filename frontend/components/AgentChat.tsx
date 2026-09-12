@@ -223,6 +223,17 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
               (list.length > 4 ? ` +${list.length - 4} more` : "");
       break;
     }
+    case "look_up": {
+      // §3.4 (2026-09-11): the photo turn looks every row up before the card
+      // shows — emitted by the turn itself, like read_photo
+      const items = Array.isArray(a.items) ? (a.items as unknown[]).map(str) : [];
+      const found = out && typeof out.found === "number" ? out.found : null;
+      const total = out && typeof out.looked_up === "number" ? out.looked_up : items.length;
+      doing = `Looking up ${items.slice(0, 4).map((p) => `“${p}”`).join(", ")}` +
+        (items.length > 4 ? ` +${items.length - 4} more` : "");
+      ok = found == null ? "Done" : `Found ${found} of ${total}`;
+      break;
+    }
     case "adjust_photo": {
       const changes = Array.isArray(a.changes)
         ? (a.changes as Record<string, unknown>[])

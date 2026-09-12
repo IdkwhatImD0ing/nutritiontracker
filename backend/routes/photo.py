@@ -43,6 +43,7 @@ from psycopg.types.json import Json
 from pydantic import BaseModel
 
 import db
+import deadline
 from auth import is_owner, require_user
 from models import (
     FoodRef, Macros, Meal, ParsedItem, ServingOption, ServingRef, StagedItem, WebSource,
@@ -51,6 +52,7 @@ from resolver import cascade, foods_repo
 from resolver.norm import norm
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from routes.logs import (
+    _PHOTO_RESERVE_S,
     _RERUN_GRACE_SECONDS,
     AgentOutcome,
     Emit,
@@ -58,8 +60,10 @@ from routes.logs import (
     _drop_empty_log,
     cascade_summary,
     _duplicate_post_response,
+    _inline_enabled,
     _load_log_response,
     _persist,
+    _resolve_inline,
     _size_by_weight,
     _stage_estimate,
     claim_log,
@@ -472,6 +476,7 @@ async def _stage_photo(
     so claiming its log as an orphan at 90 s would re-run vision underneath a
     run that is merely still thinking (a second astra call, and two stagings of
     one plate). routes/logs.py:94-99 states the invariant the two must satisfy."""
+    deadline.start_if_unset()  # the chat route started it at the request's start
     # §8.6 + the demo quota (routes/logs.claim_log): the claim of the client
     # id answers a stored log — a replay, a foreign id's 404 — before vision,
     # and records the attempt with the row: after the free upload checks,
@@ -634,6 +639,21 @@ async def _stage_photo(
                 ),
             )
     staged = [r.staged for r in resolutions]
+    # §3.4 (2026-09-11): every row is looked up before the card is shown —
+    # after the vision stamp (the not_found → estimate seam reads it) and
+    # before the reply, which says what was found, not "still looking"
+    pending = [it for it in staged if it.status == "searching"]
+    if pending and _inline_enabled():
+        look_id = f"lookup-{log_id}"
+        if emit is not None:
+            await emit({"type": "tool_call", "id": look_id, "name": "look_up",
+                        "args": {"items": [it.phrase for it in pending]}})
+        staged = await _resolve_inline(log_id, staged, reserve=_PHOTO_RESERVE_S)
+        if emit is not None:
+            looked = {p.item_index for p in pending}
+            found = sum(1 for it in staged if it.item_index in looked and it.status == "resolved")
+            await emit({"type": "tool_result", "id": look_id, "name": "look_up",
+                        "output": {"found": found, "looked_up": len(pending)}})
     return LogCreateResponse(log_id=log_id, meal=meal, items=staged, agent=outcome(staged))
 
 

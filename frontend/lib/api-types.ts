@@ -685,9 +685,9 @@ export interface components {
          * AgentToolCallEvent
          * @description The agent called a tool: `name` (log_food, log_estimate, log_weight,
          *     discard_log, past_foods, save_meal, update_meal, adjust_photo, web_search)
-         *     with `args` as the model passed them. `read_photo` is the exception — no
-         *     model called it: the photo turn (§3.4b) emits the pair itself so the chat
-         *     can show the vision call while it runs.
+         *     with `args` as the model passed them. `read_photo` and `look_up` are the
+         *     exceptions — no model called them: the photo turn (§3.4b) emits each pair
+         *     itself so the chat can show the vision call and the lookups while they run.
          */
         AgentToolCallEvent: {
             /**

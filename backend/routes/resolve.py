@@ -150,22 +150,36 @@ async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
 
 
 async def _kick_tier3(body: Tier3KickRequest) -> StagedItem:
-    row = await _item_row(body.log_id, body.item_index)
+    return await kick_row(body.log_id, body.item_index)
+
+
+async def kick_row(log_id: UUID, item_index: int, *, claim: bool = True) -> StagedItem:
+    """One tier-3 run for a staged row: the live check, the demo's capped
+    spend, the claim, then _run_tier3 (with the §3.4b photo seam). The phone's
+    kick and the chat's inline lookups (routes/logs._resolve_inline,
+    2026-09-11) are the same run behind the same gates.
+
+    `claim=False` is the inline path: it leaves tier3_attempts and
+    tier3_started_at alone, so a row the request ran out of time for reaches
+    the phone with both of the fallback's tries (and the 60 s stale clock)
+    intact."""
+    row = await _item_row(log_id, item_index)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown log item")
     _require_live(row)
     await quota.check_resolve()  # demo: capped model spend — after the free refusals
-    claimed = await db.execute(
-        f"""
-        UPDATE item_resolutions
-        SET tier3_attempts = tier3_attempts + 1, tier3_started_at = now()
-        WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
-        """,
-        (str(body.log_id), body.item_index),
-    )
-    if not claimed:  # removed/committed between the read and the write
-        raise HTTPException(status_code=409, detail="item no longer live")
-    return await _run_tier3(str(body.log_id), body.item_index)
+    if claim:
+        claimed = await db.execute(
+            f"""
+            UPDATE item_resolutions
+            SET tier3_attempts = tier3_attempts + 1, tier3_started_at = now()
+            WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
+            """,
+            (str(log_id), item_index),
+        )
+        if not claimed:  # removed/committed between the read and the write
+            raise HTTPException(status_code=409, detail="item no longer live")
+    return await _run_tier3(str(log_id), item_index)
 
 
 # ---------------------------------------------------------------------------

@@ -53,7 +53,7 @@ from openai.types.responses.response_function_web_search import (  # noqa: E402
 )
 
 import db  # noqa: E402
-from models import CommitRequest, LogCreate  # noqa: E402
+from models import CommitRequest, FoodRef, LogCreate, Meal, ServingRef, StagedItem  # noqa: E402
 from routes import agent as agent_routes  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
@@ -664,6 +664,50 @@ def test_agent_stream_orders_tool_events_reply_and_done(monkeypatch):
             assert [e["type"] for e in events3] == ["done"] and events3[0]["replay"] is True
             assert [it["phrase"] for it in events3[0]["log"]["items"]] == ["eggs"]
             assert runner.calls == 1 and body.id not in agent_routes._RUNS
+
+    _run(scenario())
+
+
+def test_the_agent_answers_on_rows_already_looked_up(monkeypatch):
+    """§3.4 (2026-09-11, Bill: "the agent should make the list using its tools
+    then I just approve"): a food not in his list is looked up inside the
+    turn — the tool result the model reads, the `done` log and the stored
+    list all carry the food found, never a searching row (trace 30e72425:
+    "I logged tonkatsu" over a row that was still searching)."""
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            monkeypatch.setenv("TALLY_INLINE_TIER3", "1")
+            food_id = await insert_food(conn)
+            import routes.resolve as rr
+
+            async def kick_row(log_id, item_index, *, claim=True):
+                assert claim is False
+                # what tier 3 writes, then answers with (the row as stored)
+                row = StagedItem(
+                    item_index=item_index, phrase="big mac", status="resolved", tier=3,
+                    food=FoodRef(id=food_id, name="Big Mac"), serving=ServingRef(id="s", description="1 egg"),
+                    qty=1, meal=Meal.lunch, confidence="high",
+                )
+                await db.execute(
+                    "UPDATE item_resolutions SET status = 'resolved', tier = 3, staged = %s::jsonb "
+                    "WHERE log_id = %s AND item_index = %s",
+                    (row.model_dump_json(), str(log_id), item_index),
+                )
+                return row
+
+            monkeypatch.setattr(rr, "kick_row", kick_row)
+            runner = _fake_runner([("log_food", {"items": [food("big mac", note="McDonald's")]})],
+                                  "Staged a Big Mac.")
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(id=uuid4(), text="a big mac", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body))
+            assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
+            assert events[1]["output"]["items"] == [
+                {"phrase": "big mac", "status": "resolved", "food": "Big Mac", "qty": 1.0, "serving": "1 egg"}]
+            assert [(it["status"], it["food"]["name"]) for it in events[3]["log"]["items"]] == [("resolved", "Big Mac")]
+            assert await _scalar(conn, "SELECT status FROM item_resolutions WHERE log_id = %s",
+                                 (body.id,)) == "resolved"
 
     _run(scenario())
 

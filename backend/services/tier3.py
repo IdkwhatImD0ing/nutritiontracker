@@ -17,6 +17,7 @@ or the food is dropped — so estimation has no code path.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -31,6 +32,7 @@ from pydantic import BaseModel
 
 import auth
 import db
+import deadline
 import tracing
 from models import (
     Alternate,
@@ -1566,6 +1568,11 @@ async def run_tier3(
     trace_id: str | None = None
     transcript: list | None = None
     out: Tier3Result
+    timed_out = False
+    # §3.4 (2026-09-11): run inside the chat's own request, a lookup gets the
+    # time that request can spare (deadline.tier3_budget, set by
+    # routes/logs._resolve_inline); None — the phone's kick — is uncapped
+    budget = deadline.tier3_budget.get()
     # §10: the run's step in the route's trace (a trace of its own from the
     # evals); the SDK's agent, model-turn and tool spans nest under it
     async with tracing.run(
@@ -1573,9 +1580,22 @@ async def run_tier3(
     ) as span:
         trace_id = span.trace_id
         try:
-            result = await Runner.run(agent, agent_input, max_turns=MAX_TURNS)
+            async with asyncio.timeout(budget):
+                result = await Runner.run(agent, agent_input, max_turns=MAX_TURNS)
             out = result.final_output_as(Tier3Result)
             transcript = result.to_input_list()
+        except TimeoutError:
+            # The request's time ran out, not the search: nothing is written
+            # below (the row stays searching for the phone's kick), but the
+            # web-evidence gate still runs over whatever add_food persisted
+            # before the cut — a web food never outlives the run that could
+            # not prove it (§3.4a).
+            timed_out = True
+            out = Tier3Result(
+                status="not_found", source=None, source_id=None, serving_id=None,
+                display_name=None, confidence="low", alternates=[], question=None,
+            )
+            span.set(attributes={"inline_timeout_s": budget})
         except MaxTurnsExceeded as exc:
             # Deterministic failure — retrying identically would burn another
             # 6-turn run; fall through to the manual-search escape hatch.
@@ -1633,6 +1653,10 @@ async def run_tier3(
             transcript = list(transcript or []) + [
                 {"type": "usual_web_gate", "web_evidence_gap": gap}
             ]
+
+    if timed_out:
+        # the row as stored, still searching: the phone's kick takes it from here
+        return StagedItem.model_validate(staged_prev)
 
     # A chip may not name a row the gate above just deleted. The model can
     # offer a web food it created as an alternate or as an option on its

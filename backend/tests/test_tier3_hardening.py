@@ -675,6 +675,48 @@ def test_run_tier3_never_asks_on_any_row_and_reads_the_agents_note():
     run(scenario())
 
 
+def test_run_tier3_inside_a_request_stops_at_its_budget_and_writes_nothing():
+    """§3.4 (2026-09-11): run inline (deadline.tier3_budget set), a search that
+    outlasts the time the request can spare is cut off — the row stays
+    searching, untouched, for the phone's kick — and the web-evidence gate
+    still runs: a web food add_food persisted before the cut, with no page
+    consulted, does not survive in the shared table."""
+    import deadline
+
+    def stalling():
+        class Stalling:
+            @staticmethod
+            async def run(agent, agent_input, max_turns):
+                args = json.dumps({"domain": "mcdonalds.com"})
+                await _tool(agent, "pin_chain_domain").on_invoke_tool(_ctx("pin_chain_domain", args), args)
+                args = json.dumps({"source": "web", "source_id": None, "display_name": "Big Mac",
+                                   "web": _web_payload(url=CALC_URL)})
+                out = json.loads(await _tool(agent, "add_food").on_invoke_tool(_ctx("add_food", args), args))
+                assert "error" not in out, out
+                await asyncio.sleep(5)  # the search goes on past the budget
+                raise AssertionError("the budget should have cut this run off")
+        return Stalling
+
+    async def scenario():
+        async with isolated_db() as conn:
+            log_id = await insert_log(conn)
+            await seed_item(conn, log_id, 0, "Big Mac", status="searching")
+            before = (await item_row(conn, log_id, 0))["staged"]
+            deadline.tier3_budget.set(0.3)
+            async with _offline_run(stalling()):
+                item = await tier3.run_tier3(log_id, 0)
+            assert item.status == "searching" and item.food is None
+            row = await item_row(conn, log_id, 0)
+            assert row["status"] == "searching" and row["staged"] == before  # nothing written
+            assert row["agent_transcript"] is None
+            gone = await (await conn.execute(
+                "SELECT count(*) AS n FROM foods WHERE source = 'web' AND source_url = %s", (CALC_URL,)
+            )).fetchone()
+            assert gone["n"] == 0, "an unevidenced web food must not outlive the cut run"
+
+    run(scenario())
+
+
 def test_run_tier3_drops_web_food_without_real_evidence():
     """Major: 'estimation has no code path' enforced after the run — a web
     food whose page the run never searched/cited/fetched is demoted to

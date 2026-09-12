@@ -49,6 +49,7 @@ work, and the thinking that mattered happened in the vision call.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -56,6 +57,8 @@ from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel
+
+import deadline
 
 # The openai-agents SDK is imported inside the functions that use it, the way
 # services/transcribe.py defers its provider client: `import agents` pulls
@@ -1099,12 +1102,17 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
                     {"type": "input_image", "image_url": deps.image, "detail": "auto"},
                 ],
             }]
-        result = Runner.run_streamed(agent, run_input, max_turns=MAX_TURNS)
-        async for event in result.stream_events():
-            if emit is None:
-                continue
-            for ev in wire_events(event, names):
-                await emit(ev)
+        # §3.4: the run stops before the platform would stop it (deadline.py) —
+        # a TimeoutError is caught below like any failure after staging, so
+        # the rows already staged are shown with the code-built reply
+        left = deadline.left()
+        async with asyncio.timeout(None if left is None else max(left, 1.0)):
+            result = Runner.run_streamed(agent, run_input, max_turns=MAX_TURNS)
+            async for event in result.stream_events():
+                if emit is None:
+                    continue
+                for ev in wire_events(event, names):
+                    await emit(ev)
         final = result.final_output
         reply = (getattr(final, "reply", "") or "").strip() or _fallback_reply(state)
         raw_options = getattr(final, "options", None) or []

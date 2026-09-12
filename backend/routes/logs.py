@@ -18,6 +18,8 @@ and pipeline helpers here are shared with it.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -34,6 +36,7 @@ from starlette.routing import Match
 
 import auth
 import db
+import deadline
 from auth import require_user
 from models import LogCreate, LogResponse, Macros, Meal, ParsedItem, ServingRef, StagedItem
 from resolver import cascade
@@ -49,6 +52,8 @@ if TYPE_CHECKING:  # the service is imported lazily at call time (route tests st
 
 # routes/agent.py's stream callback: one wire event (a dict) per call
 Emit = Callable[[dict], Awaitable[None]]
+
+log = logging.getLogger(__name__)
 
 
 def cascade_summary(resolutions: list[cascade.Resolution]) -> list[dict]:
@@ -675,6 +680,7 @@ async def _run_pipeline(
     (§6.4) — decompose → the per-log cascade → _persist, on a log row this
     request owns (a fresh claim, or a claimed orphan). `emit` streams the
     agent's events to the chat (routes/agent.py); None runs silently."""
+    deadline.start_if_unset()  # the chat route started it at the request's start
     meal = await infer_meal(body.captured_at, body.tz)
 
     # §3.0 whole-utterance short-circuit — the LLM leaves the hot path entirely.
@@ -752,6 +758,64 @@ async def _stage_from_text(
         log_id=body.id, meal=meal, items=[r.staged for r in resolutions],
         saved_meal=saved_meal, note=note, logged_at=when.logged_at,
     )
+
+
+# §3.4 (2026-09-11): every row is looked up before the chat answers (Bill:
+# "the agent should make the list using its tools then I just approve"). One
+# lookup takes at most this long, and less when the request's clock
+# (deadline.py) cannot spare it; under _INLINE_MIN_S left it is not started —
+# the row stays searching and the phone's kick, the old path, finishes it.
+_INLINE_CAP_S = 40.0
+_INLINE_MIN_S = 10.0
+_INLINE_PARALLEL = 4  # tier-3 runs at once: model time overlaps, db statements queue
+_AGENT_RESERVE_S = 20.0  # the agent's closing turn still has to fit after the lookups
+_PHOTO_RESERVE_S = 5.0  # the photo turn's reply is built in code
+
+
+def _inline_enabled() -> bool:
+    """Off in the test suite (tests/conftest.py): a fake Runner drives the real
+    tool closures there, and an inline lookup would reach the real tier 3."""
+    return os.environ.get("TALLY_INLINE_TIER3", "1") != "0"
+
+
+async def _resolve_inline(
+    log_id: UUID, rows: list[StagedItem], *, reserve: float
+) -> list[StagedItem]:
+    """Run tier 3 now for every `searching` row, before anyone replies, and
+    return the rows with the results in place (by item_index). A lookup that
+    the clock cannot fit, that the demo quota refuses, or that fails leaves
+    its row searching — exactly what the phone's kick (StagingSheet) picks up."""
+    todo = [r for r in rows if r.status == "searching"]
+    if not todo or not _inline_enabled():
+        return rows
+    from routes import resolve as resolve_route  # lazy: resolve → photo → here
+
+    gate = asyncio.Semaphore(_INLINE_PARALLEL)
+
+    async def one(item: StagedItem) -> StagedItem:
+        async with gate:
+            left = deadline.left()
+            budget = _INLINE_CAP_S if left is None else min(_INLINE_CAP_S, left - reserve)
+            if budget < _INLINE_MIN_S:
+                return item
+            deadline.tier3_budget.set(budget)  # this task's copy of the context only
+            try:
+                return await resolve_route.kick_row(log_id, item.item_index, claim=False)
+            except Exception:
+                log.warning("inline tier 3 left row %s/%s searching", log_id, item.item_index,
+                            exc_info=True)
+                return item
+
+    done = {d.item_index: d for d in await asyncio.gather(*(one(r) for r in todo))}
+    return [done.get(r.item_index, r) for r in rows]
+
+
+def _replace_rows(items: list[StagedItem], fresh: list[StagedItem]) -> None:
+    """Swap rows in place by item_index — the response is built from `items`,
+    and a stale searching copy there would make the phone kick a second,
+    paid run over a row this request already resolved."""
+    by_index = {r.item_index: r for r in fresh}
+    items[:] = [by_index.get(it.item_index, it) for it in items]
 
 
 async def _stage_items(
@@ -1277,6 +1341,11 @@ async def _run_agent_lane(
             result["items"].extend(rows)
             result["food_meal"] = food_meal
             result["logged_at"] = logged_at
+        # §3.4: looked up now, before the model writes its reply — outside
+        # the staging lock, so the other tools are not held for the wait
+        rows = await _resolve_inline(body.id, rows, reserve=_AGENT_RESERVE_S)
+        async with staging:
+            _replace_rows(result["items"], rows)
         return {"meal": food_meal.value, "items": summary(rows)}
 
     async def stage_estimate(
@@ -1298,6 +1367,9 @@ async def _run_agent_lane(
             result["basis"] = basis
             if rows:
                 result["estimate_meal"] = rows[0].meal
+        rows = await _resolve_inline(body.id, rows, reserve=_AGENT_RESERVE_S)  # §3.4, as log_food's
+        async with staging:
+            _replace_rows(result["items"], rows)
         return {
             "meal": (rows[0].meal if rows else fallback).value,
             "basis": basis,
@@ -1319,6 +1391,12 @@ async def _run_agent_lane(
                 # read twice on purpose: `out` is the model's view (no macros,
                 # ever — the reply must not state them), this is the client's
                 result["updated"] = await _load_log_response(body.photo_log_id)
+        # §3.4: a food the photo missed ("add") is looked up now like any row —
+        # after the lock, then the plate is read again for the card
+        plate = result["updated"] if "error" not in out else None
+        if plate is not None and any(r.status == "searching" for r in plate.items):
+            await _resolve_inline(body.photo_log_id, plate.items, reserve=_AGENT_RESERVE_S)
+            result["updated"] = await _load_log_response(body.photo_log_id)
         return out
 
     async def record_weight(value: float, unit: str, day) -> dict:
