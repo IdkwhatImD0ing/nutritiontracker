@@ -2,10 +2,10 @@
 
 In-process TestClient over the assembled app (main.app, all routers wired),
 against the LIVE services: Neon (production DB until the dev branch exists),
-GPT-5.6 Luna decompose, the GPT-5.6 Terra tier-3 agent, USDA FDC, Langfuse.
+the GPT-5.6 Terra chat agent and tier-3 agent, USDA FDC, Langfuse.
 
 The story (DESIGN.md §12 M1 exit criteria):
-  1. log "chicken and rice"  → decompose → tier 3 per item (kick, answer/manual
+  1. log "chicken and rice"  → the chat agent → tier 3 per item (kick, answer/manual
      as needed) → everything resolved
   2. EDIT a portion via POST /api/resolve (spoken qty 2) → commit
      → was_edited TRUE, aliases learned, portion default recomputed to the edit
@@ -229,7 +229,7 @@ def test_m1_full_story(client: TestClient):
         )
         assert r.status_code == 200, r.text
         log1 = r.json()
-        assert log1["items"], "decompose produced no items"
+        assert log1["items"], "the agent staged no items"
         phrases = [it["phrase"] for it in log1["items"]]
 
         # the story requires a cold start — pre-existing aliases would flip
@@ -326,7 +326,7 @@ def test_m1_full_story(client: TestClient):
             None,
         )
         assert repeat0 is not None, (
-            f"decompose phrasing drifted: {[i['phrase'] for i in log2['items']]}"
+            f"the agent's phrasing drifted: {[i['phrase'] for i in log2['items']]}"
         )
         # the correction changed the very next proposal (M1 gate)
         assert repeat0["qty"] == EDIT_QTY

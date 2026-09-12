@@ -4,8 +4,8 @@ Implemented here: whole-utterance short-circuit (§3.0: meal macro first, then
 aliases — short_circuit_all), tier 0 meal-macro expansion (§3.1: one
 StagedItem per macro item, stored portions, no search/LLM/portion inference),
 tier-1 exact alias match with §3.2's pick() and alternates, tier 2 (§3.3:
-decompose-time library_match — the trigram matcher that used to sit beside it
-was removed 2026-09-10), portion resolution per
+the chat agent's library_match — one of his foods by id; the trigram matcher
+that used to sit beside it was removed 2026-09-10), portion resolution per
 §7.3 (spoken qty > alias mode-of-10 > food mode > provider default, with the
 count-without-unit "verify me" rule), the §3.4a state-question rule on the
 tier-1/tier-2 paths, and the §3.1 meal-ref guard.
@@ -15,8 +15,9 @@ per-log paths (a tier-0 expansion occupies one item_index per macro item);
 short_circuit() (aliases only) and resolve_item() (one Resolution) remain for
 single-row callers such as /api/resolve.
 
-Unresolved items come back as status="searching" — the client kicks tier 3
-(services.tier3.run_tier3) per §3.4.
+Unresolved items come back as status="searching" — tier 3
+(services.tier3.run_tier3, §3.4) runs next: inside the request in the chat and
+photo turns (routes/logs._resolve_inline), else the client's kick.
 """
 
 from __future__ import annotations
@@ -678,8 +679,8 @@ async def _stage_tier2(
 # ---------------------------------------------------------------------------
 
 # trigger_phrases are stored post-norm() (the meals API applies norm() on
-# write), so the match is plain equality against norm()'d keys. §6.1 shows the
-# decompose context saved-meal NAMES, so a meal_ref can arrive as a name the
+# write), so the match is plain equality against norm()'d keys. §6.4 shows the
+# chat agent the saved-meal NAMES, so a meal_ref can arrive as a name the
 # triggers no longer carry (the Library can edit triggers away from
 # norm(name)) — norm(name) is matched too, but only after every trigger match.
 # Two active macros matching the same way: the most recently saved one wins.
@@ -736,7 +737,7 @@ async def find_macro(keys: list[str]) -> dict | None:
 
 def _macro_keys(parsed: ParsedItem) -> list[str]:
     # norm(phrase) for every item (a trigger said verbatim needs no meal_ref
-    # tag); decompose's meal_ref (the saved meal's name) as a second key.
+    # tag); the agent's meal_ref (a saved meal's name) as a second key.
     # A macro is a meal reference, not a food (§3.1): a spoken quantity on a
     # food-tagged phrase ("two eggs") is about the food, and the macro stores
     # its own portions, so tier 0 stands aside and tiers 1–3 take the item.
@@ -881,7 +882,7 @@ def _macro_broken_guard(
 
 async def short_circuit_all(raw_input: str, meal: Meal) -> list[Resolution] | None:
     """§3.0 whole-utterance short-circuit, in the spec's order: meal macro
-    (tier 0, N rows) before alias (tier 1, one row). None → decompose."""
+    (tier 0, N rows) before alias (tier 1, one row). None → the agent."""
     t0 = time.monotonic()
     key = norm(raw_input)
     if not key:
@@ -917,7 +918,7 @@ async def resolve_items(
     *,
     start_index: int = 0,
 ) -> list[Resolution]:
-    """Per-log cascade over the decomposed items with item_index allocation:
+    """Per-log cascade over the parsed items with item_index allocation:
     a tier-0 expansion occupies one index per macro item (§3.1), so the items
     after it shift ("usual breakfast and a coffee" → N macro rows, then
     coffee at index N). `start_index` is where allocation begins — the Agent

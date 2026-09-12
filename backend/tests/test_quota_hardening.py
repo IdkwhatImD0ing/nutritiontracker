@@ -9,7 +9,7 @@ pass, each reproduced against the pre-fix code before the fix landed:
       lane transcribed before finding the stored row (unbounded STT); now the
       claim of the id decides replay/ownership first and spends nothing when
       it refuses.
-  Q4  /api/resolve on a foreign item ran decompose, then 500ed; now 404 first.
+  Q4  /api/resolve on a foreign item ran a model call, then 500ed; now 404 first.
   D1  a photo placeholder's provenance (log id, capture time, raw vision
       output) was readable by any account holding the id, and a placeholder
       could be saved into a meal; now 404 for anyone but the photographer,
@@ -45,8 +45,6 @@ from psycopg.types.json import Json
 import auth  # noqa: E402
 from models import (  # noqa: E402
     LogCreate,
-    ParsedItem,
-    ParsedLog,
     ResolveRequest,
     StagedItem,
     Tier3KickRequest,
@@ -103,14 +101,6 @@ def _stub_stt(monkeypatch, text: str | None) -> list[int]:
 
     monkeypatch.setattr(stt_mod, "transcribe", fake)
     return calls
-
-
-def _parsed(phrase: str) -> ParsedLog:
-    return ParsedLog(
-        items=[ParsedItem(phrase=phrase, phrase_kind="food", qty=None, unit=None, state=None,
-                          brand=None, library_match=None, meal_ref=None)],
-        meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
-    )
 
 
 async def _log_row(conn, log_id) -> dict | None:
@@ -228,13 +218,8 @@ def test_q2_the_database_clock_is_the_only_clock(monkeypatch):
 
 
 def test_q3_foreign_and_stored_ids_are_answered_before_any_spend(monkeypatch):
-    decomposed: list[str] = []
-
-    async def decompose(text, ctx, **kw):
-        decomposed.append(text)
-        return ParsedLog(items=[], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
-
-    _stub_pipeline(monkeypatch, decompose=decompose)  # vision refuses outright
+    runs: list[str] = []  # each utterance the chat agent is handed
+    _stub_pipeline(monkeypatch, runs=runs)  # vision refuses outright
     calls = _stub_stt(monkeypatch, "two eggs")
 
     async def run():
@@ -277,7 +262,7 @@ def test_q3_foreign_and_stored_ids_are_answered_before_any_spend(monkeypatch):
                     )
                 )
             assert ei.value.status_code == 404
-            assert calls == [] and decomposed == []
+            assert calls == [] and runs == []
             assert (await quota.demo_status(demo))["used_today"] == 0
             assert await _count(conn, "logs") == 0
 
@@ -336,7 +321,7 @@ def test_q3_foreign_and_stored_ids_are_answered_before_any_spend(monkeypatch):
                 audio=_upload(AUDIO, "audio/webm"), log_id=new, captured_at=NOW, tz="UTC"
             )
             assert out.log_id == new and out.items == []
-            assert calls == [len(AUDIO)] and decomposed == ["two eggs"]
+            assert calls == [len(AUDIO)] and runs == ["two eggs"]
             row = await _log_row(conn, new)
             assert row["raw_input"] == "two eggs" and row["transcribe_ms"] == 1
             assert row["status"] == "staged" and row["input_mode"] == "voice"
@@ -369,13 +354,14 @@ def test_q3_foreign_and_stored_ids_are_answered_before_any_spend(monkeypatch):
 
 
 def test_q4_resolve_on_a_foreign_item_is_404_before_any_model_call(monkeypatch):
-    calls: list[str] = []
+    calls: list[tuple] = []
 
-    async def decompose(text, ctx, **kw):
-        calls.append(text)
-        return _parsed(text)
+    async def run_tier3(log_id, item_index, **kw):  # the one model call /api/resolve makes
+        calls.append((log_id, item_index))
+        raise AssertionError("no model call expected here")
 
-    _stub_pipeline(monkeypatch, decompose=decompose)
+    _stub_pipeline(monkeypatch)
+    monkeypatch.setattr(tier3, "run_tier3", run_tier3)
 
     async def run():
         async with isolated_db() as conn:
@@ -389,7 +375,7 @@ def test_q4_resolve_on_a_foreign_item_is_404_before_any_model_call(monkeypatch):
 
             await _become(conn, "hard-demo-4")
             # the owner's row, a fresh index under the owner's log, an unknown
-            # log: 404 alike (pre-fix: a decompose call, then a psycopg error)
+            # log: 404 alike (pre-fix: a model call, then a psycopg error)
             for log_id, idx in ((theirs, 0), (theirs, 7), (uuid4(), 0)):
                 with pytest.raises(HTTPException) as ei:
                     await resolve_routes.resolve_item(

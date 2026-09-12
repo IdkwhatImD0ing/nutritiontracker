@@ -4,11 +4,12 @@
    (running=false); the identical body again
    → 200 with duplicate=true; a score onto it (the way commit posts them)
    → 201.
-2. ONE real decompose call (gpt-5.6-luna — cents) inside a run → a trace
-   with the model's token usage, recorded (201).
 
-Needs FIRETRACE_API_KEY; the second test also OPENAI_API_KEY. The traces
-land in the environment of the key that sent them.
+(A second test ran one real decompose call inside a run; it went with
+decompose, 2026-09-11.)
+
+Needs FIRETRACE_API_KEY. The traces land in the environment of the key
+that sent them.
 
 Run:  uv run --with pytest pytest tests/test_tracing_live.py -q -m live -s
 """
@@ -16,7 +17,6 @@ Run:  uv run --with pytest pytest tests/test_tracing_live.py -q -m live -s
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -84,34 +84,3 @@ def test_trace_duplicate_and_score_live():
     assert score["body"]["score"]["name"] == "user_edited" and score["body"]["score"]["value"] == 1
     print(f"\n[firetrace] trace {root.trace_id} recorded (201) — {PROJECT_URL}")
 
-
-def test_real_decompose_records_a_trace_live():
-    _require_key()
-    tracing.init_tracing()  # .env
-    if not os.environ.get("OPENAI_API_KEY"):
-        pytest.skip("OPENAI_API_KEY is not set")
-    from services.context import AgentContext
-    from services.decompose import decompose
-
-    ctx = AgentContext(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-    utterance = "two eggs and a slice of toast"
-
-    async def flow():
-        async with tracing.run(
-            "log", input=utterance, session_id="firetrace-live-test", tags=["lane:text", "test"]
-        ) as root:
-            parsed = await decompose(utterance, ctx)
-            root.set(output=parsed)
-        return root, await root.sent, parsed
-
-    root, result, parsed = asyncio.run(flow())
-    assert parsed.items, "decompose returned no items"
-    assert result is not None and result["status"] == 201, result
-    spans = root.trace.spans
-    assert [s.name for s in spans] == ["log", "decompose"]
-    assert spans[1].kind == "llm" and spans[1].model == "gpt-5.6-luna"
-    assert spans[1].usage and spans[1].usage["totalTokens"] > 0
-    print(
-        f"\n[firetrace] real decompose trace {root.trace_id} recorded (201), "
-        f"usage {spans[1].usage} — {PROJECT_URL}"
-    )

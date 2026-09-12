@@ -1,4 +1,4 @@
-"""W1 (M1) tests — tier 2 (§3.3: decompose's library match, the only matcher
+"""W1 (M1) tests — tier 2 (§3.3: the chat agent's food_id, the only matcher
 since the trigram one was removed 2026-09-10), resolver unification
 (BACKLOG 6), and §3.4a state-question alignment (BACKLOG 13), against the
 live Neon DB.
@@ -7,7 +7,7 @@ Every test runs inside a transaction that is ROLLED BACK (isolated_db patches
 backend/db.py onto one connection with force_rollback) — nothing persists.
 
 Cross-workstream modules (auth, tracing, services.*) are stubbed in sys.modules
-per the workstream contract; tier-3 and decompose stubs RAISE, proving these
+per the workstream contract; the tier-3 stub RAISES, proving these
 paths never reach the network.
 
 Run:  uv run --with pytest pytest backend/tests/test_tier2.py -q
@@ -22,7 +22,6 @@ from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -54,20 +53,6 @@ def _build_stubs() -> dict:
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []
 
-    ctx_mod = types.ModuleType("services.context")
-
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
-    ctx_mod.build_agent_context = build_agent_context
-
-    dec_mod = types.ModuleType("services.decompose")
-
-    async def decompose(text, ctx, **kw):
-        raise AssertionError("decompose must not be called by these tests")
-
-    dec_mod.decompose = decompose
-
     t3_mod = types.ModuleType("services.tier3")
 
     async def run_tier3(log_id, item_index, refinement=None):
@@ -75,15 +60,11 @@ def _build_stubs() -> dict:
 
     t3_mod.run_tier3 = run_tier3
 
-    services_mod.context = ctx_mod
-    services_mod.decompose = dec_mod
     services_mod.tier3 = t3_mod
     return {
         "auth": auth_mod,
         "tracing": tracing_mod,
         "services": services_mod,
-        "services.context": ctx_mod,
-        "services.decompose": dec_mod,
         "services.tier3": t3_mod,
     }
 
@@ -460,7 +441,8 @@ def test_state_question_alignment():
             assert res.staged.state_question is None
             assert res.state_answer == "cooked"
 
-            # decompose-parsed state resolves it the same way
+            # a parsed state resolves it the same way (no lane sets
+            # ParsedItem.state since decompose was removed, 2026-09-11)
             res = await cascade.resolve_item(parsed(plain, state="raw"), 0, Meal.snack)
             assert res.staged.state_question is None
             assert res.state_answer == "raw"

@@ -5,14 +5,15 @@ the JSON body; audio runs through the Transcriber interface
 (services/transcribe.py) and an empty/near-empty transcript returns the §5
 capture_failure status — never an empty staged log.
 
-Agent mode (§6.4, 2026-09-06): `agent: true` (JSON field / form field) routes
-the utterance through services/agent.py after the §3.0 short-circuit — the
-agent names the foods itself and hands them to the cascade → staging pipeline
-(_stage_items; no decompose step since 2026-09-11), an unlabeled dish's components to
-_stage_estimate (flagged rows, §3.4a) and a spoken weight to routes/weights;
-the response reports what it did under `agent`. routes/agent.py streams the
-same pipeline event by event for the chat window; the claim, transcription
-and pipeline helpers here are shared with it.
+Every utterance goes through services/agent.py after the §3.0 short-circuit
+(§6.4; the only pipeline since decompose was removed, 2026-09-11) — the agent
+names the foods itself and hands them to the cascade → staging pipeline
+(_stage_items), an unlabeled dish's components to _stage_estimate (flagged
+rows, §3.4a) and a spoken weight to routes/weights; every row is looked up
+before it answers (_resolve_inline, §3.4); the response reports what it did
+under `agent`. routes/agent.py streams the same pipeline event by event for
+the chat window; the claim, transcription and pipeline helpers here are
+shared with it.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ import asyncio
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Annotated, Awaitable, Callable, Literal
@@ -98,6 +98,9 @@ _MAX_TIER3_ATTEMPTS = 2
 # searches ahead of decompose — so its logs get the run ceiling below: a retry
 # that finds no live run to attach to (another instance, BACKLOG 156) must
 # never claim a run that is merely still thinking and start a second one.
+# Since 2026-09-11 every text and voice log IS an agent run (no decompose
+# pipeline is left), so they all take the agent grace; this 90 s window is
+# the plain photo route's (one vision call).
 _RERUN_GRACE_SECONDS = 90
 # the agent lane's grace, and routes/agent.py's presumed-dead deadline: the
 # two agree so an orphan is claimed only once no live run can still own it
@@ -155,12 +158,11 @@ class AgentOutcome(BaseModel):
 
 
 class LogCreateResponse(LogResponse):
-    """POST /api/logs: LogResponse + the §8.4 itemless save path. "Save this
-    as my usual breakfast" decomposes to zero items and a save_intent; the
-    macro is built server-side from the most recent committed log and
-    reported here (`saved_meal`), or `note` says why nothing was saved —
-    never a silently empty staging list. `agent` is set on an agent-lane log
-    (§6.4) — with zero items it is what the client shows instead of a sheet."""
+    """POST /api/logs: LogResponse + what the agent's meal tools did (§8.4):
+    `saved_meal` when a save landed, `note` when it lands at commit or could
+    not — never a silently empty staging list. `agent` carries the agent's
+    reply (§6.4) — with zero items it is what the client shows instead of a
+    sheet."""
 
     saved_meal: SavedMealNote | None = None
     note: str | None = None
@@ -378,13 +380,12 @@ async def claim_voice_log(
     captured_at: datetime,
     capture_fallback: bool,
     capture_error: str | None,
-    agent: bool = False,
 ) -> tuple[bytes, str] | LogResponse | CaptureFailureResponse:
     """The voice lane's request checks and §8.6 claim, shared by the plain
     route and the streaming one (routes/agent.py): the audio part validated
     and read, then the claim of the client id — a replay of a stored log or
     capture failure comes back as the response to send; (audio_bytes, mime)
-    means this request runs STT and the pipeline. `agent`: the Agent lane's
+    means this request runs STT and the pipeline — the agent lane, with its
     longer orphan grace (§6.4)."""
     mime = audio.content_type or "application/octet-stream"
     if mime.split(";")[0].strip().lower() not in AUDIO_MIME_ALLOWLIST:
@@ -414,9 +415,7 @@ async def claim_voice_log(
         failed = await _stored_capture_failure(log_id)
         if failed is not None:
             return failed  # the same outcome again (§5 idempotency), no STT
-        replay = await _duplicate_post_response(
-            log_id, grace=_AGENT_RERUN_GRACE_SECONDS if agent else _RERUN_GRACE_SECONDS
-        )
+        replay = await _duplicate_post_response(log_id, grace=_AGENT_RERUN_GRACE_SECONDS)
         if replay is not None:
             return replay
         await quota.check_log()  # this tenant's orphan, claimed for a re-run: the next attempt
@@ -487,7 +486,6 @@ async def create_log_voice(
     tz: Annotated[str, Form()],
     capture_fallback: Annotated[bool, Form()] = False,
     capture_error: Annotated[str | None, Form()] = None,
-    agent: Annotated[bool, Form()] = False,
 ) -> LogCreateResponse | CaptureFailureResponse:
     """Audio → transcribe (§8.1) → the identical pipeline. input_mode='voice',
     transcribe_ms stored; empty/near-empty transcript → capture_failure (§5).
@@ -497,11 +495,10 @@ async def create_log_voice(
 
     # §10: one trace per run, the log id as its session (STT is its first span)
     async with tracing.run(
-        "log", session_id=str(log_id),
-        tags=["lane:voice", "lane:agent"] if agent else ["lane:voice"],
+        "log", session_id=str(log_id), tags=["lane:voice", "lane:agent"],
     ) as trace:
         claimed = await claim_voice_log(
-            audio, log_id, captured_at, capture_fallback, capture_error, agent=agent
+            audio, log_id, captured_at, capture_fallback, capture_error
         )
         if not isinstance(claimed, tuple):
             return claimed
@@ -519,7 +516,6 @@ async def create_log_voice(
             tz=tz,
             capture_fallback=capture_fallback,
             capture_error=capture_error,
-            agent=agent,
         )
         response = await _run_pipeline(body)
         trace.set(output=response)
@@ -551,7 +547,6 @@ _MULTIPART_OPENAPI = {
                         "tz": {"type": "string"},
                         "capture_fallback": {"type": "boolean", "default": False},
                         "capture_error": {"type": "string"},
-                        "agent": {"type": "boolean", "default": False},
                     },
                 }
             }
@@ -574,8 +569,7 @@ async def create_log_endpoint(body: LogCreate) -> LogCreateResponse:
     # §10: one trace per run, the log id as its session; nothing is sent
     # unless a model ran (a §3.0 short-circuit or a §8.6 replay records nothing)
     async with tracing.run(
-        "log", input=body.text, session_id=str(body.id),
-        tags=["lane:agent" if body.agent else "lane:text"],
+        "log", input=body.text, session_id=str(body.id), tags=["lane:agent"],
     ) as trace:
         response = await create_log(body)
         trace.set(output=response)
@@ -655,9 +649,8 @@ async def claim_text_log(body: LogCreate, mode: str = "text") -> LogResponse | N
         (body.id, mode, body.text, body.captured_at, body.capture_fallback,
          body.capture_error, None),
     ):
-        replay = await _duplicate_post_response(
-            body.id, grace=_AGENT_RERUN_GRACE_SECONDS if body.agent else _RERUN_GRACE_SECONDS
-        )
+        # every text log is an agent run, which may take minutes (§6.4)
+        replay = await _duplicate_post_response(body.id, grace=_AGENT_RERUN_GRACE_SECONDS)
         if replay is not None:
             return replay
         # orphaned staged log claimed (earlier attempt died mid-pipeline) →
@@ -676,8 +669,8 @@ async def create_log(body: LogCreate) -> LogCreateResponse:
 async def _run_pipeline(
     body: LogCreate, emit: Emit | None = None, image: str | None = None
 ) -> LogCreateResponse:
-    """§3.0 short-circuit, else — through the agent when the log asks for it
-    (§6.4) — decompose → the per-log cascade → _persist, on a log row this
+    """§3.0 short-circuit, else the front-door agent (§6.4) — the one
+    pipeline since decompose was removed (2026-09-11) — on a log row this
     request owns (a fresh claim, or a claimed orphan). `emit` streams the
     agent's events to the chat (routes/agent.py); None runs silently."""
     deadline.start_if_unset()  # the chat route started it at the request's start
@@ -685,8 +678,8 @@ async def _run_pipeline(
 
     # §3.0 whole-utterance short-circuit — the LLM leaves the hot path entirely.
     # Meal macro first (tier 0, N rows — "my usual breakfast"), then alias
-    # (tier 1, one row); None → decompose. The agent lane keeps it: a
-    # memorized phrase stages in one round trip whichever sheet it came from.
+    # (tier 1, one row); None → the agent. A memorized phrase stages in one
+    # round trip whichever sheet it came from.
     # An attached image is never a memorized phrase (§6.4, 2026-09-09): the
     # words were said ABOUT a picture, so "my usual breakfast" beside a photo
     # is a question about that photo, not a saved meal. Short-circuiting would
@@ -696,68 +689,7 @@ async def _run_pipeline(
         await _persist(body.id, sc, meal, short_circuit=True)
         return LogCreateResponse(log_id=body.id, meal=meal, items=[r.staged for r in sc])
 
-    if body.agent:
-        return await _run_agent_lane(body, meal, emit, image)
-    return await _stage_from_text(body, meal, body.text)
-
-
-async def _stage_from_text(
-    body: LogCreate, meal: Meal, text: str, *, start_index: int = 0
-) -> LogCreateResponse:
-    """decompose → when/meal hints → the per-log cascade → _persist, for
-    `text`: the whole utterance, or the food part the agent handed over.
-    `start_index`: where the rows' item_index allocation begins — the agent
-    lane may already have staged rows on this log (§6.4)."""
-    # decompose (gpt-5.6-luna) records its own span in this run's trace (§10)
-    import tracing
-    from services.context import build_agent_context
-    from services.decompose import decompose
-
-    tracing.init_tracing()
-    ctx = await build_agent_context()
-    t0 = time.monotonic()
-    parsed = await decompose(
-        text, ctx, now_local=local_time(body.captured_at, body.tz)
-    )
-    trace_id = tracing.current_trace_id()
-    decompose_ms = int((time.monotonic() - t0) * 1000)
-
-    # §7.2 (BACKLOG 26, 189): the model resolved the spoken time words to a day
-    # offset against the NOW line it was given; this only does the arithmetic.
-    # An explicit spoken meal_hint outranks the when-derived meal; the date
-    # shift applies regardless.
-    when = when_shift(
-        parsed.when_day_offset, parsed.when_meal, parsed.meal_hint,
-        body.captured_at, body.tz, when_hint=parsed.when_hint,
-    )
-    if parsed.meal_hint is not None:
-        meal = parsed.meal_hint
-    elif when.meal is not None:
-        meal = when.meal
-
-    # §8.4 "say 'save this as my usual breakfast' AFTER logging": zero items +
-    # a save_intent means "this" is the most recent committed log.
-    saved_meal = note = None
-    if not parsed.items and parsed.save_intent is not None:
-        saved_meal, note = await _save_intent_without_items(parsed.save_intent.name)
-
-    # Per-log cascade (§3.1): a tier-0 expansion occupies one item_index per
-    # macro item, so "usual breakfast and a coffee" → N macro rows, then coffee.
-    async with tracing.run(
-        "cascade", kind="retriever", input=[it.phrase for it in parsed.items]
-    ) as lookup:
-        resolutions = await cascade.resolve_items(parsed.items, meal, start_index=start_index)
-        lookup.set(output=cascade_summary(resolutions))
-    await _persist(
-        body.id, resolutions, meal,
-        short_circuit=False, decompose_ms=decompose_ms, trace_id=trace_id,
-        logged_at=when.logged_at, when_hint_note=when.note,
-        save_intent=parsed.save_intent.name if parsed.save_intent else None,
-    )
-    return LogCreateResponse(
-        log_id=body.id, meal=meal, items=[r.staged for r in resolutions],
-        saved_meal=saved_meal, note=note, logged_at=when.logged_at,
-    )
+    return await _run_agent_lane(body, meal, emit, image)
 
 
 # §3.4 (2026-09-11): every row is looked up before the chat answers (Bill:
@@ -1230,7 +1162,7 @@ async def _resolve_meal_items(
 
 async def _stamp_save_intent(log_id: str, name: str, triggers: list[str] | None) -> int:
     """§8.4 on a log that is still staged: the intent rides the rows' staged
-    jsonb under the key decompose's save_intent uses, so commit step 4 builds
+    jsonb under the `save_intent` key, so commit step 4 builds
     the macro from the committed items. A jsonb MERGE: nothing else on the
     row is touched (no KEEP_LOG_KEYS_SQL needed), and KEEP_LOG_KEYS_SQL
     carries the object whole through every later rewrite (tier 3,
@@ -1731,31 +1663,6 @@ async def _refresh_turn(turn: dict) -> None:
         turn["items"] = [_item_words(it) for it in current.items]
 
 
-async def _save_intent_without_items(name: str) -> tuple[SavedMealNote | None, str | None]:
-    """§8.4 create path (a): the macro's items are the most recent committed
-    log's entries (food, serving, qty as committed) — create-or-update by
-    name, triggers defaulting to norm(name), same as the "Save as meal" tap.
-    Nothing committed yet → (None, note); the log row stays an itemless
-    staged log that nothing counts (§9 reads committed/discarded only)."""
-    from routes import meals as meals_route  # lazy: routes/meals → routes/photo → here
-
-    last = await db.fetchone(_LAST_COMMITTED_LOG_SQL)
-    if last is None:
-        return None, f"Nothing to save as '{name}' yet — log the items first."
-    try:
-        # the same builder the diary's "Save as meal" and the agent's
-        # save_meal use — one copy of entries → macro (BACKLOG 160)
-        saved = await meals_route.meal_from_log(
-            meals_route.MealFromLog(log_id=last["id"], name=name, trigger_phrases=[])
-        )
-    except HTTPException as e:
-        return None, f"Couldn't save '{name}': {e.detail}"
-    return (
-        SavedMealNote(meal_id=saved.id, name=saved.name, item_count=len(saved.items)),
-        None,
-    )
-
-
 async def _duplicate_post_response(
     log_id: UUID, *, grace: int = _RERUN_GRACE_SECONDS
 ) -> LogResponse | None:
@@ -1768,7 +1675,7 @@ async def _duplicate_post_response(
     The concurrent same-id race is closed here: while another request
     plausibly owns the row (it is younger than `grace` — the lane's worst
     case: _RERUN_GRACE_SECONDS, or the agent lane's run ceiling), a duplicate
-    never re-runs decompose/resolve — it hands back whatever is persisted
+    never re-runs the pipeline — it hands back whatever is persisted
     (possibly zero items) and the client polls GET for the rest.
     """
     existing = await _load_log_response(log_id)
@@ -1809,7 +1716,6 @@ async def _persist(
     trace_id: str | None = None,
     logged_at: datetime | None = None,
     when_hint_note: str | None = None,
-    save_intent: str | None = None,
     lookup_notes: dict[int, str] | None = None,
 ) -> None:
     """All staged state is persisted server-side (§3): the client is a renderer.
@@ -1819,9 +1725,8 @@ async def _persist(
     jsonb as `logged_at` (ISO); resolver/commit.py reads it back for
     entries.logged_at and every per-item rewrite preserves it
     (commit.KEEP_LOG_KEYS_SQL). when_hint_note (an ignored hint) rides the
-    same extra-key mechanism as spoken_qty. save_intent (decompose's "save
-    this as my usual breakfast", §3.5 step 4) rides the same channel —
-    commit reads it back from the stored rows.
+    same extra-key mechanism as spoken_qty. (A save intent reaches the rows
+    through the agent's save_meal — _stamp_save_intent — not through here.)
     """
     async with db.tx() as conn:
         await conn.execute(
@@ -1857,10 +1762,6 @@ async def _persist(
                 # BACKLOG 26: an unrecognized when_hint is ignored, with the
                 # note kept visible in staged for telemetry/debugging
                 staged_payload["when_hint_note"] = when_hint_note
-            if save_intent:
-                # §3.5 step 4: resolver/commit.py creates/updates the macro
-                # from the committed items when a stored row carries this
-                staged_payload["save_intent"] = {"name": save_intent}
             await conn.execute(
                 """
                 INSERT INTO item_resolutions (log_id, item_index, phrase, phrase_norm,
@@ -1971,7 +1872,7 @@ async def patch_timings(log_id: UUID, body: TimingsPatch) -> TimingsResponse:
 )
 async def remove_staged_item(log_id: UUID, item_index: int) -> RemoveItemResponse:
     """§7.1: removing a staged row writes item_resolutions.status='removed'
-    immediately, so the decompose error stays visible in telemetry without
+    immediately, so the staging error stays visible in telemetry without
     waiting for commit (commit-time absence remains the backstop). A removed
     row never writes an alias and never reaches entries."""
     updated = await db.execute(

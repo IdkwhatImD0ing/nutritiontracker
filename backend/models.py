@@ -120,35 +120,23 @@ class StagedItem(BaseModel):
 
 
 class ParsedItem(BaseModel):
+    """The cascade's input for one food (§3). Built from the chat agent's
+    log_food items (routes/logs._stage_items), vision's items, an estimate's
+    components and an edited phrase — there is no decompose step since
+    2026-09-11, and ParsedLog, its output, went with it."""
+
     phrase: str  # quantity words removed
     phrase_kind: Literal["food", "meal_ref"]
     qty: float | None  # explicit only — never invented
     unit: str | None  # as spoken: "bottle","scoop","g","oz","cup"
     state: Literal["cooked", "raw", "dry"] | None
     brand: str | None
-    library_match: str | None  # id from the inlined personal food index (§3.3)
-    meal_ref: str | None  # id from the inlined saved-meals list (§3.1)
+    library_match: str | None  # one of his diary foods, by id — the agent's food_id (§3.3)
+    meal_ref: str | None  # a saved meal's name (§3.1)
 
 
 class SaveIntent(BaseModel):
     name: str
-
-
-class ParsedLog(BaseModel):
-    items: list[ParsedItem]
-    meal_hint: Meal | None  # only if spoken ("for breakfast I had…")
-    when_hint: str | None  # "this morning", "yesterday lunch" — verbatim, for traces
-    # §7.2: the MODEL resolves the spoken time words against the NOW line in
-    # its input (BACKLOG 189). 0 = the local day of the utterance, -1 = the day
-    # before, and so on; null when no time reference was spoken. The server
-    # only does the arithmetic — no phrase is ever pattern-matched, so a form
-    # nobody enumerated ("the day before yesterday", "Sunday") still lands.
-    when_day_offset: int | None
-    # the meal the TIME words imply ("last night" -> snack, "yesterday
-    # morning" -> breakfast), which is not the same thing as meal_hint (a meal
-    # the user named outright). meal_hint outranks it, exactly as before.
-    when_meal: Meal | None
-    save_intent: SaveIntent | None
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +164,10 @@ class LogCreate(BaseModel):
     tz: str
     capture_fallback: bool = False
     capture_error: str | None = None
-    # the + sheet's Agent lane (§6.4): route the utterance through the
-    # front-door agent after the §3.0 short-circuit (food and/or a weigh-in)
-    agent: bool = False
+    # (`agent` is gone, 2026-09-11: every text and voice log runs the
+    # front-door agent after the §3.0 short-circuit — there is no other
+    # pipeline since decompose was removed. A client still sending it is
+    # ignored, like any unknown field.)
     # the chat so far (the last turns, oldest first) — what the agent reads to
     # understand references, answers to its own question, and corrections
     history: list[AgentTurn] | None = None

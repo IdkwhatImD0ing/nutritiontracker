@@ -1,7 +1,7 @@
 """Photo decompose — the M4 vision call (DESIGN.md §3.4a, §12 M4).
 
-gpt-6-astra via the plain openai client's Responses API, the way
-services/decompose.py does it: one-shot structured extraction (strict schema
+gpt-6-astra via the plain openai client's Responses API: one-shot structured
+extraction (strict schema
 through responses.parse), a stable prompt_cache_key, and its own FireTrace
 span (tracing.run: kind llm, the model, the token usage — the image itself is
 never recorded, only its type and size).

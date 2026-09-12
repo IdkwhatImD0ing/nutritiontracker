@@ -17,7 +17,7 @@ if BACKEND not in sys.path:
 os.environ.setdefault("TALLY_INLINE_TIER3", "0")
 
 # The route tests swap the `services` package for a stub with an empty
-# __path__ (no live decompose/STT/tier 3). The routes' `from services import
+# __path__ (no live agent/STT/tier 3). The routes' `from services import
 # quota` still resolves because the REAL module already sits in sys.modules —
 # imported here, before any stub is installed (Python's from-import falls back
 # to sys.modules["services.quota"]). quota itself imports only auth/db.

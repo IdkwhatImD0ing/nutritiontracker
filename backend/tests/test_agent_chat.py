@@ -80,7 +80,7 @@ BASIS = "the whole 2 lb Costco shrimp platter, sauce included"
 
 
 def _log(text: str) -> LogCreate:
-    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ, agent=True)
+    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ)
 
 
 async def _drain(resp) -> list[dict]:
@@ -308,7 +308,7 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
                 "Made it one egg.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = LogCreate(id=uuid4(), text="actually just one egg", captured_at=NOW, tz=TZ, agent=True, history=history)
+            body = LogCreate(id=uuid4(), text="actually just one egg", captured_at=NOW, tz=TZ, history=history)
             resp = await logs_routes.create_log(body)
             assert resp.agent is not None and resp.agent.discarded == [first.log_id]
             assert await _scalar(conn, "SELECT status FROM logs WHERE id = %s", (first.log_id,)) == "discarded"
@@ -343,7 +343,7 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
 
             monkeypatch.setattr(agent_svc, "Runner", Refusals)
             resp2 = await logs_routes.create_log(
-                LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ, agent=True, history=history))
+                LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ, history=history))
             assert resp2.agent is not None and resp2.agent.discarded is None
 
             # a card that still says staged reports what the database says (discarded);
@@ -358,7 +358,7 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
             runner3 = _fake_runner([], "Nothing to change.")
             monkeypatch.setattr(agent_svc, "Runner", runner3)
             await logs_routes.create_log(
-                LogCreate(id=uuid4(), text="hello again", captured_at=NOW, tz=TZ, agent=True, history=stale))
+                LogCreate(id=uuid4(), text="hello again", captured_at=NOW, tz=TZ, history=stale))
             assert f"Log {first.log_id} (discarded): eggs" in runner3.input
             assert "ghost" not in runner3.input and runner3.input.count("- Log ") == 1
 
@@ -402,7 +402,7 @@ def test_a_question_turn_gives_a_demo_its_daily_log_attempt_back(monkeypatch):
             # the answer claims the day's attempt and stages
             monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged."))
             second = await logs_routes.create_log(LogCreate(
-                id=uuid4(), text="The big tray", captured_at=NOW, tz=TZ, agent=True,
+                id=uuid4(), text="The big tray", captured_at=NOW, tz=TZ,
                 history=[{"role": "user", "text": "costco shrimp"}, {"role": "agent", "text": "Which one?"}]))
             assert [it.phrase for it in second.items] == ["eggs"] and second.agent.options is None
             assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'log'") == 1
@@ -591,7 +591,7 @@ def test_flagged_estimate_row_commits_and_learns_no_alias(monkeypatch):
         async with isolated_db() as conn:
             food_id = await insert_food(conn)
             await insert_alias(conn, food_id)  # 'two eggs' → tier 1 for the component phrase
-            _stub_pipeline(monkeypatch)  # no decompose: the estimate is the only staging
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             runner = _fake_runner(
                 [("log_estimate", {"items": [{"phrase": "two eggs", "qty": 2, "unit": None, "grams": 100, "note": "a guess"}],
                                    "basis": "a homemade plate"})],
@@ -1114,8 +1114,7 @@ def test_a_photo_conversation_carries_its_plate_into_the_next_turn(monkeypatch):
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
             body = LogCreate(
-                id=uuid4(), text="that's three eggs", captured_at=NOW, tz=TZ,
-                agent=True, photo_log_id=plate_id,
+                id=uuid4(), text="that's three eggs", captured_at=NOW, tz=TZ, photo_log_id=plate_id,
             )
             events = await _drain(await agent_routes.agent_text(body))
             assert [e["type"] for e in events] == [

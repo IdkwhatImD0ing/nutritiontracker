@@ -7,7 +7,8 @@ ordinary interactive transactions §3.5 needs. All rows come back as dicts.
 Tenancy (migration 002): every statement runs inside a transaction that first
 binds the tenant — ``SET LOCAL ROLE tally_app`` (the role without BYPASSRLS,
 so the row policies apply) and ``app.user_id`` = ``current_user_id`` (the
-ContextVar auth.require_user sets from the JWT ``sub``; evals bind the owner).
+ContextVar auth.require_user sets from the JWT ``sub``; code with no request
+binds the owner itself).
 Transaction-local is the only safe scope over the pooler — a session-level
 SET could land on a different server connection than the next statement — so
 each helper is its own short transaction (BEGIN / bind / statement / COMMIT:

@@ -2,13 +2,13 @@
 
 In-process TestClient over the assembled app (main.app, all routers wired)
 against the LIVE services: Neon (production DB until the dev branch exists),
-Deepgram nova-3 (OpenAI gpt-transcribe on failover), GPT-5.6 Luna decompose,
+Deepgram nova-3 (OpenAI gpt-transcribe on failover), the GPT-5.6 Terra chat agent,
 the resolver. Two clips ride POST /api/logs as multipart — §5's "audio blob +
 the same fields" — with the auth dependency overridden:
 
   1. Deepgram's canonical sample ("Life moves pretty fast…", a real recorded
      voice, not food) → a staged log, NOT capture_failure: input_mode='voice',
-     transcribe_ms recorded, raw_input = the real transcript, decompose ran.
+     transcribe_ms recorded, raw_input = the real transcript, the agent ran.
   2. A synthesized food utterance ("two eggs and a fairlife", OpenAI TTS,
      generated once into the scratch dir) → staged items FROM THE REAL
      TRANSCRIPT: eggs + fairlife as rows, the spoken "two" carried as qty.
@@ -158,12 +158,11 @@ def test_m2_voice_clip_stages_through_the_real_pipeline(client: TestClient):
         assert row1["status"] == "staged"
         assert row1["transcribe_ms"] and row1["transcribe_ms"] > 0
         assert BUELLER_LANDMARK in row1["raw_input"].lower(), row1["raw_input"]
-        # the identical pipeline ran on the transcript: decompose (or the
-        # short-circuit) stamped its timing, like any text log
-        assert row1["short_circuit"] or row1["decompose_ms"] is not None
+        # the identical pipeline ran on the transcript (the chat agent, like
+        # any text log): a staged log, not a capture failure — above
         print(
             f"\n[m2 voice] bueller: transcribe_ms={row1['transcribe_ms']} "
-            f"decompose_ms={row1['decompose_ms']} items={len(body1['items'])} "
+            f"items={len(body1['items'])} "
             f"transcript={row1['raw_input'][:60]!r}"
         )
 
@@ -198,7 +197,7 @@ def test_m2_voice_clip_stages_through_the_real_pipeline(client: TestClient):
         assert [r["phrase"] for r in res_rows] == phrases
         print(
             f"[m2 voice] eggs+fairlife: transcribe_ms={row2['transcribe_ms']} "
-            f"decompose_ms={row2['decompose_ms']} transcript={transcript!r} "
+            f"transcript={transcript!r} "
             f"items={[(it['phrase'], it['status'], it.get('tier'), it.get('qty')) for it in items]}"
         )
     finally:

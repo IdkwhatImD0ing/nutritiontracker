@@ -23,7 +23,6 @@ import { getToken } from "@/lib/auth/token";
  */
 export type StagedServing = components["schemas"]["ServingOption"];
 export type StagedItem = components["schemas"]["StagedItemOut"];
-export type LogCreate = components["schemas"]["LogCreate"];
 export type LogResponse = components["schemas"]["LogPollResponse"];
 /** §8.4: POST /api/logs answers LogCreateResponse — a LogResponse plus the
  *  itemless "save this as my usual breakfast" outcome (`saved_meal`, or
@@ -132,10 +131,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await res.text();
   // 204 / empty bodies (DELETE, PATCH acks) parse to undefined, not a throw.
   return (text ? JSON.parse(text) : undefined) as T;
-}
-
-export function createLog(body: LogCreate): Promise<LogCreateResponse> {
-  return request("/api/logs", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function getLog(logId: string): Promise<LogResponse> {
@@ -439,7 +434,6 @@ export async function streamAgent(
               tz: args.tz,
               capture_fallback: args.capture_fallback ?? false,
               capture_error: args.capture_error ?? null,
-              agent: true,
               history: args.history ?? null,
               photo_log_id: args.photo_log_id ?? null,
             }),
@@ -482,40 +476,6 @@ export async function streamAgent(
     throw new ApiError(502, "the agent stream ended without a result");
   }
   return done;
-}
-
-export type AudioLogResult =
-  | { kind: "staged"; log: LogCreateResponse }
-  /** §5/§13: the transcript came back empty — a capture failure, not an empty
-   *  meal; the server has already recorded it on the audio log's row. */
-  | { kind: "capture_failure" };
-
-type CaptureFailure = components["schemas"]["CaptureFailureResponse"];
-
-/** §5: POST /api/logs as multipart — the audio blob under `audio` plus the
- *  same fields as the JSON body minus `text` (the transcript supplies it). */
-export async function createLogAudio(args: {
-  id: string;
-  clip: VoiceClip;
-  tz: string;
-  /** a client-detected failure from an earlier attempt that this clip is
-   *  retrying — lands in logs.capture_error so the §9 counter still sees it
-   *  (capture_fallback stays false: voice succeeded, nothing fell back) */
-  capture_error?: string | null;
-  /** §6.4: the Agent lane — the transcript runs through the front-door agent */
-  agent?: boolean;
-}): Promise<AudioLogResult> {
-  const form = audioForm(args);
-  if (args.agent) form.set("agent", "true");
-  const res = await multipart("/api/logs", form);
-  if (!res.ok) {
-    throw new ApiError(res.status, await res.text().catch(() => ""));
-  }
-  const body = (await res.json()) as LogCreateResponse | CaptureFailure;
-  if ("status" in body && body.status === "capture_failure") {
-    return { kind: "capture_failure" };
-  }
-  return { kind: "staged", log: body as LogCreateResponse };
 }
 
 /** One row of the user's aliases for a phrase (§4 aliases ⋈ foods) — the

@@ -55,20 +55,6 @@ def _build_stubs() -> dict:
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []
 
-    ctx_mod = types.ModuleType("services.context")
-
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
-    ctx_mod.build_agent_context = build_agent_context
-
-    dec_mod = types.ModuleType("services.decompose")
-
-    async def decompose(text, ctx, **kw):
-        raise AssertionError("decompose must not be called (short-circuit path)")
-
-    dec_mod.decompose = decompose
-
     t3_mod = types.ModuleType("services.tier3")
 
     async def run_tier3(log_id, item_index):
@@ -76,15 +62,11 @@ def _build_stubs() -> dict:
 
     t3_mod.run_tier3 = run_tier3
 
-    services_mod.context = ctx_mod
-    services_mod.decompose = dec_mod
     services_mod.tier3 = t3_mod
     return {
         "auth": auth_mod,
         "tracing": tracing_mod,
         "services": services_mod,
-        "services.context": ctx_mod,
-        "services.decompose": dec_mod,
         "services.tier3": t3_mod,
     }
 
@@ -92,18 +74,28 @@ def _build_stubs() -> dict:
 import pytest  # noqa: E402
 
 
+async def _no_agent(body, meal, emit=None, image=None):
+    raise AssertionError("the agent must not run in this test")
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _workstream_stubs():
     """Install the stubs for this module's tests only, then restore whatever
     was in sys.modules before — other test files (tier3/tracing live) must
     never see them. Route handlers resolve tracing/services lazily at call
-    time, so a run-time sys.modules swap is sufficient."""
+    time, so a run-time sys.modules swap is sufficient. The agent lane
+    raises unless a test sets its own."""
+    import routes.logs as logs_mod
+
     stubs = _build_stubs()
     saved = {name: sys.modules.get(name) for name in stubs}
     sys.modules.update(stubs)
+    saved_lane = logs_mod._run_agent_lane
+    logs_mod._run_agent_lane = _no_agent
     try:
         yield
     finally:
+        logs_mod._run_agent_lane = saved_lane
         for name, mod in saved.items():
             if mod is None:
                 sys.modules.pop(name, None)
@@ -121,7 +113,6 @@ from models import (  # noqa: E402
     LogCreate,
     Meal,
     ParsedItem,
-    ParsedLog,
     ServingRef,
     StagedItem,
 )
@@ -129,6 +120,7 @@ from resolver import cascade  # noqa: E402
 from resolver.norm import norm  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
 from routes.logs import create_log  # noqa: E402
+from services.agent import FoodItem  # noqa: E402  (before the services stub goes in)
 
 NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
 
@@ -285,7 +277,7 @@ def test_norm_cases():
 
 
 # ---------------------------------------------------------------------------
-# 2. whole-utterance short-circuit hit (§3.0) — decompose stub raises if called
+# 2. whole-utterance short-circuit hit (§3.0) — the agent lane raises if called
 # ---------------------------------------------------------------------------
 
 
@@ -397,37 +389,39 @@ def test_pick_mode_of_last_10_committed():
 
 
 # ---------------------------------------------------------------------------
-# 4. decompose path: tier-1 item + unresolved item staged as searching (§3.4 seam)
+# 4. the agent lane: tier-1 item + unresolved item staged as searching (§3.4 seam)
 # ---------------------------------------------------------------------------
 
 
-def test_decompose_path_tier1_and_searching():
+def test_agent_lane_path_tier1_and_searching():
+    """The one pipeline since decompose was removed (2026-09-11): the foods
+    the agent names go through the REAL routes/logs._stage_items — here with
+    the agent faked at the lane, as a model turn would call log_food."""
     async def run():
         async with isolated_db() as conn:
+            import routes.logs as logs_mod
+
             phrase = f"oats{uuid4().hex[:8]}"
             food = await insert_food(conn, "Rolled Oats")
             await insert_alias(conn, phrase, food)
 
-            def parsed(p, qty=None, unit=None):
-                return ParsedItem(
-                    phrase=p, phrase_kind="food", qty=qty, unit=unit,
-                    state=None, brand=None, library_match=None, meal_ref=None,
-                )
+            def item(p, qty=None, unit=None):
+                return FoodItem(phrase=p, saved_meal=False, food_id=None, qty=qty, unit=unit, note=None)
 
-            async def fake_decompose(text, ctx, **kw):
-                return ParsedLog(
-                    items=[parsed(phrase), parsed(f"novel{uuid4().hex[:8]}", qty=3, unit="g")],
-                    meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
+            async def lane(body, meal, emit=None, image=None):
+                rows, food_meal, logged_at = await logs_mod._stage_items(
+                    body, meal, [item(phrase), item(f"novel{uuid4().hex[:8]}", qty=3, unit="g")],
+                    start_index=0,
                 )
+                return logs_mod.LogCreateResponse(log_id=body.id, meal=food_meal, items=rows)
 
-            dec = sys.modules["services.decompose"]
-            orig = dec.decompose
-            dec.decompose = fake_decompose
+            orig = logs_mod._run_agent_lane
+            logs_mod._run_agent_lane = lane
             try:
                 body = log_body(f"{phrase} and something new")
                 resp = await create_log(body)
             finally:
-                dec.decompose = orig
+                logs_mod._run_agent_lane = orig
 
             assert len(resp.items) == 2
             assert resp.items[0].tier == 1 and resp.items[0].food.id == food

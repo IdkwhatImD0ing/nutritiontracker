@@ -1573,8 +1573,8 @@ async def run_tier3(
     # time that request can spare (deadline.tier3_budget, set by
     # routes/logs._resolve_inline); None — the phone's kick — is uncapped
     budget = deadline.tier3_budget.get()
-    # §10: the run's step in the route's trace (a trace of its own from the
-    # evals); the SDK's agent, model-turn and tool spans nest under it
+    # §10: the run's step in the route's trace (a trace of its own when no
+    # run is current); the SDK's agent, model-turn and tool spans nest under it
     async with tracing.run(
         "tier3", input=agent_input, attributes={"phrase": phrase, "item_index": item_index}
     ) as span:

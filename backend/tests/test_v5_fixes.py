@@ -1,9 +1,9 @@
 """V5 tests — small backend fixes (BACKLOG 24, 28, 30-origin).
 
-1. BACKLOG 24 (§5): POST /api/resolve runs the single-item decompose
-   micro-call so tier 2b works for edited text — fires for novel phrases,
-   skipped for exact alias matches, degrades to tier 1, else tier 3, on LLM
-   failure.
+1. BACKLOG 24 (§5): POST /api/resolve on edited text is tier 1 (an exact
+   alias, no model call), else tier 3 with the text as typed. (The
+   single-item decompose micro-call it once ran was removed with decompose,
+   2026-09-11.)
 2. BACKLOG 28 (§3.5): entries qty-PATCH scales from a base frozen in the
    macros jsonb sidecar — repeated edits are round-trip exact; lossless
    scales keep the stored snapshot clean (no sidecar keys).
@@ -26,9 +26,8 @@ import sys
 import time
 import types
 from tracing_stub import make_tracing_stub
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -60,20 +59,6 @@ def _build_stubs() -> dict:
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []
 
-    ctx_mod = types.ModuleType("services.context")
-
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
-    ctx_mod.build_agent_context = build_agent_context
-
-    dec_mod = types.ModuleType("services.decompose")
-
-    async def decompose(text, ctx, **kw):
-        raise AssertionError("test must install its own decompose fake")
-
-    dec_mod.decompose = decompose
-
     t3_mod = types.ModuleType("services.tier3")
 
     async def run_tier3(log_id, item_index, refinement=None):
@@ -81,14 +66,10 @@ def _build_stubs() -> dict:
 
     t3_mod.run_tier3 = run_tier3
 
-    services_mod.context = ctx_mod
-    services_mod.decompose = dec_mod
     services_mod.tier3 = t3_mod
     return {
         "tracing": tracing_mod,
         "services": services_mod,
-        "services.context": ctx_mod,
-        "services.decompose": dec_mod,
         "services.tier3": t3_mod,
     }
 
@@ -111,7 +92,7 @@ def _workstream_stubs():
 import auth  # noqa: E402  (real module — origin tests need it)
 import db  # noqa: E402
 from tenancy_harness import bind_test_tenant  # noqa: E402
-from models import ParsedItem, ParsedLog, ResolveRequest  # noqa: E402
+from models import ResolveRequest  # noqa: E402
 from resolver.norm import norm  # noqa: E402
 from routes.entries import EntryPatch, patch_entry  # noqa: E402
 
@@ -182,32 +163,6 @@ async def resolve_routes():
         sys.modules.pop("routes.resolve", None)
 
 
-@contextmanager
-def llm(fake_decompose=None, food_index=None):
-    """Install a per-test decompose fake and/or agent-context food index."""
-    dec = sys.modules["services.decompose"]
-    ctx = sys.modules["services.context"]
-    saved_dec, saved_ctx = dec.decompose, ctx.build_agent_context
-    if fake_decompose is not None:
-        dec.decompose = fake_decompose
-    if food_index is not None:
-
-        async def build_agent_context():
-            return SimpleNamespace(
-                profile_notes="",
-                targets={},
-                food_index=food_index,
-                meal_names=[],
-                recent_foods=[],
-            )
-
-        ctx.build_agent_context = build_agent_context
-    try:
-        yield
-    finally:
-        dec.decompose, ctx.build_agent_context = saved_dec, saved_ctx
-
-
 # ---------------------------------------------------------------------------
 # fixtures
 # ---------------------------------------------------------------------------
@@ -249,69 +204,14 @@ async def insert_dummy_log(conn, status="staged"):
     return log_id
 
 
-def one_item_log(item: ParsedItem) -> ParsedLog:
-    return ParsedLog(items=[item], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
-
-
-def food_item(phrase, qty=None, unit=None, library_match=None, kind="food") -> ParsedItem:
-    return ParsedItem(
-        phrase=phrase, phrase_kind=kind, qty=qty, unit=unit, state=None,
-        brand=None, library_match=library_match, meal_ref=None,
-    )
-
-
 # ---------------------------------------------------------------------------
-# 1. BACKLOG 24 — /api/resolve micro-decompose (§5 tier-2b parity)
+# 1. BACKLOG 24 — /api/resolve on edited text: tier 1, else tier 3
 # ---------------------------------------------------------------------------
 
 
-def test_micro_decompose_fires_for_novel_text():
-    """Novel edited text runs the micro-call; its library_match resolves the
-    item at tier 2 (2b), and its parsed qty becomes the spoken qty."""
-
-    async def run():
-        async with isolated_db() as conn:
-            async with resolve_routes() as rr:
-                t = tok()
-                food = await insert_food(conn, "Core Power Elite", brand="Fairlife")
-                log_id = await insert_dummy_log(conn)
-                calls: list[str] = []
-
-                async def fake_decompose(text, ctx, **kw):
-                    calls.append(text)
-                    return one_item_log(
-                        food_item(f"{t} shake", qty=2.0, library_match=food)
-                    )
-
-                with llm(fake_decompose, food_index=[(food, "Core Power Elite", "Fairlife")]):
-                    item = await rr.resolve_item(
-                        ResolveRequest(log_id=log_id, item_index=0, phrase=f"2 {t} shakes")
-                    )
-
-                assert calls == [f"2 {t} shakes"]  # micro-call fired, raw text in
-                assert item.status == "resolved" and item.tier == 2
-                assert item.food.id == food  # 2b library match, not the network
-                assert item.confidence == "high"  # a library match is his own food (2026-09-11)
-                assert item.qty == 2  # decompose-parsed qty applied (§7.3 rule 1)
-                assert item.macros.kcal == 240  # 2 x 120
-
-                row = await db.fetchone(
-                    "SELECT phrase, phrase_norm, tier, status, staged "
-                    "FROM item_resolutions WHERE log_id = %s AND item_index = 0",
-                    (log_id,),
-                )
-                # new rows store the decompose-CLEANED phrase (staging parity)
-                assert row["phrase"] == f"{t} shake"
-                assert row["phrase_norm"] == norm(f"{t} shake")
-                assert row["tier"] == 2 and row["status"] == "resolved"
-                assert row["staged"]["spoken_qty"] == 2
-
-    asyncio.run(run())
-
-
-def test_micro_decompose_skipped_for_exact_alias():
-    """A phrase that exact-matches an alias resolves at tier 1 with ZERO model
-    calls — the micro-call would be pure latency."""
+def test_resolve_exact_alias_is_tier1_without_a_model_call():
+    """A phrase that exact-matches an alias resolves at tier 1 — the tier-3
+    stub raises if touched, so no model runs."""
 
     async def run():
         async with isolated_db() as conn:
@@ -320,28 +220,21 @@ def test_micro_decompose_skipped_for_exact_alias():
                 food = await insert_food(conn, "Quest Bar")
                 await insert_alias(conn, phrase, food)
                 log_id = await insert_dummy_log(conn)
-                calls: list[str] = []
 
-                async def fake_decompose(text, ctx, **kw):
-                    calls.append(text)
-                    return one_item_log(food_item(text))
+                item = await rr.resolve_item(
+                    ResolveRequest(log_id=log_id, item_index=0, phrase=phrase)
+                )
 
-                with llm(fake_decompose):
-                    item = await rr.resolve_item(
-                        ResolveRequest(log_id=log_id, item_index=0, phrase=phrase)
-                    )
-
-                assert calls == []  # skipped: exact alias match
                 assert item.status == "resolved" and item.tier == 1
                 assert item.food.id == food
 
     asyncio.run(run())
 
 
-def test_micro_decompose_outage_degrades_to_tier3():
-    """A decompose failure must not break /api/resolve — tier 1 still runs,
-    and a phrase it does not know goes to tier 3. (Until 2026-09-10 a trigram
-    matcher caught "protein shakes" here; fuzzy matching is gone.)"""
+def test_resolve_novel_text_goes_to_tier3_as_typed():
+    """A phrase no alias knows goes to tier 3, stored as typed with the
+    request's qty. (Until 2026-09-10 a trigram matcher caught "protein
+    shakes" here; fuzzy matching is gone.)"""
 
     async def run():
         async with isolated_db() as conn:
@@ -350,59 +243,26 @@ def test_micro_decompose_outage_degrades_to_tier3():
                 food = await insert_food(conn, "Core Power Elite", brand="Fairlife")
                 await insert_alias(conn, f"{t} protein shake", food)
                 log_id = await insert_dummy_log(conn)
-                calls: list[str] = []
                 kicked: list[int] = []
-
-                async def fake_decompose(text, ctx, **kw):
-                    calls.append(text)
-                    raise RuntimeError("LLM outage")
 
                 async def fake_tier3(log_id_, item_index, refinement=None):
                     kicked.append(item_index)
                     return "tier3-result"
 
                 rr._run_tier3 = fake_tier3
-                with llm(fake_decompose):
-                    result = await rr.resolve_item(
-                        ResolveRequest(
-                            log_id=log_id, item_index=0, phrase=f"{t} protein shakes"
-                        )
-                    )
+                result = await rr.resolve_item(
+                    ResolveRequest(log_id=log_id, item_index=0, phrase=f"{t} protein shakes", qty=2)
+                )
 
-                assert calls  # the micro-call was attempted...
-                assert kicked == [0] and result == "tier3-result"  # ...and tier 3 took it
-
-    asyncio.run(run())
-
-
-def test_micro_decompose_meal_ref_never_enters_food_search():
-    """§3.1 guard: when the micro-call tags the text as a meal_ref with no
-    matching macro, the row becomes needs_input — never a tier-3 kick (the
-    tier3 stub raises if touched)."""
-
-    async def run():
-        async with isolated_db() as conn:
-            async with resolve_routes() as rr:
-                log_id = await insert_dummy_log(conn)
-                name = f"usual {tok()}"
-
-                async def fake_decompose(text, ctx, **kw):
-                    return one_item_log(food_item(name, kind="meal_ref"))
-
-                with llm(fake_decompose):
-                    item = await rr.resolve_item(
-                        ResolveRequest(log_id=log_id, item_index=0, phrase=name)
-                    )
-
-                assert item.status == "needs_input"
-                assert "No saved meal" in item.question.text
+                assert kicked == [0] and result == "tier3-result"
                 row = await db.fetchone(
-                    "SELECT status, staged FROM item_resolutions "
-                    "WHERE log_id = %s AND item_index = 0",
+                    "SELECT phrase, phrase_norm, status, staged "
+                    "FROM item_resolutions WHERE log_id = %s AND item_index = 0",
                     (log_id,),
                 )
-                assert row["status"] == "needs_input"
-                assert row["staged"]["status"] == "needs_input"
+                assert row["phrase"] == f"{t} protein shakes"
+                assert row["phrase_norm"] == norm(f"{t} protein shakes")
+                assert row["status"] == "searching" and row["staged"]["spoken_qty"] == 2
 
     asyncio.run(run())
 

@@ -73,8 +73,8 @@ async def persist_food(food: dict) -> str:
 # The foods this account has committed, newest first, one row per food. RLS
 # scopes `entries` to the caller; the photo lane's numberless placeholders are
 # never offered (they cannot be picked — routes/quick R1). Owner ruling,
-# 2026-09-06: the Search lane lists these under its bar, and the decompose
-# context carries them (§6.1) — barcode, search and photo rows learn no alias
+# 2026-09-06: the Search lane lists these under its bar, and the chat
+# agent's context carries them (§6.4) — barcode, search and photo rows learn no alias
 # (§3.5), so the alias-built food index never sees them.
 RECENT_FOODS_CAP = 200
 

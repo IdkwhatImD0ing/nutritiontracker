@@ -384,7 +384,8 @@ class FoodItem(BaseModel):
 
     # the food as they said it, quantity words out — and, when the transcript
     # misheard it, the words they MEANT ("tonkotsu ramen", not "Tom Katsu").
-    # A saved meal's name when saved_meal. Commit learns it as an alias.
+    # Commit learns it as an alias for the food. A saved meal's name when
+    # saved_meal (tier 0 — never an alias).
     phrase: str
     saved_meal: bool  # true when this is one of their saved meals, by name
     # one of THEIR foods (the context list or past_foods), copied exactly —

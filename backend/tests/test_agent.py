@@ -1,8 +1,8 @@
 """Agent mode (DESIGN.md §6.4, 2026-09-06) + the weigh-in log (§4 `weights`, 003).
 
 Offline: the Runner is a fake that drives the REAL tool closures, the way
-test_tier3_hardening does for tier 3; decompose is stubbed (test_tenancy's
-_stub_pipeline). Database work runs inside one force-rollback transaction
+test_tier3_hardening does for tier 3 (test_tenancy's _stub_pipeline refuses
+any model a test did not set). Database work runs inside one force-rollback transaction
 (isolated_db) against the live database — 003 is applied in-transaction
 while the table is not there yet (tenancy_harness), so nothing persists.
 
@@ -13,11 +13,10 @@ while the table is not there yet (tenancy_harness), so nothing persists.
 2. routes/weights: kg storage, one row per day updated in place,
    settings.body.weight_kg follows the newest weigh-in only, RLS keeps
    tenants apart; GET / PUT /api/weights.
-3. POST /api/logs with agent=true: the §3.0 short-circuit still wins with no
-   agent run; otherwise the agent stages the food part through the same
-   pipeline and records the weigh-in under the log's id, and the response
-   carries both; a weight-only utterance leaves an itemless log; agent=false
-   never builds an agent.
+3. POST /api/logs: the §3.0 short-circuit still wins with no agent run;
+   otherwise the agent names the foods (no decompose since 2026-09-11) —
+   one of his own by id — and records the weigh-in under the log's id, and
+   the response carries both; a weight-only utterance leaves an itemless log.
 
 Run:  cd backend && uv run --with pytest pytest tests/test_agent.py -q
 """
@@ -45,7 +44,7 @@ from agents import MaxTurnsExceeded
 from agents.tool_context import ToolContext
 from fastapi import HTTPException
 
-from models import LogCreate, ParsedItem, ParsedLog  # noqa: E402
+from models import LogCreate  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes import weights as weights_route  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
@@ -468,29 +467,18 @@ def test_weights_routes_get_and_put():
 
 
 # ---------------------------------------------------------------------------
-# 3. POST /api/logs, agent=true — the route end to end (model faked)
+# 3. POST /api/logs — the agent lane end to end (model faked)
 # ---------------------------------------------------------------------------
 
 
-def _parsed(*phrases: tuple[str, float | None]) -> ParsedLog:
-    return ParsedLog(
-        items=[
-            ParsedItem(phrase=p, phrase_kind="food", qty=q, unit=None, state=None,
-                       brand=None, library_match=None, meal_ref=None)
-            for p, q in phrases
-        ],
-        meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
-    )
-
-
-def _log(text: str, *, agent: bool) -> LogCreate:
-    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ, agent=agent)
+def _log(text: str) -> LogCreate:
+    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ)
 
 
 def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            _stub_pipeline(monkeypatch)  # decompose fails loudly if anything calls it
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             runner = _fake_runner(
                 [("log_food", {"items": [food("eggs", qty=2)]}),
                  ("log_weight", {"weight": 180.4, "unit": "lb", "days_ago": 0})],
@@ -498,7 +486,7 @@ def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
 
-            body = _log("two eggs and I weigh 180.4 pounds", agent=True)
+            body = _log("two eggs and I weigh 180.4 pounds")
             resp = await logs_routes.create_log(body)
 
             # the foods the agent named went straight to the cascade — no decompose
@@ -525,7 +513,7 @@ def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
             # the next agent run sees this weigh-in as the last one, in its unit
             runner2 = _fake_runner([], "Nothing to log.")
             monkeypatch.setattr(agent_svc, "Runner", runner2)
-            resp2 = await logs_routes.create_log(_log("hello there", agent=True))
+            resp2 = await logs_routes.create_log(_log("hello there"))
             assert resp2.items == [] and resp2.agent is not None and resp2.agent.weight is None
             assert resp2.agent.reply == "Nothing to log."
             assert "Last weigh-in: 180.4 lb on 2026-09-06" in runner2.input
@@ -560,7 +548,7 @@ def test_agent_lane_logs_his_own_food_by_id_and_keeps_the_note(monkeypatch):
                 "Took 'Tom Katsu' as your tonkotsu ramen.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = _log("This morning for breakfast at a Costco, Tom Katsu, Winston Roman.", agent=True)
+            body = _log("This morning for breakfast at a Costco, Tom Katsu, Winston Roman.")
             resp = await logs_routes.create_log(body)
 
             rows = {it.phrase: it for it in resp.items}
@@ -585,13 +573,13 @@ def test_agent_lane_logs_his_own_food_by_id_and_keeps_the_note(monkeypatch):
 def test_agent_lane_weight_only_leaves_an_itemless_log(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            _stub_pipeline(monkeypatch)  # decompose would fail loudly if called
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             runner = _fake_runner(
                 [("log_weight", {"weight": 82.5, "unit": "kg", "days_ago": 1})],
                 "Logged 82.5 kg for yesterday.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = _log("yesterday morning I weighed 82.5 kilos", agent=True)
+            body = _log("yesterday morning I weighed 82.5 kilos")
             resp = await logs_routes.create_log(body)
             assert resp.items == [] and resp.saved_meal is None and resp.note is None
             assert resp.agent is not None and resp.agent.weight is not None
@@ -611,28 +599,10 @@ def test_short_circuit_still_skips_the_agent(monkeypatch):
             await insert_alias(conn, food_id)  # 'two eggs' → tier 1, whole utterance
             _stub_pipeline(monkeypatch)
             monkeypatch.setattr(agent_svc, "Runner", _RefusingRunner)
-            resp = await logs_routes.create_log(_log("two eggs", agent=True))
+            resp = await logs_routes.create_log(_log("two eggs"))
             assert len(resp.items) == 1 and resp.items[0].status == "resolved" and resp.items[0].tier == 1
             assert resp.agent is None
             assert await _scalar(conn, "SELECT short_circuit FROM logs WHERE id = %s", (resp.log_id,)) is True
 
     _run(scenario())
 
-
-def test_plain_log_never_builds_the_agent(monkeypatch):
-    async def scenario():
-        async with isolated_db() as conn:
-            seen: list[str] = []
-
-            async def decompose(text, ctx, **kw):
-                seen.append(text)
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
-            monkeypatch.setattr(agent_svc, "Runner", _RefusingRunner)
-            resp = await logs_routes.create_log(_log("two eggs and I weigh 180 pounds", agent=False))
-            assert seen == ["two eggs and I weigh 180 pounds"]  # the whole utterance, as before
-            assert resp.agent is None and len(resp.items) == 1
-            assert await _scalar(conn, "SELECT count(*) FROM weights") == 0
-
-    _run(scenario())

@@ -9,14 +9,15 @@
    rides the staged jsonb, survives per-item rewrites, lands on
    entries.logged_at for every row of the log (added rows included), and the
    commit route's totals are for the shifted day.
-3. §8.4 — the create paths: an itemless "save this as my usual lunch" builds
-   the macro from the most recent committed log (or says why not), and the
-   commit route's save_intent ("Save as meal" on the staging sheet) creates it.
+3. §8.4 — the commit route's save_intent ("Save as meal" on the staging
+   sheet) creates the macro. ("Save this as my usual lunch" said with nothing
+   staged is the agent's save_meal now — test_agent_meals.py.)
 
 Rollback harness + run-time stubs as in test_meals.py / test_logs_lifecycle.py.
 services.tier3 and routes.resolve are the REAL modules — every path exercised
-resolves locally (no agent run, no network); tracing, services.context and
-services.decompose are stubbed.
+resolves locally (no model, no network): tracing is stubbed, and the agent
+lane (routes/logs._run_agent_lane — the one pipeline since decompose was
+removed, 2026-09-11) is faked with a stager that runs the REAL _stage_items.
 
 Run:  uv run --project backend --with pytest pytest backend/tests/test_phase4_fixes.py -q
 """
@@ -25,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import types
 from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -46,46 +46,36 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 # ---------------------------------------------------------------------------
-# stubs — tracing / context / decompose only; services.tier3 stays REAL
+# stubs — tracing, and the agent lane faked; services.tier3 stays REAL
 # ---------------------------------------------------------------------------
 
-_decompose: dict = {"fn": None}
+_lane: dict = {"fn": None}
 
 
-async def _decompose_dispatch(text, ctx, **kw):
-    fn = _decompose["fn"]
+async def _lane_dispatch(body, meal, emit=None, image=None):
+    fn = _lane["fn"]
     if fn is None:
-        raise AssertionError("decompose must not be called by this test")
-    return await fn(text, ctx, **kw)
+        raise AssertionError("the agent must not run in this test")
+    return await fn(body, meal)
 
 
 def _build_stubs() -> dict:
-    tracing_mod = make_tracing_stub("trace-test")
-
-    ctx_mod = types.ModuleType("services.context")
-
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
-    ctx_mod.build_agent_context = build_agent_context
-
-    dec_mod = types.ModuleType("services.decompose")
-    dec_mod.decompose = _decompose_dispatch
-    return {
-        "tracing": tracing_mod,
-        "services.context": ctx_mod,
-        "services.decompose": dec_mod,
-    }
+    return {"tracing": make_tracing_stub("trace-test")}
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _workstream_stubs():
+    import routes.logs as logs_mod
+
     stubs = _build_stubs()
     saved = {name: sys.modules.get(name) for name in stubs}
     sys.modules.update(stubs)
+    saved_lane = logs_mod._run_agent_lane
+    logs_mod._run_agent_lane = _lane_dispatch
     try:
         yield
     finally:
+        logs_mod._run_agent_lane = saved_lane
         for name, mod in saved.items():
             if mod is None:
                 sys.modules.pop(name, None)
@@ -94,10 +84,10 @@ def _workstream_stubs():
 
 
 @pytest.fixture(autouse=True)
-def _reset_decompose():
-    _decompose["fn"] = None
+def _reset_lane():
+    _lane["fn"] = None
     yield
-    _decompose["fn"] = None
+    _lane["fn"] = None
 
 
 import db  # noqa: E402
@@ -110,7 +100,6 @@ from models import (  # noqa: E402
     LogCreate,
     Meal,
     ParsedItem,
-    ParsedLog,
     ResolveRequest,
     SaveIntent,
 )
@@ -125,6 +114,7 @@ from routes.commit import commit_log as commit_route  # noqa: E402
 from routes.diary import local_date  # noqa: E402
 from routes.logs import when_shift  # noqa: E402
 from routes.resolve import Answer, AnswerRequest  # noqa: E402
+from services.agent import FoodItem  # noqa: E402
 
 NOW = lambda: datetime.now(timezone.utc)  # noqa: E731
 TZ = "America/Los_Angeles"
@@ -266,11 +256,19 @@ def parsed(phrase, kind="food", meal_ref=None):
     )
 
 
-def parsed_log(items, *, when_hint=None, save_intent=None,
-               when_day_offset=None, when_meal=None):
-    return ParsedLog(items=items, meal_hint=None, when_hint=when_hint,
-                     when_day_offset=when_day_offset, when_meal=when_meal,
-                     save_intent=save_intent)
+def stage_foods(*phrases, **when):
+    """A faked agent turn: log_food with `phrases` and the meal/time fields
+    the model passes, through the REAL routes/logs._stage_items."""
+
+    async def fn(body, meal):
+        items = [FoodItem(phrase=ph, saved_meal=False, food_id=None, qty=None, unit=None, note=None)
+                 for ph in phrases]
+        rows, food_meal, logged_at = await logs_routes._stage_items(
+            body, meal, items, start_index=0, **when)
+        return logs_routes.LogCreateResponse(
+            log_id=body.id, meal=food_meal, items=rows, logged_at=logged_at)
+
+    return fn
 
 
 def log_body(text, log_id=None):
@@ -349,7 +347,7 @@ def test_tier0_rows_stay_tier0_through_chip_manual_pick_and_rephrase():
             assert (await item_row(log_id, 1))["tier"] == 0
 
             # (c) rephrase through /api/resolve on the whey row → tier-1 alias
-            # hit on the NEW text (decompose stub: exact alias → no micro-call)
+            # hit on the NEW text
             re = await resolve_routes.resolve_item(
                 ResolveRequest(log_id=log_id, item_index=2, phrase=f"coffee {fx.tag}")
             )
@@ -420,11 +418,8 @@ def test_when_hint_keeps_captured_at_and_lands_every_entry_on_the_shifted_day():
             await insert_alias(conn, f"eggs {tag}", eggs)
             await insert_alias(conn, f"coffee {tag}", coffee)
 
-            async def fake_decompose(text, ctx, **kw):
-                return parsed_log([parsed(f"eggs {tag}")], when_hint="yesterday at lunch",
-                                  when_day_offset=-1, when_meal=Meal.lunch)
-
-            _decompose["fn"] = fake_decompose
+            _lane["fn"] = stage_foods(f"eggs {tag}", when_hint="yesterday at lunch",
+                                      when_day_offset=-1, when_meal="lunch")
             body = log_body(f"yesterday at lunch i had eggs {tag}")
             resp = await logs_routes.create_log(body)
             assert resp.meal == Meal.lunch and len(resp.items) == 1
@@ -486,10 +481,7 @@ def test_when_hint_keeps_captured_at_and_lands_every_entry_on_the_shifted_day():
             assert float(lat["floored"]) >= 0
 
             # a log without a when-hint still lands on captured_at
-            async def plain(text, ctx):
-                return parsed_log([parsed(f"coffee {tag}")])
-
-            _decompose["fn"] = plain
+            _lane["fn"] = stage_foods(f"coffee {tag}")
             body2 = log_body(f"a coffee {tag}")
             resp2 = await logs_routes.create_log(body2)
             assert "logged_at" not in (await item_row(body2.id, 0))["staged"]
@@ -514,11 +506,8 @@ def test_commit_retry_and_late_item_still_bill_the_shifted_day():
             await insert_alias(conn, f"eggs {tag}", eggs)
             await insert_alias(conn, f"coffee {tag}", coffee)
 
-            async def fake_decompose(text, ctx, **kw):
-                return parsed_log([parsed(f"eggs {tag}")], when_hint="yesterday at lunch",
-                                  when_day_offset=-1, when_meal=Meal.lunch)
-
-            _decompose["fn"] = fake_decompose
+            _lane["fn"] = stage_foods(f"eggs {tag}", when_hint="yesterday at lunch",
+                                      when_day_offset=-1, when_meal="lunch")
             body = log_body(f"yesterday at lunch i had eggs {tag}")
             resp = await logs_routes.create_log(body)
             expected = when_shift(-1, Meal.lunch, None, body.captured_at, body.tz).logged_at
@@ -568,62 +557,6 @@ def test_commit_retry_and_late_item_still_bill_the_shifted_day():
 # ---------------------------------------------------------------------------
 # 3. §8.4 — the create paths actually create
 # ---------------------------------------------------------------------------
-
-
-def test_itemless_save_intent_saves_the_last_committed_log():
-    async def run():
-        async with isolated_db() as conn:
-            tag = uuid4().hex[:6]
-            log_id, eggs, coffee, rows = await committed_lunch(conn, tag)
-            items = [rows[0].staged.model_copy(update={"qty": 3.0}), rows[1].staged]
-            await commit_route(log_id, CommitRequest(items=items))
-
-            async def fake_decompose(text, ctx, **kw):
-                return parsed_log([], save_intent=SaveIntent(name=f"Usual Lunch {tag}"))
-
-            _decompose["fn"] = fake_decompose
-            body = log_body(f"save this as my usual lunch {tag}")
-            resp = await logs_routes.create_log(body)
-            assert resp.items == [] and resp.note is None
-            assert resp.saved_meal is not None
-            assert resp.saved_meal.name == f"Usual Lunch {tag}"
-            assert resp.saved_meal.item_count == 2
-
-            macro = await db.fetchone(
-                "SELECT * FROM meal_macros WHERE id = %s", (resp.saved_meal.meal_id,)
-            )
-            assert macro["trigger_phrases"] == [f"usual lunch {tag}"]
-            assert macro["items"] == [
-                {"food_id": eggs, "serving_id": "srv-large", "qty": 3.0},  # as committed
-                {"food_id": coffee, "serving_id": "srv-cup", "qty": 1.0},
-            ]
-            # …and it expands at tier 0 from now on
-            exp = await cascade.short_circuit_all(f"my usual lunch {tag}", Meal.lunch)
-            assert exp is not None and [r.staged.tier for r in exp] == [0, 0]
-            # the itemless log is a staged row nothing counts
-            log = await db.fetchone("SELECT status FROM logs WHERE id = %s", (body.id,))
-            assert log["status"] == "staged"
-
-            # nothing committed yet → an honest note, no macro
-            real_fetchone = db.fetchone
-
-            async def no_committed(sql, params=()):
-                if "l.status = 'committed'" in sql:
-                    return None
-                return await real_fetchone(sql, params)
-
-            db.fetchone = no_committed
-            try:
-                resp2 = await logs_routes.create_log(
-                    log_body(f"save this as my usual dinner {tag}")
-                )
-            finally:
-                db.fetchone = real_fetchone
-            fake_name = f"Usual Lunch {tag}"  # the stub always returns this name
-            assert resp2.saved_meal is None and resp2.items == []
-            assert resp2.note == f"Nothing to save as '{fake_name}' yet — log the items first."
-
-    asyncio.run(run())
 
 
 def test_commit_route_save_intent_creates_macro_and_reports_it():

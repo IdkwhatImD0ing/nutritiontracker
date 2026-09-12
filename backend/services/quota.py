@@ -6,9 +6,9 @@ The owner (auth.is_owner) is unlimited. Every other account is a demo:
   /api/logs/photo, /api/logs/from-food). An attempt is recorded in
   quota_events (kind='log', migration 002) in the SAME transaction that
   claims the log's client id (routes/logs.claim_log) — before any STT,
-  vision or decompose spend — so it stands whatever happens next: a capture
+  vision or agent spend — so it stands whatever happens next: a capture
   failure, a vision or STT error that drops the itemless row
-  (routes/logs._drop_empty_log), a log that decomposed to nothing. Counting
+  (routes/logs._drop_empty_log), a turn that staged nothing. Counting
   logs rows instead would let the same client id re-run the pipeline for
   free: routes/logs._duplicate_post_response re-claims an itemless staged
   row after its grace period, and removing every item empties a row again.

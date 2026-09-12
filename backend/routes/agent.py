@@ -16,7 +16,8 @@ ten minutes — and gets the buffered transcript, tool lines and reply, then the
 rest live; a retry that finds no run to attach to (another instance, later)
 gets the stored answer as a single `done` marked `replay`.
 
-`agent` is implied: every log through here runs the front-door agent.
+Every log through here runs the front-door agent — as every text and voice
+log does, since decompose was removed (2026-09-11).
 
 Since 2026-09-08 the multipart form carries a plate photo instead of audio
 (§3.4b) and the photo lane is a chat turn: the identical vision → cascade →
@@ -436,7 +437,7 @@ async def agent_voice(
     if live is not None:
         return _stream(_follow(live))
     claimed = await claim_voice_log(
-        audio, log_id, captured_at, capture_fallback, capture_error, agent=True
+        audio, log_id, captured_at, capture_fallback, capture_error
     )
     if not isinstance(claimed, tuple):
         return _stream(_replay(log_id, claimed, with_text=True))
@@ -459,7 +460,7 @@ async def agent_voice(
             await emit(AgentTranscriptEvent(text=text).model_dump())
             body = LogCreate(
                 id=log_id, text=text, captured_at=captured_at, tz=tz,
-                capture_fallback=capture_fallback, capture_error=capture_error, agent=True,
+                capture_fallback=capture_fallback, capture_error=capture_error,
                 history=turns, photo_log_id=photo_log_id,
             )
             response = await _run_pipeline(body, emit)
@@ -497,7 +498,7 @@ async def _agent_image_turn(
     if live is not None:
         return _stream(_follow(live))
     body = LogCreate(
-        id=log_id, text=said, captured_at=captured_at, tz=tz, agent=True,
+        id=log_id, text=said, captured_at=captured_at, tz=tz,
         history=turns, photo_log_id=photo_log_id,
     )
     # claimed as a PHOTO log, not a text one: whatever this turn stages was
@@ -603,7 +604,6 @@ async def agent_text(body: LogCreate) -> NDJSONResponse:
     before the stream, then the agent's events → `done`. The multipart form
     (audio + the same fields) is the other content type on this path, as for
     POST /api/logs."""
-    body = body.model_copy(update={"agent": True})
     live = live_run(body.id)
     if live is not None:
         return _stream(_follow(live))

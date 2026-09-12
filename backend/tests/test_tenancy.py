@@ -61,7 +61,6 @@ from models import (  # noqa: E402
     FoodRef,
     LogCreate,
     Meal,
-    ParsedLog,
     ResolveRequest,
     ServingRef,
     StagedItem,
@@ -236,30 +235,47 @@ def _next_utc_midnight() -> datetime:
     return datetime.combine(today + timedelta(days=1), time.min, tzinfo=timezone.utc)
 
 
-def _stub_pipeline(monkeypatch, *, decompose=None, vision=None) -> None:
+def _stub_pipeline(monkeypatch, *, runs: list[str] | None = None, vision=None) -> None:
     """The model calls behind the log lanes, replaced in place — the routes
     import them lazily at call time, so a module attribute swap is enough.
-    Tracing is a no-op; decompose / vision run the given coroutine, else refuse."""
+    Tracing is a no-op. The chat agent's Runner (every text/voice log runs it
+    since decompose was removed, 2026-09-11) records each utterance it is
+    handed in `runs` and stages nothing — else it refuses, so no test reaches
+    a real model by forgetting to set one; a test that needs tool calls sets
+    its own Runner after this. Vision runs the given coroutine, else refuses."""
     import tracing
-    from services import context, vision as vision_mod
-    from services import decompose as decompose_mod
+    from services import agent as agent_svc, vision as vision_mod
 
     @asynccontextmanager
     async def run(name, **kw):
         yield SimpleNamespace(trace_id="trace-test", span_id="span-test", set=lambda **kw: None)
 
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
     async def refuse(*args, **kwargs):
         raise AssertionError("no model call expected here")
+
+    class _Stream:
+        final_output = agent_svc.AgentReply(reply="Nothing to log.", options=None)
+
+        async def stream_events(self):
+            return
+            yield  # pragma: no cover — makes this an async generator
+
+        def to_input_list(self):
+            return []
+
+    class _Runner:
+        @staticmethod
+        def run_streamed(agent, agent_input, max_turns):
+            if runs is None:
+                raise AssertionError("no model call expected here")
+            runs.append(agent_input.rsplit('Utterance: "', 1)[-1].rstrip('"'))
+            return _Stream()
 
     monkeypatch.setattr(tracing, "init_tracing", lambda: None)
     monkeypatch.setattr(tracing, "run", run)
     monkeypatch.setattr(tracing, "current_trace_id", lambda: "trace-test")
     monkeypatch.setattr(tracing, "flush", lambda: None)
-    monkeypatch.setattr(context, "build_agent_context", build_agent_context)
-    monkeypatch.setattr(decompose_mod, "decompose", decompose or refuse)
+    monkeypatch.setattr(agent_svc, "Runner", _Runner)
     monkeypatch.setattr(vision_mod, "analyze", vision or refuse)
 
 
@@ -433,13 +449,8 @@ def test_two_tenants_are_invisible_to_each_other():
 
 
 def test_demo_log_quota_across_lanes_and_owner_unlimited(monkeypatch):
-    decomposed: list[str] = []
-
-    async def decompose(text, ctx, **kw):
-        decomposed.append(text)
-        return ParsedLog(items=[], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
-
-    _stub_pipeline(monkeypatch, decompose=decompose)
+    ran: list[str] = []  # the utterances the (faked) agent was handed
+    _stub_pipeline(monkeypatch, runs=ran)
 
     def post(log_id, text="two eggs"):
         return logs_routes.create_log_endpoint(
@@ -454,7 +465,7 @@ def test_demo_log_quota_across_lanes_and_owner_unlimited(monkeypatch):
             assert datetime.fromisoformat(status["resets_at"]) == _next_utc_midnight()
             first = uuid4()
             out = await post(first, "nothing edible")  # the day's one attempt: admitted and recorded
-            assert out.items == [] and decomposed == ["nothing edible"]
+            assert out.items == [] and ran == ["nothing edible"]
             assert await _count(conn, "quota_events") == 1
             assert (await quota.demo_status(demo))["used_today"] == 1
 
@@ -477,7 +488,8 @@ def test_demo_log_quota_across_lanes_and_owner_unlimited(monkeypatch):
             # stored state — a row with live items, or one that left 'staged'.
             # Everything else a same-id POST can re-run (routes/logs
             # _duplicate_post_response's orphan claim), so it is an attempt.
-            past_grace = "UPDATE logs SET created_at = now() - interval '100 seconds' WHERE id = %s"
+            # past the agent lane's orphan grace — every text log is an agent run
+            past_grace = "UPDATE logs SET created_at = now() - interval '400 seconds' WHERE id = %s"
             await conn.execute(past_grace, (first,))
             with pytest.raises(quota.QuotaExceeded):
                 await post(first, "a large pizza")  # an itemless staged row past its grace gets re-run
@@ -495,7 +507,7 @@ def test_demo_log_quota_across_lanes_and_owner_unlimited(monkeypatch):
             with pytest.raises(HTTPException) as ei:
                 await post(first, "a large pizza")  # left 'staged': a replay is a 409, never a run
             assert ei.value.status_code == 409
-            assert decomposed == ["nothing edible"]  # no re-run, ever
+            assert ran == ["nothing edible"]  # no re-run, ever
             assert await _count(conn, "quota_events") == 1  # free replays record nothing
 
             # every creating lane refuses before any read, write or model spend
@@ -715,20 +727,15 @@ def test_db_binds_app_role_and_tenant_per_statement():
 
 # ---------------------------------------------------------------------------
 # 8. the same client id cannot re-run the pipeline for free: a log that
-#    decomposed to nothing is an itemless staged row, which a same-id POST
+#    staged nothing is an itemless staged row, which a same-id POST
 #    claims and re-runs on the NEW body once the §8.6 grace period is over.
 #    The attempt ledger makes that the next attempt (open-source pass, S1).
 # ---------------------------------------------------------------------------
 
 
-def test_same_id_repost_cannot_rerun_decompose_for_free(monkeypatch):
-    calls: list[str] = []
-
-    async def decompose(text, ctx, **kw):
-        calls.append(text)
-        return ParsedLog(items=[], meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None)
-
-    _stub_pipeline(monkeypatch, decompose=decompose)
+def test_same_id_repost_cannot_rerun_the_agent_for_free(monkeypatch):
+    calls: list[str] = []  # the utterances the (faked) agent was handed
+    _stub_pipeline(monkeypatch, runs=calls)
 
     async def run():
         async with isolated_db() as conn:
@@ -740,10 +747,10 @@ def test_same_id_repost_cannot_rerun_decompose_for_free(monkeypatch):
             assert out.items == [] and calls == ["nothing edible"]
             # past the grace period the orphan-claim path is open …
             await conn.execute(
-                "UPDATE logs SET created_at = now() - interval '100 seconds' WHERE id = %s",
+                "UPDATE logs SET created_at = now() - interval '400 seconds' WHERE id = %s",
                 (log_id,),
             )
-            # … and the same id with a new body is refused before decompose
+            # … and the same id with a new body is refused before the agent runs
             with pytest.raises(quota.QuotaExceeded):
                 await logs_routes.create_log_endpoint(
                     LogCreate(id=log_id, text="a large pizza", captured_at=NOW, tz="UTC")
@@ -758,7 +765,7 @@ def test_same_id_repost_cannot_rerun_decompose_for_free(monkeypatch):
                 LogCreate(id=own, text="nothing edible", captured_at=NOW, tz="UTC")
             )
             await conn.execute(
-                "UPDATE logs SET created_at = now() - interval '100 seconds' WHERE id = %s",
+                "UPDATE logs SET created_at = now() - interval '400 seconds' WHERE id = %s",
                 (own,),
             )
             await logs_routes.create_log_endpoint(

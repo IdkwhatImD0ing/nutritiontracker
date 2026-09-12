@@ -4,7 +4,7 @@ One trace per completed model or agent run, POSTed once — after the run, from
 a worker thread, never in the way of the response — to the self-hosted
 FireTrace deployment. Stdlib only: no SDK, no new dependency.
 
-    async with tracing.run("decompose", kind="llm", input=text,
+    async with tracing.run("vision", kind="llm", input=text,
                            provider="openai", model=MODEL) as r:
         ...
         r.set(output=parsed, usage=response.usage)
@@ -462,8 +462,8 @@ def _bind_user(trace: _Trace) -> None:
 def _sdk_parent(trace: _Trace) -> str | None:
     """Inside an openai-agents tool call, the tool's span is the parent."""
     # Never import the SDK just to ask. This runs for every span, including
-    # the lanes that never load `agents` at all (decompose, vision, the
-    # cascade) — and with the SDK unloaded there is no SDK span to be inside.
+    # the lanes that never load `agents` at all (vision, the cascade) — and
+    # with the SDK unloaded there is no SDK span to be inside.
     #
     # Keyed on whether anyone has *tried* to install the hook, not on
     # sys.modules: an install that failed only logs a warning, and short-
