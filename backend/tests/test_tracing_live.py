@@ -1,6 +1,7 @@
 """Live tests for backend/tracing.py against the FireTrace deployment (DESIGN.md §10).
 
-1. One run with an llm span → the API answers 201; the identical body again
+1. One run with an llm span → the API answers 201, stored ended
+   (running=false); the identical body again
    → 200 with duplicate=true; a score onto it (the way commit posts them)
    → 201.
 2. ONE real decompose call (gpt-5.6-luna — cents) inside a run → a trace
@@ -64,6 +65,8 @@ def test_trace_duplicate_and_score_live():
     assert result["status"] == 201, result
     assert result["body"]["ok"] is True and result["body"]["duplicate"] is False
     assert result["body"]["traceId"] == root.trace_id and result["body"]["spanCount"] == 2
+    # the body carries endedAt, so the trace is stored ended — never left `running`
+    assert result["body"]["running"] is False
 
     # the identical body again: 200, duplicate — nothing written twice
     again = tracing._send("resend", tracing.INGEST_URL, tracing._payload(root.trace))
