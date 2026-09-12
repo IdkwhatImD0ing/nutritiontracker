@@ -1,1 +1,1 @@
-"""Service layer — context assembly, decompose, tier-3 (DESIGN.md §3, §6)."""
+"""Service layer — the chat agent, tier 3, vision, transcription (DESIGN.md §3, §6)."""

@@ -33,7 +33,6 @@ from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -54,14 +53,13 @@ import db
 
 from tenancy_harness import bind_test_tenant, override_user  # noqa: E402
 import services.transcribe as stt  # the REAL module, bound before the stubs go in
-from models import ParsedItem, ParsedLog, ResolveRequest, Tier3KickRequest
+from models import ResolveRequest, Tier3KickRequest
 
 # ---------------------------------------------------------------------------
 # stubs for parallel workstreams (same shape as test_logs_lifecycle.py)
 # ---------------------------------------------------------------------------
 
 _transcribe: dict = {"fn": None}
-_decompose: dict = {"fn": None}
 
 
 async def _transcribe_dispatch(audio_bytes, mime):
@@ -71,28 +69,11 @@ async def _transcribe_dispatch(audio_bytes, mime):
     return await fn(audio_bytes, mime)
 
 
-async def _decompose_dispatch(text, ctx, **kw):
-    fn = _decompose["fn"]
-    if fn is None:
-        raise AssertionError("decompose must not be called by this test")
-    return await fn(text, ctx, **kw)
-
-
 def _build_stubs() -> dict:
     tracing_mod = make_tracing_stub("trace-test")
 
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []
-
-    ctx_mod = types.ModuleType("services.context")
-
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
-    ctx_mod.build_agent_context = build_agent_context
-
-    dec_mod = types.ModuleType("services.decompose")
-    dec_mod.decompose = _decompose_dispatch
 
     t3_mod = types.ModuleType("services.tier3")
 
@@ -109,15 +90,11 @@ def _build_stubs() -> dict:
     stt_mod.TranscriptionError = stt.TranscriptionError
     stt_mod.is_near_empty = stt.is_near_empty
 
-    services_mod.context = ctx_mod
-    services_mod.decompose = dec_mod
     services_mod.tier3 = t3_mod
     services_mod.transcribe = stt_mod
     return {
         "tracing": tracing_mod,
         "services": services_mod,
-        "services.context": ctx_mod,
-        "services.decompose": dec_mod,
         "services.tier3": t3_mod,
         "services.transcribe": stt_mod,
     }
@@ -141,10 +118,8 @@ def _workstream_stubs():
 @pytest.fixture(autouse=True)
 def _reset_dispatch():
     _transcribe["fn"] = None
-    _decompose["fn"] = None
     yield
     _transcribe["fn"] = None
-    _decompose["fn"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -520,17 +495,6 @@ async def item_row(conn, log_id, idx):
     return await cur.fetchone()
 
 
-def _one_item(phrase):
-    async def fake(text, ctx):
-        return ParsedLog(
-            items=[ParsedItem(phrase=phrase, phrase_kind="food", qty=None, unit=None,
-                              state=None, brand=None, library_match=None, meal_ref=None)],
-            meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
-        )
-
-    return fake
-
-
 def _assert_untouched(row, seeded, *, status):
     assert row["status"] == status
     assert row["staged"] == seeded
@@ -551,19 +515,12 @@ def test_late_resolve_never_resurrects_a_removed_row():
                 log_id = await insert_log(conn)
                 phrase = f"removed {uuid4().hex[:6]}"
                 seeded = await seed_item(conn, log_id, 0, phrase, status="removed")
-                calls: list[str] = []
-
-                async def spy(text, ctx):
-                    calls.append(text)
-                    return await _one_item(phrase)(text, ctx)
-
-                _decompose["fn"] = spy
+                # no model spend on a dead row: the tier-3 stub raises if reached
                 with pytest.raises(HTTPException) as ei:
                     await rr.resolve_item(
                         ResolveRequest(log_id=log_id, item_index=0, phrase=f"{phrase} edited")
                     )
                 assert ei.value.status_code == 409 and "removed" in ei.value.detail
-                assert calls == []  # no model spend on a dead row
                 _assert_untouched(await item_row(conn, log_id, 0), seeded, status="removed")
 
     asyncio.run(run())
@@ -586,7 +543,6 @@ def test_resolve_sql_guard_refuses_the_race_after_the_precheck():
                             "committed_at": None}
 
                 rr._item_row = live_looking
-                _decompose["fn"] = _one_item(f"{phrase} edited")
                 with pytest.raises(HTTPException) as ei:
                     await rr.resolve_item(
                         ResolveRequest(log_id=log_id, item_index=0, phrase=f"{phrase} edited")

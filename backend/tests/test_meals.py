@@ -4,8 +4,9 @@ step 4, §5 /api/meals, §8.4).
 Every test runs inside a transaction that is ROLLED BACK (isolated_db patches
 backend/db.py onto one force-rollback connection) — the live Neon DB is never
 dirtied. Cross-workstream modules (tracing, services.*) are stubbed per-module
-at run time (same pattern as test_logs_lifecycle.py); the decompose stub
-RAISES if called, which is how "zero decompose" is asserted.
+at run time (same pattern as test_logs_lifecycle.py); the agent lane
+(routes/logs._run_agent_lane) RAISES if called, which is how "the agent
+never ran" is asserted.
 
 Run:  uv run --project backend --with pytest pytest backend/tests/test_meals.py -q
 """
@@ -47,20 +48,6 @@ def _build_stubs() -> dict:
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []
 
-    ctx_mod = types.ModuleType("services.context")
-
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
-    ctx_mod.build_agent_context = build_agent_context
-
-    dec_mod = types.ModuleType("services.decompose")
-
-    async def decompose(text, ctx, **kw):
-        raise AssertionError("decompose must not be called (tier-0 short-circuit)")
-
-    dec_mod.decompose = decompose
-
     t3_mod = types.ModuleType("services.tier3")
 
     async def run_tier3(log_id, item_index, refinement=None):
@@ -68,26 +55,31 @@ def _build_stubs() -> dict:
 
     t3_mod.run_tier3 = run_tier3
 
-    services_mod.context = ctx_mod
-    services_mod.decompose = dec_mod
     services_mod.tier3 = t3_mod
     return {
         "tracing": tracing_mod,
         "services": services_mod,
-        "services.context": ctx_mod,
-        "services.decompose": dec_mod,
         "services.tier3": t3_mod,
     }
 
 
+async def _no_agent(body, meal, emit=None, image=None):
+    raise AssertionError("the agent must not run (tier-0 short-circuit)")
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _workstream_stubs():
+    import routes.logs as logs_mod
+
     stubs = _build_stubs()
     saved = {name: sys.modules.get(name) for name in stubs}
     sys.modules.update(stubs)
+    saved_lane = logs_mod._run_agent_lane
+    logs_mod._run_agent_lane = _no_agent
     try:
         yield
     finally:
+        logs_mod._run_agent_lane = saved_lane
         for name, mod in saved.items():
             if mod is None:
                 sys.modules.pop(name, None)
@@ -363,17 +355,17 @@ def test_triggers_normalized_on_write():
 
 
 # ---------------------------------------------------------------------------
-# 2. §3.0 — whole-utterance short-circuit: macro before alias, zero decompose
+# 2. §3.0 — whole-utterance short-circuit: macro before alias, no agent run
 # ---------------------------------------------------------------------------
 
 
-def test_short_circuit_expands_macro_before_alias_without_decompose():
+def test_short_circuit_expands_macro_before_alias_without_the_agent():
     async def run():
         async with isolated_db() as conn:
             fx = await breakfast_fixture(conn)
 
-            # decompose stub raises if touched; the decoy alias on the same
-            # phrase must lose to the macro (§3.0 ordering)
+            # the decoy alias on the same phrase must lose to the macro
+            # (§3.0 ordering)
             rows = await cascade.short_circuit_all(f"My usual breakfast {fx.tag}!", Meal.breakfast)
             assert rows is not None and len(rows) == 3
             assert_breakfast_rows(rows, fx)
@@ -399,7 +391,7 @@ def test_short_circuit_expands_macro_before_alias_without_decompose():
             log = await db.fetchone("SELECT short_circuit FROM logs WHERE id = %s", (log_id,))
             assert log["short_circuit"] is True
 
-            # no macro, no alias → None (decompose's turn); alias-only → tier 1
+            # no macro, no alias → None (the agent's turn); alias-only → tier 1
             assert await cascade.short_circuit_all(f"nothing here {fx.tag}", Meal.snack) is None
             await insert_alias(conn, f"decoy phrase {fx.tag}", fx.decoy)
             only = await cascade.short_circuit_all(f"decoy phrase {fx.tag}", Meal.snack)
@@ -414,7 +406,7 @@ def test_short_circuit_expands_macro_before_alias_without_decompose():
 )
 def test_create_log_short_circuits_macro():
     """End-to-end once logs.py is wired: POST /api/logs on a trigger phrase
-    stages N tier-0 rows and never calls decompose (the stub raises)."""
+    stages N tier-0 rows and never runs the agent (the lane raises)."""
 
     async def run():
         async with isolated_db() as conn:
@@ -430,7 +422,7 @@ def test_create_log_short_circuits_macro():
 
 
 # ---------------------------------------------------------------------------
-# 3. §3.1 — per-item expansion after decompose; indexes shift past the macro
+# 3. §3.1 — per-item expansion of the named foods; indexes shift past the macro
 # ---------------------------------------------------------------------------
 
 
@@ -455,13 +447,13 @@ def test_resolve_items_expands_meal_ref_and_shifts_indexes():
             last = rows[3].staged
             assert (last.item_index, last.tier, last.food.id) == (3, 1, coffee)
 
-            # a phrase that norm-matches a trigger expands even when decompose
-            # tagged it "food" (the match is on the phrase, not the tag)
+            # a phrase that norm-matches a trigger expands even when it came
+            # tagged "food" (the match is on the phrase, not the tag)
             rows = await cascade.resolve_items([parsed(f"The Usual {fx.tag}")], Meal.lunch)
             assert len(rows) == 3 and all(r.staged.tier == 0 for r in rows)
             assert all(r.staged.meal == Meal.lunch for r in rows)
 
-            # decompose's meal_ref (the saved meal's name) is a key too
+            # the meal_ref (the saved meal's name) is a key too
             rows = await cascade.resolve_items(
                 [parsed("the usual thing", "meal_ref", meal_ref=f"usual {fx.tag}")], Meal.snack
             )
@@ -639,7 +631,7 @@ def test_from_log_creates_macro_with_post_norm_triggers():
 
 
 # ---------------------------------------------------------------------------
-# 7. §3.5 step 4 — decompose's save_intent creates/updates the macro at commit
+# 7. §3.5 step 4 — a staged save_intent creates/updates the macro at commit
 # ---------------------------------------------------------------------------
 
 
@@ -648,7 +640,7 @@ def test_commit_save_intent_creates_then_updates_macro():
         async with isolated_db() as conn:
             tag = uuid4().hex[:6]
             log_id, eggs, coffee, rows = await committed_lunch(conn, tag)
-            # decompose's save_intent rides the staged jsonb (logs.py's extra-key channel)
+            # the agent's save_meal stamp rides the staged jsonb (logs.py's extra-key channel)
             await conn.execute(
                 "UPDATE item_resolutions SET staged = staged || %s::jsonb "
                 "WHERE log_id = %s AND item_index = 0",
@@ -788,7 +780,7 @@ def test_macro_matches_saved_meal_name_when_triggers_diverge():
                 [{"food_id": whey, "serving_id": "srv-scoop", "qty": 1}],
             )
 
-            # decompose echoes the NAME it saw in context (§6.1); the triggers
+            # the agent echoes the NAME it saw in context (§6.1); the triggers
             # no longer contain it, so only the name match saves this from the
             # §3.1 "no saved meal" guard
             rows = await cascade.resolve_items(
@@ -920,7 +912,7 @@ def test_partial_macro_is_surfaced_not_silently_truncated():
             assert sc[0].staged.status == "needs_input"
             assert sc[0].staged.question.text == expected
 
-            # …and so does the post-decompose path, at its allocated index
+            # …and so does the per-item path, at its allocated index
             rows = await cascade.resolve_items(
                 [parsed(f"coffee {tag}"), parsed(fx.trigger, "meal_ref")], Meal.lunch
             )

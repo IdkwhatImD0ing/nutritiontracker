@@ -42,15 +42,18 @@ from psycopg.types.json import Json
 # sys.modules swap is sufficient; see test_resolver.py for the rationale).
 # ---------------------------------------------------------------------------
 
-# Controllable decompose: tests set _decompose["fn"]; default refuses.
-_decompose: dict = {"fn": None}
+# The one pipeline behind POST /api/logs is the chat agent (§6.4; decompose
+# was removed 2026-09-11). Faked at the lane: tests set _lane["fn"] to what a
+# model turn would have staged (stage_foods below runs the REAL
+# routes/logs._stage_items); the default refuses.
+_lane: dict = {"fn": None}
 
 
-async def _decompose_dispatch(text, ctx, **kw):
-    fn = _decompose["fn"]
+async def _lane_dispatch(body, meal, emit=None, image=None):
+    fn = _lane["fn"]
     if fn is None:
-        raise AssertionError("decompose must not be called by this test")
-    return await fn(text, ctx, **kw)
+        raise AssertionError("the agent must not run in this test")
+    return await fn(body, meal)
 
 
 # Controllable transcribe (same pattern): tests set _transcribe["fn"].
@@ -70,16 +73,6 @@ def _build_stubs() -> dict:
     services_mod = types.ModuleType("services")
     services_mod.__path__ = []
 
-    ctx_mod = types.ModuleType("services.context")
-
-    async def build_agent_context():
-        return SimpleNamespace(profile_notes="", targets={}, food_index=[], meal_names=[], recent_foods=[])
-
-    ctx_mod.build_agent_context = build_agent_context
-
-    dec_mod = types.ModuleType("services.decompose")
-    dec_mod.decompose = _decompose_dispatch
-
     t3_mod = types.ModuleType("services.tier3")
 
     async def run_tier3(log_id, item_index, refinement=None):
@@ -98,15 +91,11 @@ def _build_stubs() -> dict:
     stt_mod.TranscriptionError = TranscriptionError
     stt_mod.is_near_empty = is_near_empty
 
-    services_mod.context = ctx_mod
-    services_mod.decompose = dec_mod
     services_mod.tier3 = t3_mod
     services_mod.transcribe = stt_mod
     return {
         "tracing": tracing_mod,
         "services": services_mod,
-        "services.context": ctx_mod,
-        "services.decompose": dec_mod,
         "services.tier3": t3_mod,
         "services.transcribe": stt_mod,
     }
@@ -114,12 +103,17 @@ def _build_stubs() -> dict:
 
 @pytest.fixture(scope="module", autouse=True)
 def _workstream_stubs():
+    import routes.logs as logs_mod
+
     stubs = _build_stubs()
     saved = {name: sys.modules.get(name) for name in stubs}
     sys.modules.update(stubs)
+    saved_lane = logs_mod._run_agent_lane
+    logs_mod._run_agent_lane = _lane_dispatch
     try:
         yield
     finally:
+        logs_mod._run_agent_lane = saved_lane
         for name, mod in saved.items():
             if mod is None:
                 sys.modules.pop(name, None)
@@ -128,11 +122,11 @@ def _workstream_stubs():
 
 
 @pytest.fixture(autouse=True)
-def _reset_decompose():
-    _decompose["fn"] = None
+def _reset_fakes():
+    _lane["fn"] = None
     _transcribe["fn"] = None
     yield
-    _decompose["fn"] = None
+    _lane["fn"] = None
     _transcribe["fn"] = None
 
 
@@ -144,13 +138,14 @@ from models import (  # noqa: E402
     CommitRequest,
     LogCreate,
     Meal,
-    ParsedItem,
-    ParsedLog,
     StagedItem,
 )
+from services.agent import FoodItem  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
 from routes.logs import (  # noqa: E402
-    _RERUN_GRACE_SECONDS,
+    _AGENT_RERUN_GRACE_SECONDS,
+    LogCreateResponse,
+    _stage_items,
     TimingsPatch,
     create_log,
     discard_log,
@@ -256,16 +251,22 @@ def log_body(text, log_id=None):
     )
 
 
-def novel_parsed_log(phrase):
-    return ParsedLog(
-        items=[
-            ParsedItem(
-                phrase=phrase, phrase_kind="food", qty=None, unit=None,
-                state=None, brand=None, library_match=None, meal_ref=None,
-            )
-        ],
-        meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
-    )
+def stage_foods(*phrases, calls=None, delay=0.0, **when):
+    """A faked agent turn: log_food with `phrases` (and the meal/time fields
+    in `when`, exactly as the model passes them) through the REAL
+    _stage_items. `calls` records each utterance it ran for."""
+
+    async def fn(body, meal):
+        if calls is not None:
+            calls.append(body.text)
+        if delay:
+            await asyncio.sleep(delay)
+        items = [FoodItem(phrase=ph, saved_meal=False, food_id=None, qty=None, unit=None, note=None)
+                 for ph in phrases]
+        rows, food_meal, logged_at = await _stage_items(body, meal, items, start_index=0, **when)
+        return LogCreateResponse(log_id=body.id, meal=food_meal, items=rows, logged_at=logged_at)
+
+    return fn
 
 
 # ---------------------------------------------------------------------------
@@ -371,12 +372,8 @@ def test_concurrent_double_post_one_log_one_pipeline():
             calls: list[str] = []
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx, **kw):
-                calls.append(text)
-                await asyncio.sleep(0.3)  # hold the winner mid-pipeline
-                return novel_parsed_log(phrase)
-
-            _decompose["fn"] = fake_decompose
+            # the 0.3 s hold keeps the winner mid-pipeline while the loser claims
+            _lane["fn"] = stage_foods(phrase, calls=calls, delay=0.3)
 
             log_id = uuid4()
             text = f"{phrase} something"
@@ -405,7 +402,7 @@ def test_concurrent_double_post_one_log_one_pipeline():
             # a later sequential replay returns the stored staging state
             r3 = await create_log(log_body(text, log_id))
             assert len(r3.items) == 1 and r3.items[0].status == "searching"
-            assert len(calls) == 1  # still exactly one decompose
+            assert len(calls) == 1  # still exactly one agent run
 
     asyncio.run(run())
 
@@ -416,11 +413,7 @@ def test_orphaned_staged_log_reruns_only_after_grace():
             calls: list[str] = []
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx, **kw):
-                calls.append(text)
-                return novel_parsed_log(phrase)
-
-            _decompose["fn"] = fake_decompose
+            _lane["fn"] = stage_foods(phrase, calls=calls)
 
             # a fresh itemless staged log (owner presumed alive): no re-run
             fresh_id = await insert_log(conn, created_ago_s=0)
@@ -428,8 +421,9 @@ def test_orphaned_staged_log_reruns_only_after_grace():
             assert resp.items == [] and calls == []
 
             # an orphan older than the grace period: claimed and re-run
-            # (created_ago_s tracks the constant — BACKLOG 30 bumped it to 90s)
-            orphan_id = await insert_log(conn, created_ago_s=_RERUN_GRACE_SECONDS + 30)
+            # (created_ago_s tracks the constant: every text log is an agent
+            # run since 2026-09-11, so the agent lane's grace applies)
+            orphan_id = await insert_log(conn, created_ago_s=_AGENT_RERUN_GRACE_SECONDS + 30)
             before = (
                 await db.fetchone("SELECT created_at FROM logs WHERE id = %s", (orphan_id,))
             )["created_at"]
@@ -578,14 +572,11 @@ def test_when_hint_shifts_logged_at_and_meal_through_route():
         async with isolated_db() as conn:
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx, **kw):
-                parsed = novel_parsed_log(phrase)
-                parsed.when_hint = "yesterday at lunch"   # verbatim, for the trace
-                parsed.when_day_offset = -1               # what the model resolved
-                parsed.when_meal = Meal.lunch
-                return parsed
-
-            _decompose["fn"] = fake_decompose
+            # what the agent passes log_food: the phrase verbatim for the
+            # trace, and the day and meal it resolved
+            _lane["fn"] = stage_foods(
+                phrase, when_hint="yesterday at lunch", when_day_offset=-1, when_meal="lunch"
+            )
             body = log_body(f"yesterday at lunch i had {phrase}")
             resp = await create_log(body)
 
@@ -617,15 +608,10 @@ def test_spoken_meal_hint_outranks_when_hint_meal():
         async with isolated_db() as conn:
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx, **kw):
-                parsed = novel_parsed_log(phrase)
-                parsed.meal_hint = Meal.dinner  # explicit spoken meal
-                parsed.when_hint = "yesterday lunch"
-                parsed.when_day_offset = -1
-                parsed.when_meal = Meal.lunch
-                return parsed
-
-            _decompose["fn"] = fake_decompose
+            _lane["fn"] = stage_foods(
+                phrase, meal_hint="dinner",  # explicit spoken meal
+                when_hint="yesterday lunch", when_day_offset=-1, when_meal="lunch",
+            )
             body = log_body(f"{phrase} for dinner yesterday lunch")
             resp = await create_log(body)
 
@@ -656,12 +642,8 @@ def test_unknown_when_hint_ignored_with_note_in_staged():
         async with isolated_db() as conn:
             phrase = f"novel{uuid4().hex[:8]}"
 
-            async def fake_decompose(text, ctx, **kw):
-                parsed = novel_parsed_log(phrase)
-                parsed.when_hint = "two days ago"
-                return parsed
-
-            _decompose["fn"] = fake_decompose
+            # a time phrase with no day resolved: ignored, with a note
+            _lane["fn"] = stage_foods(phrase, when_hint="two days ago")
             body = log_body(f"two days ago i had {phrase}")
             await create_log(body)
 
@@ -803,12 +785,9 @@ def test_voice_happy_path_stores_transcript_mode_and_timing():
     async def fake_stt(audio_bytes, mime):
         return Transcription(text=transcript, transcribe_ms=777, provider="deepgram")
 
-    async def fake_decompose(text, ctx, **kw):
-        assert text == transcript  # the transcript enters the identical path
-        return novel_parsed_log(phrase)
-
+    heard: list[str] = []
     _transcribe["fn"] = fake_stt
-    _decompose["fn"] = fake_decompose
+    _lane["fn"] = stage_foods(phrase, calls=heard)  # the transcript enters the identical path
     log_id = uuid4()
     try:
         with TestClient(_voice_app()) as client:
@@ -822,6 +801,7 @@ def test_voice_happy_path_stores_transcript_mode_and_timing():
             assert body["log_id"] == str(log_id)
             assert len(body["items"]) == 1
             assert body["items"][0]["status"] == "searching"
+            assert heard == [transcript]
 
         async def verify():
             row = await db.fetchone("SELECT * FROM logs WHERE id = %s", (log_id,))
@@ -888,10 +868,7 @@ def test_json_and_multipart_share_post_api_logs_and_one_openapi_operation():
 
     phrase = f"novel{uuid4().hex[:8]}"
 
-    async def fake_decompose(text, ctx, **kw):
-        return novel_parsed_log(phrase)
-
-    _decompose["fn"] = fake_decompose
+    _lane["fn"] = stage_foods(phrase)
     log_id = uuid4()
     app = _voice_app()
     try:

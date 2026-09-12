@@ -223,6 +223,17 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
               (list.length > 4 ? ` +${list.length - 4} more` : "");
       break;
     }
+    case "look_up": {
+      // §3.4 (2026-09-11): the photo turn looks every row up before the card
+      // shows — emitted by the turn itself, like read_photo
+      const items = Array.isArray(a.items) ? (a.items as unknown[]).map(str) : [];
+      const found = out && typeof out.found === "number" ? out.found : null;
+      const total = out && typeof out.looked_up === "number" ? out.looked_up : items.length;
+      doing = `Looking up ${items.slice(0, 4).map((p) => `“${p}”`).join(", ")}` +
+        (items.length > 4 ? ` +${items.length - 4} more` : "");
+      ok = found == null ? "Done" : `Found ${found} of ${total}`;
+      break;
+    }
     case "adjust_photo": {
       const changes = Array.isArray(a.changes)
         ? (a.changes as Record<string, unknown>[])
@@ -235,9 +246,22 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       break;
     }
     case "log_food": {
-      const n = out ? count(out.items) : null;
-      doing = `Looking up “${str(a.text)}”`;
-      ok = n == null ? "Done" : n === 0 ? "Nothing to stage" : `Staged ${n} item${n === 1 ? "" : "s"}`;
+      // §6.4 (2026-09-11): the agent names each food itself — items, not text
+      const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
+      const rows = out && Array.isArray(out.items) ? (out.items as Record<string, unknown>[]) : null;
+      doing = `Looking up ${items.map((it) => `“${str(it.phrase)}”`).join(", ") || "food"}`;
+      // what the lookups found, never "staged" for a food that was not
+      const found = rows ? rows.filter((r) => r.status === "resolved").length : 0;
+      const pending = rows ? rows.filter((r) => r.status === "searching").length : 0;
+      const missing = rows ? rows.length - found - pending : 0;
+      ok =
+        rows == null
+          ? "Done"
+          : rows.length === 0
+            ? "Nothing to stage"
+            : `Staged ${found} item${found === 1 ? "" : "s"}` +
+              (pending ? ` — still looking up ${pending}` : "") +
+              (missing ? ` — ${missing} not found, pick ${missing === 1 ? "it" : "them"} in the list` : "");
       break;
     }
     case "log_estimate": {

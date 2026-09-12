@@ -53,13 +53,13 @@ from openai.types.responses.response_function_web_search import (  # noqa: E402
 )
 
 import db  # noqa: E402
-from models import CommitRequest, LogCreate  # noqa: E402
+from models import CommitRequest, FoodRef, LogCreate, Meal, ServingRef, StagedItem  # noqa: E402
 from routes import agent as agent_routes  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
 from services import quota  # noqa: E402
-from test_agent import NOW, TZ, _deps, _fake_runner, _invoke, _parsed  # noqa: E402
+from test_agent import NOW, TZ, _deps, _fake_runner, _invoke, food  # noqa: E402
 from test_tenancy import (  # noqa: E402
     _become,
     _scalar,
@@ -80,7 +80,7 @@ BASIS = "the whole 2 lb Costco shrimp platter, sauce included"
 
 
 def _log(text: str) -> LogCreate:
-    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ, agent=True)
+    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ)
 
 
 async def _drain(resp) -> list[dict]:
@@ -290,11 +290,8 @@ def test_a_clarifying_question_rides_the_reply_and_discard_replaces_a_staged_log
 def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
-            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged 2 eggs."))
+            _stub_pipeline(monkeypatch)
+            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged 2 eggs."))
             first = await logs_routes.create_log(_log("two eggs"))
             assert first.agent is not None and first.agent.discarded is None and first.agent.options is None
 
@@ -307,11 +304,11 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
             ]
             # the correction: discard the earlier log (named by the conversation), stage anew
             runner = _fake_runner(
-                [("discard_log", {"log_id": str(first.log_id)}), ("log_food", {"text": "one egg"})],
+                [("discard_log", {"log_id": str(first.log_id)}), ("log_food", {"items": [food("eggs", qty=1)]})],
                 "Made it one egg.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = LogCreate(id=uuid4(), text="actually just one egg", captured_at=NOW, tz=TZ, agent=True, history=history)
+            body = LogCreate(id=uuid4(), text="actually just one egg", captured_at=NOW, tz=TZ, history=history)
             resp = await logs_routes.create_log(body)
             assert resp.agent is not None and resp.agent.discarded == [first.log_id]
             assert await _scalar(conn, "SELECT status FROM logs WHERE id = %s", (first.log_id,)) == "discarded"
@@ -346,7 +343,7 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
 
             monkeypatch.setattr(agent_svc, "Runner", Refusals)
             resp2 = await logs_routes.create_log(
-                LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ, agent=True, history=history))
+                LogCreate(id=uuid4(), text="hello", captured_at=NOW, tz=TZ, history=history))
             assert resp2.agent is not None and resp2.agent.discarded is None
 
             # a card that still says staged reports what the database says (discarded);
@@ -361,7 +358,7 @@ def test_a_correction_discards_the_earlier_staged_log_and_reports_it(monkeypatch
             runner3 = _fake_runner([], "Nothing to change.")
             monkeypatch.setattr(agent_svc, "Runner", runner3)
             await logs_routes.create_log(
-                LogCreate(id=uuid4(), text="hello again", captured_at=NOW, tz=TZ, agent=True, history=stale))
+                LogCreate(id=uuid4(), text="hello again", captured_at=NOW, tz=TZ, history=stale))
             assert f"Log {first.log_id} (discarded): eggs" in runner3.input
             assert "ghost" not in runner3.input and runner3.input.count("- Log ") == 1
 
@@ -376,10 +373,7 @@ def test_a_question_turn_gives_a_demo_its_daily_log_attempt_back(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
             await _become(conn, "demo-asker")  # a demo account: one log a day
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)
 
             class Asking:
                 @staticmethod
@@ -406,9 +400,9 @@ def test_a_question_turn_gives_a_demo_its_daily_log_attempt_back(monkeypatch):
             assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'question'") == 1
 
             # the answer claims the day's attempt and stages
-            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged."))
+            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged."))
             second = await logs_routes.create_log(LogCreate(
-                id=uuid4(), text="The big tray", captured_at=NOW, tz=TZ, agent=True,
+                id=uuid4(), text="The big tray", captured_at=NOW, tz=TZ,
                 history=[{"role": "user", "text": "costco shrimp"}, {"role": "agent", "text": "Which one?"}]))
             assert [it.phrase for it in second.items] == ["eggs"] and second.agent.options is None
             assert await _scalar(conn, "SELECT count(*) FROM quota_events WHERE kind = 'log'") == 1
@@ -470,12 +464,9 @@ def test_run_agent_emits_tool_calls_results_then_the_reply(monkeypatch):
 def test_agent_lane_estimate_rows_are_flagged_and_indexed_after_the_food(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)
             runner = _fake_runner(
-                [("log_food", {"text": "two eggs"}),
+                [("log_food", {"items": [food("eggs", qty=2)]}),
                  ("log_estimate", {"items": [SHRIMP, SAUCE], "basis": BASIS})],
                 "Staged the eggs and an estimate for the platter.",
             )
@@ -502,9 +493,9 @@ def test_agent_lane_estimate_rows_are_flagged_and_indexed_after_the_food(monkeyp
             for r in rows[1:]:
                 if r["status"] == "searching":  # the amount rides to tier 3 (§7.3 rule 1)
                     assert (r["staged"]["spoken_qty"], r["staged"]["spoken_unit"]) in ((400, "g"), (60, "g"))
-            # log_food's timing survives the second staging call on the same log
-            log = await (await conn.execute("SELECT decompose_ms FROM logs WHERE id = %s", (body.id,))).fetchone()
-            assert log["decompose_ms"] is not None
+            # log_food's trace id survives the second staging call on the same log
+            log = await (await conn.execute("SELECT trace_id FROM logs WHERE id = %s", (body.id,))).fetchone()
+            assert log["trace_id"] == "trace-test"
 
     _run(scenario())
 
@@ -600,7 +591,7 @@ def test_flagged_estimate_row_commits_and_learns_no_alias(monkeypatch):
         async with isolated_db() as conn:
             food_id = await insert_food(conn)
             await insert_alias(conn, food_id)  # 'two eggs' → tier 1 for the component phrase
-            _stub_pipeline(monkeypatch)  # no decompose: the estimate is the only staging
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             runner = _fake_runner(
                 [("log_estimate", {"items": [{"phrase": "two eggs", "qty": 2, "unit": None, "grams": 100, "note": "a guess"}],
                                    "basis": "a homemade plate"})],
@@ -641,11 +632,8 @@ def test_flagged_estimate_row_commits_and_learns_no_alias(monkeypatch):
 def test_agent_stream_orders_tool_events_reply_and_done(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
-            runner = _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item.")
+            _stub_pipeline(monkeypatch)
+            runner = _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged 1 item.")
             monkeypatch.setattr(agent_svc, "Runner", runner)
 
             body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)  # agent implied
@@ -653,7 +641,7 @@ def test_agent_stream_orders_tool_events_reply_and_done(monkeypatch):
             assert resp.media_type == "application/x-ndjson"
             events = await _drain(resp)
             assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
-            assert events[0]["name"] == "log_food" and events[0]["args"] == {"text": "two eggs"}
+            assert events[0]["name"] == "log_food" and events[0]["args"] == {"items": [food("eggs", qty=2)]}
             assert events[1]["output"]["items"][0]["phrase"] == "eggs"
             assert events[2]["text"] == "Staged 1 item."
             done = events[3]["log"]
@@ -680,18 +668,112 @@ def test_agent_stream_orders_tool_events_reply_and_done(monkeypatch):
     _run(scenario())
 
 
+def test_the_agent_answers_on_rows_already_looked_up(monkeypatch):
+    """§3.4 (2026-09-11, Bill: "the agent should make the list using its tools
+    then I just approve"): a food not in his list is looked up inside the
+    turn — the tool result the model reads, the `done` log and the stored
+    list all carry the food found, never a searching row (trace 30e72425:
+    "I logged tonkatsu" over a row that was still searching)."""
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            monkeypatch.setenv("TALLY_INLINE_TIER3", "1")
+            food_id = await insert_food(conn)
+            import routes.resolve as rr
+
+            async def kick_row(log_id, item_index, *, claim=True):
+                assert claim is False
+                # what tier 3 writes, then answers with (the row as stored)
+                row = StagedItem(
+                    item_index=item_index, phrase="big mac", status="resolved", tier=3,
+                    food=FoodRef(id=food_id, name="Big Mac"), serving=ServingRef(id="s", description="1 egg"),
+                    qty=1, meal=Meal.lunch, confidence="high",
+                )
+                await db.execute(
+                    "UPDATE item_resolutions SET status = 'resolved', tier = 3, staged = %s::jsonb "
+                    "WHERE log_id = %s AND item_index = %s",
+                    (row.model_dump_json(), str(log_id), item_index),
+                )
+                return row
+
+            monkeypatch.setattr(rr, "kick_row", kick_row)
+            runner = _fake_runner([("log_food", {"items": [food("big mac", note="McDonald's")]})],
+                                  "Staged a Big Mac.")
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(id=uuid4(), text="a big mac", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body))
+            assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
+            assert events[1]["output"]["items"] == [
+                {"phrase": "big mac", "status": "resolved", "food": "Big Mac", "qty": 1.0, "serving": "1 egg"}]
+            assert [(it["status"], it["food"]["name"]) for it in events[3]["log"]["items"]] == [("resolved", "Big Mac")]
+            assert await _scalar(conn, "SELECT status FROM item_resolutions WHERE log_id = %s",
+                                 (body.id,)) == "resolved"
+
+    _run(scenario())
+
+
+def test_log_estimate_rows_are_looked_up_before_the_reply_and_stay_flagged(monkeypatch):
+    """§3.4 for log_estimate too: a component no alias knows is looked up in
+    the turn, and the row the tool result and the done log carry is tier 3's
+    — still flagged an estimate (tier 3's rewrite keeps the flag through
+    KEEP_LOG_KEYS_SQL; the fake below writes the same way)."""
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            monkeypatch.setenv("TALLY_INLINE_TIER3", "1")
+            food_id = await insert_food(conn)
+            import routes.resolve as rr
+
+            kicked: list[int] = []
+
+            async def kick_row(log_id, item_index, *, claim=True):
+                kicked.append(item_index)
+                stored = await _scalar(
+                    conn, "SELECT staged FROM item_resolutions WHERE log_id = %s AND item_index = %s",
+                    (log_id, item_index),
+                )
+                row = StagedItem.model_validate({
+                    **stored, "status": "resolved", "tier": 3,
+                    "food": {"id": food_id, "name": "Shrimp, cooked"},
+                    "serving": {"id": "s", "description": "1 egg"},
+                })
+                await db.execute(
+                    "UPDATE item_resolutions SET status = 'resolved', tier = 3, staged = %s::jsonb "
+                    "WHERE log_id = %s AND item_index = %s",
+                    (row.model_dump_json(), str(log_id), item_index),
+                )
+                return row
+
+            monkeypatch.setattr(rr, "kick_row", kick_row)
+            runner = _fake_runner([("log_estimate", {"items": [SHRIMP], "basis": BASIS})],
+                                  "Staged the platter.")
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(id=uuid4(), text="a costco shrimp platter", captured_at=NOW, tz=TZ)
+            events = await _drain(await agent_routes.agent_text(body))
+            assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
+            assert kicked == [0]
+            assert [it["status"] for it in events[1]["output"]["items"]] == ["resolved"]
+            [row] = events[3]["log"]["items"]
+            assert row["status"] == "resolved" and row["estimated"] == "portion"
+
+    _run(scenario())
+
+
 def test_agent_stream_retry_attaches_to_the_live_run(monkeypatch):
     """A phone that lost the response mid-run sends the same id again (§8.6):
     while the run is live it follows the same stream — the events it missed,
     then the rest as they happen — and nothing runs twice."""
     async def scenario():
         async with isolated_db():
-            async def decompose(text, ctx, **kw):
-                await asyncio.sleep(0.6)  # the run is still going when the retry lands
-                return _parsed(("eggs", 2))
+            _stub_pipeline(monkeypatch)
+            staged = logs_routes._stage_items
 
-            _stub_pipeline(monkeypatch, decompose=decompose)
-            runner = _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item.")
+            async def slow_stage(*a, **kw):
+                await asyncio.sleep(0.6)  # the run is still going when the retry lands
+                return await staged(*a, **kw)
+
+            monkeypatch.setattr(logs_routes, "_stage_items", slow_stage)
+            runner = _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged 1 item.")
             monkeypatch.setattr(agent_svc, "Runner", runner)
             body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)
 
@@ -713,10 +795,7 @@ def test_agent_stream_retry_attaches_to_the_live_run(monkeypatch):
 def test_agent_stream_voice_leads_with_the_transcript(monkeypatch):
     async def scenario():
         async with isolated_db():
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)
             from services import transcribe as stt
 
             async def fake_transcribe(audio_bytes, mime):
@@ -724,7 +803,7 @@ def test_agent_stream_voice_leads_with_the_transcript(monkeypatch):
                 return SimpleNamespace(text="two eggs", transcribe_ms=12, provider="fake")
 
             monkeypatch.setattr(stt, "transcribe", fake_transcribe)
-            runner = _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item.")
+            runner = _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged 1 item.")
             monkeypatch.setattr(agent_svc, "Runner", runner)
 
             audio = UploadFile(BytesIO(b"opus-bytes"), filename="clip.webm",
@@ -769,11 +848,8 @@ def test_a_live_run_is_its_tenants_alone(monkeypatch):
     gets what a foreign id gets from the claim — a 404 — never the stream."""
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
-            runner = _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item.")
+            _stub_pipeline(monkeypatch)
+            runner = _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged 1 item.")
             monkeypatch.setattr(agent_svc, "Runner", runner)
             body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)
             events = await _drain(await agent_routes.agent_text(body))
@@ -802,10 +878,7 @@ def test_a_run_that_fails_after_staging_completes_on_the_staged_rows(monkeypatch
     the code-built reply and the stream ends in `done`, not `error`."""
     async def scenario():
         async with isolated_db():
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)
 
             class StageThenExplode:
                 @staticmethod
@@ -814,7 +887,7 @@ def test_a_run_that_fails_after_staging_completes_on_the_staged_rows(monkeypatch
                         final_output = None
 
                         async def stream_events(self):
-                            await _invoke(agent, "log_food", text="two eggs")
+                            await _invoke(agent, "log_food", items=[food("eggs", qty=2)])
                             raise RuntimeError("the final output did not parse")
                             yield  # pragma: no cover
 
@@ -824,7 +897,7 @@ def test_a_run_that_fails_after_staging_completes_on_the_staged_rows(monkeypatch
             body = LogCreate(id=uuid4(), text="two eggs", captured_at=NOW, tz=TZ)
             events = await _drain(await agent_routes.agent_text(body))
             assert [e["type"] for e in events] == ["reply", "done"]  # the bare stream yields no SDK items
-            assert events[0]["text"] == "I staged what you ate — check the list."
+            assert events[0]["text"] == "I am still looking up what you ate — check the list."
             assert [it["phrase"] for it in events[1]["log"]["items"]] == ["eggs"]
             assert events[1]["log"]["agent"]["reply"] == events[0]["text"]
 
@@ -834,10 +907,7 @@ def test_a_run_that_fails_after_staging_completes_on_the_staged_rows(monkeypatch
 def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_again(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            async def decompose(text, ctx, **kw):
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)
 
             class Exploding:
                 @staticmethod
@@ -858,7 +928,7 @@ def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_aga
                 conn, "SELECT created_at < now() - make_interval(secs => %s) FROM logs WHERE id = %s",
                 (logs_routes._AGENT_RERUN_GRACE_SECONDS, body.id),
             ) is True
-            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"text": "two eggs"})], "Staged 1 item."))
+            monkeypatch.setattr(agent_svc, "Runner", _fake_runner([("log_food", {"items": [food("eggs", qty=2)]})], "Staged 1 item."))
             events = await _drain(await agent_routes.agent_text(body))
             assert [e["type"] for e in events] == ["tool_call", "tool_result", "reply", "done"]
             assert not events[-1]["replay"] and events[-1]["log"]["items"][0]["phrase"] == "eggs"
@@ -885,7 +955,7 @@ def test_agent_stream_reports_a_failure_as_an_error_event_and_the_retry_runs_aga
             assert [e["type"] for e in events] == ["error"]  # the bare stream yields no SDK items
             assert await _scalar(conn, "SELECT count(*) FROM weights WHERE log_id = %s", (body2.id,)) == 1
             monkeypatch.setattr(agent_svc, "Runner", _fake_runner(
-                [("log_food", {"text": "two eggs"}), ("log_weight", {"weight": 180.4, "unit": "lb"})], "Staged 1 item and logged 180.4 lb."))
+                [("log_food", {"items": [food("eggs", qty=2)]}), ("log_weight", {"weight": 180.4, "unit": "lb"})], "Staged 1 item and logged 180.4 lb."))
             events = await _drain(await agent_routes.agent_text(body2))
             assert [e["type"] for e in events][-2:] == ["reply", "done"] and not events[-1]["replay"]
             assert events[-1]["log"]["items"][0]["phrase"] == "eggs" and events[-1]["log"]["agent"]["weight"] is not None
@@ -1091,8 +1161,7 @@ def test_a_photo_conversation_carries_its_plate_into_the_next_turn(monkeypatch):
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
             body = LogCreate(
-                id=uuid4(), text="that's three eggs", captured_at=NOW, tz=TZ,
-                agent=True, photo_log_id=plate_id,
+                id=uuid4(), text="that's three eggs", captured_at=NOW, tz=TZ, photo_log_id=plate_id,
             )
             events = await _drain(await agent_routes.agent_text(body))
             assert [e["type"] for e in events] == [
@@ -1106,6 +1175,90 @@ def test_a_photo_conversation_carries_its_plate_into_the_next_turn(monkeypatch):
             assert updated["log_id"] == str(plate_id)
             assert updated["items"][0]["qty"] == 3
             assert updated["items"][0]["estimated"] == "portion"
+
+    _run(scenario())
+
+
+def test_adjust_photo_looks_up_only_what_it_added_and_tells_the_model(monkeypatch):
+    """§3.4 in the tuning turn: a food the photo missed is looked up before the
+    reply, and the model reads what was found — not the "searching" the add
+    staged. A row an earlier turn left searching is NOT looked up again: the
+    phone's kick owns it, and a second run here would race it."""
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await _become(conn, "photo-owner", is_owner=True)
+            egg = await insert_food(conn)
+            await insert_alias(conn, egg)  # 'two eggs' → tier 1
+
+            import services.vision as vision_mod
+
+            async def fake_analyze(image, mime, **kw):
+                return vision_mod.VisionResult(
+                    items=[
+                        vision_mod.VisionItem(
+                            phrase="two eggs", qty=2, unit="egg", est_grams=100,
+                            confidence="high", note="two fried eggs", menu=None,
+                        ),
+                        vision_mod.VisionItem(
+                            phrase="mystery sauce", qty=None, unit=None, est_grams=30,
+                            confidence="low", note="a brown sauce", menu=None,
+                        ),
+                    ],
+                    meal_hint=None,
+                )
+
+            monkeypatch.setattr(vision_mod, "analyze", fake_analyze)
+
+            class _NoModel:
+                def run_streamed(self, *a, **k):
+                    raise AssertionError("no model on the photo turn")
+
+            monkeypatch.setattr(agent_svc, "Runner", _NoModel())
+            plate_id = uuid4()
+            # inline lookups off for this turn (the suite's default): the sauce
+            # is left searching, as a lookup the clock could not fit would be
+            await _drain(
+                await agent_routes.agent_voice(image=_image(), log_id=plate_id, captured_at=NOW, tz=TZ)
+            )
+
+            monkeypatch.setenv("TALLY_INLINE_TIER3", "1")
+            import routes.resolve as rr
+
+            kicked: list[int] = []
+
+            async def kick_row(log_id, item_index, *, claim=True):
+                kicked.append(item_index)
+                row = StagedItem(
+                    item_index=item_index, phrase="toast", status="resolved", tier=3,
+                    food=FoodRef(id=egg, name="Toast"), serving=ServingRef(id="s", description="1 egg"),
+                    qty=1, meal=Meal.lunch, confidence="high",
+                )
+                await db.execute(
+                    "UPDATE item_resolutions SET status = 'resolved', tier = 3, staged = %s::jsonb "
+                    "WHERE log_id = %s AND item_index = %s",
+                    (row.model_dump_json(), str(log_id), item_index),
+                )
+                return row
+
+            monkeypatch.setattr(rr, "kick_row", kick_row)
+            runner = _fake_runner(
+                [("adjust_photo", {"changes": [{
+                    "op": "add", "item": "toast", "qty": 30, "unit": "g", "grams": None,
+                    "note": "the photo missed it",
+                }]})],
+                "Added the toast.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = LogCreate(
+                id=uuid4(), text="there was toast too", captured_at=NOW, tz=TZ, photo_log_id=plate_id,
+            )
+            events = await _drain(await agent_routes.agent_text(body))
+            assert kicked == [2]  # the toast only — never the sauce an earlier turn left
+            seen = {it["phrase"]: it["status"] for it in events[1]["output"]["items"]}
+            assert seen["toast"] == "resolved" and seen["mystery sauce"] == "searching"
+            updated = {it["phrase"]: it["status"] for it in events[3]["log"]["agent"]["updated"]["items"]}
+            assert updated["toast"] == "resolved" and updated["mystery sauce"] == "searching"
 
     _run(scenario())
 

@@ -489,7 +489,7 @@ def test_an_attached_image_is_never_treated_as_a_memorized_phrase():
         return Meal("lunch")
 
     body = SimpleNamespace(
-        id=uuid4(), text="my usual breakfast", captured_at=CAPTURED, tz=TZ, agent=True
+        id=uuid4(), text="my usual breakfast", captured_at=CAPTURED, tz=TZ
     )
     real = (
         logs_route.cascade.short_circuit_all,

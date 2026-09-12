@@ -16,7 +16,8 @@ ten minutes — and gets the buffered transcript, tool lines and reply, then the
 rest live; a retry that finds no run to attach to (another instance, later)
 gets the stored answer as a single `done` marked `replay`.
 
-`agent` is implied: every log through here runs the front-door agent.
+Every log through here runs the front-door agent — as every text and voice
+log does, since decompose was removed (2026-09-11).
 
 Since 2026-09-08 the multipart form carries a plate photo instead of audio
 (§3.4b) and the photo lane is a chat turn: the identical vision → cascade →
@@ -45,6 +46,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, RootModel, TypeAdapter, ValidationError
 
 import db
+import deadline
 from auth import require_user
 from models import AgentTurn, LogCreate, LogResponse, Meal
 from routes.logs import (
@@ -113,9 +115,9 @@ class AgentTranscriptEvent(BaseModel):
 class AgentToolCallEvent(BaseModel):
     """The agent called a tool: `name` (log_food, log_estimate, log_weight,
     discard_log, past_foods, save_meal, update_meal, adjust_photo, web_search)
-    with `args` as the model passed them. `read_photo` is the exception — no
-    model called it: the photo turn (§3.4b) emits the pair itself so the chat
-    can show the vision call while it runs."""
+    with `args` as the model passed them. `read_photo` and `look_up` are the
+    exceptions — no model called them: the photo turn (§3.4b) emits each pair
+    itself so the chat can show the vision call and the lookups while they run."""
 
     type: Literal["tool_call"] = "tool_call"
     id: str
@@ -323,6 +325,9 @@ def _start(log_id: UUID, work: Work) -> _LiveRun:
     replacement, whose entry and log must stand."""
     run = _LiveRun(owner=db.current_user_id.get())
     _RUNS[log_id] = run
+    # §3.4: the request's clock (deadline.py) starts here, before the task —
+    # which inherits it — so speech-to-text is on it too
+    deadline.start()
 
     async def emit(event: dict) -> None:
         run.append(event)
@@ -432,7 +437,7 @@ async def agent_voice(
     if live is not None:
         return _stream(_follow(live))
     claimed = await claim_voice_log(
-        audio, log_id, captured_at, capture_fallback, capture_error, agent=True
+        audio, log_id, captured_at, capture_fallback, capture_error
     )
     if not isinstance(claimed, tuple):
         return _stream(_replay(log_id, claimed, with_text=True))
@@ -455,7 +460,7 @@ async def agent_voice(
             await emit(AgentTranscriptEvent(text=text).model_dump())
             body = LogCreate(
                 id=log_id, text=text, captured_at=captured_at, tz=tz,
-                capture_fallback=capture_fallback, capture_error=capture_error, agent=True,
+                capture_fallback=capture_fallback, capture_error=capture_error,
                 history=turns, photo_log_id=photo_log_id,
             )
             response = await _run_pipeline(body, emit)
@@ -493,7 +498,7 @@ async def _agent_image_turn(
     if live is not None:
         return _stream(_follow(live))
     body = LogCreate(
-        id=log_id, text=said, captured_at=captured_at, tz=tz, agent=True,
+        id=log_id, text=said, captured_at=captured_at, tz=tz,
         history=turns, photo_log_id=photo_log_id,
     )
     # claimed as a PHOTO log, not a text one: whatever this turn stages was
@@ -599,7 +604,6 @@ async def agent_text(body: LogCreate) -> NDJSONResponse:
     before the stream, then the agent's events → `done`. The multipart form
     (audio + the same fields) is the other content type on this path, as for
     POST /api/logs."""
-    body = body.model_copy(update={"agent": True})
     live = live_run(body.id)
     if live is not None:
         return _stream(_follow(live))

@@ -614,6 +614,153 @@ async def _offline_run(runner):
         tr.init_tracing, tr.install_agents_hook, tr.run, tr.flush = orig
 
 
+def test_run_tier3_never_asks_on_any_row_and_reads_the_agents_note():
+    """Rule 6 for every row (2026-09-10, Bill: "why am I still being asked
+    clarifying questions?"): a run that answers needs_input on a plain,
+    non-estimate row is promoted to the first option it saw, the rest kept as
+    alternates, no question; with nothing to promote it is not_found. And the
+    chat agent's `lookup_note` on the row reaches the input as context
+    (trace 30e72425: "ramen" and "Costco" never reached tier 3)."""
+    tag = uuid4().hex[:8]
+    ids = (f"zz-loin-{tag}", f"zz-tenderloin-{tag}")
+    seen_inputs: list[str] = []
+
+    def asking(options):
+        class Asking:
+            @staticmethod
+            async def run(agent, agent_input, max_turns):
+                seen_inputs.append(agent_input)
+                return _FakeRun(tier3.Tier3Result(
+                    status="needs_input", source=None, source_id=None, serving_id=None,
+                    display_name=None, confidence="low", alternates=[],
+                    question=tier3.Tier3Question(text="Which cut was the tonkatsu?", options=options),
+                ), [])
+        return Asking
+
+    async def fake_get_food(source, source_id):
+        return {"source": "fdc", "source_id": str(source_id), "name": f"pork {source_id}",
+                "display_name": f"pork {source_id}", "brand": None, "food_type": "generic",
+                "state": "cooked", "state_sensitive": False, "servings": [MASS],
+                "default_serving_id": "100g", "per_100g": MASS["macros"], "payload": {}}
+
+    async def scenario():
+        async with isolated_db() as conn:
+            log_id = await insert_log(conn)
+            await seed_item(conn, log_id, 0, "Tonkatsu", status="searching", staged={
+                "item_index": 0, "phrase": "Tonkatsu", "status": "searching", "meal": "breakfast",
+                "lookup_note": "the tonkotsu ramen they had at Costco this morning",
+            })
+            await seed_item(conn, log_id, 1, "Tonkatsu", status="searching")
+            orig = tier3.fdc.get_food
+            tier3.fdc.get_food = fake_get_food
+            try:
+                options = [tier3.Tier3Option(label="Pork loin cutlet", source="fdc", source_id=ids[0]),
+                           tier3.Tier3Option(label="Pork tenderloin cutlet", source="fdc", source_id=ids[1])]
+                async with _offline_run(asking(options)):
+                    item = await tier3.run_tier3(log_id, 0)
+                # nothing to promote (an id-less question) → not_found, never a question
+                async with _offline_run(asking([tier3.Tier3Option(label="Homemade", source=None, source_id=None)])):
+                    bare = await tier3.run_tier3(log_id, 1)
+            finally:
+                tier3.fdc.get_food = orig
+
+            assert item.status == "resolved" and item.question is None
+            assert item.food.name == f"pork {ids[0]}" and item.confidence == "low"
+            assert [a.label for a in item.alternates or []] == ["Pork tenderloin cutlet"]
+            assert (await item_row(conn, log_id, 0))["status"] == "resolved"
+            # labelled as context, never as the food itself ("Costco" is where)
+            assert ("Context from the conversation (where it was from, the brand, what the dish is"
+                    " — the phrase above is still the food): the tonkotsu ramen they had at Costco"
+                    " this morning") in seen_inputs[0]
+            assert "Context from the conversation" not in seen_inputs[1]  # no note on that row
+            assert bare.status == "not_found" and bare.question is None
+
+    run(scenario())
+
+
+def test_run_tier3_inside_a_request_stops_at_its_budget_and_writes_nothing():
+    """§3.4 (2026-09-11): run inline (deadline.tier3_budget set), a search that
+    outlasts the time the request can spare is cut off — the row stays
+    searching, untouched, for the phone's kick — and the web-evidence gate
+    still runs: a web food add_food persisted before the cut, with no page
+    consulted, does not survive in the shared table."""
+    import deadline
+
+    def stalling():
+        class Stalling:
+            @staticmethod
+            async def run(agent, agent_input, max_turns):
+                args = json.dumps({"domain": "mcdonalds.com"})
+                await _tool(agent, "pin_chain_domain").on_invoke_tool(_ctx("pin_chain_domain", args), args)
+                args = json.dumps({"source": "web", "source_id": None, "display_name": "Big Mac",
+                                   "web": _web_payload(url=CALC_URL)})
+                out = json.loads(await _tool(agent, "add_food").on_invoke_tool(_ctx("add_food", args), args))
+                assert "error" not in out, out
+                await asyncio.sleep(5)  # the search goes on past the budget
+                raise AssertionError("the budget should have cut this run off")
+        return Stalling
+
+    async def scenario():
+        async with isolated_db() as conn:
+            log_id = await insert_log(conn)
+            await seed_item(conn, log_id, 0, "Big Mac", status="searching")
+            before = (await item_row(conn, log_id, 0))["staged"]
+            deadline.tier3_budget.set(0.3)
+            async with _offline_run(stalling()):
+                item = await tier3.run_tier3(log_id, 0)
+            assert item.status == "searching" and item.food is None
+            row = await item_row(conn, log_id, 0)
+            assert row["status"] == "searching" and row["staged"] == before  # nothing written
+            assert row["agent_transcript"] is None
+            gone = await (await conn.execute(
+                "SELECT count(*) AS n FROM foods WHERE source = 'web' AND source_url = %s", (CALC_URL,)
+            )).fetchone()
+            assert gone["n"] == 0, "an unevidenced web food must not outlive the cut run"
+
+    run(scenario())
+
+
+def test_run_tier3_cancelled_from_outside_still_drops_its_unproven_web_food():
+    """A cancel that is not the lookup's own budget (the agent run's deadline,
+    a cancelled run task) propagates — but the web-evidence gate runs first,
+    so a web food add_food wrote before the cancel, from a page the run never
+    consulted, does not stay in the shared table."""
+    added = asyncio.Event()
+
+    def stalling():
+        class Stalling:
+            @staticmethod
+            async def run(agent, agent_input, max_turns):
+                args = json.dumps({"domain": "mcdonalds.com"})
+                await _tool(agent, "pin_chain_domain").on_invoke_tool(_ctx("pin_chain_domain", args), args)
+                args = json.dumps({"source": "web", "source_id": None, "display_name": "Big Mac",
+                                   "web": _web_payload(url=CALC_URL)})
+                out = json.loads(await _tool(agent, "add_food").on_invoke_tool(_ctx("add_food", args), args))
+                assert "error" not in out, out
+                added.set()
+                await asyncio.sleep(5)  # cancelled here
+                raise AssertionError("the cancel should have ended this run")
+        return Stalling
+
+    async def scenario():
+        async with isolated_db() as conn:
+            log_id = await insert_log(conn)
+            await seed_item(conn, log_id, 0, "Big Mac", status="searching")
+            async with _offline_run(stalling()):
+                task = asyncio.create_task(tier3.run_tier3(log_id, 0))
+                await added.wait()
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert (await item_row(conn, log_id, 0))["status"] == "searching"
+            gone = await (await conn.execute(
+                "SELECT count(*) AS n FROM foods WHERE source = 'web' AND source_url = %s", (CALC_URL,)
+            )).fetchone()
+            assert gone["n"] == 0, "an unevidenced web food must not outlive a cancelled run"
+
+    run(scenario())
+
+
 def test_run_tier3_drops_web_food_without_real_evidence():
     """Major: 'estimation has no code path' enforced after the run — a web
     food whose page the run never searched/cited/fetched is demoted to
@@ -832,6 +979,69 @@ def test_local_candidates_hides_a_cached_food_with_no_loggable_serving():
             assert "oikos triple zero mixed berry complete" in names
             assert "oikos triple zero mixed berry" not in names
             assert thin != full  # two distinct rows were seeded
+
+    run(scenario())
+
+
+def test_local_candidates_mark_his_diary_foods_whatever_the_lane():
+    """2026-09-10 (Bill: "food memory should be independent of source"): the
+    staples were built from aliases, and a scanned food learns none, so the
+    run that met "Tonkatsu" saw the ramen he had scanned only as an anonymous
+    sim-0.22 cache row. Candidates now come with how often he logged each,
+    the staples are his most-logged diary foods, and the input says so."""
+    async def scenario():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:8]
+            ramen = await insert_food(conn, f"tonkotsu ramen {tag}", [MASS], "100g")
+            staple = await insert_food(conn, f"zz staple {tag}", [MASS], "100g")
+            await insert_food(conn, f"tonkotsu broth {tag}", [MASS], "100g")  # never logged
+            log_id = str(uuid4())
+            await conn.execute(
+                "INSERT INTO logs (id, input_mode, raw_input, captured_at) "
+                "VALUES (%s, 'barcode', 'x', now())",
+                (log_id,),
+            )
+            for idx, fid in enumerate((ramen, staple, staple)):
+                await conn.execute(
+                    "INSERT INTO entries (logged_at, meal, food_id, serving_id, qty, "
+                    "macros, log_id, item_index) "
+                    "VALUES (now(), 'dinner', %s, '100g', 1, '{}'::jsonb, %s, %s)",
+                    (fid, log_id, idx),
+                )
+            # spy on the two reads: the staples one must come off the diary
+            inner, reads = db.fetchall, []
+
+            async def spy(sql, params=()):
+                rows = await inner(sql, params)
+                reads.append((sql, rows))
+                return rows
+
+            db.fetchall = spy
+            try:
+                cands = await tier3._local_candidates(f"tonkatsu {tag}")
+            finally:
+                db.fetchall = inner
+            staples = next(rows for sql, rows in reads if "FROM entries e JOIN foods f" in sql)
+            uses = {str(r["id"]): int(r["uses"]) for r in staples}
+            assert uses[staple] == 2 and uses[ramen] == 1  # no alias anywhere
+            assert list(uses).index(staple) < list(uses).index(ramen)  # most-logged first
+
+            by_name = {c["display_name"]: c for c in cands}
+            assert by_name[f"tonkotsu ramen {tag}"]["logged"] == 1
+            assert by_name[f"tonkotsu ramen {tag}"]["sim"] is not None  # a trigram hit
+            assert by_name[f"tonkotsu broth {tag}"]["logged"] == 0
+            assert by_name[f"zz staple {tag}"]["logged"] == 2
+
+            text = tier3._agent_input("Tonkatsu", None, None, cands, None)
+            assert f"tonkotsu ramen {tag} — sim" in text
+            assert "THEY HAVE LOGGED THIS 1×" in text and "THEY HAVE LOGGED THIS 2×" in text
+            broth_line = next(ln for ln in text.splitlines() if f"tonkotsu broth {tag}" in ln)
+            assert "LOGGED" not in broth_line
+            assert "however they logged it" in text
+            # nothing of his among the candidates → no diary paragraph
+            assert "however they logged it" not in tier3._agent_input(
+                "x", None, None, [dict(c, logged=0) for c in cands], None
+            )
 
     run(scenario())
 

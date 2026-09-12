@@ -9,7 +9,7 @@ committed_at + edited_items. Trace scores post after the transaction, batched
 into one Langfuse flush per commit (§11).
 
 Tier-0 expansions (§3.1) never write aliases or portion defaults — the macro
-is the memory. Step 4 (meal-macro save_intent): decompose's save_intent rides
+is the memory. Step 4 (meal-macro save_intent): the agent's save_meal stamp rides
 the staged jsonb (`save_intent`, same extra-key channel as spoken_qty) or the
 caller passes one explicitly; the macro is created/updated from the items
 this commit wrote, trigger phrases stored post-norm(). save_meal_macro() is
@@ -35,7 +35,7 @@ from models import SaveIntent, StagedItem
 from resolver.norm import norm
 
 # Log-level extras that ride every item's staged jsonb (routes/logs.py
-# _persist): the when-hint's shifted `logged_at`, decompose's `save_intent`,
+# _persist): the when-hint's shifted `logged_at`, the agent's `save_intent` stamp,
 # and the ignored-hint `when_hint_note`. Every per-item rewrite of the payload
 # (tier-3 result, /api/resolve re-resolution, answer, refusal, and the commit
 # itself — a retry and the late commit-item re-read `logged_at` afterwards)
@@ -266,7 +266,7 @@ async def commit_log(
     "errors" carries per-item refusals (core-macros guard): the item stays
     uncommitted as needs_input (client shows verify-me), the rest commit.
     "meal" is the macro step 4 created/updated (explicit `save_intent`, else
-    decompose's, read from the staged jsonb), or None. "logged_at" is the
+    the agent's stamp, read from the staged jsonb), or None. "logged_at" is the
     diary time the entries landed on (§7.2 when-shift, else captured_at).
     """
     scores: list[dict] = []
@@ -344,7 +344,7 @@ async def commit_log(
                 )
 
         # 4. meal macro intent: create/update the macro from the committed items
-        # (decompose's save_intent, or the agent's stamp — which may carry
+        # (the agent's stamp — which may carry
         # the trigger phrases the person said, §6.4)
         intent = (
             {"name": save_intent.name, "trigger_phrases": None}
@@ -863,8 +863,7 @@ class MealInvalid(Exception):
 
 
 def _staged_save_intent(res_rows: dict) -> dict | None:
-    """The save_intent persisted on the staged jsonb — decompose's, written
-    by logs.py _persist (`{name}`), or the agent's stamp (`{name,
+    """The save_intent persisted on the staged jsonb — the agent's stamp (`{name,
     trigger_phrases}`, logs.py _stamp_save_intent) — first row that carries
     one, as `{"name", "trigger_phrases"}`."""
     for r in res_rows.values():

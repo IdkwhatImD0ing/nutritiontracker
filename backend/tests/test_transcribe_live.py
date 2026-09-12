@@ -129,11 +129,13 @@ def test_build_keyterms_live_respects_caps():
 
 
 @pytest.mark.live
-def test_build_keyterms_db_brands_first_then_aliases_by_use():
+def test_build_keyterms_db_brands_first_then_aliases_by_use_then_diary():
     """§8.1b against the real schema, inside a rolled-back transaction: the
-    brand of a cached food comes first, then alias phrases by use_count.
+    brand of a cached food comes first, then alias phrases by use_count, then
+    the names of the foods in his diary — a scanned food learns no alias
+    (2026-09-10, "Tom Katsu" for the tonkotsu ramen he had scanned).
     build_keyterms degrades to [] on any DB error, so this is also the test
-    that proves its SQL actually runs."""
+    that proves its SQL actually runs. Database only — no provider call."""
     import psycopg
     from psycopg.rows import dict_row
     from psycopg.types.json import Json
@@ -144,6 +146,7 @@ def test_build_keyterms_db_brands_first_then_aliases_by_use():
 
     tag = uuid.uuid4().hex[:8]
     brand, alias_hi, alias_lo = f"kt brand {tag}", f"kt alias hi {tag}", f"kt alias lo {tag}"
+    scanned = f"kt scanned food {tag}"
 
     async def run():
         conn = await psycopg.AsyncConnection.connect(
@@ -178,6 +181,22 @@ def test_build_keyterms_db_brands_first_then_aliases_by_use():
                     "VALUES (%s, %s, %s, 'tier3')",
                     (alias, food_id, use_count),
                 )
+            # a food logged by barcode: in the diary, never an alias
+            cur = await conn.execute(
+                """
+                INSERT INTO foods (source, source_id, name, display_name,
+                                   food_type, servings, default_serving_id, payload)
+                VALUES ('off', %s, %s, %s, 'branded', %s, 's', '{}')
+                RETURNING id
+                """,
+                (f"kt-scan-{tag}", scanned, scanned, Json([serving])),
+            )
+            scanned_id = (await cur.fetchone())["id"]
+            await conn.execute(
+                "INSERT INTO entries (logged_at, meal, food_id, serving_id, qty, macros) "
+                "VALUES (now(), 'dinner', %s, 's', 1, '{}'::jsonb)",
+                (scanned_id,),
+            )
             return await stt.build_keyterms()
         finally:
             db.fetchall = orig
@@ -185,9 +204,9 @@ def test_build_keyterms_db_brands_first_then_aliases_by_use():
             await conn.close()
 
     terms = asyncio.run(run())
-    assert brand in terms and alias_hi in terms and alias_lo in terms
-    # brands precede aliases; within aliases, higher use_count first
-    assert terms.index(brand) < terms.index(alias_hi) < terms.index(alias_lo)
+    assert brand in terms and alias_hi in terms and alias_lo in terms and scanned in terms
+    # brands precede aliases; within aliases, higher use_count first; then the diary
+    assert terms.index(brand) < terms.index(alias_hi) < terms.index(alias_lo) < terms.index(scanned)
     assert len(terms) <= stt.KEYTERM_MAX_TERMS
 
 

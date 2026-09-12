@@ -3,9 +3,9 @@
 Implemented here: whole-utterance short-circuit (§3.0: meal macro first, then
 aliases — short_circuit_all), tier 0 meal-macro expansion (§3.1: one
 StagedItem per macro item, stored portions, no search/LLM/portion inference),
-tier-1 exact alias match with §3.2's pick() and alternates, tier 2 (§3.3: 2a
-trigram against alias_norm with an explicit similarity() threshold, 2b
-decompose-time library_match, combination rules 1–5), portion resolution per
+tier-1 exact alias match with §3.2's pick() and alternates, tier 2 (§3.3:
+the chat agent's library_match — one of his foods by id; the trigram matcher
+that used to sit beside it was removed 2026-09-10), portion resolution per
 §7.3 (spoken qty > alias mode-of-10 > food mode > provider default, with the
 count-without-unit "verify me" rule), the §3.4a state-question rule on the
 tier-1/tier-2 paths, and the §3.1 meal-ref guard.
@@ -15,8 +15,9 @@ per-log paths (a tier-0 expansion occupies one item_index per macro item);
 short_circuit() (aliases only) and resolve_item() (one Resolution) remain for
 single-row callers such as /api/resolve.
 
-Unresolved items come back as status="searching" — the client kicks tier 3
-(services.tier3.run_tier3) per §3.4.
+Unresolved items come back as status="searching" — tier 3
+(services.tier3.run_tier3, §3.4) runs next: inside the request in the chat and
+photo turns (routes/logs._resolve_inline), else the client's kick.
 """
 
 from __future__ import annotations
@@ -63,32 +64,7 @@ WHERE a.alias_norm = %s
   AND {loggable}
 """.format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
 
-# §3.3 tier 2a — trigram candidates against his personal corpus only. The
-# threshold lives IN THE QUERY as an explicit similarity() predicate: the `%%`
-# operator (literal `%`, psycopg-escaped) reads the session-level
-# similarity_threshold GUC (default 0.3), and SET does not survive PgBouncer
-# transaction pooling — so `%%` serves only as the index-accelerated prefilter
-# (its 0.3 default passes a superset of the 0.55 predicate).
-_TIER2A_THRESHOLD = 0.55
-_TIER2A_STRONG = 0.75
-
-_TRGM_SQL = """
-SELECT a.id AS alias_id, a.alias_norm, a.food_id, a.default_serving_id, a.default_qty,
-       a.state_answer, a.pinned, a.use_count, a.last_used_at, a.last_explicit_at,
-       a.rejected_count,
-       f.display_name, f.brand, f.servings, f.default_serving_id AS food_default_serving_id,
-       f.state, f.state_sensitive,
-       similarity(a.alias_norm, %s) AS sim
-FROM aliases a
-JOIN foods f ON f.id = a.food_id
-WHERE a.alias_norm %% %s
-  AND similarity(a.alias_norm, %s) >= %s
-  AND {loggable}
-ORDER BY sim DESC, a.use_count DESC
-LIMIT 3
-""".format(loggable=COMMITTABLE_FOOD_SQL.format(t="f"))
-
-# §3.3 tier 2b — the validated library_match food, shaped like an alias row
+# §3.3 tier 2 — the validated library_match food, shaped like an alias row
 # (alias fields NULL) so the same staging/portion code path applies. Never
 # the photo lane's numberless placeholder (R1: a source='estimate' row is not
 # a pick target on any lane — routes/logs.py passes no index_ids, so without
@@ -332,6 +308,14 @@ def _unit_stem(unit: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _explicit_rows(rows: list[dict]) -> list[dict]:
+    """pick() rule 2's rows: a choice he made explicitly within 90 days."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    return [
+        r for r in rows if r["last_explicit_at"] is not None and r["last_explicit_at"] >= cutoff
+    ]
+
+
 async def pick(rows: list[dict]) -> dict:
     """Recency-and-intent aware selection over the alias rows for one key.
 
@@ -348,10 +332,7 @@ async def pick(rows: list[dict]) -> dict:
     if pinned:
         return max(pinned, key=lambda r: r["last_used_at"])
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-    explicit = [
-        r for r in rows if r["last_explicit_at"] is not None and r["last_explicit_at"] >= cutoff
-    ]
+    explicit = _explicit_rows(rows)
     if explicit:
         return max(explicit, key=lambda r: r["last_explicit_at"])
 
@@ -537,7 +518,6 @@ class Resolution:
     alias_id: str | None  # which alias resolved this item
     resolve_ms: int
     unit: str | None = None  # spoken unit, carried to tier 3 (§7.3 rule 1)
-    search_instead: bool = False  # §3.3 rule 3 "search instead" affordance
     # §3.4a: the user's cooked/raw/dry intent when known (parsed.state or the
     # phrase itself) — commit persists it to aliases.state_answer so the
     # question is asked at most once per phrase (seam: commit.py, W2).
@@ -564,7 +544,6 @@ async def _stage_resolved(
     tier: int,
     confidence: str | None = None,  # None → high, downgraded to low on verify-me
     alternates: list[Alternate] | None = None,
-    search_instead: bool = False,
 ) -> Resolution:
     """Stage one resolved item from an alias⋈food row (alias fields may be NULL
     for a tier-2b library match). Shared by tiers 1 and 2 — same portion
@@ -625,13 +604,11 @@ async def _stage_resolved(
         state_question=state_question or None,
         confidence=final_confidence,  # "low" = verify-me styling (§3.3)
         servings=_serving_options(picked["servings"]) or None,
-        search_instead=search_instead or None,
     )
     return Resolution(
         staged=staged,
         alias_id=str(picked["alias_id"]) if picked["alias_id"] is not None else None,
         resolve_ms=int((time.monotonic() - t0) * 1000),
-        search_instead=search_instead,
         state_answer=intent if picked["state_sensitive"] and intent else None,
     )
 
@@ -645,18 +622,25 @@ async def _stage_tier1(
     unit: str | None,
     state: str | None,
     t0: float,
+    picked: dict | None = None,
 ) -> Resolution:
-    picked = await pick(rows)
+    """`picked`: the row the chat agent named by id (§3.3), in place of
+    pick(); the other rows stay one-tap alternates either way."""
+    picked = picked or await pick(rows)
+    return await _stage_resolved(
+        picked, phrase, item_index, meal, qty, unit, state, t0,
+        tier=1, alternates=_alias_alternates(rows, picked["alias_id"]),
+    )
+
+
+def _alias_alternates(rows: list[dict], exclude_alias_id: object = None) -> list[Alternate] | None:
+    """Up to three alias rows (not `exclude_alias_id`) as one-tap alternates."""
     others = sorted(
-        (r for r in rows if r["alias_id"] != picked["alias_id"]),
+        (r for r in rows if r["alias_id"] != exclude_alias_id),
         key=lambda r: (r["use_count"], r["last_used_at"]),
         reverse=True,
     )[:3]
-    alternates = [_alternate(r) for r in others] or None
-    return await _stage_resolved(
-        picked, phrase, item_index, meal, qty, unit, state, t0,
-        tier=1, alternates=alternates,
-    )
+    return [_alternate(r) for r in others] or None
 
 
 # ---------------------------------------------------------------------------
@@ -665,8 +649,9 @@ async def _stage_tier1(
 
 
 async def _library_food(library_match: str | None, index_ids: set[str] | None) -> dict | None:
-    """§3.3 2b: the decompose-tagged library match, validated. An id outside the
-    passed index (when supplied), a non-uuid, or an unknown food is discarded."""
+    """§3.3: the library match (the chat agent's `food_id`), validated. An id
+    outside the passed index (when supplied), a non-uuid, or an unknown food
+    is discarded."""
     if not library_match:
         return None
     if index_ids is not None and library_match not in index_ids:
@@ -678,86 +663,30 @@ async def _library_food(library_match: str | None, index_ids: set[str] | None) -
     return await db.fetchone(_LIB_FOOD_SQL, (library_match,))
 
 
-def _tier2_alternates(
-    cands: list[dict], exclude_food_id, limit: int = 3
-) -> list[Alternate] | None:
-    """Candidate rows as alternates chips, deduped by food, winner excluded."""
-    seen = {str(exclude_food_id)}
-    alts: list[Alternate] = []
-    for c in cands:
-        fid = str(c["food_id"])
-        if fid in seen:
-            continue
-        seen.add(fid)
-        alts.append(_alternate(c))
-        if len(alts) == limit:
-            break
-    return alts or None
-
-
 async def _stage_tier2(
-    parsed: ParsedItem,
-    key: str,
-    item_index: int,
-    meal: Meal,
-    index_ids: set[str] | None,
-    t0: float,
-) -> Resolution | None:
-    """§3.3 combination rules 1–5. Returns None on rule 5 (→ tier 3).
+    lib: dict, parsed: ParsedItem, item_index: int, meal: Meal, t0: float,
+    alternates: list[Alternate] | None = None,
+) -> Resolution:
+    """§3.3: one of his own foods, named by a model reading his food list —
+    since 2026-09-11 the chat agent's `food_id` (§6.4). Staged "high": it is
+    a food he has logged, picked with the whole conversation in view, and
+    the list is his to approve, not to double-check (Bill: "the agent should
+    make the list using its tools then I just approve"). Portion verify-me
+    still applies. `alternates`: the foods his own phrase history names for
+    these words — the pick overrode them, so the row says "medium" and keeps
+    them one tap away.
 
-    Confidence styling: rule 1 (two independent matchers agreeing) is "high";
-    rules 2–4 are "low" ("verify me") — §3.3 names only those two styles, and a
-    lone or disputed matcher is never more certain than rule 2's verify-me.
-    Rule 3 additionally sets Resolution.search_instead.
+    It was one of two matchers. The other, a pg_trgm similarity() test of the
+    phrase against his alias phrases, was removed 2026-09-10 (Bill: "we should
+    remove fuzzy matching in its entirety"): spelling distance is not what a
+    person meant — "Tonkatsu" scores 0.33 against the "tonkotsu ramen" he meant,
+    under the 0.55 bar — so a food is now named only by an exact phrase
+    (tier 1), a model reading his foods (here), or tier 3.
     """
-    cands = await db.fetchall(_TRGM_SQL, (key, key, key, _TIER2A_THRESHOLD)) if key else []
-    lib = await _library_food(parsed.library_match, index_ids)
-    qty, unit, state = parsed.qty, parsed.unit, parsed.state
-    phrase = parsed.phrase
-
-    if lib is not None:
-        agree = next(
-            (c for c in cands if str(c["food_id"]) == str(lib["food_id"])), None
-        )
-        if agree is not None:
-            # rule 1 — corroboration regardless of sim strength: resolve the
-            # ALIAS row (it carries the alias defaults + state_answer).
-            return await _stage_resolved(
-                agree, phrase, item_index, meal, qty, unit, state, t0,
-                tier=2, confidence="high",
-                alternates=_tier2_alternates(cands, agree["food_id"]),
-            )
-        if cands:
-            # rule 4 — disagreement: semantic beats lexical; 2a top is the chip.
-            return await _stage_resolved(
-                lib, phrase, item_index, meal, qty, unit, state, t0,
-                tier=2, confidence="low",
-                alternates=_tier2_alternates(cands[:1], lib["food_id"]),
-            )
-        # rule 2 — 2b alone: resolve it, "verify me".
-        return await _stage_resolved(
-            lib, phrase, item_index, meal, qty, unit, state, t0,
-            tier=2, confidence="low",
-        )
-
-    if cands:
-        top = cands[0]
-        alternates = _tier2_alternates(cands[1:], top["food_id"])
-        if float(top["sim"]) >= _TIER2A_STRONG:
-            # rule 2 — 2a alone, strong: resolve it, "verify me".
-            return await _stage_resolved(
-                top, phrase, item_index, meal, qty, unit, state, t0,
-                tier=2, confidence="low", alternates=alternates,
-            )
-        # rule 3 — only weak 2a: resolve top + alternates chip + "search
-        # instead" affordance (Resolution.search_instead; the StagedItem wire
-        # field is an integrator contract change — see workstream report).
-        return await _stage_resolved(
-            top, phrase, item_index, meal, qty, unit, state, t0,
-            tier=2, confidence="low", alternates=alternates, search_instead=True,
-        )
-
-    return None  # rule 5 — neither matcher fired → tier 3
+    return await _stage_resolved(
+        lib, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0,
+        tier=2, confidence="medium" if alternates else "high", alternates=alternates,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -765,8 +694,8 @@ async def _stage_tier2(
 # ---------------------------------------------------------------------------
 
 # trigger_phrases are stored post-norm() (the meals API applies norm() on
-# write), so the match is plain equality against norm()'d keys. §6.1 shows the
-# decompose context saved-meal NAMES, so a meal_ref can arrive as a name the
+# write), so the match is plain equality against norm()'d keys. §6.4 shows the
+# chat agent the saved-meal NAMES, so a meal_ref can arrive as a name the
 # triggers no longer carry (the Library can edit triggers away from
 # norm(name)) — norm(name) is matched too, but only after every trigger match.
 # Two active macros matching the same way: the most recently saved one wins.
@@ -823,7 +752,7 @@ async def find_macro(keys: list[str]) -> dict | None:
 
 def _macro_keys(parsed: ParsedItem) -> list[str]:
     # norm(phrase) for every item (a trigger said verbatim needs no meal_ref
-    # tag); decompose's meal_ref (the saved meal's name) as a second key.
+    # tag); the agent's meal_ref (a saved meal's name) as a second key.
     # A macro is a meal reference, not a food (§3.1): a spoken quantity on a
     # food-tagged phrase ("two eggs") is about the food, and the macro stores
     # its own portions, so tier 0 stands aside and tiers 1–3 take the item.
@@ -968,7 +897,7 @@ def _macro_broken_guard(
 
 async def short_circuit_all(raw_input: str, meal: Meal) -> list[Resolution] | None:
     """§3.0 whole-utterance short-circuit, in the spec's order: meal macro
-    (tier 0, N rows) before alias (tier 1, one row). None → decompose."""
+    (tier 0, N rows) before alias (tier 1, one row). None → the agent."""
     t0 = time.monotonic()
     key = norm(raw_input)
     if not key:
@@ -1004,7 +933,7 @@ async def resolve_items(
     *,
     start_index: int = 0,
 ) -> list[Resolution]:
-    """Per-log cascade over the decomposed items with item_index allocation:
+    """Per-log cascade over the parsed items with item_index allocation:
     a tier-0 expansion occupies one index per macro item (§3.1), so the items
     after it shift ("usual breakfast and a coffee" → N macro rows, then
     coffee at index N). `start_index` is where allocation begins — the Agent
@@ -1042,11 +971,11 @@ async def resolve_item(
     """Per-item cascade after decomposition: tier 0 → tier 1 → tier 2 →
     tier-3 handoff, as ONE Resolution (single-row callers: /api/resolve).
 
-    `index_ids` is the set of foods.id strings inlined into the decompose
-    prompt (§3.3 2b) — library_match is validated against it when supplied;
-    when None (current logs.py wiring), validation falls back to the food
-    existing in the cache. `skip_tier0` is resolve_items' flag: it already
-    ran the macro check.
+    `index_ids` is the set of foods.id strings the library match may name —
+    the chat agent's ids that proved to be this tenant's own diary foods
+    (routes/logs._stage_items) — validated against it when supplied; when
+    None, validation falls back to the food existing in the cache.
+    `skip_tier0` is resolve_items' flag: it already ran the macro check.
     """
     t0 = time.monotonic()
 
@@ -1079,18 +1008,35 @@ async def resolve_item(
         )
 
     key = norm(parsed.phrase)
+    lib = await _library_food(parsed.library_match, index_ids)
 
-    # tier 1 — exact alias match (§3.2)
+    # tier 1 — exact alias match (§3.2). When the chat agent named one of his
+    # foods by id (§6.4): a pinned alias or a choice he made explicitly
+    # (pick() rules 1–2) still wins — his decision outranks a model's; else
+    # his alias row for THAT food is the pick (it carries the portion default
+    # and the state answer); else the id's food at tier 2, with the foods his
+    # history names for these words kept as one-tap alternates.
     rows = await db.fetchall(_ALIAS_SQL, (key,))
+    if rows and lib is not None and not (
+        any(r["pinned"] for r in rows) or _explicit_rows(rows)
+    ):
+        same = next((r for r in rows if str(r["food_id"]) == str(lib["food_id"])), None)
+        if same is None:
+            return await _stage_tier2(
+                lib, parsed, item_index, meal, t0, alternates=_alias_alternates(rows)
+            )
+        return await _stage_tier1(
+            rows, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0,
+            picked=same,
+        )
     if rows:
         return await _stage_tier1(
             rows, parsed.phrase, item_index, meal, parsed.qty, parsed.unit, parsed.state, t0
         )
 
-    # tier 2 — novel phrasing, known food (§3.3 rules 1–5)
-    tier2 = await _stage_tier2(parsed, key, item_index, meal, index_ids, t0)
-    if tier2 is not None:
-        return tier2
+    # tier 2 — one of his foods, named by id (§3.3)
+    if lib is not None:
+        return await _stage_tier2(lib, parsed, item_index, meal, t0)
 
     # tier 3 — cold start: staged as searching, client kicks /api/resolve/tier3.
     # Spoken qty/unit ride along (§7.3 rule 1: spoken quantity always wins) —

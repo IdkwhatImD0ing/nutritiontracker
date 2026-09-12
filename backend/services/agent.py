@@ -2,9 +2,11 @@
 
 Every utterance that enters the + sheet's Agent lane (spoken or typed) runs
 through this agent once the §3.0 whole-utterance short-circuit has passed on
-it. The agent resolves nothing itself: it reads the utterance, hands the food
-part — verbatim, in ONE call — to `log_food` (the unchanged decompose →
-cascade → staging pipeline, behind a callback routes/logs.py injects), an
+it. The agent reads the utterance and names the foods itself, in ONE call to
+`log_food` — one item per food, one of the person's own foods by id (their
+diary is listed in its context), anything else in words for the databases to
+find (since 2026-09-11 there is no decompose step between the agent and the
+cascade: routes/logs._stage_items, behind a callback routes/logs.py injects), an
 explicitly stated body weight to `log_weight` (routes/weights.record_weight,
 behind the other callback), and — since the chat redesign the same day — a
 food that has NO nutrition label anywhere (a deli platter, a non-chain
@@ -47,6 +49,7 @@ work, and the thinking that mattered happened in the vision call.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -54,6 +57,8 @@ from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel
+
+import deadline
 
 # The openai-agents SDK is imported inside the functions that use it, the way
 # services/transcribe.py defers its provider client: `import agents` pulls
@@ -106,6 +111,12 @@ PHOTO_EFFORT = "low"
 MAX_TURNS = 10  # a search or two, up to three logging tools, the answer
 MAX_DAYS_AGO = 30
 MAX_ESTIMATE_ITEMS = 8
+# foods one log_food call stages — each may need a tier-3 lookup inside the
+# request's time budget (vercel.json maxDuration)
+MAX_FOOD_ITEMS = 12
+# their diary foods listed in the per-run context, newest first (~20 tokens
+# each): enough to match a misheard name by sound, and past_foods reads the rest
+MY_FOODS_IN_CONTEXT = 40
 # rows a past_foods call returns unless the model asks for more; the ceiling
 # is foods_repo.RECENT_FOODS_CAP (200), clamped there so this stays the one
 # module the tests can import without a database
@@ -130,15 +141,28 @@ state calories or macros — the database supplies those and the staged list
 shows them.
 
 Tools:
-- log_food(text): stages what they ate or drank through the food pipeline,
-  which looks every item up in the databases (USDA whole foods, branded
-  packaged products, and — for chain restaurants and retail products — the
-  maker's official nutrition page). Pass the food part of the utterance
-  VERBATIM: keep every quantity, unit, brand, meal word ("for breakfast") and
-  time reference ("this morning", "yesterday lunch") exactly as said, in the
-  same order; leave out only the words about body weight and anything you
-  route to log_estimate. Call it AT MOST ONCE, with all such food in one
-  call. Never paraphrase, convert units, or add a food that was not said.
+- log_food(items, meal_hint, when_hint, when_day_offset, when_meal): stages
+  what they ate or drank, one item per food, and looks up every food that is
+  not one of theirs in the databases (USDA whole foods, branded packaged
+  products, and — for chain restaurants and retail products — the maker's
+  official nutrition page). Each item:
+  `phrase` — the food as they said it, quantity words removed ("two bowls of
+  tonkotsu ramen" -> "tonkotsu ramen"), brand and descriptors kept; when the
+  transcript misheard a food, the words they MEANT (see "Speech is misheard"
+  below). For one of their saved meals, its name, with `saved_meal` true.
+  `food_id` — when the food is one of THEIRS (the list above, or past_foods),
+  its id copied exactly: it is staged as that food with no search. Null for
+  anything else; never write an id you were not given.
+  `qty` / `unit` — only an amount they said ("two" -> 2 with unit null,
+  "40 grams" -> 40 "g", "a bowl" -> 1 "bowl"); null when none was said, and
+  their usual amount is used. Never convert units or invent an amount.
+  `note` — for a food NOT in their list, what the lookup needs that the phrase
+  does not say: where it was from ("Costco"), the brand, what the dish is
+  ("pork-bone broth ramen"). Null otherwise.
+  `meal_hint` / `when_hint` / `when_day_offset` / `when_meal` exactly as for
+  log_estimate below. Call it AT MOST ONCE, with every such food in one call;
+  leave out body weight and anything you route to log_estimate. Never add a
+  food that was not said.
 - log_estimate(items, basis): for food that has NO nutrition label anywhere —
   a store's deli or prepared-foods platter, a plate from a restaurant that is
   not a chain publishing nutrition, a homemade dish, "some of" a shared tray.
@@ -157,8 +181,8 @@ Tools:
   asked, so make it the assumption you made, plainly. When the
   person said which meal or when ("for breakfast", "yesterday at lunch",
   "this morning", "last night"), pass the meal word as `meal_hint` and the
-  time phrase as `when_hint`, exactly as said — the same words log_food keeps
-  verbatim — AND resolve those time words yourself against the "Now" line
+  time phrase as `when_hint`, exactly as said — log_food takes the same four
+  fields — AND resolve those time words yourself against the "Now" line
   above into `when_day_offset` (whole days back: 0 today, -1 yesterday, -2 two
   days ago, a weekday name the most recent past one) plus `when_meal` when the
   words imply a meal ("last night" -> snack). Nothing downstream parses the
@@ -172,7 +196,9 @@ Tools:
   comes with it. Use it to decide between log_food and log_estimate and to
   size an estimate. Never carry nutrition numbers from a web page into
   anything: you pass foods and amounts; the databases supply the numbers. One
-  or two searches at most.
+  or two searches at most. Never search for a food that is in their list, and
+  never search to decode a word you did not recognise — compare it with their
+  foods instead (see "Speech is misheard").
 - discard_log(log_id): for a CORRECTION — the person changes what an earlier
   turn of this conversation staged ("actually I only had half", "no, that was
   the small tray, not the party platter"). Call it with that turn's log id (from
@@ -197,7 +223,8 @@ Tools:
   raise `limit` (up to 200) when what you want is not in the list. Reach for
   it when they point at something they logged before without saying the
   amount — "the same as yesterday", "my previous day's shrimp", "the filtered
-  milk I had". What they say NOW wins over what the tool reports: an amount
+  milk I had" — or name a food that might be theirs but is not in the list
+  above. What they say NOW wins over what the tool reports: an amount
   they state this turn ("two scoops") is the amount. What the conversation or
   the saved-meals list above already settles needs no call. One or two calls
   at most; it reads only — nothing is logged or changed.
@@ -231,11 +258,22 @@ Tools:
   reactivate. Pass only what they asked to change; the rest null.
 
 How to decide:
+- Speech is misheard. The utterance is usually a speech transcript, and
+  transcripts mangle food names — "Tom Katsu, Winston Roman" was "tonkotsu
+  ramen". Words that make no sense as food, or as anything, are most likely a
+  mishearing: sound them out and compare them with THEIR foods (the list
+  above, then past_foods) and with common foods BEFORE deciding nothing was
+  said. When one of their foods sounds like it, that is the food: log it by
+  food_id and say in `reply` what you heard it as ("took 'Tom Katsu' as your
+  tonkotsu ramen"). Keep every word that could be part of a food: a
+  correction ("I meant tonkatsu") replaces only the word it corrects, and
+  the rest of what they said earlier in the conversation ("… ramen, at
+  Costco") still counts. It is noise only when nothing could be a food.
 - Saving, naming, or changing a saved meal → save_meal / update_meal, never
   log_food. LOGGING a saved meal ("my usual breakfast") is log_food, like any
   food. Food and a save in one breath ("two eggs and toast, save that as my
-  usual breakfast") → log_food first, its text verbatim as always, then
-  save_meal once log_food has returned.
+  usual breakfast") → log_food first, then save_meal once log_food has
+  returned.
 - A saved meal built from what they have already eaten ("save what I had
   yesterday as my usual lunch", "make a meal from the shrimp and the tofu I
   logged", "same amounts as last time") → call past_foods FIRST and WAIT for
@@ -244,8 +282,8 @@ How to decide:
   never round or convert one. A food past_foods does not have is one they
   have not logged: say so.
 - Plain foods, packaged products with a Nutrition Facts label, chain-restaurant
-  items → log_food, verbatim. Unsure whether a product carries a label? One
-  web_search settles it.
+  items → log_food — by food_id when it is one of theirs. Unsure whether a
+  product carries a label? One web_search settles it.
 - A store's prepared-foods or deli item (a warehouse-club shrimp platter, a
   rotisserie-chicken salad from the deli case), a non-chain restaurant dish,
   a homemade meal → web_search to learn its make-up and size when you do not
@@ -281,11 +319,16 @@ How to decide:
 - When the utterance answers your meal question (the conversation shows it),
   proceed with what it settles; do not ask again.
 - An utterance can hold several of these (call each tool it needs, each at
-  most once) or none — a question, a greeting, noise means no tool call.
+  most once) or none — a question or a greeting means no tool call; words
+  that could be a misheard food are not noise (above).
 
 Then answer with `reply`: one or two short sentences for the person, in plain
 words, confirming what the tools reported — and, for an estimate, what you
-assumed, so they can correct it. Use only numbers the tool results gave you
+assumed, so they can correct it. Name the food each log_food row came back
+as. A row still "searching" is still being looked up — say so; any other row
+that is not "resolved" was NOT logged — say plainly which foods could not be
+found and that they can pick them with Search in the list. Never say you
+logged something the tool did not resolve. Use only numbers the tool results gave you
 (counts and amounts are fine; calories and macros never). Never mention tool
 names. Plain text only — no markdown, the chat shows it verbatim. If a tool
 reported an error, say plainly what could not be done.
@@ -332,6 +375,27 @@ are still for food they tell you about that is not on that plate.
 A corrected row goes back to needing their confirmation, which is right —
 say the amount is updated, not that it is confirmed.
 """
+
+
+class FoodItem(BaseModel):
+    """One food for log_food, as the agent identified it (§6.4, 2026-09-11 —
+    this is what decompose used to extract; the agent reads the utterance with
+    the whole conversation in view, so it fills these in itself)."""
+
+    # the food as they said it, quantity words out — and, when the transcript
+    # misheard it, the words they MEANT ("tonkotsu ramen", not "Tom Katsu").
+    # Commit learns it as an alias for the food. A saved meal's name when
+    # saved_meal (tier 0 — never an alias).
+    phrase: str
+    saved_meal: bool  # true when this is one of their saved meals, by name
+    # one of THEIR foods (the context list or past_foods), copied exactly —
+    # staged as that food with no search; null for anything else
+    food_id: str | None
+    qty: float | None  # an amount they said; null = their usual amount
+    unit: str | None  # as said: "bowl", "scoop", "g", "oz" … null for a bare count
+    # for a food NOT in their list: what the lookup should know that the
+    # phrase does not say — the store or restaurant, the brand, the dish
+    note: str | None
 
 
 class EstimateItem(BaseModel):
@@ -401,8 +465,12 @@ Emit = Callable[[dict], Awaitable[None]]
 class AgentDeps:
     """What the route injects: the effects, and the context the model reads."""
 
-    # the food part of the utterance → a summary of what was staged (no macros)
-    stage_food: Callable[[str], Awaitable[dict]]
+    # (the foods the agent named, meal_hint, when_hint, when_day_offset,
+    # when_meal) → a summary of what was staged (no macros)
+    stage_food: Callable[
+        [list["FoodItem"], MealName | None, str | None, int | None, MealName | None],
+        Awaitable[dict],
+    ]
     # (component items, basis, meal_hint, when_hint, when_day_offset,
     # when_meal) → a summary of the flagged rows staged (no macros)
     stage_estimate: Callable[
@@ -429,6 +497,11 @@ class AgentDeps:
     update_meal: Callable[..., Awaitable[dict]] | None = None
     # the saved meals as they stand, one line each (name, items, triggers)
     saved_meals: list[str] = field(default_factory=list)
+    # the foods in their diary, newest first, one line each ("food_id: name
+    # (brand)") — any lane, barcode and photo included (2026-09-10: food
+    # memory is independent of source). What lets a misheard "Tom Katsu" be
+    # matched to their tonkotsu ramen, and logged by id, with no tool call.
+    my_foods: list[str] = field(default_factory=list)
     # §6.4 the one read: (query | None, limit) → a row per food this account
     # has logged, with the amount it was last logged at — never macros
     past_foods: Callable[[str | None, int], Awaitable[list[dict]]] | None = None
@@ -483,26 +556,62 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
     state.setdefault("photo_calls", 0)
 
     @function_tool(failure_error_function=_tool_error)
-    async def log_food(text: str) -> str:
-        """Stage everything the user ate or drank that has a label or a
-        database entry: the food part of the utterance copied verbatim
-        (quantities, brands, meal and time words included; the weight
-        sentence and any unlabeled dish left out). At most once per utterance."""
+    async def log_food(
+        items: list[FoodItem],
+        meal_hint: MealName | None = None,
+        when_hint: str | None = None,
+        when_day_offset: int | None = None,
+        when_meal: MealName | None = None,
+    ) -> str:
+        """Stage everything they ate or drank that has a label or a database
+        entry, one item per food: `phrase` (as they said it, quantity words
+        out — the words they MEANT when the transcript misheard them; a saved
+        meal's name with `saved_meal` true), `food_id` (one of THEIR foods from
+        the list above or past_foods, copied exactly; else null), `qty`/`unit`
+        (only an amount they said), `note` (for a food not in their list: the
+        store, brand or what the dish is). `meal_hint` / `when_hint` /
+        `when_day_offset` / `when_meal` exactly as for log_estimate. Every food
+        that is not theirs is looked up in the databases; each row comes back
+        with its status and the food it found. At most once per utterance."""
         if state["food_calls"] >= 1:
             return json.dumps({
                 "error": "already_called",
                 "message": "log_food runs once per utterance — everything was already staged.",
             })
+        if not items:
+            return json.dumps({"error": "empty", "message": "no foods to stage"})
+        blank = [i for i, it in enumerate(items) if not it.phrase.strip()]
+        if blank:
+            return json.dumps({"error": "empty_phrase", "message": f"items {blank} name no food"})
+        bad = [it.phrase for it in items if it.qty is not None and not (it.qty > 0)]
+        if bad:
+            return json.dumps({
+                "error": "invalid_qty",
+                "message": f"every amount must be above zero: {bad}",
+            })
+        # over the cap the extras are dropped — reported, never silently (the
+        # rest still has to fit the request's time budget)
+        dropped = [it.phrase for it in items[MAX_FOOD_ITEMS:]]
+        items = items[:MAX_FOOD_ITEMS]
         # claimed before the await (two parallel calls must not both stage),
         # released on failure: the pipeline persists in one transaction, so a
         # failed call staged nothing and the model may try once more
         state["food_calls"] += 1
         try:
-            out = await deps.stage_food(text)
+            out = await deps.stage_food(
+                items, meal_hint, (when_hint or "").strip() or None, when_day_offset, when_meal
+            )
         except Exception:
             state["food_calls"] -= 1
             raise  # failure_error_function tells the model, without the internals
         state["food_done"] = True  # save_meal may now take this turn's log as its target
+        rows = out.get("items") or []
+        state["food_found"] = sum(1 for r in rows if r.get("status") == "resolved")
+        # still being looked up (the phone finishes a lookup the request ran out of time for)
+        state["food_pending"] = sum(1 for r in rows if r.get("status") == "searching")
+        state["food_missing"] = len(rows) - state["food_found"] - state["food_pending"]
+        if dropped:
+            out["dropped"] = dropped
         return json.dumps(out, default=str)
 
     @function_tool(failure_error_function=_tool_error)
@@ -829,12 +938,14 @@ def agent_input(text: str, deps: AgentDeps) -> str:
     else:
         last = "none yet"
     meals = "\n".join(f"- {line}" for line in deps.saved_meals) or "(none yet)"
+    foods = "\n".join(f"- {line}" for line in deps.my_foods) or "(none yet)"
     return (
         f"Now (the user's local time): {deps.now_local.strftime('%Y-%m-%d %H:%M, %A')}\n"
         f"Usual weight unit: {deps.unit_pref}\n"
         f"Last weigh-in: {last}\n"
         f"Profile notes: {deps.profile_notes or '(none)'}\n"
         f"Saved meals (name: items — say: trigger phrases):\n{meals}\n\n"
+        f"Foods they have logged, newest first (food_id: name (brand)):\n{foods}\n\n"
         f"{_history_block(deps.history)}\n\n"
         f'Utterance: "{text}"'
     )
@@ -844,8 +955,22 @@ def _fallback_reply(state: dict) -> str:
     """The reply when the model never produced one (max turns): what the
     tools did, said in code."""
     parts = []
-    if state.get("food_calls"):
-        parts.append("staged what you ate")
+    if state.get("food_calls") and not state.get("food_done"):
+        # log_food never returned (the run stopped during its lookups): its
+        # rows are staged but unknown here — never "staged what you ate"
+        parts.append("am still looking up what you ate")
+    elif state.get("food_calls"):
+        # what the lookups actually found — never "staged" for a food that
+        # was not (trace 30e72425: "I logged tonkatsu" over a searching row)
+        found = state.get("food_found", 0)
+        pending = state.get("food_pending", 0)
+        missing = state.get("food_missing", 0)
+        if found or not (pending or missing):
+            parts.append("staged what you ate")
+        if pending:
+            parts.append(f"am still looking up {pending} of them" if found else "am still looking up what you ate")
+        if missing:
+            parts.append(f"couldn't find {missing} of the foods" if found or pending else "couldn't find what you ate")
     if state.get("estimate_calls"):
         parts.append("staged an estimate for you to check")
     if state.get("weight"):
@@ -982,12 +1107,17 @@ async def run_agent(text: str, deps: AgentDeps, emit: Emit | None = None) -> Age
                     {"type": "input_image", "image_url": deps.image, "detail": "auto"},
                 ],
             }]
-        result = Runner.run_streamed(agent, run_input, max_turns=MAX_TURNS)
-        async for event in result.stream_events():
-            if emit is None:
-                continue
-            for ev in wire_events(event, names):
-                await emit(ev)
+        # §3.4: the run stops before the platform would stop it (deadline.py) —
+        # a TimeoutError is caught below like any failure after staging, so
+        # the rows already staged are shown with the code-built reply
+        left = deadline.left()
+        async with asyncio.timeout(None if left is None else max(left, 1.0)):
+            result = Runner.run_streamed(agent, run_input, max_turns=MAX_TURNS)
+            async for event in result.stream_events():
+                if emit is None:
+                    continue
+                for ev in wire_events(event, names):
+                    await emit(ev)
         final = result.final_output
         reply = (getattr(final, "reply", "") or "").strip() or _fallback_reply(state)
         raw_options = getattr(final, "options", None) or []

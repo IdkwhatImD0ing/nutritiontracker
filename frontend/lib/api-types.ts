@@ -99,7 +99,7 @@ export interface paths {
         /**
          * Remove Staged Item
          * @description §7.1: removing a staged row writes item_resolutions.status='removed'
-         *     immediately, so the decompose error stays visible in telemetry without
+         *     immediately, so the staging error stays visible in telemetry without
          *     waiting for commit (commit-time absence remains the backstop). A removed
          *     row never writes an alias and never reaches entries.
          */
@@ -685,9 +685,9 @@ export interface components {
          * AgentToolCallEvent
          * @description The agent called a tool: `name` (log_food, log_estimate, log_weight,
          *     discard_log, past_foods, save_meal, update_meal, adjust_photo, web_search)
-         *     with `args` as the model passed them. `read_photo` is the exception — no
-         *     model called it: the photo turn (§3.4b) emits the pair itself so the chat
-         *     can show the vision call while it runs.
+         *     with `args` as the model passed them. `read_photo` and `look_up` are the
+         *     exceptions — no model called them: the photo turn (§3.4b) emits each pair
+         *     itself so the chat can show the vision call and the lookups while they run.
          */
         AgentToolCallEvent: {
             /**
@@ -1425,11 +1425,6 @@ export interface components {
             capture_fallback: boolean;
             /** Capture Error */
             capture_error?: string | null;
-            /**
-             * Agent
-             * @default false
-             */
-            agent: boolean;
             /** History */
             history?: components["schemas"]["AgentTurn"][] | null;
             /** Photo Log Id */
@@ -1437,12 +1432,11 @@ export interface components {
         };
         /**
          * LogCreateResponse
-         * @description POST /api/logs: LogResponse + the §8.4 itemless save path. "Save this
-         *     as my usual breakfast" decomposes to zero items and a save_intent; the
-         *     macro is built server-side from the most recent committed log and
-         *     reported here (`saved_meal`), or `note` says why nothing was saved —
-         *     never a silently empty staging list. `agent` is set on an agent-lane log
-         *     (§6.4) — with zero items it is what the client shows instead of a sheet.
+         * @description POST /api/logs: LogResponse + what the agent's meal tools did (§8.4):
+         *     `saved_meal` when a save landed, `note` when it lands at commit or could
+         *     not — never a silently empty staging list. `agent` carries the agent's
+         *     reply (§6.4) — with zero items it is what the client shows instead of a
+         *     sheet.
          */
         LogCreateResponse: {
             /**
@@ -2156,8 +2150,6 @@ export interface operations {
                     /** @default false */
                     capture_fallback?: boolean;
                     capture_error?: string;
-                    /** @default false */
-                    agent?: boolean;
                 };
             };
         };
@@ -3303,8 +3295,6 @@ export interface operations {
                     /** @default false */
                     capture_fallback?: boolean;
                     capture_error?: string;
-                    /** @default false */
-                    agent?: boolean;
                     /** @description JSON array of AgentTurn — the chat so far (§6.4) */
                     history?: string;
                     /**

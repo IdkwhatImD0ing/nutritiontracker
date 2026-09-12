@@ -2,17 +2,17 @@
 
 DESIGN.md §5, §3.4. Exposes an APIRouter; the integrator wires it into main.py.
 POST /api/resolve runs the SAME cascade as staging (resolver.cascade: tier-1
-pick(), tier-2 trigram, §7.3 portion resolution incl. spoken qty+unit), now
-preceded by the single-item decompose micro-call (BACKLOG 24) so tier 2b works
-for edited text too. The micro-call is skipped when the phrase already
-exact-matches an alias (tier 1 resolves it locally; the model would be pure
-latency), and any decompose failure degrades to tiers 1/2a, else tier 3.
+pick(), §7.3 portion resolution incl. spoken qty+unit), else tier 3 in the
+same request. (A decompose micro-call used to run first for a library match,
+BACKLOG 24; decompose was removed 2026-09-11, and tier 3 sees his diary foods.)
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
+from fractions import Fraction
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,7 +27,7 @@ from models import (
     StagedItem,
     Tier3KickRequest,
 )
-from resolver import cascade
+from resolver import cascade, foods_repo
 from resolver.commit import KEEP_LOG_KEYS_SQL
 from resolver.norm import norm
 from routes import photo
@@ -150,85 +150,91 @@ async def kick_tier3(body: Tier3KickRequest) -> StagedItem:
 
 
 async def _kick_tier3(body: Tier3KickRequest) -> StagedItem:
-    row = await _item_row(body.log_id, body.item_index)
+    return await kick_row(body.log_id, body.item_index)
+
+
+async def kick_row(log_id: UUID, item_index: int, *, claim: bool = True) -> StagedItem:
+    """One tier-3 run for a staged row: the live check, the demo's capped
+    spend, the claim, then _run_tier3 (with the §3.4b photo seam). The phone's
+    kick and the chat's inline lookups (routes/logs._resolve_inline,
+    2026-09-11) are the same run behind the same gates.
+
+    `claim=False` is the inline path: it leaves tier3_attempts and
+    tier3_started_at alone, so a row the request ran out of time for reaches
+    the phone with both of the fallback's tries (and the 60 s stale clock)
+    intact."""
+    row = await _item_row(log_id, item_index)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown log item")
     _require_live(row)
     await quota.check_resolve()  # demo: capped model spend — after the free refusals
-    claimed = await db.execute(
-        f"""
-        UPDATE item_resolutions
-        SET tier3_attempts = tier3_attempts + 1, tier3_started_at = now()
-        WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
-        """,
-        (str(body.log_id), body.item_index),
-    )
-    if not claimed:  # removed/committed between the read and the write
-        raise HTTPException(status_code=409, detail="item no longer live")
-    return await _run_tier3(str(body.log_id), body.item_index)
+    if claim:
+        claimed = await db.execute(
+            f"""
+            UPDATE item_resolutions
+            SET tier3_attempts = tier3_attempts + 1, tier3_started_at = now()
+            WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
+            """,
+            (str(log_id), item_index),
+        )
+        if not claimed:  # removed/committed between the read and the write
+            raise HTTPException(status_code=409, detail="item no longer live")
+    return await _run_tier3(str(log_id), item_index)
 
 
 # ---------------------------------------------------------------------------
 # POST /api/resolve — re-resolve an edited/added phrase through the SAME
-# cascade as staging (micro-decompose for tier 2b, then tiers 1–2,
-# §3.2/§3.3/§7.3), else tier 3; writing the item row per §5 so edited rows are
-# never telemetry ghosts.
+# cascade as staging (tier 1, §3.2/§7.3), else tier 3 — which reads his diary
+# foods and never asks (§3.4); writing the item row per §5 so edited rows are
+# never telemetry ghosts. Until 2026-09-11 a decompose micro-call ran first
+# for a library match; decompose is gone, and tier 3 now sees which foods are
+# his, so a typed edit of one of them is still found.
 # ---------------------------------------------------------------------------
 
 _EXACT_ALIAS_SQL = "SELECT 1 AS hit FROM aliases WHERE alias_norm = %s LIMIT 1"
 
+# A typed amount at the front of the text — what the decompose micro-call used
+# to split off (BACKLOG 24): "2 eggs", "30g whey", "1/2 cup rice", "two scoops
+# of whey". A number glued to a word only when the word is a mass/volume unit,
+# so "7up" and "2% milk" stay whole.
+_NUMBER_WORDS = {
+    "one": 1.0, "two": 2.0, "three": 3.0, "four": 4.0, "five": 5.0,
+    "six": 6.0, "seven": 7.0, "eight": 8.0, "nine": 9.0, "ten": 10.0, "half": 0.5,
+}
+_TYPED_AMOUNT_RE = re.compile(
+    r"^\s*(\d+/\d+|\d+(?:\.\d+)?)(?:\s+|(?=(?:g|kg|oz|lb|lbs|ml)\b))(.+)$", re.IGNORECASE
+)
+_TYPED_UNITS = frozenset({
+    "g", "gram", "grams", "kg", "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds",
+    "ml", "cup", "cups", "tbsp", "tablespoon", "tablespoons", "tsp", "teaspoon", "teaspoons",
+    "scoop", "scoops", "bowl", "bowls", "slice", "slices", "piece", "pieces", "bottle",
+    "bottles", "can", "cans", "bar", "bars", "glass", "glasses", "serving", "servings",
+})
 
-class _TooManyFoods(Exception):
-    """The micro-call parsed the typed text into more than one food. Carried as
-    an exception only so the reason survives the `except` that turns every
-    other failure into a silent None — the caller notes it on the row."""
 
-    def __init__(self, count: int) -> None:
-        super().__init__(str(count))
-        self.count = count
-
-
-async def _micro_decompose(phrase: str) -> tuple[ParsedItem, set[str]] | None:
-    """§5 / BACKLOG 24: the single-item decompose micro-call, so tier 2b works
-    for edited/added text exactly as it does at staging. Same context assembly,
-    prompt, and cache key as logs.py's call — hence the same cached prefix
-    (§6.1) — with the edited phrase as the whole utterance. Any failure (LLM
-    outage, empty parse, text that is more than one food) degrades to tiers
-    1/2a: /api/resolve keeps working without the model. Returns (parsed item,
-    inlined index ids) or None."""
-    try:
-        from services.context import build_agent_context
-        from services.decompose import decompose
-
-        ctx = await build_agent_context()
-        parsed = await decompose(phrase, ctx)  # its span rides in this run's trace (§10)
-        if not parsed.items:
+def _typed_amount(text: str) -> tuple[float, str | None, str] | None:
+    """(qty, unit, the rest) for text that starts with an amount, else None."""
+    m = _TYPED_AMOUNT_RE.match(text)
+    if m is not None:
+        try:
+            qty = float(Fraction(m.group(1)))
+        except (ValueError, ZeroDivisionError):
             return None
-        if len(parsed.items) > 1:
-            # Typed text that decomposes into SEVERAL foods ("chicken and
-            # rice") has nowhere to put the others: /api/resolve answers with
-            # ONE StagedItem for ONE item_index, and only the client allocates
-            # indices. Taking items[0] dropped the rest with no signal — the
-            # rice left the row, which then simply read "chicken". So the whole
-            # phrase degrades to tiers 1/2a (else tier 3) exactly as an outage
-            # does: every word the user typed stays on the row, and nothing
-            # disappears unseen. Splitting it into real rows needs a wire
-            # contract that can answer with more than one item.
-            #
-            # It is not the same as an outage to whoever reads this later,
-            # though, so it says so: this decline is a deliberate refusal with a
-            # known cause and a known cost (the row goes to tier 3 for a phrase
-            # that is not one food), and an outage is neither.
-            raise _TooManyFoods(len(parsed.items))
-        # every id the prompt offered for library_match: the index and the
-        # recently logged foods (§6.1)
-        return parsed.items[0], {
-            index_id for index_id, _, _ in (*ctx.food_index, *ctx.recent_foods)
-        }
-    except _TooManyFoods:
-        raise
-    except Exception:
+        rest = m.group(2)
+    else:
+        first, _, rest = text.strip().partition(" ")
+        qty = _NUMBER_WORDS.get(first.lower())
+        if qty is None:
+            return None
+    words = rest.split()
+    unit = None
+    if len(words) > 1 and words[0].lower() in _TYPED_UNITS:
+        unit, words = words[0].lower(), words[1:]
+        if len(words) > 1 and words[0].lower() == "of":
+            words = words[1:]
+    if qty <= 0 or not words:
         return None
+    return qty, unit, " ".join(words)
 
 
 @router.post("/api/resolve", response_model=StagedItem)
@@ -252,7 +258,7 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
     elif await db.fetchone("SELECT 1 AS hit FROM logs WHERE id = %s", (str(body.log_id),)) is None:
         # an added phrase hangs on a log of this tenant's: an unknown or
         # foreign log (invisible under RLS) is 404 here, before any model
-        # call — not a tenant-FK failure after the decompose micro-call
+        # call — not a tenant-FK failure after tier 3's
         raise HTTPException(status_code=404, detail="log not found")
     await quota.check_resolve()  # demo: capped model spend — after the free refusals
     prev_staged = _staged_dict(prev) if prev is not None else {}
@@ -264,50 +270,40 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
     spoken_qty = body.qty if body.qty is not None else prev_staged.get("spoken_qty")
     spoken_unit = body.unit if body.unit is not None else prev_staged.get("spoken_unit")
 
-    # §5 (BACKLOG 24): the single-item decompose micro-call gives edited text
-    # the same tier-2b library matching as staging. Skipped when the phrase
-    # already exact-matches an alias — tier 1 resolves that locally.
-    micro = None
-    micro_note: str | None = None
-    key = norm(body.phrase)
-    if not key or await db.fetchone(_EXACT_ALIAS_SQL, (key,)) is None:
-        try:
-            micro = await _micro_decompose(body.phrase)
-        except _TooManyFoods as e:
-            micro_note = (
-                f"read as {e.count} foods; kept on one row — "
-                "add the others as their own items"
-            )
-
-    index_ids: set[str] | None = None
     phrase = body.phrase
-    if micro is not None:
-        item0, index_ids = micro
-        phrase = (item0.phrase or "").strip() or body.phrase
-        # The edited text's own quantity words beat stale spoken values from
-        # the pre-edit utterance; an explicit request qty/unit beats both.
-        if body.qty is None and item0.qty is not None:
-            spoken_qty = item0.qty
-        if body.unit is None and item0.unit is not None:
-            spoken_unit = item0.unit
-        parsed = item0.model_copy(
-            update={
-                "phrase": phrase,
-                "qty": float(spoken_qty) if spoken_qty is not None else None,
-                "unit": spoken_unit,
+    # the sheet sends the text as typed: an amount at its front ("2 eggs")
+    # comes off the phrase and beats the pre-edit utterance's; an explicit
+    # request qty/unit beats both. Not for a phrase he has said as a whole.
+    typed = _typed_amount(phrase)
+    if typed is not None and await db.fetchone(_EXACT_ALIAS_SQL, (norm(phrase),)) is None:
+        typed_qty, typed_unit, phrase = typed
+        if body.qty is None:
+            spoken_qty = typed_qty
+            spoken_unit = body.unit if body.unit is not None else typed_unit
+    # A food of his typed by its name — the edit's analogue of the chat
+    # agent's food_id (§3.3): matched exactly (norm), never fuzzily, against
+    # the foods his diary holds, so the row is that food with no search.
+    key = norm(phrase)
+    mine = next(
+        (
+            r for r in await foods_repo.recent_foods()
+            if key and key in {
+                norm(r["display_name"] or ""),
+                norm(f"{r['brand'] or ''} {r['display_name'] or ''}"),
             }
-        )
-    else:
-        parsed = ParsedItem(
-            phrase=phrase,
-            phrase_kind="food",
-            qty=float(spoken_qty) if spoken_qty is not None else None,
-            unit=spoken_unit,
-            state=None,
-            brand=None,
-            library_match=None,
-            meal_ref=None,
-        )
+        ),
+        None,
+    )
+    parsed = ParsedItem(
+        phrase=phrase,
+        phrase_kind="food",
+        qty=float(spoken_qty) if spoken_qty is not None else None,
+        unit=spoken_unit,
+        state=None,
+        brand=None,
+        library_match=mine["id"] if mine else None,
+        meal_ref=None,
+    )
 
     searching = StagedItem(
         item_index=body.item_index,
@@ -319,10 +315,6 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
     staged_payload = searching.model_dump(mode="json", exclude_none=True)
     staged_payload["spoken_qty"] = spoken_qty
     staged_payload["spoken_unit"] = spoken_unit
-    if micro_note:
-        # same extra-key channel as when_hint_note (routes/logs.py _persist):
-        # a refusal the user cannot otherwise see, kept with the row
-        staged_payload["micro_decompose_note"] = micro_note
     # §3.5/§3.2: on an existing row, the ORIGINAL phrase/phrase_norm and the
     # original proposed_* are preserved — commit learns the alias for what was
     # actually spoken, and `explicit` compares the final food against what the
@@ -358,17 +350,18 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
         raise HTTPException(status_code=409, detail="item no longer live")
 
     # BACKLOG 6: the one cascade — same pick(), same §7.3 portion resolution
-    # (spoken qty AND unit, incl. the count-without-unit rule) as staging;
-    # BACKLOG 24: `parsed` now carries the micro-call's library_match/state/
-    # brand, validated against the inlined index ids (§3.3 2b).
+    # (spoken qty AND unit, incl. the count-without-unit rule) as staging
     async with tracing.run("cascade", kind="retriever", input=[parsed.phrase]) as lookup:
-        res = await cascade.resolve_item(parsed, body.item_index, meal, index_ids)
+        res = await cascade.resolve_item(
+            parsed, body.item_index, meal, {mine["id"]} if mine else None
+        )
         lookup.set(output=cascade_summary([res]))
     if res.staged.status == "searching":
         return await _run_tier3(str(body.log_id), body.item_index)
     if res.staged.status != "resolved":
-        # §3.1 guard surfaced by the micro-call (meal_ref → needs_input): a
-        # meal-shaped phrase never enters food search — persist and return.
+        # a §3.1 tier-0 guard (a saved meal that cannot fit one row, or is
+        # missing foods): a meal-shaped phrase never enters food search —
+        # persist and return.
         stored = await db.fetchone(
             f"""
             UPDATE item_resolutions SET status = %s, staged = %s::jsonb{KEEP_LOG_KEYS_SQL}
@@ -393,9 +386,6 @@ async def _resolve(body: ResolveRequest) -> StagedItem:
     if res.state_answer:
         # §3.4a seam: commit persists this to aliases.state_answer (W2)
         resolved_payload["state_answer"] = res.state_answer
-    if res.search_instead:
-        # §3.3 rule 3 affordance (StagedItem wire field is an integrator seam)
-        resolved_payload["search_instead"] = True
     # proposed_* keep the FIRST proposal (COALESCE): a re-resolution after an
     # edit must not erase the baseline that commit's explicit-choice and
     # rejected_count semantics compare against (§3.5).
@@ -444,9 +434,8 @@ def _identity_tokens_ordered(text: str) -> list[str]:
     norm()'s tokens (§3.0), minus the cooked/raw/dry ones — the words a
     counterpart is *supposed* to differ in. fdc._parse_state does the dropping,
     so the list cannot drift from the one that stamps foods.state. norm()
-    deliberately leaves plural/singular variance alone because tier 2a's
-    trigram absorbs it; there is no trigram on this path, so cascade's stemmer
-    stands in for it on both sides. Order is kept because the first of them is
+    deliberately leaves plural/singular variance alone (§3.0), so cascade's
+    stemmer stands in for it on both sides. Order is kept because the first of them is
     the head noun, which carries more weight than the rest."""
     return [
         cascade._unit_stem(t)

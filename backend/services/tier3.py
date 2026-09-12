@@ -17,6 +17,7 @@ or the food is dropped — so estimation has no code path.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -31,6 +32,7 @@ from pydantic import BaseModel
 
 import auth
 import db
+import deadline
 import tracing
 from models import (
     Alternate,
@@ -455,8 +457,9 @@ async def _discard_web_food(food_row_id: str) -> None:
 
 INSTRUCTIONS = """\
 You are the tier-3 food resolver for a single-user nutrition logger. Map one spoken or
-typed food phrase to exactly one food-database entry, or ask one precise question. Work
-with the fewest tool calls that give a confident answer.
+typed food phrase to exactly one food-database entry. You never ask the person anything:
+take the likeliest reading and put the runners-up in alternates. Work with the fewest
+tool calls that give a confident answer.
 
 Tools:
 - search_generic(query): USDA FDC generic/whole foods (SR Legacy + Foundation), condensed.
@@ -528,17 +531,18 @@ Ranking and routing rules:
 4. Query refinement allowed: if results are junk, refine and retry ("protein bar" ->
    "Quest protein bar chocolate chip cookie dough"; FDC's ranking is quirky — "chicken
    breast cooked" surfaces breaded tenders above plain roasted breast, and a more
-   specific query fixes it). If the missing information is unknowable (which brand?),
-   return a question instead of guessing.
+   specific query fixes it). If the missing information is unknowable (which brand?
+   which flavor?), pick the likeliest — the plain, most-bought one — and put the
+   runners-up you saw in alternates (rule 6).
 5. Never mix sources for one food. A food identity lives in exactly one
    (source, source_id).
-6. An ESTIMATE row never asks. When the input says the row is a flagged estimate,
-   "needs_input" is not available to you: the amount is already a guess the person
-   is going to look at and correct, so a question buys precision the row does not
-   have and costs them a tap per item. Pick the best entry you saw and say how sure
-   you are — confidence "medium" for a refined guess, "low" for best-available —
-   and put the runners-up in alternates, which is where the sheet offers them as a
-   one-tap swap. Only "not_found" when nothing plausible matched at all.
+6. You never ask. "needs_input" is not available to you: a question stops the person
+   before anything is logged, while a pick they can see is one tap from being swapped
+   (and on a flagged ESTIMATE row the amount is already a guess they will check).
+   Pick the best entry you saw and say how sure you are — confidence "medium" for a
+   refined guess, "low" for best-available — and put the runners-up in alternates,
+   which is where the sheet offers them as a one-tap swap. Only "not_found" when
+   nothing plausible matched at all.
 
 Local candidates: the input may list already-cached foods. If one of these
 already-cached foods is the same real-world food, choose it — do not create a second
@@ -551,22 +555,15 @@ Output contract:
   the URL and citations attached.
 - Sources: "fdc" for database entries (source_id = the FDC id from search results);
   "web" ONLY for a food you just added via add_food's web mode — echo the source_id
-  add_food returned. Alternates and question options must always be "fdc" entries you
-  actually saw.
+  add_food returned. Alternates must always be "fdc" entries you actually saw.
 - "resolved": set source, source_id, serving_id (pick from get_food's servings — the
   entry's default, or the serving matching the spoken quantity/unit; for a web food use
   the serving add_food created), display_name, and confidence (high = unambiguous,
   medium = refined guess, low = best available).
 - alternates: up to 3 plausible runners-up as (source, source_id, label) — only entries
   you actually saw in results.
-- "needs_input": never on an estimate row (rule 6). Otherwise set question with short
-  text and 2–4 options; every option that refers
-  to a candidate you already saw MUST carry its source and source_id so a tap resolves
-  instantly without another search. Before asking a which-brand/flavor/variant question,
-  run at least one search so the options are real candidates carrying ids — an id-less
-  question is allowed only when no search could disambiguate (the answer exists only in
-  the user's head).
-- "not_found": nothing matched and no useful question exists.
+- "needs_input": never (rule 6); question is always null.
+- "not_found": nothing plausible matched at all.
 """
 
 # Appended for a non-owner run (§8.9, BACKLOG 119): no web tools exist there.
@@ -680,7 +677,12 @@ async def _apply_portion(
 
 # ---------------------------------------------------------------------------
 # Local candidates — threshold-free (§3.4): top-N trigram matches however weak,
-# plus his top-10 staples by use_count.
+# plus his top-10 staples. "His" means his diary (2026-09-10, Bill: "food
+# memory should be independent of source"): the staples are the foods he has
+# logged most, however he logged them, and every candidate says how often he
+# has logged it — a barcode, search or photo row learns no alias (§3.5), so the
+# alias-built staples list never carried the ramen he had scanned, and the run
+# that met "Tonkatsu" saw that ramen only as an anonymous sim-0.22 cache row.
 # ---------------------------------------------------------------------------
 
 
@@ -701,7 +703,8 @@ async def _local_candidates(phrase: str) -> list[dict]:
     trigram = await db.fetchall(
         f"""
         SELECT id, source, source_id, display_name, brand,
-               similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
+               similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim,
+               (SELECT count(*) FROM entries e WHERE e.food_id = foods.id) AS logged
         FROM foods
         WHERE source = ANY(%s) AND {loggable}
         ORDER BY sim DESC
@@ -712,11 +715,11 @@ async def _local_candidates(phrase: str) -> list[dict]:
     staples = await db.fetchall(
         f"""
         SELECT f.id, f.source, f.source_id, f.display_name, f.brand,
-               sum(a.use_count) AS uses
-        FROM foods f JOIN aliases a ON a.food_id = f.id
+               count(*) AS uses
+        FROM entries e JOIN foods f ON f.id = e.food_id
         WHERE f.source = ANY(%s) AND {loggable_f}
         GROUP BY f.id, f.source, f.source_id, f.display_name, f.brand
-        ORDER BY uses DESC, max(a.last_used_at) DESC
+        ORDER BY uses DESC, max(e.logged_at) DESC
         LIMIT 10
         """,
         (list(CANDIDATE_SOURCES),),
@@ -735,6 +738,7 @@ async def _local_candidates(phrase: str) -> list[dict]:
                 "display_name": _col(row, 3, "display_name"),
                 "brand": _col(row, 4, "brand"),
                 "sim": float(_col(row, 5, "sim") or 0.0),
+                "logged": int(_col(row, 6, "logged") or 0),
             }
         )
     for row in staples:
@@ -749,6 +753,7 @@ async def _local_candidates(phrase: str) -> list[dict]:
                 "display_name": _col(row, 3, "display_name"),
                 "brand": _col(row, 4, "brand"),
                 "sim": None,
+                "logged": int(_col(row, 5, "uses") or 0),
             }
         )
     return out
@@ -762,10 +767,20 @@ def _agent_input(
     refinement: str | None,
     note: str | None = None,
     estimated: bool = False,
+    context: str | None = None,
 ) -> str:
     lines = [f'Resolve this food phrase to a database entry: "{phrase}"']
     if qty is not None:
         lines.append(f"Spoken quantity: {qty}" + (f" {unit}" if unit else ""))
+    # What the chat agent understood about this food from the conversation —
+    # the store, the brand, what the dish is — which the phrase alone cannot
+    # carry (trace 30e72425: "at a Costco" and "ramen" never reached tier 3).
+    # Labelled as context, not as the food: "Costco" is where, not what.
+    if context:
+        lines.append(
+            f"Context from the conversation (where it was from, the brand, what the dish is"
+            f" — the phrase above is still the food): {context}"
+        )
     # The note is what the photo (or the agent's estimate) saw — including the
     # menu page it cited. Without it this call asked "homemade, or a restaurant
     # item?" about a dish vision had already tied to a cafeteria's own menu
@@ -784,19 +799,29 @@ def _agent_input(
         lines.append("")
         lines.append(
             "Already-cached local candidates (local foods table — threshold-free "
-            "trigram matches plus frequent staples):"
+            "trigram matches plus the foods this person logs most):"
         )
         for c in candidates:
             sim = f" — sim {c['sim']:.2f}" if c["sim"] is not None else " — staple"
             brand = f" ({c['brand']})" if c.get("brand") else ""
+            logged = c.get("logged") or 0
+            mine = f" — THEY HAVE LOGGED THIS {logged}×" if logged else ""
             lines.append(
                 f"- source={c['source']} source_id={c['source_id']}: "
-                f"{c['display_name']}{brand}{sim}"
+                f"{c['display_name']}{brand}{sim}{mine}"
             )
         lines.append(
             "If one of these already-cached foods is the same real-world food, choose "
             "it — do not create a second identity for the same food."
         )
+        if any(c.get("logged") for c in candidates):
+            lines.append(
+                "A food marked THEY HAVE LOGGED THIS is in their own diary, however "
+                "they logged it (voice, typing, barcode, photo). A phrase that is close "
+                "to one of those in sound or spelling most likely means it — spoken "
+                "phrases are transcribed and typed ones are misspelled — so choose it "
+                "over a new search unless the phrase clearly names a different food."
+            )
     return "\n".join(lines)
 
 
@@ -935,18 +960,24 @@ def _build_agent(
 
     @function_tool(failure_error_function=_tool_error)
     async def get_food_history(n: int = 20) -> str:
-        """The user's top-n foods by recency/use (his personal history)."""
+        """The foods this user has logged — by voice, typing, barcode, search or
+        photo alike — most-logged first (his personal history)."""
         n = max(1, min(int(n), 100))
+        # His diary, not his aliases (2026-09-10, Bill: "food memory should be
+        # independent of source"): a barcode, search or photo row learns no
+        # alias (§3.5), so the alias table never listed the ramen he scanned.
+        # Only sources the answer schema can name back (CANDIDATE_SOURCES).
         rows = await db.fetchall(
             """
             SELECT f.source, f.source_id, f.display_name, f.brand,
-                   sum(a.use_count) AS uses, max(a.last_used_at) AS last_used
-            FROM aliases a JOIN foods f ON f.id = a.food_id
+                   count(*) AS uses, max(e.logged_at) AS last_used
+            FROM entries e JOIN foods f ON f.id = e.food_id
+            WHERE f.source = ANY(%s)
             GROUP BY f.source, f.source_id, f.display_name, f.brand
             ORDER BY uses DESC, last_used DESC
             LIMIT %s
             """,
-            (n,),
+            (list(CANDIDATE_SOURCES), n),
         )
         return json.dumps(
             [
@@ -955,7 +986,7 @@ def _build_agent(
                     "source_id": _col(r, 1, "source_id"),
                     "display_name": _col(r, 2, "display_name"),
                     "brand": _col(r, 3, "brand"),
-                    "use_count": int(_col(r, 4, "uses") or 0),
+                    "times_logged": int(_col(r, 4, "uses") or 0),
                 }
                 for r in rows
             ],
@@ -1513,8 +1544,8 @@ async def run_tier3(
     # carries it — persisted into the staged payload for commit → alias.
     answered_state = phrase_state(refinement) if refinement else None
     state_intent = answered_state or phrase_state(phrase)
-    # §3.4a rule 6: a flagged estimate (a photo row, an agent log_estimate row)
-    # resolves to a best guess and never asks — the amount is already one.
+    # §3.4a: a flagged estimate (a photo row, an agent log_estimate row) — its
+    # amount is already a guess; rule 6 (never ask) holds for every row
     is_estimate = (staged_prev.get("estimated") or "none") != "none"
 
     candidates = await _local_candidates(phrase)
@@ -1526,6 +1557,9 @@ async def run_tier3(
         refinement,
         note=staged_prev.get("estimate_note"),
         estimated=is_estimate,
+        # what the chat agent knew about this food (the store, the kind of
+        # dish) — stored on the row so the phone's fallback kick has it too
+        context=staged_prev.get("lookup_note"),
     )
 
     tracing.init_tracing()
@@ -1538,16 +1572,54 @@ async def run_tier3(
     trace_id: str | None = None
     transcript: list | None = None
     out: Tier3Result
-    # §10: the run's step in the route's trace (a trace of its own from the
-    # evals); the SDK's agent, model-turn and tool spans nest under it
+    timed_out = False
+    # §3.4 (2026-09-11): run inside the chat's own request, a lookup gets the
+    # time that request can spare (deadline.tier3_budget, set by
+    # routes/logs._resolve_inline); None — the phone's kick — is uncapped
+    budget = deadline.tier3_budget.get()
+    # §10: the run's step in the route's trace (a trace of its own when no
+    # run is current); the SDK's agent, model-turn and tool spans nest under it
     async with tracing.run(
         "tier3", input=agent_input, attributes={"phrase": phrase, "item_index": item_index}
     ) as span:
         trace_id = span.trace_id
         try:
-            result = await Runner.run(agent, agent_input, max_turns=MAX_TURNS)
+            async with asyncio.timeout(budget):
+                result = await Runner.run(agent, agent_input, max_turns=MAX_TURNS)
             out = result.final_output_as(Tier3Result)
             transcript = result.to_input_list()
+        except TimeoutError:
+            # The request's time ran out, not the search: nothing is written
+            # below (the row stays searching for the phone's kick), but the
+            # web-evidence gate still runs over whatever add_food persisted
+            # before the cut — a web food never outlives the run that could
+            # not prove it (§3.4a).
+            timed_out = True
+            out = Tier3Result(
+                status="not_found", source=None, source_id=None, serving_id=None,
+                display_name=None, confidence="low", alternates=[], question=None,
+            )
+            # §10: the transcript died with the cancelled run, so the trace
+            # keeps what the tools recorded — what it spent and what it read
+            span.set(attributes={
+                "inline_timeout_s": budget,
+                "network_calls": counter["network_calls"],
+                "fetched_hosts": sorted(run_state.get("fetched_hosts") or ()),
+                "foods_seen": [f"{source}:{source_id}" for source, source_id in food_cache],
+            })
+        except asyncio.CancelledError:
+            # Cancelled from OUTSIDE — the agent run's own deadline, a
+            # cancelled run task; the timeout above turns only its own
+            # deadline into TimeoutError. The gate below would never run, so
+            # it runs here on what the tools recorded (no transcript survives
+            # a cancel) before the cancellation goes on: an unproven web food
+            # never outlives its run (§3.4a).
+            for key, row_id in persisted.items():
+                if key[0] == "web" and _web_evidence_gap(
+                    (food_cache.get(key) or {}).get("source_url") or "", {}, run_state
+                ) is not None:
+                    await _discard_web_food(row_id)
+            raise
         except MaxTurnsExceeded as exc:
             # Deterministic failure — retrying identically would burn another
             # 6-turn run; fall through to the manual-search escape hatch.
@@ -1574,7 +1646,9 @@ async def run_tier3(
             if run_data is not None:
                 transcript = [it.to_input_item() for it in run_data.new_items]
             span.set(attributes={"max_turns_hit": True})
-        span.set(output=out.model_dump(mode="json"))
+        # a cut run produced no result: the row stays searching, and says so
+        span.set(output={"status": "searching", "timed_out": True} if timed_out
+                 else out.model_dump(mode="json"))
 
     # §3.4/§9: what the hosted web_search consulted, and how many search
     # actions it ran — each one is a billed network call, counted like any other.
@@ -1606,6 +1680,10 @@ async def run_tier3(
                 {"type": "usual_web_gate", "web_evidence_gap": gap}
             ]
 
+    if timed_out:
+        # the row as stored, still searching: the phone's kick takes it from here
+        return StagedItem.model_validate(staged_prev)
+
     # A chip may not name a row the gate above just deleted. The model can
     # offer a web food it created as an alternate or as an option on its
     # question, and those two lists reach the user on exactly the exits the
@@ -1618,18 +1696,19 @@ async def run_tier3(
         return (source, str(source_id)) not in dropped_web
 
     # Rule 6, enforced in code the way §3.4a's cooked/raw guard is rather than
-    # left to the prompt: an estimate row must never come back as a question.
-    # The amount is already a flagged guess the person is going to check, so a
-    # question costs a tap per item and buys precision the row does not have
-    # (trace 886b7b91: three of six photo rows asked, "which lettuce mix?"
-    # among them). Promote the best candidate this run actually saw — a
-    # question option carrying an id first, because a model that means to ask
-    # puts its real candidates there and leaves `alternates` empty — at low
-    # confidence, keeping the rest as alternates so the sheet still offers the
-    # one-tap swap. Nothing to promote means not_found: the manual search box,
-    # never a food this run did not see. Applied before the mapping below, so
-    # the StagedItem's alternates and question are built from what stands.
-    if out.status == "needs_input" and is_estimate:
+    # left to the prompt: no row ever comes back as a question. It began with
+    # estimate rows (trace 886b7b91: three of six photo rows asked, "which
+    # lettuce mix?" among them) and since 2026-09-10 covers every row (Bill:
+    # "why am I still being asked clarifying questions?" — trace 30e72425's
+    # "restaurant, packaged, or homemade?" on a food he had logged before).
+    # Promote the best candidate this run actually saw — a question option
+    # carrying an id first, because a model that means to ask puts its real
+    # candidates there and leaves `alternates` empty — at low confidence,
+    # keeping the rest as alternates so the sheet still offers the one-tap
+    # swap. Nothing to promote means not_found: the manual search box, never a
+    # food this run did not see. Applied before the mapping below, so the
+    # StagedItem's alternates and question are built from what stands.
+    if out.status == "needs_input":
         pool = [
             (o.source, o.source_id, o.label)
             for o in (out.question.options if out.question else [])
@@ -1640,13 +1719,16 @@ async def run_tier3(
             if _alive(a.source, a.source_id)
         ]
         if pool:
-            src, sid, label = pool[0]
+            src, sid, _ = pool[0]
             out = out.model_copy(
                 update={
                     "status": "resolved",
                     "source": src,
                     "source_id": sid,
-                    "display_name": label,
+                    # an option's label is the text of one chip, not a name for
+                    # a shared row — the same rule as a promoted alternate below
+                    # (apply_label would make it that food's name for life)
+                    "display_name": None,
                     "serving_id": None,  # the entry's default; this pick chose none
                     "confidence": "low",
                     "alternates": [

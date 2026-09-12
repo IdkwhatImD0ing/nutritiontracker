@@ -1,6 +1,6 @@
 """Quick-add routes — barcode scan + explicit food pick (DESIGN.md §3.4, §5; M4).
 
-Two of the four + actions never pass through decompose or the cascade:
+Two of the four + actions never pass through the agent or the cascade:
 
 - GET /api/foods/barcode?code= — digits-only normalization, then the foods
   cache (a code seen before answers with no network call), then the §3.4

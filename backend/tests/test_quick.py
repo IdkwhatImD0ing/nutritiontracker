@@ -695,15 +695,15 @@ def test_diary_correction_on_a_quick_add_row_learns_nothing():
 
 # ---------------------------------------------------------------------------
 # recently logged foods (owner feedback, 2026-09-06): GET /api/foods/recent
-# under the Search lane's bar, and the same rows in the decompose context
+# under the Search lane's bar, and the same rows in the chat agent's context
 # ---------------------------------------------------------------------------
 
 
 def test_recent_foods_lists_committed_picks_newest_first_and_reaches_the_context():
     """One row per food, the food committed last first, the photo lane's
-    placeholders left out; the same rows ride the decompose context as
-    recent_foods — a from-food row learns no alias, so the alias-built index
-    never carries them. (Inside one rollback transaction every entry shares
+    placeholders left out; the same rows are the chat agent's food list
+    (my_foods, §6.4) — a from-food row learns no alias, so only the diary
+    carries them. (Inside one rollback transaction every entry shares
     now() as created_at; the query's logged_at tiebreak orders them.)"""
     name_a = f"zz recent a {uuid4().hex[:8]}"
     name_b = f"zz recent b {uuid4().hex[:8]}"
@@ -714,7 +714,7 @@ def test_recent_foods_lists_committed_picks_newest_first_and_reaches_the_context
         assert totals.errors == []
 
     async def run():
-        from services.context import build_agent_context
+        from services import agent as agent_svc
 
         async with isolated_db():
             fid_a = await foods_repo.persist_food(_fake_food(name_a, brand="BrandA"))
@@ -730,46 +730,19 @@ def test_recent_foods_lists_committed_picks_newest_first_and_reaches_the_context
                 (fid_e,),
             )
             hits = await foods_routes.list_recent_foods()
-            ctx = await build_agent_context()
-            return fid_a, fid_b, fid_e, hits, ctx
+            mine = await foods_repo.recent_foods(agent_svc.MY_FOODS_IN_CONTEXT)
+            return fid_a, fid_b, fid_e, hits, mine
 
-    fid_a, fid_b, fid_e, hits, ctx = asyncio.run(run())
+    fid_a, fid_b, fid_e, hits, mine = asyncio.run(run())
     ids = [h.food_id for h in hits]
     assert ids[:2] == [fid_a, fid_b]
     assert ids.count(fid_a) == 1 and fid_e not in ids
     assert hits[0].label == name_a and hits[0].brand == "BrandA" and hits[0].source == "fdc"
     assert len(hits) <= foods_repo.RECENT_FOODS_CAP
-    # the context: same rows, same order, the index's own ids not repeated
-    recent_ids = [i for i, _, _ in ctx.recent_foods]
-    assert recent_ids[:2] == [fid_a, fid_b]
-    assert (fid_a, name_a, "BrandA") in ctx.recent_foods
-    assert not {i for i, _, _ in ctx.food_index} & set(recent_ids)
-
-
-def test_render_context_offers_recent_foods_for_library_match():
-    """The prompt lists the recent foods under the index, in the index's line
-    shape, so decompose may name one as library_match; a context with no
-    list (an eval snapshot from before it existed) renders "(empty)"."""
-    from prompts.decompose_prompt import render_context
-    from services.context import AgentContext
-
-    ctx = AgentContext(
-        profile_notes="",
-        targets={},
-        food_index=[("idx-1", "whey", None)],
-        meal_names=[],
-        recent_foods=[("rec-1", "fairlife 2% milk", "fairlife")],
-    )
-    text = render_context(ctx)
-    assert "idx-1 | whey | -" in text
-    assert "rec-1 | fairlife 2% milk | fairlife" in text
-    assert (
-        text.index("PERSONAL FOOD INDEX")
-        < text.index("RECENTLY LOGGED FOODS")
-        < text.index("SAVED MEALS")
-    )
-    bare = render_context(AgentContext(profile_notes="", targets={}, food_index=[], meal_names=[]))
-    assert "newest first):\n(empty)" in bare
+    # the agent's list (routes/logs._run_agent_lane): same rows, same order
+    mine_ids = [r["id"] for r in mine]
+    assert mine_ids[:2] == [fid_a, fid_b] and fid_e not in mine_ids
+    assert (mine[0]["display_name"], mine[0]["brand"]) == (name_a, "BrandA")
 
 
 def test_router_shape():

@@ -19,13 +19,6 @@ dependencies = [
 dev = [
     "uvicorn",
 ]
-# The eval harness (evals/collect.py, evals/replay.py) still runs on Langfuse
-# datasets and experiments — FireTrace has no counterpart yet
-# (docs/FIRETRACE_FEEDBACK.md). Opt in: uv run --group evals python -m evals.replay
-evals = [
-    "langfuse>=4.7.0",
-    "openinference-instrumentation-openai-agents",
-]
 
 [tool.pytest.ini_options]
 markers = [

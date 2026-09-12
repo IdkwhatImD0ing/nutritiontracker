@@ -1,8 +1,8 @@
 """Agent mode (DESIGN.md §6.4, 2026-09-06) + the weigh-in log (§4 `weights`, 003).
 
 Offline: the Runner is a fake that drives the REAL tool closures, the way
-test_tier3_hardening does for tier 3; decompose is stubbed (test_tenancy's
-_stub_pipeline). Database work runs inside one force-rollback transaction
+test_tier3_hardening does for tier 3 (test_tenancy's _stub_pipeline refuses
+any model a test did not set). Database work runs inside one force-rollback transaction
 (isolated_db) against the live database — 003 is applied in-transaction
 while the table is not there yet (tenancy_harness), so nothing persists.
 
@@ -13,11 +13,10 @@ while the table is not there yet (tenancy_harness), so nothing persists.
 2. routes/weights: kg storage, one row per day updated in place,
    settings.body.weight_kg follows the newest weigh-in only, RLS keeps
    tenants apart; GET / PUT /api/weights.
-3. POST /api/logs with agent=true: the §3.0 short-circuit still wins with no
-   agent run; otherwise the agent stages the food part through the same
-   pipeline and records the weigh-in under the log's id, and the response
-   carries both; a weight-only utterance leaves an itemless log; agent=false
-   never builds an agent.
+3. POST /api/logs: the §3.0 short-circuit still wins with no agent run;
+   otherwise the agent names the foods (no decompose since 2026-09-11) —
+   one of his own by id — and records the weigh-in under the log's id, and
+   the response carries both; a weight-only utterance leaves an itemless log.
 
 Run:  cd backend && uv run --with pytest pytest tests/test_agent.py -q
 """
@@ -45,7 +44,7 @@ from agents import MaxTurnsExceeded
 from agents.tool_context import ToolContext
 from fastapi import HTTPException
 
-from models import LogCreate, ParsedItem, ParsedLog  # noqa: E402
+from models import LogCreate  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes import weights as weights_route  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
@@ -80,12 +79,23 @@ async def _invoke(agent, name: str, **kwargs) -> dict:
     return json.loads(await _tool(agent, name).on_invoke_tool(_ctx(name, args), args))
 
 
+def food(phrase: str, **over) -> dict:
+    """One log_food item as the model would send it — every field spelled out,
+    the strict schema requires them (§6.4, 2026-09-11: the agent names the
+    foods itself; there is no decompose step)."""
+    return {"phrase": phrase, "saved_meal": False, "food_id": None, "qty": None,
+            "unit": None, "note": None, **over}
+
+
 def _deps(**over) -> agent_svc.AgentDeps:
     calls: dict = {"food": [], "estimate": [], "weight": [], "meal": [], "update": [], "past": []}
 
-    async def stage_food(text: str) -> dict:
-        calls["food"].append(text)
-        return {"meal": "breakfast", "items": [{"phrase": "eggs", "status": "searching"}]}
+    async def stage_food(items, meal_hint=None, when_hint=None, when_day_offset=None,
+                         when_meal=None) -> dict:
+        calls["food"].append(([it.model_dump() for it in items], meal_hint, when_hint,
+                              when_day_offset, when_meal))
+        return {"meal": "breakfast",
+                "items": [{"phrase": it.phrase, "status": "resolved"} for it in items]}
 
     async def stage_estimate(items, basis: str, meal_hint=None, when_hint=None,
                              when_day_offset=None, when_meal=None) -> dict:
@@ -244,13 +254,40 @@ def test_log_food_tool_runs_once_per_utterance():
         deps = _deps()
         state: dict = {}
         agent = agent_svc.build_agent(deps, state)
-        out = await _invoke(agent, "log_food", text="two eggs")
+        out = await _invoke(agent, "log_food", items=[food("eggs", qty=2)])
         assert out["items"][0]["phrase"] == "eggs"
         assert state["food_calls"] == 1
         # a second call stages nothing again (item indexes would collide)
-        out = await _invoke(agent, "log_food", text="a coffee")
+        out = await _invoke(agent, "log_food", items=[food("coffee")])
         assert out["error"] == "already_called"
-        assert deps.calls["food"] == ["two eggs"] and state["food_calls"] == 1
+        assert [[it["phrase"] for it in c[0]] for c in deps.calls["food"]] == [["eggs"]]
+        assert deps.calls["food"][0][0][0]["qty"] == 2 and state["food_calls"] == 1
+
+    _run(scenario())
+
+
+def test_log_food_validates_items_and_passes_the_time_fields():
+    """The agent names the foods (§6.4, 2026-09-11): the tool refuses an empty
+    list, a blank phrase and a non-positive amount before anything is
+    staged, drops the tail past MAX_FOOD_ITEMS out loud, and hands the meal
+    and day fields through exactly as log_estimate does."""
+    async def scenario():
+        deps = _deps()
+        state: dict = {}
+        agent = agent_svc.build_agent(deps, state)
+        assert (await _invoke(agent, "log_food", items=[]))["error"] == "empty"
+        assert (await _invoke(agent, "log_food", items=[food("  ")]))["error"] == "empty_phrase"
+        assert (await _invoke(agent, "log_food", items=[food("rice", qty=0)]))["error"] == "invalid_qty"
+        assert deps.calls["food"] == [] and state["food_calls"] == 0
+
+        many = [food(f"food {i}") for i in range(agent_svc.MAX_FOOD_ITEMS + 2)]
+        out = await _invoke(agent, "log_food", items=many, meal_hint="breakfast",
+                            when_hint="this morning", when_day_offset=0, when_meal="breakfast")
+        assert out["dropped"] == [f"food {i}" for i in range(agent_svc.MAX_FOOD_ITEMS, agent_svc.MAX_FOOD_ITEMS + 2)]
+        items, meal_hint, when_hint, offset, when_meal = deps.calls["food"][0]
+        assert len(items) == agent_svc.MAX_FOOD_ITEMS
+        assert (meal_hint, when_hint, offset, when_meal) == ("breakfast", "this morning", 0, "breakfast")
+        assert state["food_found"] == agent_svc.MAX_FOOD_ITEMS and state["food_missing"] == 0
 
     _run(scenario())
 
@@ -259,24 +296,33 @@ def test_log_food_failure_frees_the_slot_and_is_not_reported_as_staged():
     async def scenario():
         calls: list[str] = []
 
-        async def flaky(text: str) -> dict:
-            calls.append(text)
+        async def flaky(items, *rest) -> dict:
+            calls.append(items[0].phrase)
             if len(calls) == 1:
-                raise RuntimeError("decompose is down")
+                raise RuntimeError("the cascade is down")
             return {"meal": "lunch", "items": [{"phrase": "rice", "status": "searching"}]}
 
         deps = _deps(stage_food=flaky)
         state: dict = {}
         agent = agent_svc.build_agent(deps, state)
-        name, args = "log_food", json.dumps({"text": "rice"})
+        name, args = "log_food", json.dumps({"items": [food("rice")]})
         out = await _tool(agent, name).on_invoke_tool(_ctx(name, args), args)
         # the sanitized tool error reaches the model; the internals do not
-        assert "RuntimeError" in out and "decompose" not in out
+        assert "RuntimeError" in out and "cascade" not in out
         assert state["food_calls"] == 0  # the slot is free again: nothing was staged
         assert agent_svc._fallback_reply(state) == "I couldn't work that one out — try again, or type it."
-        out = await _invoke(agent, name, text="rice")
+        out = await _invoke(agent, name, items=[food("rice")])
         assert out["items"][0]["phrase"] == "rice" and state["food_calls"] == 1
         assert calls == ["rice", "rice"]
+        # a row still being looked up is never reported as staged
+        assert (state["food_found"], state["food_pending"], state["food_missing"]) == (0, 1, 0)
+        assert agent_svc._fallback_reply(state) == "I am still looking up what you ate — check the list."
+        assert agent_svc._fallback_reply({"food_calls": 1, "food_done": True, "food_missing": 2}) == (
+            "I couldn't find what you ate — check the list.")
+        # log_food that never returned (the run stopped during its lookups):
+        # its rows are unknown here, so never "staged what you ate"
+        assert agent_svc._fallback_reply({"food_calls": 1}) == (
+            "I am still looking up what you ate — check the list.")
 
     _run(scenario())
 
@@ -291,6 +337,11 @@ def test_agent_input_carries_the_context_block():
     assert text.endswith('Utterance: "I weigh 180"')
     assert "Earlier in this conversation: nothing" in text
     assert "Last weigh-in: none yet" in agent_svc.agent_input("x", _deps())
+    # their diary foods ride in, any lane, id first — what a misheard name is
+    # matched against and what log_food names by id (§6.4, 2026-09-11)
+    text = agent_svc.agent_input("Tom Katsu, Winston Roman", _deps(my_foods=["f-1: tonkotsu ramen (Nongshim)"]))
+    assert "Foods they have logged, newest first (food_id: name (brand)):\n- f-1: tonkotsu ramen (Nongshim)" in text
+    assert "Foods they have logged, newest first (food_id: name (brand)):\n(none yet)" in agent_svc.agent_input("x", _deps())
     # the conversation rides in: what they said, what we replied, each staged log
     deps = _deps(history=[
         {"role": "user", "text": "a platter of costco shrimp"},
@@ -322,7 +373,7 @@ def test_run_agent_reports_tool_state_and_survives_max_turns(monkeypatch):
                 self._agent = agent
 
             async def stream_events(self):
-                await _invoke(self._agent, "log_food", text="two eggs")
+                await _invoke(self._agent, "log_food", items=[food("eggs", qty=2)])
                 raise MaxTurnsExceeded("max turns")
                 yield  # pragma: no cover — makes this an async generator
 
@@ -338,6 +389,12 @@ def test_run_agent_reports_tool_state_and_survives_max_turns(monkeypatch):
         assert agent_svc._fallback_reply({}) == "I couldn't work that one out — try again, or type it."
         assert agent_svc._fallback_reply({"estimate_calls": 1, "weight": {"x": 1}}) == (
             "I staged an estimate for you to check and logged your weight — check the list."
+        )
+        # never "staged" for a food the lookup did not find (trace 30e72425)
+        assert agent_svc._fallback_reply(
+            {"food_calls": 1, "food_done": True, "food_found": 1, "food_missing": 1}
+        ) == (
+            "I staged what you ate and couldn't find 1 of the foods — check the list."
         )
 
     _run(scenario())
@@ -416,47 +473,29 @@ def test_weights_routes_get_and_put():
 
 
 # ---------------------------------------------------------------------------
-# 3. POST /api/logs, agent=true — the route end to end (model faked)
+# 3. POST /api/logs — the agent lane end to end (model faked)
 # ---------------------------------------------------------------------------
 
 
-def _parsed(*phrases: tuple[str, float | None]) -> ParsedLog:
-    return ParsedLog(
-        items=[
-            ParsedItem(phrase=p, phrase_kind="food", qty=q, unit=None, state=None,
-                       brand=None, library_match=None, meal_ref=None)
-            for p, q in phrases
-        ],
-        meal_hint=None, when_hint=None, when_day_offset=None, when_meal=None, save_intent=None,
-    )
-
-
-def _log(text: str, *, agent: bool) -> LogCreate:
-    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ, agent=agent)
+def _log(text: str) -> LogCreate:
+    return LogCreate(id=uuid4(), text=text, captured_at=NOW, tz=TZ)
 
 
 def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            seen: list[str] = []
-
-            async def decompose(text, ctx, **kw):
-                seen.append(text)
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             runner = _fake_runner(
-                [("log_food", {"text": "two eggs"}),
+                [("log_food", {"items": [food("eggs", qty=2)]}),
                  ("log_weight", {"weight": 180.4, "unit": "lb", "days_ago": 0})],
                 "Staged 1 item and logged 180.4 lb.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
 
-            body = _log("two eggs and I weigh 180.4 pounds", agent=True)
+            body = _log("two eggs and I weigh 180.4 pounds")
             resp = await logs_routes.create_log(body)
 
-            # the food part went through the ordinary pipeline, verbatim
-            assert seen == ["two eggs"]
+            # the foods the agent named went straight to the cascade — no decompose
             assert [(it.phrase, it.qty, it.status) for it in resp.items] == [("eggs", 2.0, "searching")]
             assert resp.log_id == body.id and resp.meal.value == "breakfast"
             # the model's reply, the tool's weigh-in
@@ -472,18 +511,68 @@ def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
             assert row["log_id"] == str(body.id) and row["day"] == LOCAL_DAY and float(row["weight_kg"]) == 81.83
             assert await _scalar(conn, "SELECT count(*) FROM item_resolutions WHERE log_id = %s", (body.id,)) == 1
             log = await (await conn.execute("SELECT * FROM logs WHERE id = %s", (body.id,))).fetchone()
-            assert log["status"] == "staged" and log["decompose_ms"] is not None
+            assert log["status"] == "staged" and log["decompose_ms"] is None  # no decompose ran
+            assert log["trace_id"] == "trace-test"  # commit scores find the run by it
             assert runner.calls == 1
             assert "Usual weight unit: lb" in runner.input and "2026-09-06 08:30" in runner.input
 
             # the next agent run sees this weigh-in as the last one, in its unit
             runner2 = _fake_runner([], "Nothing to log.")
             monkeypatch.setattr(agent_svc, "Runner", runner2)
-            resp2 = await logs_routes.create_log(_log("hello there", agent=True))
+            resp2 = await logs_routes.create_log(_log("hello there"))
             assert resp2.items == [] and resp2.agent is not None and resp2.agent.weight is None
             assert resp2.agent.reply == "Nothing to log."
             assert "Last weigh-in: 180.4 lb on 2026-09-06" in runner2.input
-            assert seen == ["two eggs"]  # no decompose for an utterance with no food
+
+    _run(scenario())
+
+
+def test_agent_lane_logs_his_own_food_by_id_and_keeps_the_note(monkeypatch):
+    """Trace 30e72425, offline: the tonkotsu ramen he SCANNED is in his diary,
+    and the agent names it by id — staged resolved from his own row, tier 2,
+    confident, no search. An id that is not one of his foods is dropped and
+    its phrase goes to tier 3 with the agent's note on the row (tier 3 reads
+    it as context). A saved_meal name that matches no active saved meal is
+    the §3.1 "no saved meal called…" row — never a food search.
+    The meal the agent heard applies to every row."""
+    async def scenario():
+        async with isolated_db() as conn:
+            _stub_pipeline(monkeypatch)
+            ramen = await insert_food(conn)
+            stranger = await insert_food(conn)  # cached, never eaten by this tenant
+            await conn.execute(  # a barcode log: in the diary, no alias learned
+                "INSERT INTO entries (logged_at, meal, food_id, serving_id, qty, macros) "
+                "VALUES (now(), 'dinner', %s, 's', 1, '{}'::jsonb)",
+                (ramen,),
+            )
+            runner = _fake_runner(
+                [("log_food", {"items": [
+                    food("tonkotsu ramen", food_id=ramen),
+                    food("pork buns", food_id=stranger, note="from the Costco food court"),
+                    food("usual lunch", saved_meal=True),
+                ], "meal_hint": "breakfast"})],
+                "Took 'Tom Katsu' as your tonkotsu ramen.",
+            )
+            monkeypatch.setattr(agent_svc, "Runner", runner)
+            body = _log("This morning for breakfast at a Costco, Tom Katsu, Winston Roman.")
+            resp = await logs_routes.create_log(body)
+
+            rows = {it.phrase: it for it in resp.items}
+            got = rows["tonkotsu ramen"]
+            assert (got.status, got.tier, got.confidence, got.food.id) == ("resolved", 2, "high", ramen)
+            assert rows["pork buns"].status == "searching" and rows["pork buns"].food is None
+            guard = rows["usual lunch"]
+            assert guard.status == "needs_input" and "No saved meal" in guard.question.text
+            assert resp.meal.value == "breakfast" and {it.meal.value for it in resp.items} == {"breakfast"}
+            # the agent's note rides the row that still needs looking up — only that one
+            stored = await (await conn.execute(
+                "SELECT phrase, staged->>'lookup_note' AS note FROM item_resolutions WHERE log_id = %s",
+                (body.id,),
+            )).fetchall()
+            assert {r["phrase"]: r["note"] for r in stored} == {"tonkotsu ramen": None, "pork buns": "from the Costco food court",
+                             "usual lunch": None}
+            # the context the model read listed his diary food by id
+            assert f"- {ramen}: egg" in runner.input
 
     _run(scenario())
 
@@ -491,13 +580,13 @@ def test_agent_lane_stages_food_and_records_weight_under_the_log(monkeypatch):
 def test_agent_lane_weight_only_leaves_an_itemless_log(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            _stub_pipeline(monkeypatch)  # decompose would fail loudly if called
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             runner = _fake_runner(
                 [("log_weight", {"weight": 82.5, "unit": "kg", "days_ago": 1})],
                 "Logged 82.5 kg for yesterday.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = _log("yesterday morning I weighed 82.5 kilos", agent=True)
+            body = _log("yesterday morning I weighed 82.5 kilos")
             resp = await logs_routes.create_log(body)
             assert resp.items == [] and resp.saved_meal is None and resp.note is None
             assert resp.agent is not None and resp.agent.weight is not None
@@ -517,28 +606,10 @@ def test_short_circuit_still_skips_the_agent(monkeypatch):
             await insert_alias(conn, food_id)  # 'two eggs' → tier 1, whole utterance
             _stub_pipeline(monkeypatch)
             monkeypatch.setattr(agent_svc, "Runner", _RefusingRunner)
-            resp = await logs_routes.create_log(_log("two eggs", agent=True))
+            resp = await logs_routes.create_log(_log("two eggs"))
             assert len(resp.items) == 1 and resp.items[0].status == "resolved" and resp.items[0].tier == 1
             assert resp.agent is None
             assert await _scalar(conn, "SELECT short_circuit FROM logs WHERE id = %s", (resp.log_id,)) is True
 
     _run(scenario())
 
-
-def test_plain_log_never_builds_the_agent(monkeypatch):
-    async def scenario():
-        async with isolated_db() as conn:
-            seen: list[str] = []
-
-            async def decompose(text, ctx, **kw):
-                seen.append(text)
-                return _parsed(("eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
-            monkeypatch.setattr(agent_svc, "Runner", _RefusingRunner)
-            resp = await logs_routes.create_log(_log("two eggs and I weigh 180 pounds", agent=False))
-            assert seen == ["two eggs and I weigh 180 pounds"]  # the whole utterance, as before
-            assert resp.agent is None and len(resp.items) == 1
-            assert await _scalar(conn, "SELECT count(*) FROM weights") == 0
-
-    _run(scenario())

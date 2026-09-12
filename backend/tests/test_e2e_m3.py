@@ -10,8 +10,8 @@ alias-hit-rate curve is visible and rising":
      POST /api/meals/from-log saves it as "usual breakfast <tag>" with the
      trigger "my usual breakfast <tag>" (stored post-norm()).
   2. POST /api/logs "My usual breakfast <tag>!" → tier-0 rows stage from the
-     whole-utterance short-circuit with ZERO decompose (the decompose entry
-     point is patched to raise; logs.short_circuit=true, decompose_ms NULL).
+     whole-utterance short-circuit with no agent run (the agent lane is
+     patched to raise; logs.short_circuit=true, decompose_ms NULL).
   3. Commit → entries written from the macro's stored portions; NO alias is
      learned for the trigger (tier-0 rule, §3.1/§3.5).
   4. GET /api/history?range=w|3d|y shows today; GET /api/metrics?range=4w
@@ -109,7 +109,7 @@ async def _insert_food(name: str, serving: dict, brand: str | None = None) -> st
 
 async def _insert_staged_log(log_id: str, raw: str, items: list[dict]) -> None:
     """A staged log with resolved tier-1 rows, as POST /api/logs would have
-    persisted them — without a decompose call."""
+    persisted them — without a model call."""
     await db.execute(
         "INSERT INTO logs (id, input_mode, raw_input, captured_at) VALUES (%s, 'text', %s, now())",
         (log_id, raw),
@@ -210,13 +210,13 @@ def test_m3_usual_breakfast_stages_instantly_and_the_curves_render(client: TestC
         ]
         assert meal["items"][0]["food_name"] == f"zz egg {tag}"
 
-        # -- 2. "my usual breakfast" → tier 0, zero decompose ---------------
-        import services.decompose as decompose_mod
+        # -- 2. "my usual breakfast" → tier 0, no agent run ----------------
+        import routes.logs as logs_mod
 
         async def _no_llm(*a, **kw):
-            raise AssertionError("decompose must not run for a macro trigger (§3.0)")
+            raise AssertionError("the agent must not run for a macro trigger (§3.0)")
 
-        monkeypatch.setattr(decompose_mod, "decompose", _no_llm)
+        monkeypatch.setattr(logs_mod, "_run_agent_lane", _no_llm)
 
         alias_count_before = _run(db.fetchone("SELECT count(*) AS n FROM aliases"))["n"]
         t0 = time.perf_counter()

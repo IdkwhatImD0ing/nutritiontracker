@@ -1,8 +1,9 @@
 """Agent mode, live (DESIGN.md §6.4; §3.4 rule 2b) — the owner's two asks, 2026-09-06.
 
 In-process TestClient over the assembled app against the LIVE services:
-Neon, gpt-5.6-luna (the front-door agent and decompose), the gpt-5.6-terra
-tier-3 agent with the hosted web_search, USDA FDC, Langfuse. Three stories:
+Neon, the gpt-5.6-terra chat agent (it names the foods itself — no
+decompose since 2026-09-11), the gpt-5.6-terra tier-3 agent with the
+hosted web_search, USDA FDC, Langfuse. Three stories:
 
   1. a weigh-in alone: "I weighed myself this morning, 180.4 pounds" → a
      weights row (81.83 kg, unit lb, the utterance's local day, this log's
@@ -117,7 +118,7 @@ def _post(client: TestClient, log_id: str, text: str) -> dict:
     t0 = time.perf_counter()
     r = client.post(
         "/api/logs",
-        json={"id": log_id, "text": text, "captured_at": CAPTURED_AT, "tz": TZ, "agent": True},
+        json={"id": log_id, "text": text, "captured_at": CAPTURED_AT, "tz": TZ},
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -190,7 +191,7 @@ def test_agent_records_a_weigh_in_and_stages_food(client: TestClient, needs_003)
         assert abs(agent["weight"]["weight_kg"] - 180 / LB_PER_KG) < 0.01
         # the same local day: replaced in place, one row for the day
         assert _run(db.fetchone("SELECT count(*) AS n FROM weights WHERE day = %s", (LOCAL_DAY,)))["n"] == 1
-        # the food part reached decompose as food only: no "pounds" row
+        # the agent staged the food only: no "pounds" row
         assert not any("pound" in it["phrase"].lower() or "180" in it["phrase"] for it in items), items
     finally:
         _run(_cleanup(t0, [l1, l2]))

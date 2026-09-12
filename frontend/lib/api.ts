@@ -439,7 +439,6 @@ export async function streamAgent(
               tz: args.tz,
               capture_fallback: args.capture_fallback ?? false,
               capture_error: args.capture_error ?? null,
-              agent: true,
               history: args.history ?? null,
               photo_log_id: args.photo_log_id ?? null,
             }),
@@ -502,12 +501,8 @@ export async function createLogAudio(args: {
    *  retrying — lands in logs.capture_error so the §9 counter still sees it
    *  (capture_fallback stays false: voice succeeded, nothing fell back) */
   capture_error?: string | null;
-  /** §6.4: the Agent lane — the transcript runs through the front-door agent */
-  agent?: boolean;
 }): Promise<AudioLogResult> {
-  const form = audioForm(args);
-  if (args.agent) form.set("agent", "true");
-  const res = await multipart("/api/logs", form);
+  const res = await multipart("/api/logs", audioForm(args));
   if (!res.ok) {
     throw new ApiError(res.status, await res.text().catch(() => ""));
   }

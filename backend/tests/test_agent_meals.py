@@ -1,8 +1,8 @@
 """Saved meals through the agent (DESIGN.md §6.4 + §8.4, 2026-09-07) — Bill's
 ruling that the agent can do whatever the UI can, saved meals first.
 
-Offline: test_agent's fake Runner drives the REAL tool closures; decompose is
-stubbed; database work runs inside one force-rollback transaction against
+Offline: test_agent's fake Runner drives the REAL tool closures (no model
+runs); database work runs inside one force-rollback transaction against
 the live database (isolated_db).
 
 1. services/agent: save_meal / update_meal refuse bad input in code (an empty
@@ -50,7 +50,7 @@ from routes import agent as agent_routes  # noqa: E402
 from routes import logs as logs_routes  # noqa: E402
 from routes.commit import commit_log as commit_route  # noqa: E402
 from services import agent as agent_svc  # noqa: E402
-from test_agent import NOW, TZ, _ctx, _deps, _fake_runner, _log, _parsed, _tool  # noqa: E402
+from test_agent import NOW, TZ, _ctx, _deps, _fake_runner, _log, _tool, food  # noqa: E402
 from test_meals import breakfast_fixture  # noqa: E402
 from test_meals import insert_alias as insert_named_alias  # noqa: E402
 from test_meals import insert_food as insert_named_food  # noqa: E402
@@ -228,7 +228,7 @@ def test_agent_input_lists_saved_meals():
 def test_save_meal_from_a_conversation_log_and_the_fallbacks(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            _stub_pipeline(monkeypatch)  # no food in these utterances: decompose never runs
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             fx = await breakfast_fixture(conn)
             tag = uuid4().hex[:6]
             name = f"Agent brekkie {tag}"
@@ -238,7 +238,7 @@ def test_save_meal_from_a_conversation_log_and_the_fallbacks(monkeypatch):
                 assert (await _call(agent, "save_meal", name=name))["error"] == "nothing_to_save"
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(nothing))
-            resp0 = await logs_routes.create_log(_log(f"save that as {name}", agent=True))
+            resp0 = await logs_routes.create_log(_log(f"save that as {name}"))
             assert resp0.items == [] and resp0.saved_meal is None and resp0.note is None
 
             egg = await insert_food(conn)
@@ -256,8 +256,7 @@ def test_save_meal_from_a_conversation_log_and_the_fallbacks(monkeypatch):
                 "Saved it.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = LogCreate(id=uuid4(), text=f"save that as {name}", captured_at=NOW, tz=TZ,
-                             agent=True, history=history)
+            body = LogCreate(id=uuid4(), text=f"save that as {name}", captured_at=NOW, tz=TZ, history=history)
             resp = await logs_routes.create_log(body)
             assert resp.items == [] and resp.note is None
             assert resp.saved_meal is not None and resp.saved_meal.name == name
@@ -276,8 +275,7 @@ def test_save_meal_from_a_conversation_log_and_the_fallbacks(monkeypatch):
             runner2 = _fake_runner([("save_meal", {"name": name.upper()})], "Saved again.")
             monkeypatch.setattr(agent_svc, "Runner", runner2)
             resp2 = await logs_routes.create_log(LogCreate(
-                id=uuid4(), text="save that as my brekkie", captured_at=NOW, tz=TZ,
-                agent=True, history=history,
+                id=uuid4(), text="save that as my brekkie", captured_at=NOW, tz=TZ, history=history,
             ))
             assert resp2.saved_meal is not None and resp2.saved_meal.name == name
             assert await _scalar(conn, "SELECT count(*) FROM meal_macros WHERE lower(name) = lower(%s)", (name,)) == 1
@@ -288,7 +286,7 @@ def test_save_meal_from_a_conversation_log_and_the_fallbacks(monkeypatch):
             latest = f"Latest {tag}"
             runner3 = _fake_runner([("save_meal", {"name": latest})], "Saved.")
             monkeypatch.setattr(agent_svc, "Runner", runner3)
-            resp3 = await logs_routes.create_log(_log(f"save that as {latest}", agent=True))
+            resp3 = await logs_routes.create_log(_log(f"save that as {latest}"))
             assert resp3.saved_meal is not None and resp3.saved_meal.name == latest
             assert (await _macro(conn, latest))["items"] == [{"food_id": egg, "serving_id": "s", "qty": 2.0}]
 
@@ -307,8 +305,7 @@ def test_save_meal_from_a_conversation_log_and_the_fallbacks(monkeypatch):
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(refusals))
             resp4 = await logs_routes.create_log(LogCreate(
-                id=uuid4(), text="save the other one", captured_at=NOW, tz=TZ,
-                agent=True, history=stale,
+                id=uuid4(), text="save the other one", captured_at=NOW, tz=TZ, history=stale,
             ))
             assert resp4.saved_meal is None and resp4.note is None
             assert (await _macro(conn, latest))["name"] == latest
@@ -323,7 +320,7 @@ def test_save_in_an_estimate_only_turn_stamps_this_turns_log(monkeypatch):
 
     async def scenario():
         async with isolated_db() as conn:
-            _stub_pipeline(monkeypatch)  # log_estimate never calls decompose
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             tag = uuid4().hex[:6]
             shrimp = await insert_named_food(conn, f"shrimp {tag}", [HUNDRED_G])
             await insert_named_alias(conn, norm(f"shrimp {tag}"), shrimp)
@@ -341,7 +338,7 @@ def test_save_in_an_estimate_only_turn_stamps_this_turns_log(monkeypatch):
                 "Staged the platter — it saves when you commit.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = _log(f"a platter of shrimp, save that as {name}", agent=True)
+            body = _log(f"a platter of shrimp, save that as {name}")
             resp = await logs_routes.create_log(body)
 
             assert [it.estimated for it in resp.items] == ["portion"]
@@ -375,8 +372,7 @@ def test_a_committed_log_with_nothing_in_it_is_not_a_name_collision(monkeypatch)
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(probe))
             resp = await logs_routes.create_log(LogCreate(
-                id=uuid4(), text="save that as ghost", captured_at=NOW, tz=TZ,
-                agent=True, history=history,
+                id=uuid4(), text="save that as ghost", captured_at=NOW, tz=TZ, history=history,
             ))
             assert resp.saved_meal is None
             assert await _macro(conn, "ghost") is None
@@ -390,20 +386,17 @@ def test_save_in_the_same_turn_stamps_the_staged_rows_and_commit_builds_the_macr
             egg = await insert_food(conn)
             await insert_alias(conn, egg)  # "two eggs" → tier 1, resolved
 
-            async def decompose(text, ctx, **kw):
-                return _parsed(("two eggs", 2))
-
-            _stub_pipeline(monkeypatch, decompose=decompose)
+            _stub_pipeline(monkeypatch)
             tag = uuid4().hex[:6]
             name = f"Same turn {tag}"
             triggers = [f"Same-Turn {tag}", f"st {tag}"]
             runner = _fake_runner(
-                [("log_food", {"text": "two eggs"}),
+                [("log_food", {"items": [food("two eggs", qty=2)]}),
                  ("save_meal", {"name": name, "trigger_phrases": triggers})],
                 "Staged the eggs — saved as a meal when you commit.",
             )
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            body = _log(f"two eggs, save that as {name}", agent=True)
+            body = _log(f"two eggs, save that as {name}")
             resp = await logs_routes.create_log(body)
             assert [(it.phrase, it.status, it.qty) for it in resp.items] == [("two eggs", "resolved", 2.0)]
             # not saved yet: the note (the chat's bubble) says when
@@ -429,7 +422,7 @@ def test_save_in_the_same_turn_stamps_the_staged_rows_and_commit_builds_the_macr
 def test_save_from_words_resolves_through_the_tiers_and_reports_the_unknown(monkeypatch):
     async def scenario():
         async with isolated_db() as conn:
-            _stub_pipeline(monkeypatch)  # words go straight to the cascade — no decompose
+            _stub_pipeline(monkeypatch)  # tracing off; the model is the fake Runner below
             fx = await breakfast_fixture(conn)
             tag = fx.tag
             banana = await insert_named_food(conn, f"banana {tag}", [BANANA])
@@ -457,7 +450,7 @@ def test_save_from_words_resolves_through_the_tiers_and_reports_the_unknown(monk
                 assert out["error"] == "unresolved" and [u["phrase"] for u in out["unresolved"]] == [cold]
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(create, "Saved 2 of 3."))
-            body = _log(f"make a meal called {name}", agent=True)
+            body = _log(f"make a meal called {name}")
             resp = await logs_routes.create_log(body)
             assert resp.items == [] and resp.saved_meal is not None
             assert resp.saved_meal.name == name and resp.saved_meal.item_count == 2
@@ -478,7 +471,7 @@ def test_save_from_words_resolves_through_the_tiers_and_reports_the_unknown(monk
             ]
             runner = _fake_runner([("save_meal", {"name": name.lower(), "items": more})], "Added.")
             monkeypatch.setattr(agent_svc, "Runner", runner)
-            resp2 = await logs_routes.create_log(_log(f"add a banana and 3 eggs to {name}", agent=True))
+            resp2 = await logs_routes.create_log(_log(f"add a banana and 3 eggs to {name}"))
             assert resp2.saved_meal is not None and resp2.saved_meal.item_count == 3
             row = await _macro(conn, name)
             assert row["items"] == [
@@ -527,7 +520,7 @@ def test_update_meal_renames_retriggers_sets_qty_removes_and_toggles_active(monk
                 assert out["is_active"] is True
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(edits, "Updated."))
-            resp = await logs_routes.create_log(_log("rename my usual breakfast", agent=True))
+            resp = await logs_routes.create_log(_log("rename my usual breakfast"))
             # the items changed: the code-side note rides the response
             assert resp.saved_meal is not None and resp.saved_meal.name == new
             assert resp.saved_meal.item_count == 2 and resp.items == []
@@ -567,8 +560,7 @@ def test_agent_meal_tools_are_the_tenants_alone(monkeypatch):
             runner = _probe_runner(probe)
             monkeypatch.setattr(agent_svc, "Runner", runner)
             resp = await logs_routes.create_log(LogCreate(
-                id=uuid4(), text="deactivate the usual breakfast", captured_at=NOW, tz=TZ,
-                agent=True, history=history,
+                id=uuid4(), text="deactivate the usual breakfast", captured_at=NOW, tz=TZ, history=history,
             ))
             assert resp.saved_meal is None and resp.items == []
             assert mine not in runner.input and "(none yet)" in runner.input
@@ -723,7 +715,7 @@ def test_save_meal_takes_the_ids_and_amounts_past_foods_reported(monkeypatch):
                 assert "error" not in out and "unresolved" not in out, out
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(build, "Saved it."))
-            body = _log(f"make a meal called {name} from what I had yesterday", agent=True)
+            body = _log(f"make a meal called {name} from what I had yesterday")
             resp = await logs_routes.create_log(body)
             assert resp.saved_meal is not None and resp.saved_meal.item_count == 2
             row = await _macro(conn, name)
@@ -781,7 +773,7 @@ def test_a_food_this_account_never_logged_cannot_join_a_meal_by_id(monkeypatch):
                     assert "log them once first" not in out["message"], (why, out)
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(probe, "Couldn't do that."))
-            resp = await logs_routes.create_log(_log(f"save {name}", agent=True))
+            resp = await logs_routes.create_log(_log(f"save {name}"))
             assert resp.saved_meal is None
             assert await _scalar(
                 conn, "SELECT count(*) FROM meal_macros WHERE name = %s", (name,)
@@ -816,7 +808,7 @@ def test_an_id_without_a_serving_takes_the_default_and_duplicates_merge(monkeypa
                 assert "error" not in out, out
 
             monkeypatch.setattr(agent_svc, "Runner", _probe_runner(build, "Saved."))
-            resp = await logs_routes.create_log(_log(f"save {name}", agent=True))
+            resp = await logs_routes.create_log(_log(f"save {name}"))
             assert resp.saved_meal is not None
             row = await _macro(conn, name)
             # the id beat the alias, the default serving filled in, and the two
