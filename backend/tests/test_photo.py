@@ -1326,3 +1326,57 @@ def test_a_menu_match_is_only_believed_when_the_web_lane_actually_ran():
     # §3.4a: transcribed numbers carry a visible link to the page
     assert staged.web_source is not None
     assert staged.web_source.url.startswith("https://example-restaurant.test/menu/")
+
+
+def test_a_camera_shot_s_location_names_the_places_around_it_for_the_owner_only(monkeypatch):
+    """§3.4b (2026-09-12): the phone's fix becomes the places around it —
+    told to the vision call and named on the `read_photo` line — only on the
+    owner's web lane (the lookup is billed, §8.9), and never without a fix.
+    The lookup runs after the claim, so a replayed id spends nothing on it."""
+    import auth
+    from services import places
+
+    asked: list = []
+
+    async def nearby(where):
+        asked.append(where)
+        return [places.Place("Chipotle Mexican Grill", "Mexican Restaurant", "1 Market St, San Francisco")]
+
+    monkeypatch.setattr(places, "nearby", nearby)
+    told: list[str] = []
+
+    async def analyze(image, mime, *, context="", web=False):
+        told.append(context)
+        return VREAL.VisionResult(items=[], meal_hint=None)
+
+    monkeypatch.setattr(sys.modules["services.vision"], "analyze", analyze)
+    here = places.Fix(37.7937, -122.3965, 20.0)
+
+    async def stage(as_owner: bool, where):
+        async with isolated_db():
+            events: list[dict] = []
+
+            async def emit(ev):
+                events.append(ev)
+
+            token = auth.current_user.set({"id": "t", "email": "test", "is_owner": as_owner})
+            try:
+                await photo._stage_photo(
+                    PNG, "image/png", uuid4(), CAPTURED, None, TZ, emit, where=where
+                )
+            finally:
+                auth.current_user.reset(token)
+            return [e["args"] for e in events if e["type"] == "tool_call"]
+
+    calls = asyncio.run(stage(True, here))
+    assert asked == [here]
+    # the line goes up at once; the same id names the place once it is known
+    assert "near" not in calls[0] and calls[-1]["near"] == ["Chipotle Mexican Grill"]
+    assert "- Chipotle Mexican Grill (Mexican Restaurant), 1 Market St, San Francisco" in told[-1]
+
+    for as_owner, where in ((False, here), (True, None)):
+        asked.clear()
+        calls = asyncio.run(stage(as_owner, where))
+        assert asked == [], (as_owner, where)
+        assert len(calls) == 1 and "near" not in calls[0]
+        assert "the phone was" not in told[-1]

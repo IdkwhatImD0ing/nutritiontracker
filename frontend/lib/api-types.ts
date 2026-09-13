@@ -3309,6 +3309,12 @@ export interface operations {
                      * @description the staged photo log this conversation is tuning (§3.4b)
                      */
                     photo_log_id?: string;
+                    /** @description the phone's latitude when the photo was taken */
+                    lat?: number;
+                    /** @description the phone's longitude when the photo was taken */
+                    lng?: number;
+                    /** @description how far off that fix may be, in meters */
+                    accuracy?: number;
                 };
             };
         };

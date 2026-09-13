@@ -74,7 +74,8 @@ committed — keep it that way. `.env.example` lists the canonical variable name
 `DATABASE_URL`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_COOKIE_SECRET`, `OPENAI_API_KEY`,
 `DEEPGRAM_API_KEY`, `FDC_API_KEY`, `OFF_USER_AGENT`, `FIRETRACE_API_KEY` (a development
 key — the key decides the environment; unset, tracing is simply off), `FIRECRAWL_API_KEY`
-(the photo lane's web tools; unset, the lane keeps hosted search alone), the `LANGFUSE_*`
+(the photo lane's web tools; unset, the lane keeps hosted search alone), `GOOGLE_PLACES_API_KEY`
+(the places around a camera shot, DESIGN §3.4b; unset, photos carry no place), the `LANGFUSE_*`
 set (unused since the eval harness was removed, 2026-09-11), plus the Neon-managed
 `POSTGRES_*`/`PG*` set.
 
@@ -388,6 +389,17 @@ the ten known failures (368 pass). Live, as the owner: the trace's utterance now
 ramen by id in 10.4 s with no question; a Big Mac's web-lane lookup runs 35–40 s, right at the
 40 s inline cap (BACKLOG 196).
 
+**2026-09-12 — where a photo was taken** (DESIGN §3.4b; BACKLOG 197). The owner's photo sheet
+asks for the phone's location when it opens; a *Take a photo* shot carries it (a library pick
+never does) as `lat`/`lng`/`accuracy` on `POST /api/agent`, and `services/places.py` turns it
+into the five nearest places from Google Places API (New) Nearby Search. The vision call reads
+them beside the profile notes, worded as where the phone was, not where the food came from;
+the `read_photo` line says *Reading the plate near …*. Owner only, skipped without
+`GOOGLE_PLACES_API_KEY` or when the fix is vaguer than 200 m; nothing about the location is
+stored. `tests/test_places.py` (13, offline), four offline tests in `tests/test_photo_chat.py`
+and one DB test in `tests/test_photo.py`. **No iPhone has run it yet**: the permission prompt's
+timing against the camera, and whether iOS keeps the grant between launches, are unverified.
+
 What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
 (18, now 100), the preview-protection bypass token (19), the input-hardening pass (98), the
 open-sourcing follow-ups (99–111), and whatever real use turns up.
@@ -436,6 +448,7 @@ person. DESIGN §0.5 has the *why* for each.
 | Deepgram | an API key — or set `STT_PROVIDER=openai` and skip it; OpenAI transcribe is the fallback either way | `DEEPGRAM_API_KEY` |
 | USDA FDC | free key: https://fdc.nal.usda.gov/api-key-signup | `FDC_API_KEY` |
 | Firecrawl | optional. A key from [firecrawl.dev](https://firecrawl.dev) gives the owner's photo lane its hosted MCP tools — finding and reading a menu page for the dish in the picture (DESIGN §3.4b). Without it the lane still has hosted `web_search`; demo accounts never get either | `FIRECRAWL_API_KEY` |
+| Google Places | optional. In [Google Cloud](https://console.cloud.google.com), enable **Places API (New)** and create an API key restricted to it. The owner's camera shots then carry the names of the places around them to the photo reader (DESIGN §3.4b). One Nearby Search Pro call per photo: 5,000 free a month | `GOOGLE_PLACES_API_KEY` |
 | FireTrace | a project on your FireTrace deployment, one write key per environment (the key decides which). Unset, tracing is off and nothing else changes | `FIRETRACE_API_KEY` |
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |
 

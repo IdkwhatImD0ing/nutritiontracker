@@ -62,6 +62,7 @@ from routes.logs import (
     release_claim,
     transcribe_for_log,
 )
+from services import places
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_user)])
@@ -87,6 +88,16 @@ _AGENT_FORM["properties"]["text"] = {
 _AGENT_FORM["properties"]["photo_log_id"] = {
     "type": "string", "format": "uuid",
     "description": "the staged photo log this conversation is tuning (§3.4b)",
+}
+# where the phone was when a camera shot was taken (§3.4b, 2026-09-12)
+_AGENT_FORM["properties"]["lat"] = {
+    "type": "number", "description": "the phone's latitude when the photo was taken",
+}
+_AGENT_FORM["properties"]["lng"] = {
+    "type": "number", "description": "the phone's longitude when the photo was taken",
+}
+_AGENT_FORM["properties"]["accuracy"] = {
+    "type": "number", "description": "how far off that fix may be, in meters",
 }
 
 
@@ -395,6 +406,11 @@ async def agent_voice(
     meal_hint: Annotated[Meal | None, Form()] = None,
     text: Annotated[str | None, Form()] = None,
     photo_log_id: Annotated[UUID | None, Form()] = None,
+    # strings, not floats: places.fix drops a malformed fix, where a float
+    # field would 422 the whole turn over it
+    lat: Annotated[str | None, Form()] = None,
+    lng: Annotated[str | None, Form()] = None,
+    accuracy: Annotated[str | None, Form()] = None,
 ) -> NDJSONResponse:
     """The multipart turn — exactly one of `audio` or `image`.
 
@@ -412,7 +428,12 @@ async def agent_voice(
 
     Image with `text` (§6.4, 2026-09-09): a chat turn that happens to carry a
     picture. It runs the agent, which can see the image — see
-    `_agent_image_turn`."""
+    `_agent_image_turn`.
+
+    `lat`/`lng`/`accuracy` (2026-09-12): where the phone was when a camera
+    shot was taken. Only the bare photo turn reads them, for the places
+    around it (services/places.py). A missing or malformed fix is dropped,
+    never refused — it is a hint, and must not cost the person the photo."""
     turns = _parse_history(history)
     if (audio is None) == (image is None):
         raise HTTPException(422, "send exactly one of `audio` or `image`")
@@ -432,7 +453,9 @@ async def agent_voice(
             return await _agent_image_turn(
                 image, said, log_id, captured_at, tz, turns, photo_log_id
             )
-        return await _agent_photo(image, log_id, captured_at, tz, meal_hint, turns)
+        return await _agent_photo(
+            image, log_id, captured_at, tz, meal_hint, turns, places.fix(lat, lng, accuracy)
+        )
     live = live_run(log_id)
     if live is not None:
         return _stream(_follow(live))
@@ -530,13 +553,14 @@ async def _agent_photo(
     tz: str,
     meal_hint: Meal | None,
     turns: list[AgentTurn] | None,
+    where: places.Fix | None = None,
 ) -> NDJSONResponse:
     """The photo turn (§3.4b in the chat). The upload's two validations happen
     here, before the first byte of the stream, so 415/413 stay the plain HTTP
     errors the lane has always answered with; everything after rides the
     stream. `turns` is accepted and ignored: this turn runs no model, so there
     is no conversation to read — the chat keeps its own history for the tuning
-    turns that follow."""
+    turns that follow. `where` is the camera shot's location, if it had one."""
     from routes import photo as photo_route  # lazy: it imports routes/logs
 
     image_bytes, sniffed = await photo_route.read_image(image)
@@ -561,6 +585,7 @@ async def _agent_photo(
                 # §8.6 orphan window has to be the same span — at 90 s a retry
                 # elsewhere would re-run vision under a run still thinking
                 grace=_AGENT_RERUN_GRACE_SECONDS,
+                where=where,
             )
             trace.set(output=response)
         # _stage_photo builds the reply itself (photo_reply) on every path that
