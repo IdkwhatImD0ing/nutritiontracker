@@ -243,7 +243,8 @@ regression even when tests pass.
    link — the deployment metadata's `source: "git"` does). Agents deploy previews only
    (`vercel deploy --yes`); production changes only through a push the owner asked for.
    Since 2026-09-12 a push that changes nothing under `frontend/`, `backend/` (tests aside)
-   or `vercel.json` is **not built at all** — `vercel.json`'s `ignoreCommand` diffs against
+   or `vercel.json` is **not built at all** — each service's `ignoreCommand` in `vercel.json`
+   (the same command on both; Vercel refuses a top-level one beside `services`) diffs against
    the last successful deployment — so a docs-only push leaves no preview and production
    stays on its last build. Previews are kept one week (project settings), production 30
    days: each deployment stores a ~39 MB Python bundle plus ~17 MB of web functions, and
