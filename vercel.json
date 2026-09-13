@@ -10,8 +10,7 @@
       "ignoreCommand": "git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- ':(top)frontend' ':(top)backend' ':(top)vercel.json' ':(top,exclude)backend/tests' || exit 1",
       "functions": {
         "main.py": {
-          "maxDuration": 120,
-          "excludeFiles": "{tests/**,backend/tests/**}"
+          "maxDuration": 120
         }
       }
     }
