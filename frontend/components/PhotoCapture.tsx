@@ -12,6 +12,15 @@ const JPEG_QUALITY = 0.85;
  *  blob: URL is dead after a reload — and it must be small. */
 const THUMB_EDGE = 240;
 const THUMB_QUALITY = 0.6;
+/** A camera shot is a file made moments ago. Desktop browsers ignore
+ *  `capture` and open a file picker, where "Take a photo" can hand back a
+ *  photo from any day — so the phone's location rides only a file this new. */
+const FRESH_MS = 5 * 60_000;
+
+/** Where the phone was (§3.4b, 2026-09-12): the Geolocation API's fix,
+ *  accuracy in meters. The server turns it into the names of the places
+ *  around it for the photo reader, and stores none of it. */
+export type Fix = { lat: number; lng: number; accuracy: number };
 
 /** One prepared shot (§3.4b in the chat, 2026-09-08). `capturedAt` is the
  *  retry key, exactly as VoiceClip's is: re-sending the same shot reuses the
@@ -22,6 +31,11 @@ export type PhotoShot = {
   capturedAt: string;
   /** a small data: URL for the chat bubble — never the full JPEG */
   thumb: string | null;
+  /** camera shots only, of a file made in the last few minutes — a library
+   *  pick may have been taken anywhere, and the phone's location now would
+   *  mislead the reader. Null when there was no fix in time, or the person
+   *  said no. */
+  where?: Fix | null;
 };
 
 type Props = {
@@ -29,6 +43,10 @@ type Props = {
   onClose: () => void;
   /** a decoded, downscaled shot — the caller sends it as the chat turn */
   onPicked: (shot: PhotoShot) => void;
+  /** ask where the phone is while the sheet is open. The owner's only: the
+   *  server looks places up for no one else (§8.9), so a demo account is
+   *  never shown a prompt that could not help it. */
+  locate?: boolean;
 };
 
 type Phase = "pick" | "preparing" | "error";
@@ -95,11 +113,12 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
  *  to correct it. Two buttons a human taps is also the only shape that works:
  *  a file input cannot be opened from an effect, because the user activation
  *  is long gone by the time the lane has mounted. */
-export default function PhotoCapture({ open, onClose, onPicked }: Props) {
+export default function PhotoCapture({ open, onClose, onPicked, locate = false }: Props) {
   const [phase, setPhase] = useState<Phase>("pick");
   const [error, setError] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
+  const whereRef = useRef<Fix | null>(null);
 
   // A reopened sheet starts clean.
   useEffect(() => {
@@ -108,7 +127,33 @@ export default function PhotoCapture({ open, onClose, onPicked }: Props) {
     setError(null);
   }, [open]);
 
-  const onFile = async (file: File | undefined) => {
+  // Where the phone is, asked when the sheet opens rather than on the camera
+  // tap: the permission prompt then comes before the camera instead of over
+  // it, and the fix has the whole shot to arrive. A denial, a timeout and a
+  // fix still pending all mean the same thing — the photo goes without one.
+  useEffect(() => {
+    whereRef.current = null;
+    if (!open || !locate || !navigator.geolocation) return;
+    let live = true;
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (live) {
+          whereRef.current = {
+            lat: coords.latitude,
+            lng: coords.longitude,
+            accuracy: coords.accuracy,
+          };
+        }
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 60_000, timeout: 20_000 },
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, locate]);
+
+  const onFile = async (file: File | undefined, camera: boolean) => {
     if (!file) return;
     setPhase("preparing");
     setError(null);
@@ -129,6 +174,7 @@ export default function PhotoCapture({ open, onClose, onPicked }: Props) {
         mimeType: blob.type || "image/jpeg",
         capturedAt: new Date().toISOString(),
         thumb,
+        where: camera && Date.now() - file.lastModified < FRESH_MS ? whereRef.current : null,
       });
       setPhase("pick");
     } catch {
@@ -172,7 +218,7 @@ export default function PhotoCapture({ open, onClose, onPicked }: Props) {
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = ""; // re-picking the same file must fire again
-            void onFile(f);
+            void onFile(f, true);
           }}
         />
         <input
@@ -183,7 +229,7 @@ export default function PhotoCapture({ open, onClose, onPicked }: Props) {
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = "";
-            void onFile(f);
+            void onFile(f, false);
           }}
         />
 

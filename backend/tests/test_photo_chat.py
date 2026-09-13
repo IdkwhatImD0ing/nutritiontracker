@@ -594,3 +594,139 @@ def test_words_sent_with_audio_are_refused_rather_than_dropped():
         )
     assert exc.value.status_code == 422
     assert "`text` belongs with `image`" in exc.value.detail
+
+
+# ---------------------------------------------------------------------------
+# 7. the camera shot's location (2026-09-12)
+# ---------------------------------------------------------------------------
+
+
+def test_a_bare_photo_hands_its_fix_to_the_photo_turn_and_drops_a_bad_one():
+    """The form's lat/lng/accuracy reach the plate parse as one Fix. A partial
+    or malformed fix is dropped, never a 422: the location is a hint, and it
+    must not cost the person the photo."""
+    from io import BytesIO
+
+    from starlette.datastructures import Headers, UploadFile
+
+    from routes import agent as agent_routes
+    from services import places
+
+    got: list = []
+
+    async def to_parse(*a, **_k):
+        got.append(a[6])  # where — after image, id, captured_at, tz, meal_hint, turns
+
+    real = agent_routes._agent_photo
+    agent_routes._agent_photo = to_parse
+    try:
+        for lat, lng, accuracy in (
+            ("37.79", "-122.39", "20"), ("37.79", None, "20"), ("nan", "-122.39", "20"),
+            ("undefined", "-122.39", "20"), (None, None, None),
+        ):
+            asyncio.run(
+                agent_routes.agent_voice(
+                    log_id=uuid4(), captured_at=CAPTURED, tz=TZ,
+                    image=UploadFile(
+                        file=BytesIO(b"\xff\xd8\xff\xe0" + b"\0" * 32), filename="plate.jpg",
+                        headers=Headers({"content-type": "image/jpeg"}),
+                    ),
+                    lat=lat, lng=lng, accuracy=accuracy,
+                )
+            )
+    finally:
+        agent_routes._agent_photo = real
+    assert got == [places.Fix(37.79, -122.39, 20.0), None, None, None, None]
+
+
+def test_the_location_fields_parse_through_the_real_multipart_route():
+    """The test above calls the handler directly, which skips FastAPI's form
+    parsing. This one posts a real multipart body, the way the app does — and
+    a malformed fix must reach the handler to be dropped, not be a 422."""
+    from fastapi import FastAPI
+    from fastapi.responses import Response
+    from fastapi.testclient import TestClient
+
+    import auth
+    from routes import agent as agent_routes
+    from services import places
+    from tenancy_harness import override_user
+
+    got: list = []
+
+    async def to_parse(*a, **_k):
+        got.append(a[6])
+        return Response(status_code=204)
+
+    app = FastAPI()
+    app.include_router(agent_routes.router)
+    app.dependency_overrides[auth.require_user] = override_user()
+    real = agent_routes._agent_photo
+    agent_routes._agent_photo = to_parse
+    try:
+        with TestClient(app) as client:
+            for extra in (
+                {"lat": "37.7937", "lng": "-122.3965", "accuracy": "20"},
+                {},
+                {"lat": "undefined", "lng": "-122.3965", "accuracy": "20"},
+            ):
+                r = client.post(
+                    "/api/agent",
+                    data={"id": str(uuid4()), "captured_at": CAPTURED.isoformat(), "tz": TZ, **extra},
+                    files={"image": ("plate.jpg", b"\xff\xd8\xff\xe0" + b"\0" * 32, "image/jpeg")},
+                )
+                assert r.status_code == 204, r.text
+    finally:
+        agent_routes._agent_photo = real
+    assert got == [places.Fix(37.7937, -122.3965, 20.0), None, None]
+
+
+def test_the_multipart_schema_documents_the_location_fields():
+    """typegen reads this; all three are optional — a library pick, a denied
+    prompt or a slow fix all send the photo without them."""
+    from routes import agent as agent_routes
+
+    for name in ("lat", "lng", "accuracy"):
+        assert agent_routes._AGENT_FORM["properties"][name]["type"] == "number"
+        assert name not in agent_routes._AGENT_FORM["required"]
+
+
+def test_the_places_ride_the_photo_context_as_where_the_phone_was(monkeypatch):
+    """The places join the profile notes and the date the vision call already
+    reads, nearest first — worded as where the PHONE was, so a plate cooked
+    at home next to a taqueria is not read as a burrito. Without places the
+    context is exactly what it was."""
+    from routes import photo as photo_route
+    from services import places
+    from services.places import Place
+
+    async def notes(*_a, **_k):
+        return {"value": "I eat lunch at the office cafeteria."}
+
+    near = [
+        Place("Chipotle Mexican Grill", "Mexican Restaurant", "1 Market St, San Francisco"),
+        Place("Blue Bottle Coffee", None, None),
+    ]
+    asked: list = []
+
+    async def nearby(where):
+        asked.append(where)
+        return near
+
+    monkeypatch.setattr(photo_route.db, "fetchone", notes)
+    monkeypatch.setattr(places, "nearby", nearby)
+    plain, found = asyncio.run(photo_route._photo_context(CAPTURED, TZ))
+    assert (found, asked) == ([], [])  # no fix, no lookup
+    assert plain == (
+        "I eat lunch at the office cafeteria.\n\n"
+        "This photo was taken on Tuesday 2026-09-08 at 12:15 local time."
+    )
+    here = places.Fix(37.79, -122.39, 20.0)
+    told, found = asyncio.run(photo_route._photo_context(CAPTURED, TZ, here))
+    assert asked == [here] and found == near
+    assert told.startswith(plain + "\n\n")
+    assert (
+        "- Chipotle Mexican Grill (Mexican Restaurant), 1 Market St, San Francisco\n"
+        "- Blue Bottle Coffee\n"
+    ) in told
+    assert "not necessarily where the food came from" in told

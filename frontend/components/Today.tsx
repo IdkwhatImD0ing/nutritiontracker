@@ -514,11 +514,15 @@ export default function Today() {
         return;
       case "tool_call":
         // a re-attached stream (§8.6) replays the lines the first attempt
-        // already showed: the same call id is the same line, running again
+        // already showed: the same call id is the same line, running again —
+        // with the newest args, which is how the photo turn names the place
+        // once its lookup lands (2026-09-12)
         setChat((cur) =>
           cur.some((m) => m.kind === "tool" && m.id === ev.id)
             ? cur.map((m) =>
-                m.kind === "tool" && m.id === ev.id ? { ...m, done: false, output: undefined } : m,
+                m.kind === "tool" && m.id === ev.id
+                  ? { ...m, args: ev.args, done: false, output: undefined }
+                  : m,
               )
             : [...cur, { kind: "tool", id: ev.id, name: ev.name, args: ev.args, done: false }],
         );
@@ -1119,6 +1123,7 @@ export default function Today() {
               busy={captureBusy}
               error={captureError}
               openWith={openWith}
+              locate={me?.is_owner === true}
               onSubmit={submit}
               onSubmitAudio={submitAudio}
               onSubmitPhoto={submitPhoto}

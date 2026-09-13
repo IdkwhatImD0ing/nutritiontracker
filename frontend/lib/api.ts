@@ -365,6 +365,14 @@ function photoForm(args: {
   // instead of the deterministic §3.4b plate parse
   if (args.text?.trim()) form.set("text", args.text.trim());
   if (args.photo_log_id) form.set("photo_log_id", args.photo_log_id);
+  // a camera shot's location (2026-09-12): the server names the places around
+  // it for the bare plate parse only, so a turn with words does not send it
+  const where = args.text?.trim() ? null : args.shot.where;
+  if (where) {
+    form.set("lat", String(where.lat));
+    form.set("lng", String(where.lng));
+    form.set("accuracy", String(where.accuracy));
+  }
   form.set("image", new File([blob], "plate.jpg", { type: mimeType || "image/jpeg" }));
   return form;
 }

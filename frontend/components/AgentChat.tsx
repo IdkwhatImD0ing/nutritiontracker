@@ -75,6 +75,8 @@ type Props = {
   onVoiceFailure: (error: VoiceFailure) => void;
   /** the result card's Review: bring the staged list back into the split */
   onReview: (log: LogCreateResponse) => void;
+  /** a camera shot carries where the phone was (PhotoCapture's `locate`) */
+  locate?: boolean;
   /** Rendered as the lower pane of <SplitSheet> rather than as a sheet of its
    *  own: no backdrop and no rounded shell — the split owns both — so the
    *  staged list stays on screen while the conversation continues under it
@@ -213,7 +215,9 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       // §3.4b: no model called this — the photo turn emits the pair itself so
       // the vision call is visible while it runs (it is the slowest step).
       const list = out && Array.isArray(out.seen) ? (out.seen as unknown[]) : null;
-      doing = "Reading the plate…";
+      // 2026-09-12: the nearest place the phone was at, when one was looked up
+      const near = Array.isArray(a.near) && a.near.length ? str(a.near[0]) : "";
+      doing = near ? `Reading the plate near ${near}…` : "Reading the plate…";
       ok =
         list == null
           ? "Done"
@@ -409,6 +413,7 @@ export default function AgentChat({
   onReview,
   onClose,
   docked = false,
+  locate = false,
 }: Props) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -753,6 +758,7 @@ export default function AgentChat({
           the send, and every failure, belong to the conversation. */}
       <PhotoCapture
         open={pickerOpen}
+        locate={locate}
         onClose={() => {
           // dismissed without a pick: the lane's one send-on-pick is spent,
           // or the composer's next camera tap would send instead of attach

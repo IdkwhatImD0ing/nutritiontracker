@@ -31,6 +31,7 @@ logs.input_mode).
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from datetime import datetime
@@ -74,6 +75,7 @@ from services import quota
 if TYPE_CHECKING:
     from models import LogCreate, LogPollResponse
     from services.agent import PhotoChange
+    from services.places import Fix, Place
     from services.vision import VisionItem, VisionResult
 
 router = APIRouter(dependencies=[Depends(require_user)])
@@ -126,7 +128,9 @@ def sniff_image(head: bytes) -> str | None:
     return None
 
 
-async def _photo_context(captured_at: datetime, tz: str | None) -> str:
+async def _photo_context(
+    captured_at: datetime, tz: str | None, where: Fix | None = None
+) -> tuple[str, list[Place]]:
     """What the vision call is told about the person, and when they ate.
 
     §6.1's profile notes are the one place they already write standing facts
@@ -135,15 +139,40 @@ async def _photo_context(captured_at: datetime, tz: str | None) -> str:
     place named, nothing to look up. The date matters as much — a cafeteria
     menu is per-day, so a photo without one can only be matched against
     today's. Nothing here knows what a cafeteria is; the notes are free text
-    and the lane works the same for a restaurant."""
-    row = await db.fetchone("SELECT value FROM settings WHERE key = 'profile_notes'")
+    and the lane works the same for a restaurant.
+
+    `where` (2026-09-12) is the phone's fix when the shot was taken; the
+    places around it (services/places.py), nearest first, name a place
+    without anyone having to write it down. They are looked up beside the
+    notes read — two independent round trips — and returned with the context
+    so the chat can name the place. They are worded as where the PHONE was,
+    never where the food came from — a plate cooked at home next door to a
+    taqueria looks the same to a map."""
+    from services import places  # lazy: stubbed in route tests
+
+    async def _near() -> list[Place]:
+        return await places.nearby(where) if where is not None else []
+
+    row, near = await asyncio.gather(
+        db.fetchone("SELECT value FROM settings WHERE key = 'profile_notes'"), _near()
+    )
     notes = (row["value"] if row and isinstance(row.get("value"), str) else "") or ""
     try:
         local = captured_at.astimezone(ZoneInfo(tz)) if tz else captured_at
     except Exception:
         local = captured_at
     when = f"This photo was taken on {local:%A %Y-%m-%d} at {local:%H:%M} local time."
-    return "\n\n".join(part for part in (notes.strip(), when) if part)
+    around = ""
+    if near:
+        around = (
+            "When it was taken, the phone was at or near one of these places "
+            "(from a map, nearest first):\n"
+            + "\n".join(f"- {p.line()}" for p in near)
+            + "\nThat is where the phone was, not necessarily where the food came "
+            "from: food cooked at home or brought from somewhere else looks the "
+            "same to a map."
+        )
+    return "\n\n".join(part for part in (notes.strip(), when, around) if part), near
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +490,7 @@ async def _stage_photo(
     tz: str | None,
     emit: Emit | None = None,
     grace: int = _RERUN_GRACE_SECONDS,
+    where: Fix | None = None,
 ) -> LogCreateResponse:
     """The claim, vision, the cascade and staging — the handler's body, inside
     the run's trace, and the chat lane's photo turn (routes/agent.py) verbatim.
@@ -469,6 +499,11 @@ async def _stage_photo(
     line the moment the bytes leave for the model, and settles with what was
     seen. The image itself never rides it — its type and size, as everywhere
     else (§8.8). Without `emit` the identical path runs silently.
+
+    `where` (2026-09-12) is the phone's location when a camera shot was taken.
+    On the web lane it becomes the places around it (services/places.py), told
+    to the vision call and named on the `read_photo` line, so the chat shows
+    what the model was told. The coordinates go no further than that lookup.
 
     `grace` is the §8.6 orphan window — how long another request may plausibly
     still own this id. It is the LANE's worst case, not the route's: a chat
@@ -503,21 +538,26 @@ async def _stage_photo(
 
     tracing.init_tracing()
     call_id = f"photo-{log_id}"
+    args = {"mime": sniffed, "bytes": len(image_bytes)}
     if emit is not None:
-        await emit({
-            "type": "tool_call", "id": call_id, "name": "read_photo",
-            "args": {"mime": sniffed, "bytes": len(image_bytes)},
-        })
-    t0 = time.monotonic()
+        await emit({"type": "tool_call", "id": call_id, "name": "read_photo", "args": args})
     # §8.9: the hosted search and scraper are billed per action, so the web
     # lane is the owner's, as tier 3's is. Read once — it gates both the call
-    # and what may be believed about what comes back.
+    # and what may be believed about what comes back. The places lookup is
+    # billed too, and a place is only worth anything to a lane that can look
+    # it up, so it rides the same gate.
     web_lane = is_owner()
     try:
+        context, near = await _photo_context(captured_at, tz, where if web_lane else None)
+        if near and emit is not None:
+            # the line went up before the lookup; the same id names the place on it
+            await emit({
+                "type": "tool_call", "id": call_id, "name": "read_photo",
+                "args": {**args, "near": [p.name for p in near]},
+            })
+        t0 = time.monotonic()
         seen = await vision.analyze(  # its span rides in this trace (§10)
-            image_bytes, sniffed,
-            context=await _photo_context(captured_at, tz),
-            web=web_lane,
+            image_bytes, sniffed, context=context, web=web_lane,
         )
     except OpenAIError as e:
         await _drop_empty_log(log_id)
