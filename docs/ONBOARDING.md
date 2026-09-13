@@ -242,6 +242,12 @@ regression even when tests pass.
    and auto-deploys every push to `main` (`vercel project inspect` does not print the git
    link — the deployment metadata's `source: "git"` does). Agents deploy previews only
    (`vercel deploy --yes`); production changes only through a push the owner asked for.
+   Since 2026-09-12 a push that changes nothing under `frontend/`, `backend/` (tests aside)
+   or `vercel.json` is **not built at all** — `vercel.json`'s `ignoreCommand` diffs against
+   the last successful deployment — so a docs-only push leaves no preview and production
+   stays on its last build. Previews are kept one week (project settings), production 30
+   days: each deployment stores a ~39 MB Python bundle plus ~17 MB of web functions, and
+   every project on the team shares one storage allowance.
 8. **Tenancy is the database's job.** Never add `WHERE user_id = …` by hand, never touch the
    RLS policies to make a query work, and never run request code without `app.user_id` set.
    A new table that holds user data gets the same `user_id` default + policy as the tables in
