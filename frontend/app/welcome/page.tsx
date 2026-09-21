@@ -184,6 +184,10 @@ export default function Welcome() {
           Nutrition data from{" "}
           <a href="https://fdc.nal.usda.gov/">USDA FoodData Central</a>
         </span>
+        <span className="land-foot-legal">
+          <Link href="/privacy">Privacy</Link>
+          <Link href="/terms">Terms</Link>
+        </span>
       </footer>
     </main>
   );

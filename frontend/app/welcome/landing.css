@@ -316,3 +316,8 @@
 .land-foot a {
   color: var(--muted);
 }
+
+.land-foot-legal {
+  display: flex;
+  gap: 16px;
+}

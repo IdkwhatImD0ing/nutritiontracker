@@ -1,0 +1,112 @@
+/* Tally — the two legal pages (/privacy, /terms). Same ground and tokens as
+   globals.css; nothing here is imported by the app shell, so it cannot affect
+   Today. Deliberately plain: long prose, one column, no cards. */
+
+.legal {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: env(safe-area-inset-top) 20px calc(48px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.legal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 0 0;
+  font-size: 0.9rem;
+}
+
+.legal-mark {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.legal-nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.legal-nav a:hover {
+  color: var(--text);
+}
+
+.legal-head h1 {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 7vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0 0 10px;
+}
+
+.legal-stamp {
+  color: var(--faint);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.legal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  font-size: 0.97rem;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.legal-body h2 {
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+
+.legal-body p {
+  margin: 0 0 12px;
+}
+
+.legal-body p:last-child {
+  margin-bottom: 0;
+}
+
+.legal-body ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.legal-body li {
+  margin-bottom: 7px;
+}
+
+.legal-body strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.legal-body a {
+  color: var(--mint);
+}
+
+.legal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+  font-size: 0.82rem;
+  color: var(--faint);
+}
+
+.legal-foot a {
+  color: var(--muted);
+}
