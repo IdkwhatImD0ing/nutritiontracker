@@ -4,7 +4,9 @@ persist_food(food) upserts a normalized food dict (the shape
 backend/sources/fdc.py get_food returns, plus its source/source_id identity)
 on UNIQUE (source, source_id) and returns the row uuid. Cache-forever: a
 conflict keeps the existing record (one row per real-world food) and only
-touches refreshed_at.
+touches refreshed_at — with one exception, which is a REPAIR rather than a
+refresh: a stored row that carries no loggable serving takes the fresh
+record's numbers (see persist_food).
 
 The table is shared by every account (DESIGN §8.9), so what a caller may put
 on a row is a tenancy rule: apply_label() takes a chosen display name from
@@ -21,6 +23,7 @@ from psycopg.types.json import Json
 
 import auth
 import db
+from resolver.commit import COMMITTABLE_FOOD_SQL, food_committable
 
 
 def apply_label(food: dict, display_name: str | None) -> None:
@@ -36,19 +39,35 @@ def apply_label(food: dict, display_name: str | None) -> None:
 
 
 async def persist_food(food: dict) -> str:
+    """Cache one normalized food; the row uuid, new or existing.
+
+    Cache-forever, except that a stored row with NO loggable serving takes the
+    fresh record's servings, default, per-100 and payload (BACKLOG 198). A
+    provider outage can cache a food with nothing in it — FDC spent 2026-09-15
+    to 09-19 answering /food/{id} for every Branded record with nutrient rows
+    that named no nutrient, so anything looked up in that window stored zero
+    servings — and ON CONFLICT DO UPDATE SET refreshed_at, on its own, would
+    keep that row for good: every lane hides it (COMMITTABLE_FOOD_SQL), so it
+    is invisible AND unrepairable, and a tier-3 run that finds the id again
+    gets this row's uuid back and stages a card the commit guard then refuses.
+    Repairing only an unloggable row keeps the invariant that matters — a good
+    row is never rewritten under a diary that already snapshotted it — and
+    the write carries provider numbers only, never the caller's display_name
+    (apply_label's shared-cache rule is unchanged).
+    """
     source = food.get("source")
     source_id = food.get("source_id")
     if not source or not source_id:
         raise ValueError("persist_food requires 'source' and 'source_id'")
 
     row = await db.fetchone(
-        """
+        f"""
         INSERT INTO foods (source, source_id, source_url, provenance, name,
                            display_name, brand, food_type, state, state_sensitive,
                            servings, default_serving_id, per_100g, payload)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (source, source_id) DO UPDATE SET refreshed_at = now()
-        RETURNING id
+        RETURNING id, {COMMITTABLE_FOOD_SQL.format(t="foods")} AS loggable
         """,
         (
             source,
@@ -67,6 +86,21 @@ async def persist_food(food: dict) -> str:
             Json(food["payload"]),
         ),
     )
+    if not row["loggable"] and food_committable(food):
+        # RETURNING reads the row as it now stands, so this is the stored
+        # record on a conflict and the inserted one otherwise: either way,
+        # nothing here can be logged and the fresh fetch can.
+        await db.execute(
+            "UPDATE foods SET servings = %s, default_serving_id = %s, per_100g = %s, "
+            "payload = %s, refreshed_at = now() WHERE id = %s",
+            (
+                Json(food["servings"]),
+                food["default_serving_id"],
+                Json(food["per_100g"]) if food.get("per_100g") is not None else None,
+                Json(food["payload"]),
+                row["id"],
+            ),
+        )
     return str(row["id"])
 
 

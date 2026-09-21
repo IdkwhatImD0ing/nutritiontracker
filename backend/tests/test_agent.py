@@ -119,10 +119,13 @@ def _deps(**over) -> agent_svc.AgentDeps:
         return {"meal": name, "is_active": True, "item_count": 1,
                 "items": ["egg 2 × 1 large"], "trigger_phrases": triggers or [name.lower()]}
 
-    async def update_meal(name: str, new_name, triggers, is_active, set_qty, remove) -> dict:
+    async def update_meal(
+        name: str, new_name, triggers, is_active, set_qty, remove, swap=None
+    ) -> dict:
         calls["update"].append((
             name, new_name, triggers, is_active,
             [c.model_dump() for c in set_qty] if set_qty else None, remove,
+            [c.model_dump() for c in swap] if swap else None,
         ))
         return {"meal": new_name or name, "is_active": True if is_active is None else is_active,
                 "item_count": 1, "items": ["egg 2 × 1 large"], "trigger_phrases": triggers or []}
