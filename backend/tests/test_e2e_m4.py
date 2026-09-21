@@ -495,7 +495,7 @@ def test_main_app_carries_the_m4_routes_in_a_safe_order(monkeypatch):
     # (string detail) must claim the path ahead of GET /api/foods/{food_id},
     # whose UUID parse error would be a list.
     monkeypatch.setattr(main, "tracing", sys.modules["tracing"])
-    main.app.dependency_overrides[auth.require_user] = override_user(email="e2e", user_id="e2e-m4")
+    main.app.dependency_overrides[auth.require_user] = override_user(email="e2e")
     try:
         with TestClient(main.app) as client:
             r = client.get("/api/foods/barcode", params={"code": "no digits"})

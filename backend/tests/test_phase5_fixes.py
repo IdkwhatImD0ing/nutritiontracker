@@ -831,7 +831,7 @@ def test_g3_non_finite_qty_is_a_422_not_a_500(monkeypatch):
 
     monkeypatch.setattr(quick, "_load_food", never)
     monkeypatch.setattr(main, "tracing", sys.modules["tracing"])
-    main.app.dependency_overrides[auth.require_user] = override_user(email="t", user_id="phase5")
+    main.app.dependency_overrides[auth.require_user] = override_user(email="t")
     ids: list = []
     try:
         with TestClient(main.app, raise_server_exceptions=False) as client:

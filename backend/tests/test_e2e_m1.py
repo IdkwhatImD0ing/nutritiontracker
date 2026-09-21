@@ -77,9 +77,7 @@ def _run(coro):
 
 @pytest.fixture()
 def client():
-    main.app.dependency_overrides[auth.require_user] = override_user(
-        email="billzhangsc@gmail.com", user_id="e2e-m1"
-    )
+    main.app.dependency_overrides[auth.require_user] = override_user(email="billzhangsc@gmail.com")
     try:
         with TestClient(main.app) as c:
             yield c

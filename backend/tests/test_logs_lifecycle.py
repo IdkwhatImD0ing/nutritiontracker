@@ -665,6 +665,12 @@ def test_unknown_when_hint_ignored_with_note_in_staged():
 # 7. §5/§8.1d — voice multipart path through the HTTP route (TestClient).
 #    These hit the live DB (no rollback harness across the TestClient's event
 #    loop) and self-clean their rows, per the workstream test contract.
+#
+#    override_user must keep its DEFAULT user_id (TEST_USER_ID), the tenant
+#    conftest binds for this process: the REQUEST writes as override_user's
+#    tenant while the verify/cleanup db.* calls below run as conftest's, so a
+#    different one makes both invisible to RLS — the reads see nothing and the
+#    DELETEs remove nothing, silently littering the live DB (BACKLOG 134).
 # ---------------------------------------------------------------------------
 
 
@@ -676,7 +682,7 @@ def _voice_app():
 
     app = FastAPI()
     app.include_router(logs_routes.router)
-    app.dependency_overrides[require_user] = override_user(email="test", user_id="t")
+    app.dependency_overrides[require_user] = override_user(email="test")
     return app
 
 
