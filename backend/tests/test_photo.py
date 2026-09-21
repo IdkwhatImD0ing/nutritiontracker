@@ -929,7 +929,7 @@ def _photo_app():
 
     app = FastAPI()
     app.include_router(photo.router)
-    app.dependency_overrides[require_user] = override_user(email="test", user_id="t")
+    app.dependency_overrides[require_user] = override_user(email="test")
     return app
 
 

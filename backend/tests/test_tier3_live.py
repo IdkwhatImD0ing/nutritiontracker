@@ -1,8 +1,10 @@
 """Live tests for the tier-3 search agent (Workstream D — DESIGN.md §3.4, §6.3).
 
 These hit the real Neon DB, the real USDA FDC API, and the real OpenAI API
-(gpt-5.6-terra via openai-agents). Self-cleaning: every row seeded or created
-(logs, item_resolutions, foods) is deleted in a finally block.
+(gpt-5.6-terra via openai-agents), so each of the four scenarios carries
+`@pytest.mark.live` — only test_router_shape, which touches nothing, runs in
+the default suite. Self-cleaning: every row seeded or created (logs,
+item_resolutions, foods) is deleted in a finally block.
 
 Cross-workstream modules (db, sources.fdc, resolver.foods_repo, tracing, auth)
 are being built in parallel; per the workstream contract they are STUBBED here —
@@ -51,21 +53,37 @@ _load_env()
 # ---------------------------------------------------------------------------
 # db stub — the shared interface (fetchall/fetchone/execute/tx) over psycopg,
 # one short-lived connection per call against DATABASE_URL.
+#
+# Every call binds the tenant first, exactly as the real db.py does per
+# statement (db.tenant_sql: SET LOCAL ROLE + app.user_id) and with the same
+# fixed test tenant as the rollback harnesses. Without it the statement runs
+# as the connecting role with app.user_id = '', so migration 002's user_id
+# DEFAULT is NULL and the seed dies on logs.user_id's NOT NULL (BACKLOG 134).
 # ---------------------------------------------------------------------------
 
 import psycopg  # noqa: E402
+import pytest  # noqa: E402
+
+import db as _real_db  # noqa: E402  (the real module; db_stub replaces it below)
+from tenancy_harness import TEST_USER_ID  # noqa: E402
 
 _DB_URL = os.environ["DATABASE_URL"]
 
 
+async def _bind(conn) -> None:
+    await conn.execute(_real_db.tenant_sql(TEST_USER_ID))
+
+
 async def _db_fetchall(sql, params=()):
     async with await psycopg.AsyncConnection.connect(_DB_URL) as conn:
+        await _bind(conn)
         cur = await conn.execute(sql, params)
         return await cur.fetchall()
 
 
 async def _db_fetchone(sql, params=()):
     async with await psycopg.AsyncConnection.connect(_DB_URL) as conn:
+        await _bind(conn)
         cur = await conn.execute(sql, params)
         return await cur.fetchone()
 
@@ -73,6 +91,7 @@ async def _db_fetchone(sql, params=()):
 async def _db_execute(sql, params=()):
     # returns rowcount like db.execute — routes/resolve.py's live guard reads it
     async with await psycopg.AsyncConnection.connect(_DB_URL) as conn:
+        await _bind(conn)
         cur = await conn.execute(sql, params)
         return cur.rowcount
 
@@ -82,6 +101,7 @@ async def _db_tx():
     conn = await psycopg.AsyncConnection.connect(_DB_URL)
     try:
         async with conn.transaction():
+            await _bind(conn)
             yield conn
     finally:
         await conn.close()
@@ -458,6 +478,7 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live
 def test_grilled_chicken_breast_resolves_sr_legacy_cooked():
     async def scenario():
         log_id = str(uuid4())
@@ -525,6 +546,7 @@ def test_grilled_chicken_breast_resolves_sr_legacy_cooked():
     _run(scenario())
 
 
+@pytest.mark.live
 def test_quest_bar_branded_or_question():
     async def scenario():
         log_id = str(uuid4())
@@ -585,6 +607,7 @@ def test_quest_bar_branded_or_question():
     _run(scenario())
 
 
+@pytest.mark.live
 def test_answer_id_option_resolves_locally_without_agent():
     """§5 /api/resolve/answer: a tapped id-bearing option = one get_food + persist,
     no second agent run (fast — FDC latency only)."""
@@ -631,6 +654,7 @@ def test_answer_id_option_resolves_locally_without_agent():
     _run(scenario())
 
 
+@pytest.mark.live
 def test_resolve_edited_phrase_hits_tier1():
     """§5 POST /api/resolve (M0): an edited phrase with an exact alias match
     resolves tier 1 locally and writes the item row."""
