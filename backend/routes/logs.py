@@ -996,6 +996,18 @@ def _meal_out(meal) -> dict:
     }
 
 
+def _looked_up(resolved: list[dict]) -> list[dict]:
+    """What each word the meal tools looked up became: the entry chosen, its
+    numbers, and the runners-up the same search returned (§8.4, 2026-09-20).
+    Empty for a meal built only from `past_foods` ids or from a log — those
+    name a food the person already chose."""
+    return [
+        {k: r[k] for k in ("phrase", "food", "serving", "nutrition", "alternates") if k in r}
+        for r in resolved
+        if "phrase" in r
+    ]
+
+
 def _meal_error(e: HTTPException, *, conflict: str = "duplicate_name") -> dict:
     """routes/meals.py's refusals, as the tool reports them to the model.
     `conflict` is what a 409 means at THIS call site: create/patch raise it
@@ -1112,6 +1124,99 @@ def _merge_meal_rows(rows: list[dict]) -> list[dict]:
     return merged
 
 
+async def _lookup_meal_words(
+    items: list[MealFood], staged: dict[int, StagedItem], meal: Meal
+) -> None:
+    """Tier 3 for the saved-meal words tiers 1–2 could not place, in place.
+
+    Until now they were only reported back (BACKLOG 162): tier 3 was a
+    client-kicked handoff from a staged row, a saved meal has no rows, so a
+    food the person had never logged could not join a meal at all — and
+    neither way out was one, since past_foods can only name a food their diary
+    already holds and logging the meal to define it puts food they may not
+    have eaten in the diary (Bill, 2026-09-19: "miso paste" and "dashi broth"
+    fell out of the miso-soup meal he was building, and no rephrasing put them
+    back). tier3.resolve_phrase is the same run behind the same gates: it
+    caches the food it chooses in `foods` and writes no row.
+
+    The runs go out together under the request's own clock, exactly as the
+    chat's staged rows do (_resolve_inline); one the clock cannot fit, or the
+    demo quota refuses, leaves its word `searching` for the caller to report.
+    """
+    todo = [i for i, st in staged.items() if st.status == "searching"]
+    if not todo or not _inline_enabled():
+        return
+    from services import tier3
+
+    gate = asyncio.Semaphore(_INLINE_PARALLEL)
+
+    async def one(i: int) -> tuple[int, StagedItem | None]:
+        async with gate:
+            left = deadline.left()
+            budget = (
+                _INLINE_CAP_S if left is None
+                else min(_INLINE_CAP_S, left - _AGENT_RESERVE_S)
+            )
+            if budget < _INLINE_MIN_S:
+                return i, None
+            deadline.tier3_budget.set(budget)  # this task's copy of the context only
+            try:
+                await quota.check_resolve()  # demo: the same capped model spend
+                return i, await tier3.resolve_phrase(
+                    items[i].phrase.strip(),
+                    meal,
+                    qty=float(items[i].qty) if items[i].qty is not None else None,
+                    unit=(items[i].unit or "").strip() or None,
+                )
+            except Exception:
+                log.warning("saved-meal tier 3 left %r unplaced", items[i].phrase,
+                            exc_info=True)
+                return i, None
+
+    for i, found in await asyncio.gather(*(one(i) for i in todo)):
+        if found is not None:
+            staged[i] = found
+
+
+_MEAL_FOODS_SQL = (
+    "SELECT id::text AS id, servings, default_serving_id FROM foods WHERE id = ANY(%s::uuid[])"
+)
+
+
+async def _describe_meal_lookups(resolved: list[dict]) -> None:
+    """Give every word item its numbers and its runners-up, in place.
+
+    A saved-meal item is three ids, and Library renders it as a name and a
+    portion — so nothing about it says what the lookup chose BETWEEN, and
+    "miso paste" has half a dozen plausible answers with different numbers
+    (Bill, 2026-09-20). The chosen food's serving is read from the cache in
+    one statement; the alternates cost one read each
+    (tier3.describe_alternates) and are the ones the search itself returned,
+    so they cost no model time. Only a word item gets either: an item the
+    person named by `past_foods` id is their own past choice and has nothing
+    to second-guess.
+    """
+    from services import tier3
+
+    words = [r for r in resolved if "alternates" in r]
+    if not words:
+        return
+    foods = {
+        r["id"]: r
+        for r in await db.fetchall(_MEAL_FOODS_SQL, ([r["food_id"] for r in words],))
+    }
+    described = await asyncio.gather(
+        *(tier3.describe_alternates(r.pop("alternates")) for r in words)
+    )
+    for r, alts in zip(words, described):
+        food = foods.get(str(r["food_id"]))
+        nutrition = tier3.food_in_words(food, r["serving_id"]) if food else None
+        if nutrition:
+            r["nutrition"] = nutrition
+        if alts:
+            r["alternates"] = alts
+
+
 async def _resolve_meal_items(
     items: list[MealFood], meal: Meal
 ) -> tuple[list[dict], list[dict]]:
@@ -1119,10 +1224,10 @@ async def _resolve_meal_items(
     a past_foods row by id is taken from _resolve_meal_ids — no lookup, so the
     amount is exactly the diary's. An item in words goes through the identical
     tiers 1–2 log_estimate's components take (tier 0 skipped; the amount on
-    the §7.3 spoken-quantity channel, none = the usual portion). Nothing is
-    persisted: tier 3 is a client-kicked handoff from a staged row, so a food
-    the databases do not know yet is reported back — logging it once is what
-    makes it known."""
+    the §7.3 spoken-quantity channel, none = the usual portion), then tier 3
+    for whatever is left (_lookup_meal_words). Nothing is logged and nothing is
+    staged: a chosen food joins the shared `foods` cache, the meal holds its
+    id, and the diary is untouched."""
     import tracing
 
     resolved: list[dict] = []
@@ -1131,6 +1236,20 @@ async def _resolve_meal_items(
     async with tracing.run(
         "cascade", kind="retriever", input=[it.phrase for it in items]
     ) as lookup:
+        staged: dict[int, StagedItem] = {}
+        for i, it in enumerate(items):
+            if i in by_id:
+                continue
+            parsed = ParsedItem(
+                phrase=it.phrase.strip(), phrase_kind="food",
+                qty=float(it.qty) if it.qty is not None else None,
+                unit=(it.unit or "").strip() or None,
+                state=None, brand=None, library_match=None, meal_ref=None,
+            )
+            staged[i] = (
+                await cascade.resolve_item(parsed, i, meal, skip_tier0=True)
+            ).staged
+        await _lookup_meal_words(items, staged, meal)
         for i, it in enumerate(items):
             if i in by_id:
                 if by_id[i] is None:
@@ -1142,25 +1261,28 @@ async def _resolve_meal_items(
                 else:
                     resolved.append(by_id[i])
                 continue
-            parsed = ParsedItem(
-                phrase=it.phrase.strip(), phrase_kind="food",
-                qty=float(it.qty) if it.qty is not None else None,
-                unit=(it.unit or "").strip() or None,
-                state=None, brand=None, library_match=None, meal_ref=None,
-            )
-            st = (await cascade.resolve_item(parsed, i, meal, skip_tier0=True)).staged
+            st = staged[i]
             if st.status == "resolved" and st.food is not None and st.serving is not None:
                 resolved.append({
                     "food_id": st.food.id, "serving_id": st.serving.id,
                     "qty": float(st.qty if st.qty is not None else 1),
                     "food": st.food.name, "serving": st.serving.description,
+                    # the word it came from and what the lookup passed over —
+                    # _describe_meal_lookups turns these into numbers
+                    "phrase": it.phrase, "alternates": st.alternates,
                 })
             else:
                 unresolved.append({
                     "phrase": it.phrase, "status": st.status,
-                    "message": "not in the databases yet — log it once, then add it",
+                    # `searching` means the lookup never ran — the request's
+                    # clock, or the demo's spend. "Not in the databases" there
+                    # would send them to log a food that is.
+                    "message": "the lookup did not fit in this turn — ask again"
+                               if st.status == "searching"
+                               else "no database entry matched it",
                 })
         resolved = _merge_meal_rows(resolved)
+        await _describe_meal_lookups(resolved)
         lookup.set(output={
             "resolved": [r["food"] for r in resolved],
             "unresolved": [u["phrase"] for u in unresolved],
@@ -1429,8 +1551,7 @@ async def _run_agent_lane(
                                     "none of those is a food this account has logged — "
                                     "look them up with past_foods, or name them in words"
                                     if all(u["status"] == "unknown_food" for u in unresolved)
-                                    else "none of those foods is in the databases yet — "
-                                         "log them once first"
+                                    else "no database entry matched any of those foods"
                                 )}
                     rows = [{"food_id": r["food_id"], "serving_id": r["serving_id"], "qty": r["qty"]}
                             for r in resolved]
@@ -1459,6 +1580,8 @@ async def _run_agent_lane(
                         ))
                     note_meal(saved)
                     out = _meal_out(saved)
+                    if looked_up := _looked_up(resolved):
+                        out["looked_up"] = looked_up
                     if unresolved:
                         out["unresolved"] = unresolved
                     return out
@@ -1504,8 +1627,18 @@ async def _run_agent_lane(
             note_meal(saved)
             return _meal_out(saved)
 
-    async def update_meal(name: str, new_name, triggers, is_active, set_qty, remove) -> dict:
-        """The Library sheet's edits (routes/meals.patch_meal), by name."""
+    async def update_meal(
+        name: str, new_name, triggers, is_active, set_qty, remove, swap=None
+    ) -> dict:
+        """The Library sheet's edits (routes/meals.patch_meal), by name, plus
+        `swap` — which Library has no button for: an item's food replaced by
+        another named in words, resolved through _resolve_meal_items' own
+        ladder. That is what makes save_meal's reported alternates actionable
+        ("use the white miso instead"); without it the only way to change a
+        pick was to remove the item and add it again by a name that happened
+        to land differently."""
+        from services.agent import MealFood
+
         async with meals:
             # a reactivation means the inactive namesake, when there is one
             row = await _find_meal(name, prefer_inactive=is_active is True)
@@ -1523,13 +1656,35 @@ async def _run_agent_lane(
                 patch["trigger_phrases"] = triggers
             if is_active is not None:
                 patch["is_active"] = is_active
-            if set_qty or remove:
+            swapped: list[dict] = []
+            if set_qty or remove or swap:
                 items = [it.model_dump() for it in current.items]
                 for change in set_qty or []:
                     hit = _match_meal_item(current, change.food)
                     if isinstance(hit, dict):
                         return hit
                     items[hit]["qty"] = float(change.qty)
+                for change in swap or []:
+                    hit = _match_meal_item(current, change.food)
+                    if isinstance(hit, dict):
+                        return hit
+                    found, missed = await _resolve_meal_items(
+                        [MealFood(phrase=change.to_phrase, qty=change.qty,
+                                  unit=change.unit, food_id=None, serving_id=None)],
+                        meal,
+                    )
+                    if not found:
+                        # the item stands: a swap that resolved nothing must
+                        # not leave the meal holding neither food
+                        return {"error": "unresolved", "unresolved": missed,
+                                "message": f"nothing in the databases matched "
+                                           f"'{change.to_phrase}' — the meal is unchanged"}
+                    new_food = found[0]
+                    items[hit]["food_id"] = new_food["food_id"]
+                    items[hit]["serving_id"] = new_food["serving_id"]
+                    if change.qty is not None:
+                        items[hit]["qty"] = new_food["qty"]
+                    swapped.extend(found)
                 drop: set[int] = set()
                 for food in remove or []:
                     hit = _match_meal_item(current, food)
@@ -1546,7 +1701,10 @@ async def _run_agent_lane(
                 return _meal_error(e)
             if "items" in patch:
                 note_meal(saved)
-            return _meal_out(saved)
+            out = _meal_out(saved)
+            if looked_up := _looked_up(swapped):
+                out["looked_up"] = looked_up
+            return out
 
     settings = {
         r["key"]: r["value"]

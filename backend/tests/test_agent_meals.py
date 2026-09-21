@@ -180,7 +180,7 @@ def test_meal_tools_refuse_bad_input_in_code():
         assert out["error"] == "invalid_qty" and deps.calls["update"] == []
         out = await _call(agent, "update_meal", name="x", new_name=" y ", remove=["oats"])
         assert "error" not in out
-        assert deps.calls["update"] == [("x", "y", None, None, None, ["oats"])]
+        assert deps.calls["update"] == [("x", "y", None, None, None, ["oats"], None)]
         assert state["meal_calls"] == 3 and state["meal_note"] == "updated 'y'"
         # max turns: the reply is built from what the tools did (the food and
         # estimate calls were claimed above, so they are in it too)

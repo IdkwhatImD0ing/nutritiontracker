@@ -239,8 +239,15 @@ Tools:
   foods in words ("make a meal called protein snack: a scoop of whey and a
   banana", "add a banana to my usual breakfast") — plain food names with the
   amount as said, looked up in the databases like log_food's — ADDED to the
-  meal of that name, or making a new one. A food the databases do not know
-  yet comes back unresolved: say so, and that logging it once makes it known.
+  meal of that name, or making a new one. A food no database entry matches
+  comes back unresolved: name the ones that did not go in.
+  `looked_up` reports what each word became: the entry chosen with its
+  `nutrition` (one serving's calories and macros) and up to three
+  `alternates` the same search returned, each with its own. Say the chosen
+  one's numbers, and, when there are alternates, name each one WITH its
+  calories — a name alone cannot be chosen between ("gochujang, medium hot,
+  1 Tbsp, 40 kcal; also Wegmans 35, Mother-in-Law's 30"). Then update_meal's
+  `swap` takes whichever they say. Never invent numbers: only these.
   More than 8 foods at once: the extras come back in `dropped` — name them
   and say they were not added. `trigger_phrases`: other ways they said they
   will call it, verbatim; null = the name.
@@ -250,12 +257,21 @@ Tools:
   words goes in as `phrase` with the amount as said, both ids null. Never
   write a food_id past_foods did not give you: an id that is not one of their
   own foods comes back unresolved.
-- update_meal(name, new_name, trigger_phrases, is_active, set_qty, remove):
-  changes a saved meal that exists: rename, replace its trigger phrases, set
-  an item's quantity or remove an item — the item by its food name as the
-  saved-meals list shows it — deactivate (`is_active` false: their "delete";
-  it stays in Library as inactive and the diary keeps its context) or
-  reactivate. Pass only what they asked to change; the rest null.
+- update_meal(name, new_name, trigger_phrases, is_active, set_qty, remove,
+  swap): changes a saved meal that exists: rename, replace its trigger
+  phrases, set an item's quantity, swap an item's food for another or remove
+  an item — the item by its food name as the saved-meals list shows it —
+  deactivate (`is_active` false: their "delete"; it stays in Library as
+  inactive and the diary keeps its context) or reactivate. Pass only what they
+  asked to change; the rest null.
+  `swap` is how one of the reported alternates gets taken ("use the white miso
+  instead", "make that one the red one"): `food` is the item now in the meal,
+  `to_phrase` the replacement as a plain food name, and `qty`/`unit` null to
+  keep the amount the item already has. When they are taking an alternate that
+  was listed, put its FULL label in `to_phrase`, brand and all — it is looked
+  up again from those words, and a half-name ("the red one") finds a different
+  food. It answers with the same `looked_up` report, so say the new food's
+  numbers too, and say the brand if it is not the one they named.
 
 How to decide:
 - Speech is misheard. The utterance is usually a speech transcript, and
@@ -280,7 +296,8 @@ How to decide:
   what it answers, then save_meal with each food's food_id, serving_id and
   qty as reported. Never ask them for an amount they have already logged, and
   never round or convert one. A food past_foods does not have is one they
-  have not logged: say so.
+  have not logged — put that one in as `phrase`, which searches the databases
+  for it, rather than leaving it out of the meal.
 - Plain foods, packaged products with a Nutrition Facts label, chain-restaurant
   items → log_food — by food_id when it is one of theirs. Unsure whether a
   product carries a label? One web_search settles it.
@@ -431,6 +448,18 @@ class MealQty(BaseModel):
 
     food: str  # the item's food name as the saved-meals list shows it
     qty: float  # > 0
+
+
+class MealSwap(BaseModel):
+    """One item's food replaced by another, for update_meal.swap. The
+    replacement is given in words and looked up through save_meal's own
+    ladder — so one of the alternatives a save reported can be taken by
+    saying it, and so can a food nothing has mentioned yet."""
+
+    food: str  # the item to replace, by its food name as the meal shows it
+    to_phrase: str  # the replacement, as a plain database-searchable name
+    qty: float | None  # the new amount; null keeps the item's own
+    unit: str | None
 
 
 class PhotoChange(BaseModel):
@@ -795,32 +824,42 @@ def build_agent(deps: AgentDeps, state: dict[str, Any]) -> Agent:
         is_active: bool | None = None,
         set_qty: list[MealQty] | None = None,
         remove: list[str] | None = None,
+        swap: list[MealSwap] | None = None,
     ) -> str:
         """Change a saved meal that exists: rename (`new_name`), replace its
-        trigger phrases, set an item's quantity or remove an item (the item's
-        food name as the saved-meals list shows it), deactivate (`is_active`
-        false — their "delete": it stays inactive, the diary keeps its
-        context) or reactivate. Only what they asked to change; the rest
-        null."""
+        trigger phrases, set an item's quantity, swap an item's food for
+        another (`swap`, the replacement in words) or remove an item (the
+        item's food name as the saved-meals list shows it), deactivate
+        (`is_active` false — their "delete": it stays inactive, the diary
+        keeps its context) or reactivate. Only what they asked to change; the
+        rest null."""
         name = name.strip()
         if not name:
             return json.dumps({"error": "invalid_name", "message": "which saved meal?"})
         new_name = (new_name or "").strip() or None
         if (
             new_name is None and trigger_phrases is None and is_active is None
-            and not set_qty and not remove
+            and not set_qty and not remove and not swap
         ):
             return json.dumps({"error": "nothing_to_change", "message": "say what to change"})
         bad = [c.food for c in set_qty or [] if not (c.qty > 0)]
+        bad += [c.food for c in swap or [] if c.qty is not None and not (c.qty > 0)]
         if bad:
             return json.dumps({
                 "error": "invalid_qty",
                 "message": f"every quantity must be above zero: {bad}",
             })
+        blank = [c.food for c in swap or [] if not c.to_phrase.strip()]
+        if blank:
+            return json.dumps({
+                "error": "invalid_swap",
+                "message": f"say what to swap these for: {blank}",
+            })
         if deps.update_meal is None:
             return json.dumps({"error": "unavailable", "message": "saved meals cannot be changed here"})
         out = await deps.update_meal(
-            name, new_name, trigger_phrases, is_active, set_qty or None, remove or None
+            name, new_name, trigger_phrases, is_active, set_qty or None, remove or None,
+            swap or None,
         )
         if "error" not in out:
             state["meal_calls"] += 1

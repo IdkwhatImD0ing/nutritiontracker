@@ -73,6 +73,23 @@ _MICRO_IDS = {
     1293: "polyunsaturated_fat_g",
 }
 
+# FDC's own nutrient NUMBER for each id above (read off live records,
+# 2026-09-19). The abridged representation of a record names its nutrients by
+# `number` and carries no id at all, and since 2026-09-19 that is the only
+# representation whose Branded rows name their nutrient at all —
+# _abridged_nutrients is the whole reason this table exists.
+_NUMBER_BY_ID = {
+    1003: "203", 1004: "204", 1005: "205", 1008: "208",
+    2047: "957", 2048: "958",
+    1079: "291", 2000: "269", 1093: "307", 1092: "306", 1087: "301",
+    1089: "303", 1090: "304", 1091: "305", 1095: "309", 1103: "317",
+    1106: "320", 1162: "401", 1114: "328", 1109: "323", 1185: "430",
+    1165: "404", 1166: "405", 1167: "406", 1175: "415", 1177: "417",
+    1178: "418", 1253: "601", 1257: "605", 1258: "606", 1292: "645",
+    1293: "646",
+}
+_ID_BY_NUMBER = {number: nid for nid, number in _NUMBER_BY_ID.items()}
+
 # Branded labelNutrients keys -> our keys (per serving, as labeled).
 _LABEL_KEYS = {
     "calories": "kcal",
@@ -188,6 +205,20 @@ def _scale(macros: dict[str, float], factor: float) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
+def _nutrient_id(row: dict) -> int | None:
+    """The FDC nutrient id one foodNutrients row is about, whichever way the
+    API named it: /food/{id} nests it (``nutrient.id``) and ?format=abridged
+    carries only its ``number``, which _ID_BY_NUMBER maps back. None when the
+    row names no nutrient the maps above know.
+    """
+    nested = row.get("nutrient") or {}
+    nid = nested.get("id")
+    if nid is not None:
+        return nid
+    number = nested.get("number") or row.get("number")
+    return _ID_BY_NUMBER.get(str(number)) if number is not None else None
+
+
 def _nutrients_from_detail(food_nutrients: list[dict]) -> dict[str, float]:
     """Map /food/{id} foodNutrients by stable id. Skips null-amount header rows.
 
@@ -200,7 +231,7 @@ def _nutrients_from_detail(food_nutrients: list[dict]) -> dict[str, float]:
         amount = row.get("amount")
         if amount is None:  # category-header rows — skip
             continue
-        nid = (row.get("nutrient") or {}).get("id")
+        nid = _nutrient_id(row)
         if nid in _MACRO_IDS:
             out[_MACRO_IDS[nid]] = float(amount)
         elif nid in _MICRO_IDS:
@@ -593,6 +624,27 @@ async def lookup_barcode(code: str) -> dict | None:
     return None
 
 
+async def _abridged_nutrients(source_id: str) -> dict[str, float]:
+    """The record's nutrients read from its ABRIDGED representation — the
+    backstop for a full record whose rows name no nutrient at all.
+
+    Since 2026-09-19 every FDC *Branded* record answers /food/{id} with
+    foodNutrients rows of {id, type, amount}: the `nutrient` object is gone,
+    and `labelNutrients` comes back empty beside it, so the adapter reads no
+    macros, the food normalizes to zero servings, and tier 3 discards it as
+    uncommittable (services/tier3._first_live_food) — every branded food the
+    cache did not already hold resolved as not_found, while /foods/search
+    still advertised it as loggable. ?format=abridged still names each row's
+    nutrient by `number`, so one extra request recovers them. It is spent only
+    on a record the full payload could not read AT ALL, so it costs nothing
+    once FDC puts the field back.
+    """
+    r = await _get(f"/food/{quote(str(source_id), safe='')}", format="abridged")
+    if r.status_code != 200:
+        return {}
+    return _nutrients_from_detail(r.json().get("foodNutrients") or [])
+
+
 async def get_food(source: str, source_id: str) -> dict | None:
     """Fetch + normalize one FDC record. Returns None on 404 (stale index ids)."""
     if source != "fdc":
@@ -607,6 +659,8 @@ async def get_food(source: str, source_id: str) -> dict | None:
     data_type = payload.get("dataType", "")
     name = payload.get("description", "")
     per_100 = _nutrients_from_detail(payload.get("foodNutrients") or [])
+    if not per_100:
+        per_100 = await _abridged_nutrients(source_id)
 
     if data_type == "Branded":
         brand = (payload.get("brandName") or payload.get("brandOwner") or "").strip() or None

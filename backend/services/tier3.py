@@ -25,7 +25,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, Literal, NamedTuple, get_args
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel
@@ -1526,6 +1526,24 @@ async def resolve_item_from_food(
 # ---------------------------------------------------------------------------
 
 
+class _Search(NamedTuple):
+    """One tier-3 run, before any of it is written down: the StagedItem its
+    answer maps to, plus the telemetry run_tier3 puts on the row. A caller
+    with no row (resolve_phrase) reads `item` and drops the rest."""
+
+    item: StagedItem
+    timed_out: bool
+    proposed_food_id: str | None
+    web_source: dict | None
+    network_calls: int
+    resolve_ms: int
+    trace_id: str | None
+    transcript: list | None
+    spoken_qty: float | None
+    spoken_unit: str | None
+    state_intent: str | None
+
+
 async def run_tier3(
     log_id: str, item_index: int, refinement: str | None = None
 ) -> StagedItem:
@@ -1535,9 +1553,122 @@ async def run_tier3(
     `refinement` carries a free-text question answer on the single re-kick path
     (§5 /api/resolve/answer); callers using the plain interface omit it.
     """
+    phrase, staged_prev = await _load_item(log_id, item_index)
+    found = await _search(phrase, staged_prev, item_index, refinement)
+    if found.timed_out:
+        return found.item
+    stored = await _write_item_row(
+        log_id, item_index, found.item,
+        network_calls=found.network_calls,
+        resolve_ms=found.resolve_ms,
+        proposed_food_id=found.proposed_food_id,
+        trace_id=found.trace_id,
+        agent_transcript=found.transcript,
+        spoken_qty=found.spoken_qty,
+        spoken_unit=found.spoken_unit,
+        state_answer=found.state_intent if found.item.status == "resolved" else None,
+        web_source=found.web_source,
+    )
+    return _stored_item(stored, found.item)
+
+
+async def resolve_phrase(
+    phrase: str, meal: str, qty: float | None = None, unit: str | None = None
+) -> StagedItem:
+    """Tier 3 for a phrase with NO staged row behind it — the saved-meal words
+    routes/logs._resolve_meal_items could not place locally (§8.4, BACKLOG
+    162). The same run behind the same gates, caching the food it chooses in
+    the shared `foods` table exactly as a staged row's lookup does; only the
+    item_resolutions write is skipped, because a saved meal is not a log and
+    has no row to update. A run the request has no time for comes back
+    `searching`, the way a staged row does.
+    """
+    return (
+        await _search(
+            phrase,
+            {"item_index": 0, "phrase": phrase, "status": "searching", "meal": meal,
+             "spoken_qty": qty, "spoken_unit": unit},
+            0,
+            None,
+        )
+    ).item
+
+
+# The four a caller shows when it has to describe a food in words rather than
+# render a card. Same order every time, so two foods read comparably.
+_SHOWN_MACROS = ("kcal", "protein_g", "carb_g", "fat_g")
+
+
+def food_in_words(food: dict, serving_id: str | None = None) -> str | None:
+    """One food's chosen serving and its core macros, as a phrase —
+    "1 cup (245 g), 39 kcal / 3 P / 6 C / 1 F". None when nothing on it can be
+    logged, which is also the caller's signal not to offer it.
+
+    The agent's tools answer in words (routes/logs._meal_item_words), and a
+    food it did not pick has no card to render, so this is how a runner-up
+    gets its numbers in front of the person.
+    """
+    serving = _pick_serving(with_loggable_servings(food), serving_id)
+    macros = (serving or {}).get("macros") or {}
+    if serving is None or not all(isinstance(macros.get(k), (int, float)) for k in _SHOWN_MACROS):
+        return None
+    kcal, protein, carb, fat = (macros[k] for k in _SHOWN_MACROS)
+    return (f"{serving.get('description') or serving.get('serving_id')}, "
+            f"{kcal:g} kcal / {protein:g} P / {carb:g} C / {fat:g} F")
+
+
+async def describe_alternates(
+    alternates: list[Alternate] | None, limit: int = 3
+) -> list[dict]:
+    """The runner-up foods a resolution carried, each with its numbers.
+
+    A staged row offers its alternates as one-tap chips, so their macros never
+    had to be fetched — the sheet shows a name and the tap does the rest. A
+    saved meal has no chips (routes/logs._resolve_meal_items), so the only way
+    the person hears about the food that was NOT chosen is the agent saying
+    it, and a name alone is not enough to choose between two misos. Each one
+    is read from the cache (a `food_id` chip) or fetched once (a database id);
+    one that cannot be logged is dropped rather than offered, the same rule
+    every other lane applies. Nothing is cached: an alternate is a suggestion
+    until it is picked, and the swap that picks it resolves it then.
+    """
+    picks = [a for a in (alternates or []) if a.food_id or (a.source and a.source_id)][:limit]
+    if not picks:
+        return []
+
+    async def one(alt: Alternate) -> dict | None:
+        if alt.food_id:
+            row = await db.fetchone(
+                f"SELECT {_FOOD_COLS} FROM foods WHERE id = %s", (str(alt.food_id),)
+            )
+            food = _food_row(row)[1] if row else None
+        elif alt.source == "fdc":
+            food = await fdc.get_food("fdc", str(alt.source_id))
+        else:
+            food = None
+        words = food_in_words(food) if food else None
+        if words is None:
+            return None
+        return {
+            "label": alt.label,
+            "brand": food.get("brand"),
+            "source": alt.source,
+            "source_id": str(alt.source_id) if alt.source_id else None,
+            "food_id": str(alt.food_id) if alt.food_id else None,
+            "nutrition": words,
+        }
+
+    return [a for a in await asyncio.gather(*(one(a) for a in picks)) if a is not None]
+
+
+async def _search(
+    phrase: str, staged_prev: dict, item_index: int, refinement: str | None
+) -> _Search:
+    """The run itself, from the row's staged payload (or a caller-built one):
+    the agent, its gates, and the StagedItem its answer maps to. It writes the
+    chosen food to the shared `foods` cache and nothing else."""
     _ensure_env()
     t0 = time.perf_counter()
-    phrase, staged_prev = await _load_item(log_id, item_index)
     meal = staged_prev.get("meal") or "snack"
     spoken_qty, spoken_unit = _spoken(staged_prev)
     # §3.4a: the user's cooked/raw/dry intent, when the refinement or phrase
@@ -1681,8 +1812,21 @@ async def run_tier3(
             ]
 
     if timed_out:
-        # the row as stored, still searching: the phone's kick takes it from here
-        return StagedItem.model_validate(staged_prev)
+        # nothing resolved: the row as stored, still searching — the phone's
+        # kick takes it from here (a phrase with no row is simply not found)
+        return _Search(
+            item=StagedItem.model_validate(staged_prev),
+            timed_out=True,
+            proposed_food_id=None,
+            web_source=None,
+            network_calls=counter["network_calls"],
+            resolve_ms=int((time.perf_counter() - t0) * 1000),
+            trace_id=trace_id,
+            transcript=transcript,
+            spoken_qty=spoken_qty,
+            spoken_unit=spoken_unit,
+            state_intent=state_intent,
+        )
 
     # A chip may not name a row the gate above just deleted. The model can
     # offer a web food it created as an alternate or as an option on its
@@ -1857,16 +2001,16 @@ async def run_tier3(
         proposed_food_id = None
         web_source = None
 
-    stored = await _write_item_row(
-        log_id, item_index, item,
+    return _Search(
+        item=item,
+        timed_out=False,
+        proposed_food_id=proposed_food_id,
+        web_source=web_source,
         network_calls=counter["network_calls"],
         resolve_ms=int((time.perf_counter() - t0) * 1000),
-        proposed_food_id=proposed_food_id,
         trace_id=trace_id,
-        agent_transcript=transcript,
+        transcript=transcript,
         spoken_qty=spoken_qty,
         spoken_unit=spoken_unit,
-        state_answer=state_intent if item.status == "resolved" else None,
-        web_source=web_source,
+        state_intent=state_intent,
     )
-    return _stored_item(stored, item)
