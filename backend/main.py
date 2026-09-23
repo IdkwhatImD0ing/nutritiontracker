@@ -7,12 +7,15 @@ out (tracing.FlushMiddleware holds the invocation open for it, bounded), and
 shutdown drains whatever is still in flight. The demo quota's 429
 (services/quota.py) gets its own handler so the body carries
 {detail, resets_at, used, limit} — the shape frontend/lib/api.ts reads.
+Agents reach the same handlers over MCP at POST /api/mcp (mcp_app.py), which
+authenticates itself (auth.authenticate) and runs inside the lifespan.
 """
 
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import mcp_app
 import tracing
 from routes import (
     agent,
@@ -22,6 +25,7 @@ from routes import (
     entries,
     foods,
     history,
+    keys,
     logs,
     me,
     meals,
@@ -38,7 +42,10 @@ from services import quota
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tracing.init_tracing()
-    yield
+    # the MCP servers' session managers: stateless requests run in their task
+    # groups, so they live as long as the instance (mcp_app.running)
+    async with mcp_app.running():
+        yield
     try:
         tracing.flush()  # queued commit scores, if any
         await tracing.drain()  # sends still in flight (bounded)
@@ -46,7 +53,16 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Tally API", lifespan=lifespan)
+# The schema is public at /api/openapi.json (under /api/, the backend's half of
+# the origin) so the docs can link it; no Swagger/ReDoc pages. typegen calls
+# app.openapi() directly, unaffected.
+app = FastAPI(
+    title="Tally API",
+    lifespan=lifespan,
+    openapi_url="/api/openapi.json",
+    docs_url=None,
+    redoc_url=None,
+)
 app.add_exception_handler(quota.QuotaExceeded, quota.exception_handler)
 # §10: after each response has gone out, wait (bounded) for that request's
 # trace sends — the client never waits, and a serverless freeze cannot lose one
@@ -84,3 +100,10 @@ app.include_router(weights.router)
 # The chat window's streaming front door (§6.4, 2026-09-06): the same claim and
 # pipeline as POST /api/logs with agent=true, answered event by event.
 app.include_router(agent.router)
+# Personal API keys (migration 006): Settings mints and revokes them; a key
+# then authenticates REST and MCP like a session (auth.py).
+app.include_router(keys.router)
+# MCP (mcp_app.py): a raw ASGI route, not a mount (a mount answers POST
+# /api/mcp with a 307). POST only: GET and DELETE get a 405, since a
+# stateless GET would open an event stream that never ends.
+app.add_route("/api/mcp", mcp_app.McpEndpoint(), methods=["POST"], include_in_schema=False)

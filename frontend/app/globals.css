@@ -51,6 +51,7 @@
 
   --font: var(--font-archivo), system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: var(--font-bricolage), var(--font-archivo), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* Numbers and headings carry the character; body text stays Archivo. */

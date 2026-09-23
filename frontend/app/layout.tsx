@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Archivo, Bricolage_Grotesque } from "next/font/google";
+import { Archivo, Bricolage_Grotesque, IBM_Plex_Mono } from "next/font/google";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 import { LegacyChatCleanup } from "./legacy-storage";
 import { ServiceWorkerProvider } from "./serwist/provider";
@@ -22,18 +23,26 @@ const bricolage = Bricolage_Grotesque({
   display: "swap",
 });
 
+// Code, API key strings and the small uppercase labels on the public pages
+// (landing, docs). Exposed as --font-mono in globals.css.
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-plex-mono",
+  display: "swap",
+});
+
 const description =
   "Voice-first nutrition logger: say what you ate and Tally finds the foods, works out the macros, and keeps your diary. Photo, barcode, and search lanes too.";
 
 // Public-facing (the repo is open source and anyone can sign up for a demo
 // account). No social image exists yet, so openGraph/twitter carry text only.
 // Absolute URLs for Open Graph and Twitter cards. Without it Next warns and
-// emits relative URLs, which link previews cannot resolve. NEXT_PUBLIC_SITE_URL
-// lets a fork point it at its own domain without editing this file.
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tally.art3m1s.me";
+// emits relative URLs, which link previews cannot resolve. SITE_URL reads
+// NEXT_PUBLIC_SITE_URL, so a fork can point it at its own domain (lib/site.ts).
 
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  metadataBase: new URL(SITE_URL),
   applicationName: "Tally",
   title: { default: "Tally", template: "%s · Tally" },
   description,
@@ -112,7 +121,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${archivo.variable} ${bricolage.variable}`}>
+    <html
+      lang="en"
+      className={`${archivo.variable} ${bricolage.variable} ${plexMono.variable}`}
+    >
       <body>
         <ServiceWorkerProvider>
           <LegacyChatCleanup />

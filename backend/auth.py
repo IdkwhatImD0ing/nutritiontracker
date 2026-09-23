@@ -1,15 +1,25 @@
-"""Auth dependency (DESIGN.md §2): offline JWT verification against Neon Auth JWKS.
+"""Auth dependency (DESIGN.md §2): offline JWT verification against Neon Auth
+JWKS, or a personal API key (migration 006, api_keys.py).
 
 Any verified account is a user: ``require_user`` returns ``{id, email,
-is_owner}`` (id = the JWT ``sub`` = the Neon Auth user id; is_owner marks the
-one ALLOWED_EMAIL account — every other account is a demo, see
-services/quota.py) and binds ``db.current_user_id`` so every statement of the
-request runs as that tenant (migration 002 RLS).
+is_owner, via, scopes}`` (id = the JWT ``sub`` = the Neon Auth user id;
+is_owner marks the one ALLOWED_EMAIL account — every other account is a demo,
+see services/quota.py, and a demo's key carries the demo's quota because it
+IS that user; via = "session" | "api_key"; scopes = frozenset of "read" /
+"write", both for a session; a key's dict also carries ``key_id``) and binds
+``db.current_user_id`` so every statement of the request runs as that tenant
+(migration 002 RLS).
+
+Three entry points: ``authenticate`` (who is calling, no scope check — the
+MCP endpoint picks its tool set from the scopes itself), ``require_user``
+(+ a read-only key may only use GET/HEAD/OPTIONS) and ``require_session_user``
+(/api/keys: a key cannot manage keys).
 
 `require_user` is a module-level function used directly as a FastAPI dependency
 (``Depends(require_user)``) so ``app.dependency_overrides[require_user] = ...``
 works naturally in tests (an override must bind the tenant itself:
-tests/tenancy_harness.override_user).
+tests/tenancy_harness.override_user). Route modules import only
+``require_user`` (some tests fake this module with nothing else).
 """
 
 from __future__ import annotations
@@ -24,6 +34,7 @@ import httpx
 import jwt
 from fastapi import HTTPException, Request
 
+import api_keys
 import db
 
 DEFAULT_ALLOWED_EMAIL = "billzhangsc@gmail.com"
@@ -42,6 +53,10 @@ def is_owner() -> bool:
 
 
 _STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# The methods a read-only key may use (require_user). Every other method needs
+# "write", so a method nobody planned for fails closed.
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+SESSION_SCOPES = frozenset({"read", "write"})  # a signed-in user can do everything
 
 # ---------------------------------------------------------------------------
 # env (.env fallback for local dev; Vercel injects real env vars in prod)
@@ -199,10 +214,51 @@ def _check_origin(request: Request) -> None:
     raise HTTPException(status_code=403, detail="origin mismatch")
 
 
-async def require_user(request: Request) -> dict:
-    """FastAPI dependency: verified user ({id, email, is_owner}) or 401/403."""
+def _is_owner_email(email: str) -> bool:
+    allowed = _env("ALLOWED_EMAIL", DEFAULT_ALLOWED_EMAIL) or DEFAULT_ALLOWED_EMAIL
+    return email.strip().lower() == allowed.strip().lower()
+
+
+def _bind(user: dict) -> dict:
+    db.current_user_id.set(user["id"])  # the tenant every statement of this request runs as
+    current_user.set(user)
+    return user
+
+
+async def _api_key_user(token: str) -> dict:
+    """The key branch: format -> SHA-256 -> api_key_auth (migration 006).
+    Malformed, unknown, wrong-secret, revoked and expired keys all get the
+    same 401, so the answer never says which keys exist."""
+    key_id = api_keys.parse(token)
+    row = None
+    if key_id is not None:
+        # The key is what names the tenant, so none is bound for the lookup:
+        # api_key_auth is the one SECURITY DEFINER door past RLS and needs none.
+        db.current_user_id.set(None)
+        row = await db.fetchone(
+            "SELECT * FROM api_key_auth(%s, %s)", (key_id, api_keys.hash_key(token))
+        )
+    if row is None:
+        raise HTTPException(status_code=401, detail="invalid API key")
+    if not row["email_verified"]:  # the JWT path's rule, read from the account itself
+        raise HTTPException(status_code=403, detail="email not verified")
+    return {
+        "id": row["user_id"],
+        "email": row["email"],
+        "is_owner": _is_owner_email(row["email"]),
+        "via": "api_key",
+        "scopes": frozenset(row["scopes"]),
+        "key_id": key_id,
+    }
+
+
+async def authenticate(request: Request) -> dict:
+    """Who is calling (an API key or a Neon Auth JWT), bound as the request's
+    tenant, or 401/403. No scope check: require_user adds the per-method one."""
     _check_origin(request)
     token = _bearer_token(request)
+    if token.startswith(api_keys.FAMILY):  # before the JWT parse, which would say "invalid token"
+        return _bind(await _api_key_user(token))
     try:
         header = jwt.get_unverified_header(token)
     except jwt.InvalidTokenError:
@@ -253,12 +309,33 @@ async def require_user(request: Request) -> dict:
     sub = payload.get("sub")
     if not sub:
         raise HTTPException(status_code=401, detail="token missing sub")
-    allowed = _env("ALLOWED_EMAIL", DEFAULT_ALLOWED_EMAIL) or DEFAULT_ALLOWED_EMAIL
-    user = {
-        "id": str(sub),
-        "email": email,
-        "is_owner": email.strip().lower() == allowed.strip().lower(),
-    }
-    db.current_user_id.set(user["id"])  # the tenant every statement of this request runs as
-    current_user.set(user)
+    return _bind(
+        {
+            "id": str(sub),
+            "email": email,
+            "is_owner": _is_owner_email(email),
+            "via": "session",
+            "scopes": SESSION_SCOPES,
+        }
+    )
+
+
+async def require_user(request: Request) -> dict:
+    """FastAPI dependency: the verified user or 401/403. A read-only key may
+    only read: any other method answers 403."""
+    user = await authenticate(request)
+    need = "read" if request.method.upper() in _READ_METHODS else "write"
+    if need not in user["scopes"]:
+        raise HTTPException(status_code=403, detail="this API key is read-only")
+    return user
+
+
+async def require_session_user(request: Request) -> dict:
+    """FastAPI dependency for /api/keys: a signed-in session only. A key that
+    could mint keys could outlive its own revocation."""
+    user = await authenticate(request)
+    if user["via"] == "api_key":
+        raise HTTPException(
+            status_code=403, detail="API keys cannot manage API keys; sign in to the app"
+        )
     return user

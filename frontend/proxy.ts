@@ -12,6 +12,8 @@ import { getAuth } from "@/lib/auth/server";
  * a 307 to the landing page is not an image. `/privacy` and `/terms` are
  * excluded for the same reason again: a reviewer or an OAuth provider checking
  * them is signed out, and a bounce to the landing page reads as a missing page.
+ * `/docs` is public for the same reason: the developer docs are read before
+ * anyone has an account, and they carry no user data.
  *
  * `/` serves two different pages. Signed in, it is Today. Signed out, it is
  * the landing page — rendered AT `/`, not redirected to, so the front door
@@ -52,6 +54,6 @@ export default async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|auth|welcome|privacy|terms|serwist|manifest.webmanifest|icons|apple-touch-icon.png|og.png|screenshots).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|auth|welcome|privacy|terms|docs|serwist|manifest.webmanifest|icons|apple-touch-icon.png|og.png|screenshots).*)",
   ],
 };

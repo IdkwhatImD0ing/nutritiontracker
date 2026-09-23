@@ -1153,3 +1153,245 @@ body:has(.tabbar) .shell {
     text-align: left;
   }
 }
+
+/* ---------- API keys (Settings § API keys, ApiKeysCard.tsx) ----------
+   A list, not a table: a phone-width card cannot hold seven columns, so each
+   key is a block (label and status, the redacted key, four facts, Revoke)
+   that becomes one line per key once the section spans both desktop
+   columns. Revoked and expired keys stay listed, dimmed. The reveal banner
+   holds the only copy of a new key the browser ever gets. */
+
+.keys-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.keys-btn:hover {
+  border-color: var(--line-strong);
+}
+
+.keys-btn.accent {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.keys-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-sm);
+}
+
+.keys-reveal-title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* one tap selects the whole key, the manual fallback when copy fails */
+.keys-secret {
+  display: block;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text);
+  word-break: break-all;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.keys-reveal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* heard, not seen: the "Copied" announcement */
+.keys-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.keys-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.keys-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.keys-row:last-child {
+  padding-bottom: 0;
+}
+
+.keys-row.revoked,
+.keys-row.expired {
+  opacity: 0.55;
+}
+
+.keys-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.keys-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.keys-status {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.keys-status.active {
+  background: rgba(116, 207, 156, 0.14);
+  color: var(--green);
+}
+
+.keys-status.expired {
+  background: rgba(242, 107, 107, 0.14);
+  color: var(--red);
+}
+
+.keys-status.revoked {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.keys-redacted {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--sage);
+  overflow-wrap: anywhere;
+}
+
+.keys-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.keys-meta div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.keys-meta dt {
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.keys-meta dd {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+/* Revoke, or its confirm: the sentence on its own line, the buttons right */
+.keys-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 18px;
+}
+
+.keys-row-actions .m3-note {
+  flex-basis: 100%;
+}
+
+.keys-row-actions .m3-link-btn {
+  min-height: 32px;
+}
+
+.keys-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.keys-seg-note {
+  margin-top: 8px;
+}
+
+.keys-cancel {
+  align-self: center;
+  min-height: 32px;
+}
+
+@media (min-width: 1140px) {
+  /* one line per key: who it is | four facts | its action */
+  .keys-row {
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 7fr) minmax(0, 3fr);
+    column-gap: 24px;
+    row-gap: 4px;
+    align-items: center;
+  }
+
+  .keys-row-head,
+  .keys-redacted {
+    grid-column: 1;
+  }
+
+  .keys-meta {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .keys-row-actions {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+}

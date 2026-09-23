@@ -91,7 +91,9 @@ def test_valid_token_allowlisted_email_is_owner(app_client):
     state["jwks"] = {"keys": [jwk]}
     r = client.get("/whoami", headers={"Authorization": f"Bearer {_token(priv, 'kid-a')}"})
     assert r.status_code == 200
-    assert r.json() == {"id": "user-123", "email": ALLOWED, "is_owner": True}
+    body = r.json()
+    assert sorted(body.pop("scopes")) == ["read", "write"]  # a session can do everything (006)
+    assert body == {"id": "user-123", "email": ALLOWED, "is_owner": True, "via": "session"}
 
 
 def test_other_email_is_a_demo_user(app_client):
@@ -104,7 +106,9 @@ def test_other_email_is_a_demo_user(app_client):
     tok = _token(priv, "kid-a", email="mallory@example.com", sub="user-456")
     r = client.get("/whoami", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
-    assert r.json() == {"id": "user-456", "email": "mallory@example.com", "is_owner": False}
+    body = r.json()
+    assert sorted(body.pop("scopes")) == ["read", "write"]
+    assert body == {"id": "user-456", "email": "mallory@example.com", "is_owner": False, "via": "session"}
 
 
 def test_token_without_email_or_sub_rejected(app_client):

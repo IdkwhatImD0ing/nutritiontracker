@@ -14,6 +14,7 @@ import {
 import { CM_PER_IN, LB_PER_KG } from "./WizardMath";
 import WizardGoal from "./WizardGoal";
 import AccountCard from "./AccountCard";
+import ApiKeysCard from "./ApiKeysCard";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -343,6 +344,8 @@ export default function Settings() {
             {busy ? "Saving…" : "Save settings"}
           </button>
           {status ? <p className="m3-status">{status}</p> : null}
+
+          <ApiKeysCard />
 
           <section className="m3-section" aria-label="More">
             <div className="m3-card">
