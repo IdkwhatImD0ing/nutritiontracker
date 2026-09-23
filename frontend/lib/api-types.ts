@@ -591,6 +591,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/oura": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Status */
+        get: operations["get_status_api_oura_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/oura/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Authorize */
+        get: operations["authorize_api_oura_authorize_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/oura/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Sync */
+        post: operations["post_sync_api_oura_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1704,6 +1755,60 @@ export interface components {
             unit?: string | null;
             /** Basis */
             basis: string;
+        };
+        /** OuraAuthorize */
+        OuraAuthorize: {
+            /** Url */
+            url: string;
+        };
+        /** OuraDay */
+        OuraDay: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Total Calories */
+            total_calories: number | null;
+            /** Active Calories */
+            active_calories: number | null;
+            /** Steps */
+            steps: number | null;
+        };
+        /** OuraStatus */
+        OuraStatus: {
+            /** Available */
+            available: boolean;
+            /** Connected */
+            connected: boolean;
+            /** Last Synced At */
+            last_synced_at?: string | null;
+            /**
+             * Missing
+             * @default []
+             */
+            missing: string[];
+            /**
+             * Days
+             * @default []
+             */
+            days: components["schemas"]["OuraDay"][];
+        };
+        /** OuraSync */
+        OuraSync: {
+            /** Skipped */
+            skipped: boolean;
+            /** Days */
+            days: number;
+            /** Workouts */
+            workouts: number;
+            /** Last Synced At */
+            last_synced_at: string | null;
+            /**
+             * Missing
+             * @default []
+             */
+            missing: string[];
         };
         /** Question */
         Question: {
@@ -3326,6 +3431,77 @@ export interface operations {
                 };
                 content: {
                     "application/x-ndjson": components["schemas"]["AgentEvent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_api_oura_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OuraStatus"];
+                };
+            };
+        };
+    };
+    authorize_api_oura_authorize_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OuraAuthorize"];
+                };
+            };
+        };
+    };
+    post_sync_api_oura_sync_post: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OuraSync"];
                 };
             };
             /** @description Validation Error */

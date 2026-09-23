@@ -1,7 +1,9 @@
 """FastAPI app assembly (DESIGN.md §2, §5, §10).
 
-Routers own their routes and apply auth.require_user router-wide; /api/health
-is the single unauthenticated route. Tracing (FireTrace, §10) initializes at
+Routers own their routes and apply auth.require_user router-wide. Two routes
+are unauthenticated: /api/health, and /api/oura/callback — Oura's browser
+redirect, which carries no bearer token and names its user in a signed
+`state` (services/oura.py). Tracing (FireTrace, §10) initializes at
 startup; each AI route records one trace, sent after its response has gone
 out (tracing.FlushMiddleware holds the invocation open for it, bounded), and
 shutdown drains whatever is still in flight. The demo quota's 429
@@ -26,6 +28,7 @@ from routes import (
     me,
     meals,
     metrics,
+    oura,
     photo,
     quick,
     resolve,
@@ -84,3 +87,8 @@ app.include_router(weights.router)
 # The chat window's streaming front door (§6.4, 2026-09-06): the same claim and
 # pipeline as POST /api/logs with agent=true, answered event by event.
 app.include_router(agent.router)
+# Oura (2026-09-21, migration 005): connect, sync, and the Settings card. The
+# callback is Oura's browser redirect — no bearer token — so it has its own
+# router without require_user; services/oura.py's signed `state` names the user.
+app.include_router(oura.router)
+app.include_router(oura.public)

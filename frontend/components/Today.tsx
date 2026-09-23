@@ -24,6 +24,7 @@ import DiaryList from "./DiaryList";
 import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { getMe, type Me } from "./MeApi";
+import { syncOura } from "./OuraApi";
 import PendingItems from "./PendingItems";
 import { photoErrorMessage } from "./PhotoApi";
 import type { PhotoShot } from "./PhotoCapture";
@@ -295,7 +296,9 @@ export default function Today() {
       });
     getMe()
       .then((m) => {
-        if (!cancelled) setMe(m);
+        if (cancelled) return;
+        setMe(m);
+        syncOuraFor(m);
       })
       .catch(() => {
         /* no banner — the quota is enforced server-side regardless */
@@ -414,6 +417,13 @@ export default function Today() {
     getMe().then(setMe).catch(() => {});
   };
 
+  // Oura (owner only, services/oura.py): opening or resuming Today is the
+  // sync trigger. The server skips it when the last sync is under half an
+  // hour old, and a failure changes nothing here — Settings shows the state.
+  const syncOuraFor = (m: Me | null) => {
+    if (m?.is_owner) syncOura().catch(() => {});
+  };
+
   // Installed, Tally is resumed far more often than it is loaded: iOS keeps a
   // standalone PWA warm for days, and the effects above run once per mount.
   // Without this the diary, the quota banner and the weight card show whatever
@@ -436,6 +446,7 @@ export default function Today() {
     dayRef.current = day;
     reloadDiary();
     refreshMe();
+    syncOuraFor(me);
     // The card owns the series; Today only tells it the world moved (§6.4).
     setWeightsKey((k) => k + 1);
   });

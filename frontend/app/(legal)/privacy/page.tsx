@@ -16,7 +16,7 @@ export default function Privacy() {
     <>
       <div className="legal-head">
         <h1>Privacy</h1>
-        <p className="legal-stamp">Last updated 20 September 2026</p>
+        <p className="legal-stamp">Last updated 23 September 2026</p>
       </div>
 
       <div className="legal-body">
@@ -60,6 +60,13 @@ export default function Privacy() {
               the log and its trace, because they are what the model was told. Demo accounts
               are never asked for their location.
             </li>
+            <li>
+              <strong>Oura activity</strong> — on the owner’s account only, once Oura is
+              connected: the full daily-activity and workout records Oura returns, from 90 days
+              before connecting onward. That includes each day’s calories burned, steps and
+              activity score, and Oura’s own finer detail such as its minute-by-minute activity
+              levels. The tokens that let Tally read them are stored encrypted.
+            </li>
           </ul>
         </section>
 
@@ -95,6 +102,10 @@ export default function Privacy() {
             <li>
               <strong>Firecrawl</strong> — owner’s account only. Reads a restaurant’s published
               menu page when the photo lane looks one up.
+            </li>
+            <li>
+              <strong>Oura</strong> — owner’s account only, once connected. Tally reads daily
+              activity and workouts from it; nothing from your diary is sent to Oura.
             </li>
           </ul>
           <p>

@@ -13,6 +13,10 @@
                                     no-op if applied)
   python apply.py 004 --dry-run  -> apply 004 + verify inside one transaction, then ROLL BACK
   python apply.py 004 --check    -> re-run 004's verification against the committed schema
+  python apply.py 005            -> 005_oura.sql (the Oura connection + its synced activity;
+                                    needs 002, no-op if applied)
+  python apply.py 005 --dry-run  -> apply 005 + verify inside one transaction, then ROLL BACK
+  python apply.py 005 --check    -> re-run 005's verification against the committed schema
 
 Every migration runs in ONE transaction. 002 is verified before COMMIT (row
 counts unchanged, every existing row backfilled to the owner, RLS filters
@@ -24,6 +28,7 @@ insert with no tenant fails); a failed check rolls back. Guards:
   003 - logs.user_id must be present (002 applied) and `weights` absent; present -> no-op, exit 0
   004 - logs.user_id must be present (002 applied); the index is CREATE INDEX IF NOT EXISTS,
         so re-applying is a no-op either way
+  005 - logs.user_id must be present (002 applied) and `oura_tokens` absent; present -> no-op, exit 0
 
 Never prints secret values (the owner's user id is an identifier, not a secret).
 """
@@ -40,6 +45,7 @@ SQL_FILE = MIGRATIONS_DIR / "001_init.sql"
 SQL_FILE_002 = MIGRATIONS_DIR / "002_multiuser.sql"
 SQL_FILE_003 = MIGRATIONS_DIR / "003_weights.sql"
 SQL_FILE_004 = MIGRATIONS_DIR / "004_entries_food_idx.sql"
+SQL_FILE_005 = MIGRATIONS_DIR / "005_oura.sql"
 
 EXPECTED_TABLES = {
     "foods",
@@ -152,8 +158,13 @@ def verify_002(cur, before: dict[str, int]) -> str:
         "WHERE n.nspname = 'public' AND c.relrowsecurity AND c.relforcerowsecurity"
     )
     rls = {r[0] for r in cur.fetchall()}
-    # 003's `weights` is RLS-covered too once it exists (a --check after 003)
-    expected_rls = set(RLS_TABLES) | ({"weights"} if has_003(cur) else set())
+    # 003's `weights` and 005's Oura tables are RLS-covered too once they exist
+    # (a --check after 003 / 005)
+    expected_rls = (
+        set(RLS_TABLES)
+        | ({"weights"} if has_003(cur) else set())
+        | (set(OURA_TABLES) if has_005(cur) else set())
+    )
     assert rls == expected_rls, f"RLS enabled+forced on {sorted(rls)}, expected {sorted(expected_rls)}"
     cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")
     assert cur.fetchone()[0] == len(expected_rls)
@@ -390,17 +401,115 @@ def check_004(conn) -> None:
     print("CHECK OK: 004 invariants hold.")
 
 
+# ---------------------------------------------------------------------------
+# 005 — the Oura connection and what it syncs (2026-09-21)
+# ---------------------------------------------------------------------------
+
+OURA_TABLES = ("oura_tokens", "oura_days", "oura_workouts")
+# one probe row per table, written as the app role by verify_005
+_OURA_PROBES = {
+    "oura_tokens": "INSERT INTO oura_tokens (access_token, refresh_token, expires_at) "
+    "VALUES ('a', 'r', now())",
+    "oura_days": "INSERT INTO oura_days (day, raw) VALUES (current_date, '{}'::jsonb)",
+    "oura_workouts": "INSERT INTO oura_workouts (oura_id, day, activity, raw) "
+    "VALUES ('probe', current_date, 'walking', '{}'::jsonb)",
+}
+
+
+def has_005(cur) -> bool:
+    cur.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = 'oura_tokens'"
+    )
+    return cur.fetchone() is not None
+
+
+def verify_005(cur) -> None:
+    """005's invariants inside the still-open transaction, per table: RLS
+    enabled AND forced with one policy, the app role writes and reads its own
+    rows and sees nobody else's, and a write with no tenant bound fails. Every
+    probe row is rolled back to a savepoint, so a real apply commits nothing
+    but the tables."""
+    for table in OURA_TABLES:
+        cur.execute(
+            "SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relname = %s",
+            (table,),
+        )
+        assert cur.fetchone() == (True, True), f"{table}: RLS must be enabled and forced"
+        cur.execute(
+            "SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = %s", (table,)
+        )
+        assert cur.fetchone()[0] == 1, f"{table}: expected exactly one policy"
+
+    cur.execute("SAVEPOINT verify_005")
+    try:
+        cur.execute(f"SET LOCAL ROLE {APP_ROLE}")
+        for table, probe in _OURA_PROBES.items():
+            cur.execute("SELECT set_config('app.user_id', '005-verify-a', true)")
+            cur.execute(probe)
+            cur.execute(f"SELECT count(*) FROM {table}")
+            assert cur.fetchone()[0] == 1, f"{table}: the owner cannot read its own row"
+            cur.execute("SELECT set_config('app.user_id', '005-verify-b', true)")
+            cur.execute(f"SELECT count(*) FROM {table}")
+            assert cur.fetchone()[0] == 0, f"{table}: RLS leaks rows to another tenant"
+        cur.execute("SELECT set_config('app.user_id', '', true)")
+        for table, probe in _OURA_PROBES.items():
+            cur.execute("SAVEPOINT verify_005_untenanted")
+            try:
+                cur.execute(probe)
+            except (psycopg.errors.NotNullViolation, psycopg.errors.InsufficientPrivilege,
+                    psycopg.errors.CheckViolation):
+                cur.execute("ROLLBACK TO SAVEPOINT verify_005_untenanted")
+            else:
+                raise AssertionError(f"{table}: insert with no app.user_id must fail")
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT verify_005")  # probes gone, SET LOCAL ROLE undone with them
+    cur.execute("SET LOCAL ROLE NONE")
+
+
+def apply_005(conn, dry_run: bool) -> None:
+    sql = SQL_FILE_005.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        if not has_002(cur):
+            sys.exit("ERROR: refusing to apply 005 - 002 (logs.user_id) is not applied. No changes made.")
+        if has_005(cur):
+            print("Guard: table oura_tokens already exists - 005 already applied, nothing to do.")
+            sys.exit(0)
+        cur.execute(sql)
+        verify_005(cur)
+    if dry_run:
+        conn.rollback()
+        print("DRY RUN: 005_oura.sql applied and verified, then ROLLED BACK.")
+        return
+    conn.commit()
+    print("Applied 005_oura.sql: oura_tokens, oura_days, oura_workouts created, RLS enabled+forced.")
+
+
+def check_005(conn) -> None:
+    """`--check`: 005's own verification against the committed schema, rolled back."""
+    with conn.cursor() as cur:
+        if not has_005(cur):
+            sys.exit("ERROR: 005 is not applied (table oura_tokens absent) - nothing to check.")
+        verify_005(cur)
+    conn.rollback()
+    print("CHECK OK: 005 invariants hold.")
+
+
 def main(argv: list[str]) -> None:
     dry_run = "--dry-run" in argv
     check = "--check" in argv
     args = [a for a in argv if a not in ("--dry-run", "--check")]
     which = args[0] if args else "001"
-    if which not in ("001", "002", "003", "004") or (which == "001" and (dry_run or check)) or (dry_run and check):
+    if which not in ("001", "002", "003", "004", "005") or (which == "001" and (dry_run or check)) or (dry_run and check):
         sys.exit(__doc__)
     dsn = read_database_url(ENV_FILE)
     with psycopg.connect(dsn) as conn:
         if which == "001":
             apply_001(conn)
+        elif which == "005":
+            check_005(conn) if check else apply_005(conn, dry_run)
         elif which == "004":
             check_004(conn) if check else apply_004(conn, dry_run)
         elif which == "003":
