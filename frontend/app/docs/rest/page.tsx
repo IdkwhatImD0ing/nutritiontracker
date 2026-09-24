@@ -71,8 +71,8 @@ export default function RestDoc() {
         </li>
         <li>
           Auth: <code>Authorization: Bearer tally_live_…</code> on every request.{" "}
-          <code>read</code> covers GET; everything else needs <code>write</code> (
-          <Link href="/docs/api-keys#scopes">scopes</Link>).
+          <code>read</code> covers GET; everything else needs <code>write</code>, except three
+          routes marked below (<Link href="/docs/api-keys#scopes">scopes</Link>).
         </li>
         <li>
           Days are your local days, in the timezone from your settings (UTC if unset). Dates are{" "}
@@ -140,10 +140,12 @@ export default function RestDoc() {
             <code>weight</code> if you mentioned one.
           </p>
         </Endpoint>
-        <Endpoint method="GET" path="/api/logs/{log_id}" scope="read">
+        <Endpoint method="GET" path="/api/logs/{log_id}" scope="write">
           <p>
             The log&apos;s rows as they stand now. A row can carry <code>stale: true</code> when
-            its lookup stalled; retry it with <code>/api/resolve/tier3</code>.
+            its lookup stalled; retry it with <code>/api/resolve/tier3</code>. A row that stalls
+            again after its retries is set to <code>not_found</code> by this read, so it needs{" "}
+            <code>write</code>.
           </p>
         </Endpoint>
         <Endpoint method="POST" path="/api/logs/{log_id}/commit" scope="write">
@@ -277,11 +279,11 @@ export default function RestDoc() {
             source reported, a source badge, and the raw provider <code>payload</code>.
           </p>
         </Endpoint>
-        <Endpoint method="GET" path="/api/foods/barcode?code=" scope="read">
+        <Endpoint method="GET" path="/api/foods/barcode?code=" scope="write">
           <p>
             Look a barcode up: the cache first, then USDA, then Open Food Facts. A miss is{" "}
             <code>&#123;&quot;found&quot;: false&#125;</code>, not a 404. A new hit is added to the
-            shared food cache.
+            shared food cache, so it needs <code>write</code>.
           </p>
         </Endpoint>
         <Endpoint method="POST" path="/api/foods/select" scope="write">
@@ -342,10 +344,10 @@ export default function RestDoc() {
             IANA name; <code>targets.kcal</code> must be 800 to 10000.
           </p>
         </Endpoint>
-        <Endpoint method="POST" path="/api/settings/goals/compute" scope="write">
+        <Endpoint method="POST" path="/api/settings/goals/compute" scope="read">
           <p>
             Proposes targets from height, weight, age, sex and activity level. Saves nothing; PUT
-            the <code>targets</code> you want. It is a POST, so it needs a write key.
+            the <code>targets</code> you want. Because it saves nothing, a read key may call it.
           </p>
         </Endpoint>
       </ul>

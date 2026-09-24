@@ -6,8 +6,8 @@ row is whatever the fake says api_key_auth returned. The JWT path must be
 untouched: a token still never reaches the database.
 
 Against the database (sections 3-4): every test runs inside a transaction
-that is ROLLED BACK (the isolated_db harness; tenancy_harness applies 006
-inside it while it is not yet applied). The /api/keys handlers are called
+that is ROLLED BACK (the isolated_db harness; tenancy_harness applies 006 and
+007 inside it while they are not yet applied). The /api/keys handlers are called
 directly under two tenants, and api_key_auth is called the way a keyed
 request starts: as the app role with NO tenant bound. Its keys belong to the
 real owner account — the function joins neon_auth for the email, so a made-up
@@ -32,6 +32,7 @@ import psycopg
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from psycopg import sql as pgsql
 from psycopg.rows import dict_row
 from pydantic import ValidationError
 from starlette.requests import Request
@@ -345,6 +346,65 @@ async def _owner_key(conn, label: str, scopes: str = "read_write") -> keys_route
     return keys_routes.ApiKeyCreated(key=keys_routes._out(row), secret=secret)
 
 
+async def _stored_keys(
+    conn, count: int, minutes_old: int, *, revoked: bool = False, expired: bool = False
+) -> list[str]:
+    """`count` keys for the bound tenant in one direct INSERT (past create_key's
+    cap and prune), created `minutes_old`, `minutes_old + 1`, ... minutes ago,
+    revoked or expired on request. Their ids, newest first."""
+    made = [api_keys.generate() for _ in range(count)]
+    ids = [key_id for key_id, _ in made]
+    await conn.execute(
+        """
+        INSERT INTO api_keys (id, label, key_hash, last_four, scopes, created_at, revoked_at, expires_at)
+        SELECT k.id, 'stored', k.key_hash, 'stor', '{read}',
+               now() - (%s + k.n - 1)::int * interval '1 minute',
+               CASE WHEN %s THEN now() END,
+               CASE WHEN %s THEN now() - interval '1 second' END
+          FROM unnest(%s::text[], %s::text[]) WITH ORDINALITY AS k(id, key_hash, n)
+        """,
+        (minutes_old, revoked, expired, ids, [api_keys.hash_key(secret) for _, secret in made]),
+    )
+    return ids
+
+
+# A value per type for the probe account's NOT NULL columns with no default (as verify_007)
+_PROBE_VALUES = {
+    "text": "'banned-probe'",
+    "character varying": "'banned-probe'",
+    "uuid": "gen_random_uuid()",
+    "boolean": "false",
+    "timestamp with time zone": "now()",
+    "timestamp without time zone": "now()",
+}
+
+
+async def _banned_account(conn) -> str:
+    """A Neon Auth account with banned = true, rolled back with the test. The
+    app role cannot write neon_auth, so as the connecting role, the way the
+    harness runs its DDL; the caller rebinds a tenant after. Its NOT NULL
+    columns with no default are read from information_schema, as verify_007
+    does. Returns its id."""
+    await conn.execute("SET LOCAL ROLE NONE")
+    cur = await conn.execute(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_schema = 'neon_auth' AND table_name = 'user' "
+        "AND is_nullable = 'NO' AND column_default IS NULL"
+    )
+    values = {r["column_name"]: pgsql.SQL(_PROBE_VALUES[r["data_type"]]) for r in await cur.fetchall()}
+    values |= {  # a fresh address, so a concurrent run never waits on the unique email
+        "email": pgsql.Literal(f"banned-{api_keys.generate()[0]}@example.invalid"),
+        "banned": pgsql.SQL("true"),
+    }
+    row = await _one(
+        conn,
+        pgsql.SQL('INSERT INTO neon_auth."user" ({}) VALUES ({}) RETURNING id::text AS id').format(
+            pgsql.SQL(", ").join(map(pgsql.Identifier, values)), pgsql.SQL(", ").join(values.values())
+        ),
+    )
+    return row["id"]
+
+
 # ---------------------------------------------------------------------------
 # 3. /api/keys under two tenants
 # ---------------------------------------------------------------------------
@@ -429,6 +489,100 @@ def test_cap_counts_only_active_keys():
     _run(run())
 
 
+def test_create_locks_the_user_inside_its_insert_transaction():
+    """The cap's count holds under concurrency only behind the per-user
+    advisory lock, taken in the same tx() as the insert. Every statement
+    create_key runs goes through that one tx() connection, the lock first;
+    the lock outlives the statement (held to the transaction's end), and it
+    is this user's alone: a second connection cannot take it, but can take
+    another user's."""
+
+    async def run():
+        async with isolated_db() as conn:
+            await switch_tenant(conn, "keys-lock")
+            ran = []
+            harness = (db.tx, db.fetchone, db.fetchall, db.execute)
+
+            class Recorder:
+                def __init__(self, c):
+                    self._c = c
+
+                async def execute(self, sql, params=None):
+                    ran.append(sql)
+                    return await self._c.execute(sql, params)
+
+            @asynccontextmanager
+            async def recording_tx():
+                async with harness[0]() as c:
+                    yield Recorder(c)
+
+            async def outside(*_args):
+                raise AssertionError("create_key ran a statement outside its transaction")
+
+            db.tx, db.fetchone, db.fetchall, db.execute = recording_tx, outside, outside, outside
+            try:
+                await keys_routes.create_key(ApiKeyCreate(label="locked"))
+            finally:
+                db.tx, db.fetchone, db.fetchall, db.execute = harness
+            assert "pg_advisory_xact_lock" in ran[0]
+            assert [sql.split()[0] for sql in ran[1:]] == ["INSERT", "DELETE"]
+
+            async with await psycopg.AsyncConnection.connect(db._database_url(), autocommit=True) as other:
+
+                async def can_lock(user_id: str) -> bool:
+                    cur = await other.execute(
+                        "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0))", (f"api_keys:{user_id}",)
+                    )
+                    return (await cur.fetchone())[0]
+
+                assert await can_lock("keys-lock") is False  # held until the create's transaction ends
+                assert await can_lock("keys-lock-other") is True  # per user: nobody else waits
+
+    _run(run())
+
+
+def test_create_prunes_the_oldest_inactive_keys_past_the_bound():
+    async def run():
+        async with isolated_db() as conn:
+            await switch_tenant(conn, "keys-prune")
+            bound = keys_routes.MAX_STORED_KEYS
+            live = await _stored_keys(conn, keys_routes.MAX_ACTIVE_KEYS - 2, 10_000)  # the oldest rows of all
+            [expired] = await _stored_keys(conn, 1, 5_000, expired=True)  # the oldest inactive one
+            revoked = await _stored_keys(conn, bound - len(live) - 1, 100, revoked=True)
+
+            # at the bound: each create drops one row, the oldest inactive one
+            first = (await keys_routes.create_key(ApiKeyCreate(label="first"))).key
+            second = (await keys_routes.create_key(ApiKeyCreate(label="second"))).key
+            cur = await conn.execute("SELECT id FROM api_keys")
+            left = {r["id"] for r in await cur.fetchall()}
+            assert len(left) == bound
+            assert expired not in left and revoked[-1] not in left  # expired counts as inactive
+            assert set(revoked[:-1]) <= left
+            assert set(live) | {first.id, second.id} <= left  # live keys are never pruned, however old
+
+            # the cap is full now: a refused create prunes nothing
+            with pytest.raises(HTTPException) as exc:
+                await keys_routes.create_key(ApiKeyCreate(label="over the cap"))
+            assert exc.value.status_code == 409
+            assert (await _one(conn, "SELECT count(*) AS n FROM api_keys"))["n"] == bound
+
+    _run(run())
+
+
+def test_list_returns_at_most_the_bound_newest_first():
+    """Rows past the bound (stored directly: create_key would have pruned
+    them) are not listed; the newest are."""
+
+    async def run():
+        async with isolated_db() as conn:
+            await switch_tenant(conn, "keys-list")
+            stored = await _stored_keys(conn, keys_routes.MAX_STORED_KEYS + 5, 1, revoked=True)
+            listed = [k.id for k in await keys_routes.list_keys()]
+            assert listed == stored[: keys_routes.MAX_STORED_KEYS]
+
+    _run(run())
+
+
 # ---------------------------------------------------------------------------
 # 4. api_key_auth: the lookup with no tenant bound
 # ---------------------------------------------------------------------------
@@ -495,5 +649,40 @@ def test_api_key_auth_stamps_last_used_at_every_five_minutes():
             assert await call_then_age() == timedelta(minutes=4)  # recent: left alone
             await conn.execute("UPDATE api_keys SET last_used_at = now() - interval '6 minutes' WHERE id = %s", (key_id,))
             assert await call_then_age() == timedelta(0)  # stale: stamped again
+
+    _run(run())
+
+
+def test_api_key_auth_refuses_a_banned_account_without_stamping():
+    """Migration 007: a banned account's live key is the same 401 as an
+    unknown key, and the refusal records no use. Unbanned, the same key
+    resolves and is stamped, so the ban is what refused it."""
+
+    async def run():
+        async with isolated_db() as conn:
+            banned_id = await _banned_account(conn)
+            await switch_tenant(conn, banned_id)
+            made = await _owner_key(conn, "banned")
+            key_id, key_hash = made.key.id, api_keys.hash_key(made.secret)
+
+            async def last_used():
+                await switch_tenant(conn, banned_id)
+                row = await _one(conn, "SELECT last_used_at FROM api_keys WHERE id = %s", (key_id,))
+                return row["last_used_at"]
+
+            await _no_tenant(conn)
+            request = Request({"type": "http", "method": "GET", "path": "/", "query_string": b"",
+                               "headers": [(b"authorization", f"Bearer {made.secret}".encode())]})
+            with pytest.raises(HTTPException) as exc:
+                await auth.authenticate(request)
+            assert (exc.value.status_code, exc.value.detail) == (401, "invalid API key")
+            assert await last_used() is None
+
+            await conn.execute("SET LOCAL ROLE NONE")
+            await conn.execute('UPDATE neon_auth."user" SET banned = false WHERE id::text = %s', (banned_id,))
+            await _no_tenant(conn)
+            [row] = await _auth(conn, key_id, key_hash)
+            assert row["user_id"] == banned_id
+            assert await last_used() is not None
 
     _run(run())

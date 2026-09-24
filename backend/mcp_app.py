@@ -15,19 +15,24 @@ cancelled stateless request):
 - Auth runs before dispatch: auth.authenticate (API key or session JWT) binds
   the tenant contextvars, and they reach the tool on both protocol paths (the
   SDK copies the request's context into the tasks it spawns).
-- A raw ASGI endpoint, registered by main.py with add_route: a mount would
-  answer POST /api/mcp with a 307. POST only; GET and DELETE get Starlette's
-  405, because in stateless mode a GET opens an SSE stream that never ends.
+- A raw ASGI endpoint (handle), reached through main.py's route, which
+  imports this module on the first /api/mcp request: the SDK and the two
+  servers cost ~0.4 s, which every cold start paid when main imported it. A
+  mount would answer POST /api/mcp with a 307. POST only; GET and DELETE get
+  Starlette's 405, because in stateless mode a GET opens an SSE stream that
+  never ends.
 - transport_security is explicit: the SDK's default turns on a localhost-only
   Host check that would refuse every real host. auth._check_origin already
   does the Origin check.
 - subscriptions/listen is refused: its answer is a stream held open until the
   client leaves, which a 120 s function cannot serve.
-- The session managers are built and run by running(), entered from
-  main.lifespan: a manager's run() works once, and the tests enter the app's
-  lifespan many times per process.
+- The session managers run in one background task per event loop, started
+  by the loop's first request (_started) and stopped by main.lifespan's
+  shutdown (stop). anyio wants a task group entered and exited by the same
+  task, and a request's task ends with it. A manager's run() works once, so
+  each start builds fresh ones: the tests run a fresh loop per TestClient.
 
-Every tool calls one handler with every argument explicit: called outside
+Every tool calls its handlers with every argument explicit: called outside
 FastAPI, a handler's Query() default is a FieldInfo object, not the value. A
 handler's HTTPException (404 log not found, 409, 422, the demo quota's 429)
 becomes a ToolError the model can read; the SDK reports anything else as
@@ -36,8 +41,11 @@ becomes a ToolError the model can read; the SDK reports anything else as
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import functools
-from contextlib import AsyncExitStack, asynccontextmanager
+import json
+from contextlib import AsyncExitStack
 from datetime import date as date_type
 from datetime import datetime, timezone
 from typing import Annotated
@@ -53,11 +61,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import auth
+import db
 import deadline
 from models import Alternate, DayTotals, LogCreate, Macros, MacroTargets, Meal, Question
-from models import SaveIntent, StagedItem
+from models import SaveIntent, StagedItem, Tier3KickRequest
 from resolver import foods_repo
-from routes import commit, diary, entries, foods, history, logs, me, meals, settings, weights
+from routes import commit, diary, entries, foods, history, logs, me, meals, resolve, settings, weights
 from services import quota
 
 INSTRUCTIONS = """\
@@ -75,6 +84,17 @@ no database matched is not saved. The read tools never change anything."""
 # ---------------------------------------------------------------------------
 
 
+def _detail_text(detail) -> str:
+    """An HTTPException's detail as text: a str as is, FastAPI's validation
+    list as its messages, anything else as JSON. An f-string would hand the
+    model a Python repr."""
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, list) and all(isinstance(d, dict) and "msg" in d for d in detail):
+        return "; ".join(str(d["msg"]) for d in detail)
+    return json.dumps(detail, default=str)
+
+
 def _handler_errors(fn):
     """A handler's HTTPException as a ToolError, so the model reads the reason
     instead of the SDK's bare "Error executing tool". functools.wraps keeps the
@@ -89,7 +109,7 @@ def _handler_errors(fn):
             reason = str(e.detail).partition(" — ")[0]
             raise ToolError(f"{reason}; resets at {e.resets_at}") from e
         except HTTPException as e:
-            raise ToolError(f"{e.detail} (HTTP {e.status_code})") from e
+            raise ToolError(f"{_detail_text(e.detail)} (HTTP {e.status_code})") from e
 
     return run
 
@@ -142,6 +162,11 @@ class LoggedFood(BaseModel):
     options: list[str] | None = None  # answers it offers when the reply is a question
     weight: weights.WeightEntry | None = None  # a weigh-in the sentence recorded
     note: str | None = None
+
+
+class LookupsRetried(BaseModel):
+    log_id: UUID
+    items: list[StagedRow]
 
 
 class NotSaved(BaseModel):
@@ -272,25 +297,38 @@ async def get_food(food_id: UUID) -> foods.FoodDetail:
 async def log_food(
     text: Annotated[str, Field(description='what was eaten, e.g. "two eggs and toast for breakfast"')],
     tz: Annotated[str | None, Field(description="IANA timezone; default the account's")] = None,
+    id: Annotated[
+        UUID | None,
+        Field(description="any UUID you pick for this sentence; send the same one when "
+                          "retrying it after a timeout, so it is logged once"),
+    ] = None,
 ) -> LoggedFood:
     """Turn a sentence into diary rows matched to database foods. The rows are
     STAGED, not saved: show them to the user, then call commit_log with the
     log_id to save them (or discard_log). Words like "yesterday" move the rows
-    to that day (logged_at). Can take up to two minutes. A demo account can
-    log once a day."""
+    to that day (logged_at). A row left `searching` ran out of time for its
+    lookup: retry_lookups runs it again. Can take up to two minutes. A demo
+    account can log once a day.
+
+    A retry with the same id never logs the sentence twice. It returns the
+    rows the first call has stored so far, without the reply, and does not
+    count as another log; while that call is still running they may be
+    incomplete or none, so try again shortly."""
     deadline.start()  # the request's 105 s budget, from the tool's first step
     body = LogCreate(
-        id=uuid4(), text=text, captured_at=datetime.now(timezone.utc),
+        id=id or uuid4(), text=text, captured_at=datetime.now(timezone.utc),
         tz=tz or await diary.tz_name(),
     )
     r = await logs.create_log_endpoint(body=body)
-    agent = r.agent
+    # a same-id replay (routes/logs._duplicate_post_response) is the stored
+    # log, a LogPollResponse: no agent outcome, no note
+    agent = getattr(r, "agent", None)
     return LoggedFood(
         log_id=r.log_id, meal=r.meal, logged_at=r.logged_at, items=[_row(i) for i in r.items],
         reply=agent.reply if agent else None,
         options=agent.options if agent else None,
         weight=agent.weight if agent else None,
-        note=r.note,
+        note=getattr(r, "note", None),
     )
 
 
@@ -307,7 +345,9 @@ async def commit_log(
     """Save a staged log's resolved rows to the diary and return the day's new
     totals. Rows still searching, needing input or not found are not saved
     (not_saved); `errors` lists rows refused because their serving lacks
-    calories or a macro."""
+    calories or a macro. For a row still searching, call retry_lookups:
+    before this commit, so the row is saved with the rest, or after it, and
+    retry_lookups saves the row itself once it resolves."""
     staged = await logs.get_log(log_id=log_id)
     drop = set(drop_items or ())
     unknown = drop - {i.item_index for i in staged.items}
@@ -334,6 +374,51 @@ async def commit_log(
             if i.status != "resolved" or i.food is None
         ],
     )
+
+
+@_handler_errors
+async def retry_lookups(log_id: UUID) -> LookupsRetried:
+    """Look up again every row of a log that is still `searching` (log_food
+    ran out of time for it), and return the log's rows. On a staged log,
+    commit_log then saves the rows that resolved. On a log already committed,
+    commit_log cannot add rows, so this call saves each row it resolves to
+    the diary itself. A row still searching afterwards can be retried later;
+    a food no database has comes back not_found. Can take up to two minutes.
+    Counts against a demo account's daily lookup limit."""
+    deadline.start()  # one 105 s budget for every row this call looks up
+    staged = await logs.get_log(log_id=log_id)
+    log = await db.fetchone("SELECT status FROM logs WHERE id = %s", (log_id,))
+    if log["status"] not in ("staged", "committed"):
+        raise ToolError(f"this log is {log['status']}; nothing in it can be saved")
+    rows = {i.item_index: i for i in staged.items}
+    for item in staged.items:
+        if item.status != "searching":
+            continue
+        # The phone's kick is uncapped, one row per request; here the rows
+        # share one request, so each lookup gets what is left of its clock,
+        # and none starts under the inline lookups' floor. A row not started
+        # stays searching for the next call.
+        left = deadline.left()
+        if left < logs._INLINE_MIN_S:
+            break
+        deadline.tier3_budget.set(left)
+        found = await resolve.kick_tier3(
+            body=Tier3KickRequest(log_id=log_id, item_index=item.item_index)
+        )
+        rows[item.item_index] = found
+        # The commit left this row uncommitted (resolver/commit.py); commit-item
+        # is the app's late path for it (PendingItems). A numberless photo
+        # estimate cannot commit, as there.
+        if (
+            log["status"] == "committed"
+            and found.status == "resolved"
+            and found.estimated != "unresolved"
+        ):
+            await commit.commit_item(
+                log_id=log_id,
+                body=commit.CommitItemRequest(item_index=found.item_index, item=found),
+            )
+    return LookupsRetried(log_id=log_id, items=[_row(i) for i in rows.values()])
 
 
 @_handler_errors
@@ -387,6 +472,7 @@ _READ_TOOLS = (
 _WRITE_TOOLS = (
     (log_food, None),
     (commit_log, None),
+    (retry_lookups, None),
     (discard_log, None),
     (edit_entry, None),
     (delete_entry, ToolAnnotations(destructive_hint=True)),
@@ -411,35 +497,73 @@ def _build(write: bool) -> MCPServer:
 _SERVERS = {"read": _build(False), "write": _build(True)}
 
 
-@asynccontextmanager
-async def running():
-    """main.lifespan's part: a fresh session manager per server, each running
-    the task group that stateless requests are served in."""
-    async with AsyncExitStack() as stack:
-        for server in _SERVERS.values():
-            server.streamable_http_app(
-                stateless_http=True, json_response=True, transport_security=_NO_HOST_CHECK
-            )
-            await stack.enter_async_context(server.session_manager.run())
-        yield
+class _Runner:
+    """One event loop's session managers: a fresh one per server, each running
+    the task group that stateless requests are served in, all entered and
+    exited inside this one background task."""
 
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.ready = asyncio.Event()
+        self.stopping = asyncio.Event()
+        # an empty context: the first request creates this task, and its
+        # tenant must not ride into a task that outlives it
+        self.task = loop.create_task(self._run(), context=contextvars.Context())
 
-class McpEndpoint:
-    """POST /api/mcp. A class instance, so Starlette hands it the raw ASGI
-    call instead of wrapping it as a request handler."""
-
-    async def __call__(self, scope, receive, send) -> None:
-        request = Request(scope, receive)
+    async def _run(self) -> None:
         try:
-            user = await auth.authenticate(request)  # binds db.current_user_id + current_user
-        except HTTPException as e:
-            headers = {"WWW-Authenticate": "Bearer"} if e.status_code == 401 else None
-            response = JSONResponse({"detail": e.detail}, e.status_code, headers=headers)
-            return await response(scope, receive, send)
-        # the SDK requires this header to match the body's method, so it is
-        # enough to refuse the one method that holds a stream open
-        if request.headers.get("mcp-method") == "subscriptions/listen":
-            response = JSONResponse({"detail": "subscriptions/listen is not supported"}, 400)
-            return await response(scope, receive, send)
-        server = _SERVERS["write" if "write" in user["scopes"] else "read"]
-        await server.session_manager.handle_request(scope, receive, send)
+            async with AsyncExitStack() as stack:
+                for server in _SERVERS.values():
+                    server.streamable_http_app(
+                        stateless_http=True, json_response=True, transport_security=_NO_HOST_CHECK
+                    )
+                    await stack.enter_async_context(server.session_manager.run())
+                self.ready.set()
+                await self.stopping.wait()
+        finally:
+            self.ready.set()  # a failed start must not leave requests waiting
+
+
+_runner: _Runner | None = None
+
+
+async def _started() -> None:
+    """Start the runner on this loop's first request (or after the last one
+    stopped), then wait until it serves."""
+    global _runner
+    loop = asyncio.get_running_loop()
+    runner = _runner
+    # no await between the check and the assignment: two concurrent first
+    # requests cannot both start one
+    if runner is None or runner.loop is not loop or runner.task.done():
+        runner = _runner = _Runner(loop)
+    await runner.ready.wait()
+    if runner.task.done():
+        runner.task.result()  # it failed to start: raise why; the next request retries
+
+
+async def stop() -> None:
+    """main.lifespan's shutdown: end the runner a request started on this loop."""
+    runner = _runner
+    if runner is not None and runner.loop is asyncio.get_running_loop() and not runner.task.done():
+        runner.stopping.set()
+        await runner.task
+
+
+async def handle(scope, receive, send) -> None:
+    """POST /api/mcp, the raw ASGI call main.py's route hands over."""
+    request = Request(scope, receive)
+    try:
+        user = await auth.authenticate(request)  # binds db.current_user_id + current_user
+    except HTTPException as e:
+        headers = {"WWW-Authenticate": "Bearer"} if e.status_code == 401 else None
+        response = JSONResponse({"detail": e.detail}, e.status_code, headers=headers)
+        return await response(scope, receive, send)
+    # the SDK requires this header to match the body's method, so it is
+    # enough to refuse the one method that holds a stream open
+    if request.headers.get("mcp-method") == "subscriptions/listen":
+        response = JSONResponse({"detail": "subscriptions/listen is not supported"}, 400)
+        return await response(scope, receive, send)
+    await _started()
+    server = _SERVERS["write" if "write" in user["scopes"] else "read"]
+    await server.session_manager.handle_request(scope, receive, send)

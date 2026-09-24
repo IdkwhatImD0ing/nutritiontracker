@@ -5,8 +5,9 @@ import { DocsPage, Endpoint } from "@/components/docs/DocsPage";
 import { SITE_URL } from "@/lib/site";
 
 /** Mirrors backend/api_keys.py (format, hashing, redaction) and
- *  routes/keys.py + auth.py (scopes, expiry, the 10-key cap, revocation,
- *  session-only management) — SPEC §1. Change one, change the other. */
+ *  routes/keys.py + auth.py (scopes, expiry, the 10-key cap, the 50-key
+ *  bound, revocation, session-only management) — SPEC §1. Change one,
+ *  change the other. */
 
 export const metadata: Metadata = {
   title: "API keys",
@@ -124,7 +125,7 @@ export default function ApiKeysDoc() {
               <td>
                 <code>[&quot;read&quot;]</code>
               </td>
-              <td>GET, HEAD and OPTIONS</td>
+              <td>GET, HEAD and OPTIONS, with the exceptions below</td>
               <td>The 9 read tools</td>
             </tr>
             <tr>
@@ -133,17 +134,23 @@ export default function ApiKeysDoc() {
                 <code>[&quot;read&quot;, &quot;write&quot;]</code>
               </td>
               <td>Every method</td>
-              <td>All 15 tools</td>
+              <td>All 16 tools</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p>
-        The REST check is by HTTP method. A read-only key on POST, PUT, PATCH or DELETE gets{" "}
-        <code>403</code> with <code>{'{"detail": "this API key is read-only"}'}</code>, even
-        where the call saves nothing (<code>POST /api/settings/goals/compute</code> is a POST).
-        Over MCP, a read-only key is served a tool list without the write tools, so an agent
-        never sees them. A signed-in session in the app has both scopes.
+        On REST, the HTTP method decides by default: GET, HEAD and OPTIONS need read; POST, PUT,
+        PATCH and DELETE need write. Three routes set their own scope, because their method says
+        the wrong thing: <code>{"GET /api/logs/{log_id}"}</code> needs write (reading a log can
+        mark a stalled lookup <code>not_found</code>), <code>GET /api/foods/barcode</code> needs
+        write (a new barcode&apos;s food is added to the shared food cache), and{" "}
+        <code>POST /api/settings/goals/compute</code> needs only read (it computes targets and
+        saves nothing). The OpenAPI document marks those three with <code>x-tally-scope</code>. A
+        read-only key on a route that needs write gets <code>403</code> with{" "}
+        <code>{'{"detail": "this API key is read-only"}'}</code>. Over MCP, a read-only key is
+        served a tool list without the write tools, so an agent never sees them. A signed-in
+        session in the app has both scopes.
       </p>
 
       <h2 id="expiry">Expiry and the 10-key cap</h2>
@@ -168,9 +175,15 @@ export default function ApiKeysDoc() {
         dimmed, so you can still see what it was and when it was last used.
       </p>
       <p>
+        An account keeps at most <strong>50 keys</strong> in all: active, revoked and expired.
+        Creating a key past that deletes your oldest revoked or expired keys to make room. Active
+        keys are never deleted.
+      </p>
+      <p>
         A revoked, expired, unknown or malformed key always gets the same answer, so it never
         reveals which keys exist: <code>401</code> with{" "}
-        <code>{'{"detail": "invalid API key"}'}</code>.
+        <code>{'{"detail": "invalid API key"}'}</code> and the header{" "}
+        <code>WWW-Authenticate: Bearer</code>.
       </p>
 
       <h2 id="demo">Demo accounts</h2>
@@ -190,7 +203,7 @@ export default function ApiKeysDoc() {
       </p>
       <ul className="docs-eps">
         <Endpoint method="GET" path="/api/keys" scope="session">
-          <p>Your keys, newest first, revoked ones included.</p>
+          <p>Your keys, newest first, revoked and expired ones included, up to 50.</p>
         </Endpoint>
         <Endpoint method="POST" path="/api/keys" scope="session">
           <p>
@@ -199,7 +212,8 @@ export default function ApiKeysDoc() {
             <code>&quot;read_write&quot;</code>), <code>expires_in_days</code> (<code>30</code>,{" "}
             <code>90</code>, <code>365</code> or <code>null</code> for never). Answers{" "}
             <code>201</code> with <code>{"{key, secret}"}</code>: the key&apos;s record and
-            the full plaintext key, the only time it is ever returned.
+            the full plaintext key, the only time it is ever returned. It also deletes your
+            oldest revoked or expired keys past 50 in all.
           </p>
         </Endpoint>
         <Endpoint method="DELETE" path="/api/keys/{key_id}" scope="session">

@@ -154,7 +154,7 @@ export default function DocsIntroduction() {
           <a href="/api/openapi.json">OpenAPI document</a>.
         </li>
         <li>
-          <Link href="/docs/mcp">MCP server</Link>: all fifteen tools and what they do.
+          <Link href="/docs/mcp">MCP server</Link>: all sixteen tools and what they do.
         </li>
         <li>
           <Link href="/docs/limits">Limits &amp; errors</Link>: the demo quota and the error

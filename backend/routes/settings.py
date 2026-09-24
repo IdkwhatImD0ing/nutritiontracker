@@ -196,7 +196,13 @@ async def put_settings(body: SettingsUpdate) -> SettingsResponse:
     return await _read_settings()
 
 
-@router.post("/api/settings/goals/compute", response_model=GoalProposal)
+# "read" for a read-only key's sake (auth.require_user): a POST only to carry
+# its body. It computes a proposal and stores nothing (PUT /api/settings does).
+@router.post(
+    "/api/settings/goals/compute",
+    response_model=GoalProposal,
+    openapi_extra={"x-tally-scope": "read"},
+)
 async def compute_goals(body: GoalInputs) -> GoalProposal:
     out = goals.compute_targets(**body.model_dump())
     return GoalProposal(**out)

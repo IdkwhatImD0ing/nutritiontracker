@@ -13,7 +13,7 @@ import {
   MCP_URL,
 } from "@/components/docs/snippets";
 
-/** The MCP server's public contract: endpoint, auth, and the fifteen tools
+/** The MCP server's public contract: endpoint, auth, and the sixteen tools
  *  (names and arguments final per SPEC §2; backend/mcp_app.py implements
  *  them). A tool renamed there must be renamed here. */
 
@@ -83,7 +83,7 @@ export default function McpDoc() {
         </li>
         <li>
           The key decides the tools. A <strong>read only</strong> key sees the 9 read tools; a{" "}
-          <strong>read &amp; write</strong> key sees all 15. A tool your key does not have is not
+          <strong>read &amp; write</strong> key sees all 16. A tool your key does not have is not
           listed and cannot be called.
         </li>
         <li>
@@ -128,9 +128,9 @@ export default function McpDoc() {
         ]}
       />
       <p>
-        <code>log_food</code> waits for Tally&apos;s lookups and can take up to about two minutes.
-        Give tool calls a longer timeout than that: the TypeScript SDK stops waiting after 60
-        seconds unless you pass <code>timeout</code>.
+        <code>log_food</code> and <code>retry_lookups</code> wait for Tally&apos;s lookups and can
+        take up to about two minutes. Give tool calls a longer timeout than that: the TypeScript
+        SDK stops waiting after 60 seconds unless you pass <code>timeout</code>.
       </p>
 
       <h2 id="read-tools">Read tools</h2>
@@ -187,7 +187,7 @@ export default function McpDoc() {
       <h2 id="write-tools">Write tools</h2>
       <p>Only a read &amp; write key has these.</p>
       <ul className="docs-eps">
-        <Tool name="log_food" args="text, tz?" scope="write">
+        <Tool name="log_food" args="text, tz?, id?" scope="write">
           <p>
             Stages a log from what you ate, in words, and returns its <code>log_id</code>, the
             meal, and each row: index, status, food, amount, serving, macros, alternates, and any
@@ -195,12 +195,31 @@ export default function McpDoc() {
             saved</strong>: call <code>commit_log</code> to save them. <code>tz</code> defaults to
             the timezone in your settings.
           </p>
+          <p>
+            <code>id</code> is any UUID you pick. If a call times out, call again with the same{" "}
+            <code>id</code>: you get the rows the first call has stored so far instead of a second
+            log. That answer has no reply or options, and while the first call is still running
+            its rows may be incomplete, so try again shortly. A row left <code>searching</code> ran
+            out of time for its lookup; <code>retry_lookups</code> runs it again.
+          </p>
         </Tool>
         <Tool name="commit_log" args="log_id, drop_items?, save_as_meal?" scope="write">
           <p>
             Saves a staged log&apos;s rows to the diary. <code>drop_items</code> lists row indexes
             to leave out; <code>save_as_meal</code> also saves the rows as a saved meal under that
             name.
+          </p>
+        </Tool>
+        <Tool name="retry_lookups" args="log_id" scope="write">
+          <p>
+            Looks up again, one after another, each row of a log that is still{" "}
+            <code>searching</code>, and returns the log&apos;s rows in <code>log_food</code>&apos;s
+            shape. On a staged log, <code>commit_log</code> then saves the rows that resolved. On a
+            log already committed, this call saves each row it resolves to the diary itself. The
+            rows share one request&apos;s time, up to about two minutes; a row there was no time
+            for stays <code>searching</code>, so call again. A discarded log is refused. On a demo
+            account each lookup counts toward the 10 a day (
+            <Link href="/docs/limits#demo">limits</Link>).
           </p>
         </Tool>
         <Tool name="discard_log" args="log_id" scope="write">
@@ -232,7 +251,8 @@ export default function McpDoc() {
         Nothing is in your diary until <code>commit_log</code>. That leaves room for your agent
         to show you the rows and ask before saving. Only rows with status{" "}
         <code>resolved</code> are saved; a row still <code>searching</code> or waiting on a
-        question is left uncommitted. Photos are not available over MCP.
+        question is left uncommitted. <code>retry_lookups</code> looks a <code>searching</code> row
+        up again, before the commit or after it. Photos are not available over MCP.
       </p>
 
       <h2 id="prompts">Example prompts</h2>

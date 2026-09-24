@@ -1,8 +1,9 @@
 """The MCP server at POST /api/mcp (mcp_app.py), offline.
 
 Every request goes through the assembled app with its lifespan running
-(`with TestClient(main.app)`: without it the SDK's session managers have no
-task group). No database: where a test is not about auth, auth.authenticate
+(`with TestClient(main.app)`: the first MCP request on the client's loop
+starts the SDK's session managers, and the shutdown stops them). No
+database: where a test is not about auth, auth.authenticate
 is faked with one that binds the tenant the way the real one does, and each
 tool's handler is faked on its route module (the tools look handlers up at
 call time). Both protocol paths are exercised: the 2025 handshake era
@@ -15,8 +16,11 @@ Run:  uv run --with pytest pytest backend/tests/test_mcp.py -q
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -30,9 +34,10 @@ import auth
 import db
 import deadline
 import main
+import mcp_app
 from models import DayTotals, FoodRef, Macros, MacroTargets, Meal, ServingRef, StagedItem
 from resolver import foods_repo
-from routes import commit, diary, entries, foods, history, logs, weights
+from routes import commit, diary, entries, foods, history, logs, resolve, weights
 from routes.logs import AgentOutcome, LogCreateResponse, LogPollResponse, StagedItemOut
 from services import quota
 from test_auth import BASE, _keypair, _token
@@ -44,7 +49,10 @@ READ_TOOLS = {
     "whoami", "get_day", "get_history", "get_goals", "get_weights",
     "list_saved_meals", "search_my_foods", "search_foods", "get_food",
 }
-WRITE_TOOLS = {"log_food", "commit_log", "discard_log", "edit_entry", "delete_entry", "log_weight"}
+WRITE_TOOLS = {
+    "log_food", "commit_log", "retry_lookups", "discard_log", "edit_entry", "delete_entry",
+    "log_weight",
+}
 
 ZERO = MacroTargets(kcal=0, protein_g=0, carb_g=0, fat_g=0)
 TODAY = date(2026, 9, 23)
@@ -169,6 +177,37 @@ def test_get_and_delete_are_405(client):
         assert r.headers["allow"] == "POST"
 
 
+def test_importing_main_leaves_mcp_for_the_first_request():
+    """A cold start that serves no MCP never pays for the SDK and the two
+    servers: main imports mcp_app inside the route, not at module load."""
+    out = subprocess.run(
+        [sys.executable, "-c", "import main, sys; print('mcp_app' in sys.modules, 'mcp' in sys.modules)"],
+        cwd=Path(main.__file__).parent, capture_output=True, text=True, timeout=120,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ["False", "False"]
+
+
+def test_each_loops_first_request_starts_mcp(monkeypatch):
+    """Each TestClient block runs its own event loop: its first MCP request
+    starts a runner there, and its lifespan's shutdown stops it."""
+    monkeypatch.setattr(auth, "authenticate", _fake_authenticate(USERS))
+    runners = []
+    for _ in range(2):
+        with TestClient(main.app) as c:
+            block = []
+            for _ in range(2):
+                headers, body = _rpc("read-key", "tools/list")
+                r = c.post("/api/mcp", headers=headers, json=body)
+                assert r.status_code == 200, r.text
+                assert {t["name"] for t in r.json()["result"]["tools"]} == READ_TOOLS
+                block.append(mcp_app._runner)
+            assert block[0] is block[1]  # the loop's later requests reuse it
+            runners.append(block[0])
+        assert runners[-1].task.done()  # stopped by the shutdown, on its own loop
+    assert runners[0] is not runners[1]
+
+
 def test_subscriptions_listen_is_refused(monkeypatch):
     """Its answer is a stream held open until the client leaves: refused on
     the modern path by its header, and the 2025 path has no such method."""
@@ -281,6 +320,29 @@ def test_http_exception_is_a_readable_tool_error(client, monkeypatch, era):
 
     result = _call(client, "read-key", "get_food", {"food_id": str(uuid4())}, era)
     assert _text(result) == "Error executing tool get_food: food not found (HTTP 404)"
+
+
+def test_a_structured_detail_reads_as_text(client, monkeypatch):
+    """A list or dict detail reaches the model as words or JSON, never as a
+    Python repr."""
+    assert mcp_app._detail_text("log not found") == "log not found"
+    assert mcp_app._detail_text({"code": "stale", "day": date(2026, 9, 23)}) == (
+        '{"code": "stale", "day": "2026-09-23"}'
+    )
+    validation = [
+        {"type": "missing", "loc": ["body", "qty"], "msg": "Field required"},
+        {"type": "greater_than", "loc": ["body", "weight"], "msg": "Input should be greater than 0"},
+    ]
+    assert mcp_app._detail_text(validation) == "Field required; Input should be greater than 0"
+
+    async def invalid(log_id):
+        raise HTTPException(422, validation)
+
+    monkeypatch.setattr(logs, "discard_log", invalid)
+    result = _call(client, "write-key", "discard_log", {"log_id": str(uuid4())})
+    assert _text(result) == (
+        "Error executing tool discard_log: Field required; Input should be greater than 0 (HTTP 422)"
+    )
 
 
 def test_a_crash_stays_on_the_server(client, monkeypatch):
@@ -475,6 +537,110 @@ def test_log_food_stages_and_reports_rows(client, monkeypatch):
     )
     assert eggs["macros"]["kcal"] == 156
     assert (bar["index"], bar["status"], bar["food"]) == (1, "searching", None)
+
+
+def test_log_food_retry_sends_the_callers_id(client, monkeypatch):
+    """A client that timed out retries with the same id, so routes/logs answers
+    from the stored rows (the replay: a LogPollResponse, with no agent reply)
+    instead of logging the sentence twice."""
+    log_id = uuid4()
+    sent: list = []
+
+    async def replay(body):
+        sent.append(body.id)
+        return LogPollResponse(log_id=body.id, meal=Meal.lunch, items=[
+            StagedItemOut(item_index=0, phrase="rice", status="resolved", meal=Meal.lunch,
+                          food=FoodRef(id="f0", name="Rice"), qty=1),
+        ])
+
+    monkeypatch.setattr(logs, "create_log_endpoint", replay)
+    result = _call(client, "write-key", "log_food", {"text": "rice", "tz": "UTC", "id": str(log_id)})
+    assert result["isError"] is False, _text(result)
+    assert sent == [log_id]
+    out = result["structuredContent"]
+    assert (out["log_id"], out["reply"], out["note"]) == (str(log_id), None, None)
+    assert [(i["index"], i["food"]) for i in out["items"]] == [(0, "Rice")]
+
+
+def _rows(*statuses: str) -> list[StagedItemOut]:
+    return [
+        StagedItemOut(
+            item_index=i, phrase=f"food {i}", status=status, meal=Meal.lunch,
+            food=FoodRef(id=f"f{i}", name=f"food {i}") if status == "resolved" else None,
+        )
+        for i, status in enumerate(statuses)
+    ]
+
+
+@pytest.mark.parametrize("log_status", ["staged", "committed"])
+def test_retry_lookups_kicks_only_searching_rows(client, monkeypatch, log_status):
+    """The phone's tier-3 kick, once per searching row, on this call's own
+    clock. On a committed log a row that resolves is saved through
+    commit-item: commit_log cannot add rows to a committed log."""
+    log_id = uuid4()
+    kicked: list = []
+    budgets: list = []
+    landed: list = []
+
+    async def get_log(log_id):
+        return LogPollResponse(
+            log_id=log_id, meal=Meal.lunch,
+            items=_rows("resolved", "searching", "not_found", "searching"),
+        )
+
+    async def fetchone(sql, params=()):
+        assert (sql, params) == ("SELECT status FROM logs WHERE id = %s", (log_id,))
+        return {"status": log_status}
+
+    async def kick_tier3(body):
+        kicked.append((body.log_id, body.item_index))
+        budgets.append(deadline.tier3_budget.get())
+        if body.item_index == 1:
+            return StagedItem(item_index=1, phrase="food 1", status="resolved", meal=Meal.lunch,
+                              food=FoodRef(id="f1", name="Oat milk"), qty=1)
+        return StagedItem(item_index=body.item_index, phrase="food 3", status="searching",
+                          meal=Meal.lunch)
+
+    async def commit_item(log_id, body):
+        landed.append((log_id, body.item_index, body.item.food.name))
+        return DayTotals(kcal=0, protein_g=0, carb_g=0, fat_g=0, targets=ZERO)
+
+    monkeypatch.setattr(logs, "get_log", get_log)
+    monkeypatch.setattr(db, "fetchone", fetchone)
+    monkeypatch.setattr(resolve, "kick_tier3", kick_tier3)
+    monkeypatch.setattr(commit, "commit_item", commit_item)
+
+    result = _call(client, "write-key", "retry_lookups", {"log_id": str(log_id)})
+    assert result["isError"] is False, _text(result)
+    assert kicked == [(log_id, 1), (log_id, 3)]
+    assert budgets[0] is not None and budgets[0] > 100  # the call's clock, not the kick's no cap
+    out = result["structuredContent"]
+    assert out["log_id"] == str(log_id)
+    assert [(i["index"], i["status"], i["food"]) for i in out["items"]] == [
+        (0, "resolved", "food 0"), (1, "resolved", "Oat milk"),
+        (2, "not_found", None), (3, "searching", None),
+    ]
+    assert landed == ([(log_id, 1, "Oat milk")] if log_status == "committed" else [])
+
+
+def test_retry_lookups_spends_nothing_on_a_discarded_log(client, monkeypatch):
+    async def get_log(log_id):
+        return LogPollResponse(log_id=log_id, meal=Meal.lunch, items=_rows("searching"))
+
+    async def fetchone(sql, params=()):
+        return {"status": "discarded"}
+
+    async def never(body):
+        raise AssertionError("a discarded log's rows must not be looked up")
+
+    monkeypatch.setattr(logs, "get_log", get_log)
+    monkeypatch.setattr(db, "fetchone", fetchone)
+    monkeypatch.setattr(resolve, "kick_tier3", never)
+    result = _call(client, "write-key", "retry_lookups", {"log_id": str(uuid4())})
+    assert result["isError"] is True
+    assert _text(result) == (
+        "Error executing tool retry_lookups: this log is discarded; nothing in it can be saved"
+    )
 
 
 def test_commit_log_sends_every_kept_row(client, monkeypatch):

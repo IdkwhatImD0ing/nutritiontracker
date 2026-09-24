@@ -8,14 +8,14 @@ shutdown drains whatever is still in flight. The demo quota's 429
 (services/quota.py) gets its own handler so the body carries
 {detail, resets_at, used, limit} — the shape frontend/lib/api.ts reads.
 Agents reach the same handlers over MCP at POST /api/mcp (mcp_app.py), which
-authenticates itself (auth.authenticate) and runs inside the lifespan.
+authenticates itself (auth.authenticate) and is imported on its first request.
 """
 
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-import mcp_app
 import tracing
 from routes import (
     agent,
@@ -42,10 +42,11 @@ from services import quota
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     tracing.init_tracing()
-    # the MCP servers' session managers: stateless requests run in their task
-    # groups, so they live as long as the instance (mcp_app.running)
-    async with mcp_app.running():
-        yield
+    yield
+    # MCP's session managers run on a task the first /api/mcp request started
+    # (mcp_app._started), if one came: close them while this loop still runs
+    if "mcp_app" in sys.modules:
+        await sys.modules["mcp_app"].stop()
     try:
         tracing.flush()  # queued commit scores, if any
         await tracing.drain()  # sends still in flight (bounded)
@@ -103,7 +104,21 @@ app.include_router(agent.router)
 # Personal API keys (migration 006): Settings mints and revokes them; a key
 # then authenticates REST and MCP like a session (auth.py).
 app.include_router(keys.router)
+
+
+class _Mcp:
+    """POST /api/mcp: mcp_app is imported on the first request, not here. The
+    MCP SDK and the two servers took ~0.4 s of every cold start, MCP or not.
+    A class instance, so Starlette hands it the raw ASGI call instead of
+    wrapping it as a request handler."""
+
+    async def __call__(self, scope, receive, send) -> None:
+        import mcp_app  # lazy: see the docstring
+
+        await mcp_app.handle(scope, receive, send)
+
+
 # MCP (mcp_app.py): a raw ASGI route, not a mount (a mount answers POST
 # /api/mcp with a 307). POST only: GET and DELETE get a 405, since a
 # stateless GET would open an event stream that never ends.
-app.add_route("/api/mcp", mcp_app.McpEndpoint(), methods=["POST"], include_in_schema=False)
+app.add_route("/api/mcp", _Mcp(), methods=["POST"], include_in_schema=False)

@@ -6,7 +6,7 @@
  * fetched through LibraryApi's apiFetch (Bearer + one 401 retry) like the
  * other Settings seams.
  *
- *   GET    /api/keys      → ApiKeyOut[] newest first, revoked ones included
+ *   GET    /api/keys      → ApiKeyOut[] newest first, revoked ones included (up to 50)
  *   POST   /api/keys      { label, scopes: "read" | "read_write",
  *                           expires_in_days: 30 | 90 | 365 | null }
  *                         → { key, secret } (201; 409 past 10 active keys)

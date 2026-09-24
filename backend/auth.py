@@ -12,8 +12,9 @@ IS that user; via = "session" | "api_key"; scopes = frozenset of "read" /
 
 Three entry points: ``authenticate`` (who is calling, no scope check — the
 MCP endpoint picks its tool set from the scopes itself), ``require_user``
-(+ a read-only key may only use GET/HEAD/OPTIONS) and ``require_session_user``
-(/api/keys: a key cannot manage keys).
+(+ a read-only key may only use a read route: GET/HEAD/OPTIONS, unless the
+route declares its scope) and ``require_session_user`` (/api/keys: a key
+cannot manage keys).
 
 `require_user` is a module-level function used directly as a FastAPI dependency
 (``Depends(require_user)``) so ``app.dependency_overrides[require_user] = ...``
@@ -53,8 +54,9 @@ def is_owner() -> bool:
 
 
 _STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-# The methods a read-only key may use (require_user). Every other method needs
-# "write", so a method nobody planned for fails closed.
+# The methods a read-only key may use (require_user), unless the route declares
+# its own scope. Every other method needs "write", so a method nobody planned
+# for fails closed.
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 SESSION_SCOPES = frozenset({"read", "write"})  # a signed-in user can do everything
 
@@ -239,7 +241,10 @@ async def _api_key_user(token: str) -> dict:
             "SELECT * FROM api_key_auth(%s, %s)", (key_id, api_keys.hash_key(token))
         )
     if row is None:
-        raise HTTPException(status_code=401, detail="invalid API key")
+        # the challenge a 401 owes its caller (RFC 6750), as POST /api/mcp sends it
+        raise HTTPException(
+            status_code=401, detail="invalid API key", headers={"WWW-Authenticate": "Bearer"}
+        )
     if not row["email_verified"]:  # the JWT path's rule, read from the account itself
         raise HTTPException(status_code=403, detail="email not verified")
     return {
@@ -254,11 +259,18 @@ async def _api_key_user(token: str) -> dict:
 
 async def authenticate(request: Request) -> dict:
     """Who is calling (an API key or a Neon Auth JWT), bound as the request's
-    tenant, or 401/403. No scope check: require_user adds the per-method one."""
-    _check_origin(request)
+    tenant, or 401/403. No scope check: require_user adds the per-route one."""
     token = _bearer_token(request)
     if token.startswith(api_keys.FAMILY):  # before the JWT parse, which would say "invalid token"
+        # No Origin check for a key. The allowlist pins the session token to
+        # this app's own frontend, the one client that ever holds one. A key is
+        # made for every other client, and those that run in a browser engine
+        # (an extension, a desktop app's webview) send their own Origin, so the
+        # check would refuse callers keys exist for. The key alone is the
+        # credential: a browser never attaches it on its own, so there is no
+        # cross-site request to forge.
         return _bind(await _api_key_user(token))
+    _check_origin(request)  # still before the JWT is parsed or a JWKS fetched
     try:
         header = jwt.get_unverified_header(token)
     except jwt.InvalidTokenError:
@@ -322,9 +334,18 @@ async def authenticate(request: Request) -> dict:
 
 async def require_user(request: Request) -> dict:
     """FastAPI dependency: the verified user or 401/403. A read-only key may
-    only read: any other method answers 403."""
+    only read: a route that writes answers 403."""
     user = await authenticate(request)
-    need = "read" if request.method.upper() in _READ_METHODS else "write"
+    # The method says whether a route writes, except where it doesn't: a GET
+    # that writes (a watchdog, a cache fill) or a POST that only computes.
+    # Such a route names its scope in its decorator,
+    # openapi_extra={"x-tally-scope": "read" | "write"} (plain data, so route
+    # modules still import nothing but require_user), and FastAPI has put the
+    # matched route in the scope before any dependency runs.
+    declared = (getattr(request.scope.get("route"), "openapi_extra", None) or {}).get(
+        "x-tally-scope"
+    )
+    need = declared or ("read" if request.method.upper() in _READ_METHODS else "write")
     if need not in user["scopes"]:
         raise HTTPException(status_code=403, detail="this API key is read-only")
     return user

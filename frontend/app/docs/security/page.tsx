@@ -44,9 +44,11 @@ export default function SecurityDoc() {
       <h2 id="scopes">Scopes</h2>
       <p>
         A key is either read only or read &amp; write, and the check runs on every request. On the
-        REST API, a read-only key may only use GET, HEAD and OPTIONS; anything else is refused
-        with <code>403</code>. On the MCP server, a read-only key is served a separate tool set
-        that has no write tools at all, so there is nothing to call by mistake.{" "}
+        REST API, a read-only key may only use routes that read. By default those are GET, HEAD
+        and OPTIONS; two GETs that can change stored data need write, and one POST that saves
+        nothing needs only read. Anything else is refused with <code>403</code>. On the MCP
+        server, a read-only key is served a separate tool set that has no write tools at all, so
+        there is nothing to call by mistake.{" "}
         <Link href="/docs/api-keys#scopes">Scopes in detail</Link>.
       </p>
 
@@ -72,7 +74,8 @@ export default function SecurityDoc() {
         Revoked and expired keys are checked on every request, with no cache in between, so a
         revoked key fails on its very next call. Revoked, expired, unknown and malformed keys all
         get the same <code>401 invalid API key</code>, so the answer never reveals which keys
-        exist. A revoked key stays in your list, dimmed, as a record.
+        exist. A revoked key stays in your list, dimmed, as a record. An account keeps at most 50
+        keys, so a new key past that deletes the oldest revoked or expired ones.
       </p>
 
       <h2 id="keys-cannot-manage-keys">Keys cannot manage keys</h2>
@@ -85,10 +88,13 @@ export default function SecurityDoc() {
       <h2 id="browsers">Browsers</h2>
       <p>
         The API sends no CORS headers, so a web page on another site cannot read its responses.
-        State-changing requests that carry another site&apos;s <code>Origin</code> header are
-        refused with <code>403 origin mismatch</code>. Scripts and agents send no{" "}
-        <code>Origin</code>, so they are unaffected. Keys belong in servers, scripts and agent
-        configs, never in a web page, where anyone could read them.
+        A signed-in app session is also held to the app&apos;s own origin: a state-changing
+        request with a session token and another site&apos;s <code>Origin</code> header is
+        refused with <code>403 origin mismatch</code>. Requests with an API key are not checked
+        for <code>Origin</code>. The key is the whole credential and a browser never adds it to a
+        request by itself, so another site has nothing to forge, and a client that runs in a
+        browser engine, such as an extension, can use a key. Keys belong in servers, scripts and
+        agent configs, never in a web page, where anyone could read them.
       </p>
 
       <h2 id="practice">Good practice</h2>

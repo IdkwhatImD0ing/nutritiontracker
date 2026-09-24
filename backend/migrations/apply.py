@@ -16,6 +16,10 @@
   python apply.py 006            -> 006_api_keys.sql (personal API keys; needs 002, no-op if applied)
   python apply.py 006 --dry-run  -> apply 006 + verify inside one transaction, then ROLL BACK
   python apply.py 006 --check    -> re-run 006's verification against the committed schema
+  python apply.py 007            -> 007_api_key_auth.sql (api_key_auth checks the account before
+                                    it stamps last_used_at; needs 006, no-op if applied)
+  python apply.py 007 --dry-run  -> apply 007 + verify inside one transaction, then ROLL BACK
+  python apply.py 007 --check    -> re-run 007's verification against the committed schema
 
 Every migration runs in ONE transaction. 002 is verified before COMMIT (row
 counts unchanged, every existing row backfilled to the owner, RLS filters
@@ -28,6 +32,8 @@ insert with no tenant fails); a failed check rolls back. Guards:
   004 - logs.user_id must be present (002 applied); the index is CREATE INDEX IF NOT EXISTS,
         so re-applying is a no-op either way
   006 - logs.user_id must be present (002 applied) and `api_keys` absent; present -> no-op, exit 0
+  007 - `api_keys` must be present (006 applied) and api_key_auth must not carry 007's comment
+        marker; marked -> no-op, exit 0
 
 Never prints secret values (the owner's user id is an identifier, not a secret).
 """
@@ -37,6 +43,7 @@ import sys
 from pathlib import Path
 
 import psycopg
+from psycopg import sql as pgsql
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = MIGRATIONS_DIR.parent.parent
@@ -46,6 +53,7 @@ SQL_FILE_002 = MIGRATIONS_DIR / "002_multiuser.sql"
 SQL_FILE_003 = MIGRATIONS_DIR / "003_weights.sql"
 SQL_FILE_004 = MIGRATIONS_DIR / "004_entries_food_idx.sql"
 SQL_FILE_006 = MIGRATIONS_DIR / "006_api_keys.sql"
+SQL_FILE_007 = MIGRATIONS_DIR / "007_api_key_auth.sql"
 
 EXPECTED_TABLES = {
     "foods",
@@ -535,17 +543,143 @@ def check_006(conn) -> None:
     print("CHECK OK: 006 invariants hold.")
 
 
+# ---------------------------------------------------------------------------
+# 007 — api_key_auth checks the account before it stamps (2026-09-23)
+# ---------------------------------------------------------------------------
+
+# A value per type for the probe account's NOT NULL columns that have no default
+_PROBE_VALUES = {
+    "text": pgsql.SQL("'007-verify'"),
+    "character varying": pgsql.SQL("'007-verify'"),
+    "uuid": pgsql.SQL("gen_random_uuid()"),
+    "boolean": pgsql.SQL("false"),
+    "timestamp with time zone": pgsql.SQL("now()"),
+    "timestamp without time zone": pgsql.SQL("now()"),
+}
+
+
+def has_007(cur) -> bool:
+    cur.execute(
+        "SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname = 'public' AND p.proname = 'api_key_auth' "
+        "AND obj_description(p.oid, 'pg_proc') LIKE '007:%'"
+    )
+    return cur.fetchone() is not None
+
+
+def verify_007(cur) -> None:
+    """007's invariants inside the still-open transaction: everything 006
+    checks still holds (owner, grants, the answers for right and wrong keys);
+    a banned account's live key names nobody AND is left unstamped; and the
+    owner's live key still resolves and is stamped. The banned account is a
+    probe row in neon_auth."user" whose NOT NULL columns are read from
+    information_schema, so a Neon Auth schema change fails loudly here. It
+    and the probe keys are rolled back to a savepoint, so a real apply
+    commits only the function."""
+    verify_006(cur)
+    assert has_007(cur), "api_key_auth: the 007 comment marker is missing"
+    cur.execute(
+        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (OWNER_EMAIL,)
+    )
+    owners = cur.fetchall()
+    assert len(owners) == 1, f"expected exactly one Neon Auth user for the owner, found {len(owners)}"
+    owner_id = owners[0][0]
+    cur.execute(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_schema = 'neon_auth' AND table_name = 'user' "
+        "AND is_nullable = 'NO' AND column_default IS NULL"
+    )
+    probe = {}
+    for name, dtype in cur.fetchall():
+        assert dtype in _PROBE_VALUES, f'neon_auth."user".{name}: no probe value for a NOT NULL {dtype}'
+        probe[name] = _PROBE_VALUES[dtype]
+    probe |= {"email": pgsql.Literal("007-verify-banned@example.invalid"), "banned": pgsql.SQL("true")}
+    banned_hash = _probe_hash("007c0ffee0000001")
+    owner_hash = _probe_hash("007c0ffee0000002")
+
+    cur.execute("SAVEPOINT verify_007")
+    try:
+        cur.execute(  # as the migrating role: the app role cannot write neon_auth
+            pgsql.SQL('INSERT INTO neon_auth."user" ({}) VALUES ({}) RETURNING id::text').format(
+                pgsql.SQL(", ").join(map(pgsql.Identifier, probe)), pgsql.SQL(", ").join(probe.values())
+            )
+        )
+        banned_id = cur.fetchone()[0]
+        cur.execute(f"SET LOCAL ROLE {APP_ROLE}")
+        for user_id, key_id, key_hash in (
+            (banned_id, "007c0ffee0000001", banned_hash),
+            (owner_id, "007c0ffee0000002", owner_hash),
+        ):
+            cur.execute("SELECT set_config('app.user_id', %s, true)", (user_id,))
+            cur.execute(
+                "INSERT INTO api_keys (id, label, key_hash, last_four, scopes) "
+                "VALUES (%s, '007 verify', %s, 'prob', '{read}')",
+                (key_id, key_hash),
+            )
+
+        cur.execute("SELECT set_config('app.user_id', '', true)")
+        cur.execute("SELECT count(*) FROM api_key_auth(%s, %s)", ("007c0ffee0000001", banned_hash))
+        assert cur.fetchone()[0] == 0, "api_key_auth: a banned account's key must name nobody"
+        cur.execute("SELECT user_id FROM api_key_auth(%s, %s)", ("007c0ffee0000002", owner_hash))
+        assert cur.fetchall() == [(owner_id,)], "api_key_auth: the owner's live key must still resolve"
+
+        # last_used_at = now(): NULL while unstamped, true once stamped in this transaction
+        for user_id, key_id, stamped, why in (
+            (banned_id, "007c0ffee0000001", None, "a refused key must stay unstamped"),
+            (owner_id, "007c0ffee0000002", True, "a used key must be stamped"),
+        ):
+            cur.execute("SELECT set_config('app.user_id', %s, true)", (user_id,))
+            cur.execute("SELECT last_used_at = now() FROM api_keys WHERE id = %s", (key_id,))
+            assert cur.fetchone() == (stamped,), f"api_key_auth: {why}"
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT verify_007")  # probes gone, SET LOCAL ROLE undone with them
+    cur.execute("SET LOCAL ROLE NONE")
+
+
+def apply_007(conn, dry_run: bool) -> None:
+    sql = SQL_FILE_007.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        if not has_006(cur):
+            sys.exit("ERROR: refusing to apply 007 - 006 (table api_keys) is not applied. No changes made.")
+        if has_007(cur):
+            print("Guard: api_key_auth already carries the 007 marker - 007 already applied, nothing to do.")
+            sys.exit(0)
+        cur.execute(sql)
+        verify_007(cur)
+    if dry_run:
+        conn.rollback()
+        print("DRY RUN: 007_api_key_auth.sql applied and verified, then ROLLED BACK.")
+        return
+    conn.commit()
+    print(
+        "Applied 007_api_key_auth.sql: api_key_auth refuses a banned or deleted account before "
+        f"it stamps last_used_at; still SECURITY DEFINER, executable by {APP_ROLE} only."
+    )
+
+
+def check_007(conn) -> None:
+    """`--check`: 007's own verification against the committed schema, rolled back."""
+    with conn.cursor() as cur:
+        if not has_007(cur):
+            sys.exit("ERROR: 007 is not applied (api_key_auth has no 007 marker) - nothing to check.")
+        verify_007(cur)
+    conn.rollback()
+    print("CHECK OK: 007 invariants hold.")
+
+
 def main(argv: list[str]) -> None:
     dry_run = "--dry-run" in argv
     check = "--check" in argv
     args = [a for a in argv if a not in ("--dry-run", "--check")]
     which = args[0] if args else "001"
-    if which not in ("001", "002", "003", "004", "006") or (which == "001" and (dry_run or check)) or (dry_run and check):
+    if which not in ("001", "002", "003", "004", "006", "007") or (which == "001" and (dry_run or check)) or (dry_run and check):
         sys.exit(__doc__)
     dsn = read_database_url(ENV_FILE)
     with psycopg.connect(dsn) as conn:
         if which == "001":
             apply_001(conn)
+        elif which == "007":
+            check_007(conn) if check else apply_007(conn, dry_run)
         elif which == "006":
             check_006(conn) if check else apply_006(conn, dry_run)
         elif which == "004":

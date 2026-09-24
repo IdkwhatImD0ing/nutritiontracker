@@ -1971,7 +1971,13 @@ async def _persist(
             )
 
 
-@router.get("/api/logs/{log_id}", response_model=LogPollResponse)
+# "write" for a read-only key's sake (auth.require_user): the poll's watchdog
+# flips a stale searching row to not_found.
+@router.get(
+    "/api/logs/{log_id}",
+    response_model=LogPollResponse,
+    openapi_extra={"x-tally-scope": "write"},
+)
 async def get_log(log_id: UUID) -> LogPollResponse:
     resp = await _load_log_response(log_id, watchdog=True)
     if resp is None:

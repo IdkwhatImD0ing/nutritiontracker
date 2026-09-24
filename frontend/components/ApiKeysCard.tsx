@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "@/lib/api";
+import { writeClipboard } from "@/lib/clipboard";
 import {
   createKey,
   listKeys,
@@ -185,10 +186,11 @@ export default function ApiKeysCard() {
     setCreateError(null);
     try {
       const made = await createKey({ label: name, scopes: access, expires_in_days: expiry });
-      // Prepend only onto a loaded list. The refetch covers a list that failed
-      // or is still loading (that GET predates the insert), and drops its answer.
-      setKeys((ks) => ks && [made.key, ...ks]);
-      setAttempt((n) => n + 1);
+      // Prepend onto a list that was loaded when the form was sent. One that
+      // failed or was still loading is refetched instead: that GET predates the
+      // insert, and bumping `attempt` drops its answer.
+      if (keys) setKeys((ks) => ks && [made.key, ...ks]);
+      else setAttempt((n) => n + 1);
       setCopied("idle");
       setReveal({ label: made.key.label, secret: made.secret });
       setSheet(false);
@@ -203,10 +205,10 @@ export default function ApiKeysCard() {
     if (!reveal) return;
     let next: Copy = "copied";
     try {
-      await navigator.clipboard.writeText(reveal.secret);
+      await writeClipboard(reveal.secret);
     } catch {
-      // No async clipboard (a plain-http origin, a refused permission):
-      // select the whole key so the system's own copy takes it.
+      // Both the async clipboard and execCommand("copy") refused: select the
+      // whole key so the system's own copy takes it.
       const sel = window.getSelection();
       if (secretEl.current && sel) {
         const range = document.createRange();

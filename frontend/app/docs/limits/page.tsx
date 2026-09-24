@@ -80,8 +80,9 @@ export default function LimitsDoc() {
               <td>Re-resolutions</td>
               <td>10 a day</td>
               <td>
-                <code>POST /api/resolve</code>, <code>POST /api/resolve/tier3</code>, and a
-                free-text <code>POST /api/resolve/answer</code>.
+                <code>POST /api/resolve</code>, <code>POST /api/resolve/tier3</code>, a
+                free-text <code>POST /api/resolve/answer</code>, and each row MCP{" "}
+                <code>retry_lookups</code> looks up.
               </td>
             </tr>
           </tbody>
@@ -117,8 +118,9 @@ export default function LimitsDoc() {
       <p>
         Every request must finish inside the hosting platform&apos;s 120-second limit. Two kinds
         of call can come close. Logging (<code>POST /api/logs</code>, MCP <code>log_food</code>)
-        runs on its own 105-second clock, and a row whose lookup does not fit comes back{" "}
-        <code>searching</code> rather than holding the request open. The row fixes (
+        and MCP <code>retry_lookups</code> run on their own 105-second clock, and a row whose
+        lookup does not fit comes back <code>searching</code> rather than holding the request
+        open. The row fixes (
         <code>POST /api/resolve</code>, <code>POST /api/resolve/tier3</code> and a free-text{" "}
         <code>POST /api/resolve/answer</code>) can run a fresh lookup with no clock of its own,
         which often takes 15 seconds or more and can run up to the 120-second limit. Set your
@@ -127,15 +129,16 @@ export default function LimitsDoc() {
       </p>
       <p>
         A lost response is safe to retry: send <code>POST /api/logs</code> again with the same{" "}
-        <code>id</code> and you get the stored result instead of a second log. Commits are safe
-        to retry too.
+        <code>id</code> (or call MCP <code>log_food</code> with the same <code>id</code>) and you
+        get the stored result instead of a second log. Commits are safe to retry too.
       </p>
 
       <h2 id="other-limits">Other limits</h2>
       <ul>
         <li>
-          At most 10 active API keys per account (<Link href="/docs/api-keys#expiry">API keys</Link>
-          ).
+          At most 10 active API keys per account, and 50 stored in all: creating a key deletes
+          the oldest revoked or expired ones past 50 (
+          <Link href="/docs/api-keys#expiry">API keys</Link>).
         </li>
         <li>
           <code>GET /api/weights</code> takes <code>days</code> from 1 to 3660; a weigh-in must be
@@ -170,7 +173,10 @@ export default function LimitsDoc() {
           <tbody>
             <tr>
               <td>401</td>
-              <td>No usable credentials. Revoked, expired, unknown and malformed keys look the same.</td>
+              <td>
+                No usable credentials. Revoked, expired, unknown and malformed keys look the same,
+                and their <code>401</code> carries <code>WWW-Authenticate: Bearer</code>.
+              </td>
               <td>
                 <code>missing bearer token</code>, <code>invalid API key</code>
               </td>
@@ -179,8 +185,8 @@ export default function LimitsDoc() {
               <td>403</td>
               <td>
                 Refused: a read-only key on a write, a key on{" "}
-                <code>/api/keys</code>, an unverified email, or a browser request from another
-                site.
+                <code>/api/keys</code>, an unverified email, or a signed-in app request from
+                another site (API keys are not checked for <code>Origin</code>).
               </td>
               <td>
                 <code>this API key is read-only</code>,{" "}
