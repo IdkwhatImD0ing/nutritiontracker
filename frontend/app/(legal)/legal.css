@@ -1,6 +1,6 @@
-/* Tally — the two legal pages (/privacy, /terms). Same ground and tokens as
-   globals.css; nothing here is imported by the app shell, so it cannot affect
-   Today. Deliberately plain: long prose, one column, no cards. */
+/* Tally — the two legal pages (/privacy, /terms). The nav and wordmark are
+   landing.css's own .land-nav / .land-mark; this file holds only what is
+   specific to long prose. Nothing here is imported by the app shell. */
 
 .legal {
   max-width: 680px;
@@ -11,30 +11,10 @@
   gap: 40px;
 }
 
-.legal-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 22px 0 0;
-  font-size: 0.9rem;
-}
-
+/* .land-mark is a <span> on the landing page; here it is a link. */
 .legal-mark {
-  font-family: var(--font-display);
-  font-size: 1.3rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
   color: var(--text);
   text-decoration: none;
-}
-
-.legal-nav a {
-  color: var(--muted);
-  text-decoration: none;
-}
-
-.legal-nav a:hover {
-  color: var(--text);
 }
 
 .legal-head h1 {
@@ -93,20 +73,4 @@
 
 .legal-body a {
   color: var(--mint);
-}
-
-.legal-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
-  font-size: 0.82rem;
-  color: var(--faint);
-}
-
-.legal-foot a {
-  color: var(--muted);
 }

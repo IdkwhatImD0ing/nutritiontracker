@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import "../legal.css";
 
 /** Public, and it has to stay that way: proxy.ts excludes /privacy from the
  *  signed-out redirect so an unfurler, a reviewer or an OAuth provider can
@@ -15,19 +13,10 @@ export const metadata: Metadata = {
 
 export default function Privacy() {
   return (
-    <main className="legal">
-      <header className="legal-nav">
-        <Link href="/" className="legal-mark">
-          Tally
-        </Link>
-        <nav>
-          <Link href="/terms">Terms</Link>
-        </nav>
-      </header>
-
+    <>
       <div className="legal-head">
         <h1>Privacy</h1>
-        <p className="legal-stamp">Last updated 20 September 2026</p>
+        <p className="legal-stamp">Last updated 23 September 2026</p>
       </div>
 
       <div className="legal-body">
@@ -64,6 +53,20 @@ export default function Privacy() {
               <strong>Weigh-ins and profile</strong> — any weight you log, plus the height, age,
               sex, activity level and goals you enter to generate targets.
             </li>
+            <li>
+              <strong>Where a photo was taken</strong> — on the owner’s account only. A photo
+              taken with the camera carries the phone’s location, which is used once to look up
+              the places around it and is never stored. The names of those places are kept, in
+              the log and its trace, because they are what the model was told. Demo accounts
+              are never asked for their location.
+            </li>
+            <li>
+              <strong>Oura activity</strong> — on the owner’s account only, once Oura is
+              connected: the full daily-activity and workout records Oura returns, from 90 days
+              before connecting onward. That includes each day’s calories burned, steps and
+              activity score, and Oura’s own finer detail such as its minute-by-minute activity
+              levels. The tokens that let Tally read them are stored encrypted.
+            </li>
           </ul>
         </section>
 
@@ -92,6 +95,18 @@ export default function Privacy() {
               <strong>USDA FoodData Central</strong> and <strong>Open Food Facts</strong> — the
               food databases. A lookup sends the name or barcode of a food, never your diary.
             </li>
+            <li>
+              <strong>Google Places</strong> — owner’s account only. Receives the location of a
+              camera photo and returns the names of the places around it.
+            </li>
+            <li>
+              <strong>Firecrawl</strong> — owner’s account only. Reads a restaurant’s published
+              menu page when the photo lane looks one up.
+            </li>
+            <li>
+              <strong>Oura</strong> — owner’s account only, once connected. Tally reads daily
+              activity and workouts from it; nothing from your diary is sent to Oura.
+            </li>
           </ul>
           <p>
             Application traces are kept on a server run by the same person who runs Tally, not a
@@ -107,6 +122,12 @@ export default function Privacy() {
             rather than by application code — the database role the app runs as cannot read
             another account’s rows even if the app asks it to. The one shared table is the
             cache of public food records, which holds nutrition data and nothing personal.
+          </p>
+          <p>
+            The one exception is the operator. As owner of the database, Bill has
+            administrative access that row-level security does not apply to, and can read any
+            account’s rows directly. If you would rather nobody else could read your diary, run
+            your own copy — see below.
           </p>
           <p>
             Your data is not sold, rented, or shared with anyone beyond the services listed
@@ -126,7 +147,9 @@ export default function Privacy() {
         <section>
           <h2>Cookies</h2>
           <p>
-            One session cookie, set when you sign in, so the app knows it is you. Nothing else.
+            Only the sign-in service’s own two: a session token, and a signed copy of your
+            session that lets a page skip re-checking it for up to fifteen minutes. No
+            advertising or analytics cookies.
           </p>
         </section>
 
@@ -150,13 +173,6 @@ export default function Privacy() {
           </p>
         </section>
       </div>
-
-      <footer className="legal-foot">
-        <span>Tally</span>
-        <span>
-          <Link href="/terms">Terms of Service</Link>
-        </span>
-      </footer>
-    </main>
+    </>
   );
 }

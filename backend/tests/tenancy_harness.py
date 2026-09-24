@@ -3,9 +3,10 @@
 Every isolated_db copy calls bind_test_tenant(conn) right after opening its
 force-rollback transaction. Inside that transaction it
   1. applies 002 when the database is still pre-002, and 003 (the weigh-in
-     log), 006 (API keys) and 007 (api_key_auth checks the account before it
-     stamps) while they are not yet applied — DDL is transactional, it rolls
-     back with the test — so the suite exercises RLS either way;
+     log), 005 (the Oura tables), 006 (API keys) and 007 (api_key_auth
+     checks the account before it stamps) while they are not yet applied —
+     DDL is transactional, it rolls back with the test — so the suite
+     exercises RLS either way;
   2. switches to the app role and binds one fixed tenant, exactly as db.py
      does for a request (db.tenant_sql) — neondb_owner itself bypasses RLS;
   3. seeds the 001 settings rows for that tenant — a fresh tenant has none,
@@ -32,6 +33,9 @@ SQL_002 = (
 ).read_text(encoding="utf-8")
 SQL_003 = (
     Path(__file__).resolve().parents[1] / "migrations" / "003_weights.sql"
+).read_text(encoding="utf-8")
+SQL_005 = (
+    Path(__file__).resolve().parents[1] / "migrations" / "005_oura.sql"
 ).read_text(encoding="utf-8")
 SQL_006 = (
     Path(__file__).resolve().parents[1] / "migrations" / "006_api_keys.sql"
@@ -75,6 +79,14 @@ async def has_003(conn) -> bool:
     return await cur.fetchone() is not None
 
 
+async def has_005(conn) -> bool:
+    cur = await conn.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = 'oura_tokens'"
+    )
+    return await cur.fetchone() is not None
+
+
 async def has_006(conn) -> bool:
     cur = await conn.execute(
         "SELECT 1 FROM information_schema.tables "
@@ -104,6 +116,8 @@ async def bind_test_tenant(conn, user_id: str = TEST_USER_ID) -> None:
         await conn.execute(SQL_002)
     if not await has_003(conn):  # the weigh-in log, the same way — rolls back with the test
         await conn.execute(SQL_003)
+    if not await has_005(conn):  # the Oura tables, the same way
+        await conn.execute(SQL_005)
     if not await has_006(conn):  # API keys: DDL tally_app cannot run, so before the switch
         await conn.execute(SQL_006)
     if not await has_007(conn):  # api_key_auth's account check: the same, after 006

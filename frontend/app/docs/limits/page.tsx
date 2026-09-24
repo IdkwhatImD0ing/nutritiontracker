@@ -190,7 +190,7 @@ export default function LimitsDoc() {
               </td>
               <td>
                 <code>this API key is read-only</code>,{" "}
-                <code>API keys cannot manage API keys; sign in to the app</code>,{" "}
+                <code>API keys cannot do this; sign in to the app</code>,{" "}
                 <code>email not verified</code>, <code>origin mismatch</code>
               </td>
             </tr>

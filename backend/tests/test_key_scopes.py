@@ -183,3 +183,15 @@ def test_real_app_applies_the_declared_scope(scoped):
     r = client.post("/api/settings/goals/compute", headers=_bearer(key), json=body)
     assert r.status_code == 200, r.text
     assert r.json()["targets"]["kcal"] > 0
+
+def test_oura_connect_takes_a_session_not_a_key(scoped):
+    """GET /api/oura/authorize hands out the signed state the callback stores
+    Oura tokens under, so it is session-only like /api/keys: every key, even a
+    read and write one, is refused before the handler runs."""
+    _, state = scoped
+    client = TestClient(main.app)
+    for scopes in (("read",), ("read", "write")):
+        r = client.get("/api/oura/authorize", headers=_bearer(state["add_key"](*scopes)))
+        assert (r.status_code, r.json()) == (
+            403, {"detail": "API keys cannot do this; sign in to the app"}
+        ), scopes

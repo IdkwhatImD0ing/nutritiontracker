@@ -1,8 +1,9 @@
 """GET /api/me — whose JWT this is and what the demo quota says (services/quota.py).
 
-  {email, is_owner, demo: null | {limit, used_today, resets_at}}
+  {email, is_owner, demo: null | {limit, used_today, resets_at}, oura_connected}
 
-`demo` is null for the owner (unlimited). Exposes an APIRouter; the integrator
+`demo` is null for the owner (unlimited). `oura_connected` is whether the
+owner has Oura connected (services/oura.py) — Today asks for a sync only then. Exposes an APIRouter; the integrator
 wires it into main.py.
 """
 
@@ -12,7 +13,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from auth import require_user
-from services import quota
+from services import oura, quota
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -27,6 +28,7 @@ class MeResponse(BaseModel):
     email: str
     is_owner: bool
     demo: DemoQuota | None
+    oura_connected: bool = False
 
 
 @router.get("/api/me", response_model=MeResponse)
@@ -36,4 +38,5 @@ async def get_me(user: dict = Depends(require_user)) -> MeResponse:
         email=user["email"],
         is_owner=user["is_owner"],
         demo=DemoQuota(**demo) if demo is not None else None,
+        oura_connected=user["is_owner"] and await oura.connected(),
     )

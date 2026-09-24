@@ -14,6 +14,7 @@ import {
 import { CM_PER_IN, LB_PER_KG } from "./WizardMath";
 import WizardGoal from "./WizardGoal";
 import AccountCard from "./AccountCard";
+import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
@@ -190,6 +191,7 @@ export default function Settings() {
       ) : null}
 
       <AccountCard />
+      <OuraCard />
 
       {!form ? (
         error ? null : <p className="m3-empty">Loading…</p>

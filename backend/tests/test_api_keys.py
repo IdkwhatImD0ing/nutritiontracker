@@ -244,7 +244,7 @@ def test_session_only_dependency_refuses_keys(key_app):
     key = state["add_key"]()
     r = client.get("/session", headers=_bearer(key))
     assert (r.status_code, r.json()) == (
-        403, {"detail": "API keys cannot manage API keys; sign in to the app"}
+        403, {"detail": "API keys cannot do this; sign in to the app"}
     )
     priv, jwk = _keypair("kid-a")
     state["jwks"] = {"keys": [jwk]}

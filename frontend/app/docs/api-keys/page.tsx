@@ -198,7 +198,7 @@ export default function ApiKeysDoc() {
       <p>
         The Settings screen uses these. They accept a signed-in app session only: an API key
         calling them gets <code>403</code> with{" "}
-        <code>{'{"detail": "API keys cannot manage API keys; sign in to the app"}'}</code>.
+        <code>{'{"detail": "API keys cannot do this; sign in to the app"}'}</code>.
         That way a leaked key can never mint a new key or outlive its own revocation.
       </p>
       <ul className="docs-eps">

@@ -24,13 +24,16 @@ import { getAuth } from "@/lib/auth/server";
  * Every other protected path redirects to `/`, NOT to `/welcome`. Sending them
  * to `/welcome` gave one page two public addresses; `/` is the one people
  * share and it already carries the Sign in and Try a demo links, so `/welcome`
- * stays an internal rewrite target that nothing links to. The auth middleware
- * is still handed `/welcome` as its loginUrl so its own behaviour is unchanged
- * — we only retarget the Location it produced, in place, so any cookie it set
- * on that response survives.
+ * stays an internal rewrite target that nothing links to.
+ *
+ * Never hand the auth middleware `/` as its loginUrl, however tidy it looks.
+ * Neon Auth lets through any path that is the login path or sits under it, and
+ * every path sits under `/` — protection would switch off for the whole app.
+ * It gets `/welcome`; we retarget the Location it produced, in place, so any
+ * cookie it set on that response survives.
  */
-const LOGIN_URL = "/"; // where a signed-out visitor to a protected path lands
-const LANDING = "/welcome"; // the route `/` rewrites to when signed out
+const FRONT_DOOR = "/"; // where a signed-out visitor lands. NOT a loginUrl — see above
+const LANDING = "/welcome"; // the middleware's loginUrl, and what `/` rewrites to
 
 export default async function proxy(request: NextRequest) {
   const response = await getAuth().middleware({ loginUrl: LANDING })(request);
@@ -42,18 +45,27 @@ export default async function proxy(request: NextRequest) {
   const target = new URL(location, request.url);
   if (target.pathname !== LANDING) return response; // some other redirect
 
-  // `/` keeps its own address and renders the landing in place.
+  // `/` keeps its own address and renders the landing in place. The rewrite is
+  // a new response, so carry over any cookie the middleware set on its own
+  // (e.g. the clear of a stale session-data cookie).
   if (request.nextUrl.pathname === "/") {
-    return NextResponse.rewrite(new URL(LANDING, request.url));
+    const rewrite = NextResponse.rewrite(new URL(LANDING, request.url));
+    for (const cookie of response.headers.getSetCookie()) {
+      rewrite.headers.append("set-cookie", cookie);
+    }
+    return rewrite;
   }
 
-  // Everywhere else, send them to the front door instead of `/welcome`.
-  response.headers.set("location", new URL(LOGIN_URL, request.url).toString());
+  // Everywhere else, send them to the front door instead of `/welcome`, with
+  // the query string the middleware carried onto its login URL.
+  const door = new URL(FRONT_DOOR, request.url);
+  door.search = target.search;
+  response.headers.set("location", door.toString());
   return response;
 }
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|auth|welcome|privacy|terms|docs|serwist|manifest.webmanifest|icons|apple-touch-icon.png|og.png|screenshots).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|auth|welcome|(?:privacy|terms|docs)(?:/|$)|serwist|manifest.webmanifest|icons|apple-touch-icon.png|og.png|screenshots).*)",
   ],
 };

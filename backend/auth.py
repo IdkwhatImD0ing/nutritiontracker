@@ -352,11 +352,13 @@ async def require_user(request: Request) -> dict:
 
 
 async def require_session_user(request: Request) -> dict:
-    """FastAPI dependency for /api/keys: a signed-in session only. A key that
-    could mint keys could outlive its own revocation."""
+    """FastAPI dependency for /api/keys and /api/oura/authorize: a signed-in
+    session only. A key that could mint keys could outlive its own
+    revocation, and one that could start an Oura connection could attach an
+    account to the diary."""
     user = await authenticate(request)
     if user["via"] == "api_key":
         raise HTTPException(
-            status_code=403, detail="API keys cannot manage API keys; sign in to the app"
+            status_code=403, detail="API keys cannot do this; sign in to the app"
         )
     return user
