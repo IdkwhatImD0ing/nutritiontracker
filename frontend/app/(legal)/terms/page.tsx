@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import "../legal.css";
 
 /** Public, like /privacy — proxy.ts excludes it from the signed-out redirect.
  *  The two clauses that actually matter for a nutrition app are “not medical
@@ -13,16 +11,7 @@ export const metadata: Metadata = {
 
 export default function Terms() {
   return (
-    <main className="legal">
-      <header className="legal-nav">
-        <Link href="/" className="legal-mark">
-          Tally
-        </Link>
-        <nav>
-          <Link href="/privacy">Privacy</Link>
-        </nav>
-      </header>
-
+    <>
       <div className="legal-head">
         <h1>Terms of Service</h1>
         <p className="legal-stamp">Last updated 20 September 2026</p>
@@ -138,13 +127,6 @@ export default function Terms() {
           </p>
         </section>
       </div>
-
-      <footer className="legal-foot">
-        <span>Tally</span>
-        <span>
-          <Link href="/privacy">Privacy</Link>
-        </span>
-      </footer>
-    </main>
+    </>
   );
 }

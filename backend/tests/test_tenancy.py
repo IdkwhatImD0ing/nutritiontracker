@@ -50,10 +50,12 @@ from tenancy_harness import (  # noqa: E402
     SEED_SETTINGS_SQL,
     SQL_002,
     SQL_003,
+    SQL_005,
     TEST_USER_ID,
     bind_test_tenant,
     has_002,
     has_003,
+    has_005,
     override_user,
     switch_tenant,
 )
@@ -75,7 +77,9 @@ from services import quota, tier3  # noqa: E402
 from sources import fdc  # noqa: E402
 
 TENANT_TABLES = ("aliases", "meal_macros", "logs", "item_resolutions", "entries", "settings")
-RLS_TABLES = TENANT_TABLES + ("quota_events", "weights")  # + 003's weigh-in log
+RLS_TABLES = TENANT_TABLES + ("quota_events", "weights") + (  # + 003's weigh-in log
+    "oura_tokens", "oura_days", "oura_workouts"  # + 005's Oura tables
+)
 SEED_KEYS = {
     "meal_windows", "timezone", "cronometer_baseline_days_per_week", "food_index",
     "profile_notes", "body", "targets",
@@ -317,6 +321,8 @@ def test_002_schema_backfill_and_fail_closed():
                 await conn.execute(SQL_002)
             if not await has_003(conn):  # the weigh-in log rides the same transaction
                 await conn.execute(SQL_003)
+            if not await has_005(conn):  # and the Oura tables, so the inventory below holds either way
+                await conn.execute(SQL_005)
             assert {t: await _count(conn, t) for t in tables} == before, "002 changed row counts"
             assert await _count(conn, "quota_events") == 0
 
@@ -628,7 +634,9 @@ def test_me_shapes():
         async with isolated_db() as conn:
             owner = await _become(conn, "owner-3", is_owner=True)
             me = await me_routes.get_me(user=owner)
-            assert me.model_dump() == {"email": owner["email"], "is_owner": True, "demo": None}
+            assert me.model_dump() == {
+                "email": owner["email"], "is_owner": True, "demo": None, "oura_connected": False
+            }
 
             demo = await _become(conn, "demo-4")
             me = await me_routes.get_me(user=demo)
@@ -686,7 +694,7 @@ def test_http_429_body_and_me(monkeypatch):
         assert r.status_code == 200
         assert r.json() == {
             "email": "demo@example.test", "is_owner": False,
-            "demo": {"limit": 1, "used_today": 1, "resets_at": at},
+            "demo": {"limit": 1, "used_today": 1, "resets_at": at}, "oura_connected": False,
         }
     # handler not registered (main.py forgot): still a 429 carrying the sentence
     with TestClient(_app(register_handler=False)) as client:

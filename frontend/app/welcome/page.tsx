@@ -8,6 +8,9 @@ import "./landing.css";
  *  Signed-in visitors never see it — `/` renders Today for them. */
 
 export const metadata: Metadata = {
+  // `/welcome` is only the rewrite target behind `/` (proxy.ts); old links to it
+  // still resolve, so point search engines at the one real address.
+  alternates: { canonical: "/" },
   title: "Say what you ate",
   description:
     "Tally is a nutrition logger you talk to. Say or type what you ate, check the pre-filled list, tap once. Real database numbers, and it gets faster every week.",
