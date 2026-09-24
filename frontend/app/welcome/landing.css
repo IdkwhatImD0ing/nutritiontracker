@@ -1,45 +1,182 @@
 /* Tally — the public landing page. Signal palette from globals.css :root;
-   nothing here is imported by the app shell, so it cannot affect Today. */
+   nothing here is imported by the app shell, so it cannot affect Today.
+   Structure after FireTrace's landing: a sticky header, a mono eyebrow over
+   a display headline, one big framed preview, numbered claims. The preview
+   copies the staging sheet's values (globals.css "staging sheet" / "staged
+   row") under land-* names rather than reusing the app's classes, which
+   carry cursors and hover states for controls this picture does not have. */
 
 .land {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: env(safe-area-inset-top) 20px calc(48px + env(safe-area-inset-bottom));
+  --land-well: #141417; /* the preview frame's floor, a step under --bg */
+  --land-term: #0c0c0e; /* terminal panel */
+  --land-gutter: 20px;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  gap: 72px;
+}
+
+.land-wrap {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-left: max(var(--land-gutter), env(safe-area-inset-left));
+  padding-right: max(var(--land-gutter), env(safe-area-inset-right));
+}
+
+@media (min-width: 720px) {
+  .land {
+    --land-gutter: 32px;
+  }
+}
+
+.land-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 88px;
+  padding-bottom: 96px;
+}
+
+@media (min-width: 960px) {
+  .land-main {
+    gap: 120px;
+    padding-bottom: 128px;
+  }
+}
+
+/* Mono uppercase label: section eyebrows, the preview caption. */
+.land-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.land-h2 {
+  font-family: var(--font-display);
+  font-size: clamp(1.75rem, 1.2rem + 2.2vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  margin: 12px 0 0;
+  text-wrap: balance;
 }
 
 /* ---------- nav ---------- */
 
 .land-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-top: env(safe-area-inset-top);
+  background: rgba(17, 17, 19, 0.72);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom: 1px solid var(--line);
+}
+
+.land-nav-in {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22px 0 0;
+  gap: 12px;
+  height: 64px;
 }
 
 .land-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+  text-decoration: none;
   font-family: var(--font-display);
   font-size: 1.3rem;
   font-weight: 800;
   letter-spacing: -0.03em;
 }
 
+.land-mark-icon {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.land-mark-icon rect {
+  fill: var(--accent);
+}
+
+.land-mark-icon path {
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.land-mark.small {
+  font-size: 1.1rem;
+}
+
+.land-mark.small .land-mark-icon {
+  width: 22px;
+  height: 22px;
+}
+
 .land-nav-links {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 2px;
   font-size: 0.9rem;
 }
 
-.land-nav-links a {
+.land-nav-links a:not(.land-pill) {
   color: var(--muted);
   text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 999px;
+  transition:
+    color 150ms,
+    background 150ms;
 }
 
-.land-nav-links a:hover {
+.land-nav-links a:not(.land-pill):hover {
   color: var(--text);
+  background: var(--surface-2);
+}
+
+.land-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  margin-left: 6px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: filter 150ms;
+}
+
+.land-pill:hover {
+  filter: brightness(1.08);
+}
+
+/* 320px phones: the three links only just fit at 360 */
+@media (max-width: 359px) {
+  .land-nav-links a:not(.land-pill) {
+    padding: 8px 6px;
+  }
+  .land-pill {
+    margin-left: 2px;
+    padding: 0 12px;
+  }
 }
 
 /* ---------- hero ---------- */
@@ -47,38 +184,67 @@
 .land-hero {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding-top: 28px;
+  align-items: flex-start;
+  padding-top: 64px;
+}
+
+@media (min-width: 960px) {
+  .land-hero {
+    padding-top: 112px;
+  }
+}
+
+/* a quiet "listening" light: voice is the first lane */
+.land-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  animation: land-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes land-pulse {
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .land-hero h1 {
   font-family: var(--font-display);
-  font-size: clamp(2.6rem, 9vw, 4rem);
+  font-size: clamp(2.7rem, 1.1rem + 7vw, 5.4rem);
   font-weight: 800;
-  letter-spacing: -0.04em;
-  line-height: 1.02;
-  margin: 0;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+  margin: 22px 0 0;
+  max-width: 13em;
   text-wrap: balance;
 }
 
-.land-hero-dim {
-  color: var(--muted);
+/* its own line: the second sentence is the punchline, not a wrap */
+.land-hero-accent {
+  display: block;
+  color: var(--accent);
 }
 
 .land-lede {
-  font-size: 1.08rem;
+  margin: 26px 0 0;
+  font-size: clamp(1.05rem, 0.98rem + 0.35vw, 1.25rem);
   line-height: 1.55;
   color: var(--muted);
-  margin: 0;
-  max-width: 46ch;
+  max-width: 44ch;
   text-wrap: pretty;
 }
 
 .land-cta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 4px;
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.land-hero .land-cta {
+  margin-top: 32px;
 }
 
 .land-btn {
@@ -93,6 +259,7 @@
   font-size: 1rem;
   font-weight: 700;
   text-decoration: none;
+  white-space: nowrap;
   box-shadow: 0 10px 24px -12px rgba(246, 165, 92, 0.8);
   transition: filter 150ms;
 }
@@ -114,56 +281,153 @@
   filter: none;
 }
 
-.land-fine {
-  font-size: 0.85rem;
-  color: var(--faint);
-  margin: 0;
+.land-textlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0; /* flush left when the CTA row wraps it onto its own line */
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
-/* ---------- the worked example ---------- */
+.land-textlink::after {
+  content: "→";
+  transition: transform 150ms var(--ease);
+}
 
-.land-demo {
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 22px 20px;
+.land-textlink:hover {
+  color: var(--text);
+}
+
+.land-textlink:hover::after {
+  transform: translateX(3px);
+}
+
+.land-fine {
+  margin: 18px 0 0;
+  font-size: 0.85rem;
+  color: var(--faint);
+}
+
+/* ---------- preview: the staging sheet, framed ---------- */
+
+.land-preview {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  margin-top: -24px; /* sits closer to the hero than sections sit to each other */
+}
+
+.land-frame {
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  padding: 12px;
+  background:
+    radial-gradient(60% 55% at 28% 0%, rgba(246, 165, 92, 0.11), transparent 70%),
+    radial-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1.3px) 0 0 / 22px 22px,
+    var(--land-well);
   box-shadow: var(--shadow-card);
+}
+
+@media (min-width: 720px) {
+  .land-frame {
+    padding: 40px;
+  }
+}
+
+@media (min-width: 960px) {
+  .land-frame {
+    display: grid;
+    grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
+    align-items: center;
+    gap: 64px;
+    padding: 56px 64px;
+  }
+}
+
+.land-sheet {
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 24px;
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.land-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.land-sheet-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+}
+
+.land-meal {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  text-transform: capitalize;
 }
 
 .land-said {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  justify-content: flex-end;
+  padding: 16px 18px 6px;
 }
 
-.land-said-label {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--faint);
-  font-weight: 600;
-}
-
-.land-said p {
+/* the chat's user bubble (.bubble.user) */
+.land-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 86%;
   margin: 0;
-  font-size: 1.25rem;
-  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 18px;
+  border-bottom-right-radius: 6px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  font-size: 0.95rem;
+  font-weight: 550;
+  line-height: 1.3;
+}
+
+.land-bubble svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .land-rows {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--line);
+  padding: 0 18px;
 }
 
 .land-row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 13px 0;
+  gap: 12px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -171,22 +435,62 @@
   border-bottom: none;
 }
 
-.land-row-main {
+.land-row-info {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
 }
 
 .land-row-name {
   font-size: 0.98rem;
-  font-weight: 550;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+/* .badge + .badge.fdc */
+.land-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 2px;
 }
 
 .land-row-sub {
-  font-size: 0.82rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 6px;
+  font-size: 0.8rem;
   color: var(--muted);
+}
+
+/* .portion-btn, as a label */
+.land-portion {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--sage);
+  font-size: 0.78rem;
+}
+
+.land-portion::after {
+  content: "›";
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--faint);
 }
 
 .land-p {
@@ -194,45 +498,164 @@
 }
 
 .land-row-kcal {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.land-row-kcal .n {
   font-family: var(--font-display);
   font-size: 1.3rem;
   font-weight: 800;
-  letter-spacing: -0.02em;
-  flex-shrink: 0;
+  letter-spacing: -0.03em;
 }
 
-.land-demo-note {
-  margin: 0;
-  font-size: 0.85rem;
+.land-row-kcal .u {
+  font-size: 0.68rem;
   color: var(--faint);
-  line-height: 1.5;
+  letter-spacing: 0.04em;
 }
 
-/* ---------- claims ---------- */
-
-.land-claims {
+.land-sheet-foot {
   display: flex;
   flex-direction: column;
-  gap: 34px;
+  gap: 12px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--line);
 }
 
-.land-claims h2,
-.land-open h2,
-.land-lanes-head {
+.land-totals {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.land-totals .k {
+  margin-right: auto;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.land-totals strong {
   font-family: var(--font-display);
-  font-size: 1.5rem;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.land-totals strong:not(.land-p) {
+  color: var(--text);
+}
+
+/* .commit-btn, minus the cursor and the press */
+.land-commit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 54px;
+  padding: 0 18px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  box-shadow: 0 10px 24px -12px rgba(246, 165, 92, 0.8);
+}
+
+.land-steps {
+  list-style: none;
+  display: grid;
+  gap: 22px;
+  max-width: 460px;
+  margin: 28px auto 8px;
+  padding: 0 6px;
+}
+
+@media (min-width: 960px) {
+  .land-steps {
+    max-width: 380px;
+    margin: 0;
+    padding: 0;
+    gap: 30px;
+  }
+}
+
+.land-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 16px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.land-steps li:last-child {
+  border-left-color: var(--accent);
+}
+
+.land-step-k {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.land-steps p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/* ---------- numbered claims ---------- */
+
+.land-claims {
+  display: grid;
+  gap: 44px;
+  padding-top: 56px;
+  border-top: 1px solid var(--line);
+}
+
+@media (min-width: 960px) {
+  .land-claims {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 48px;
+  }
+}
+
+.land-num {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 2.6rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--accent);
+}
+
+.land-claims h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
   font-weight: 800;
   letter-spacing: -0.03em;
-  margin: 0 0 10px;
+  margin: 16px 0 10px;
 }
 
-.land-claims p,
-.land-open p {
+.land-claims p {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.98rem;
   line-height: 1.6;
   color: var(--muted);
-  max-width: 58ch;
+  max-width: 60ch;
   text-wrap: pretty;
 }
 
@@ -243,81 +666,371 @@
 
 /* ---------- lanes ---------- */
 
-.land-lanes-head {
-  margin-bottom: 18px;
-}
-
 .land-lane-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  margin-top: 32px;
 }
 
-@media (max-width: 520px) {
+@media (min-width: 560px) {
   .land-lane-grid {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .land-lane-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
 .land-lane {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 20px 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 22px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.land-lane-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
 }
 
 .land-lane svg {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   fill: none;
   stroke: var(--spruce);
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-  margin-bottom: 4px;
 }
 
 .land-lane h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.02rem;
   font-weight: 650;
 }
 
 .land-lane p {
   margin: 0;
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   line-height: 1.5;
   color: var(--muted);
 }
 
-/* ---------- open source + foot ---------- */
+/* ---------- developers ---------- */
 
-.land-open {
+.land-dev {
+  display: grid;
+  gap: 36px;
+}
+
+.land-dev > * {
+  min-width: 0; /* lets the code panel scroll instead of widening the page */
+}
+
+@media (min-width: 960px) {
+  .land-dev {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    gap: 64px;
+    align-items: start;
+  }
+}
+
+.land-dev-copy > p:not(.land-eyebrow) {
+  margin: 18px 0 0;
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 50ch;
+  text-wrap: pretty;
+}
+
+.land-dev-copy .land-cta {
+  margin-top: 28px;
+}
+
+.land-dev-side {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
+.land-term {
+  background: var(--land-term);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.land-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.land-term-bar i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--surface-3);
+}
+
+.land-term-bar span {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* One command per line, unwrapped, so it copies as a single command; the
+   panel scrolls sideways instead of the page. */
+.land-code {
+  margin: 0;
+  padding: 16px 18px 18px;
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.8;
+  color: var(--text);
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+}
+
+.land-code:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: -2px;
+}
+
+.land-code .c,
+.land-code .pr {
+  color: var(--faint);
+}
+
+.land-code .pr {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.land-code .f {
+  color: var(--sage);
+}
+
+.land-code .u {
+  color: var(--carb);
+}
+
+.land-code .s {
+  color: var(--spruce-soft);
+}
+
+.land-tools {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.land-tools-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.land-tools-head .land-textlink {
+  font-size: 0.85rem;
+}
+
+.land-tools ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.land-tools li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.land-tools li:last-child {
+  border-bottom: none;
+}
+
+.land-tools code {
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.land-tools li p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.land-scope {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.land-scope.write {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+/* ---------- open source ---------- */
+
+.land-open {
+  display: grid;
+  gap: 28px;
+  padding: 32px 24px;
+  background: linear-gradient(180deg, #1d1c22, var(--surface) 70%);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow-card);
+}
+
+@media (min-width: 960px) {
+  .land-open {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 48px;
+    padding: 44px 48px;
+  }
+}
+
+.land-open p:not(.land-eyebrow) {
+  margin: 14px 0 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 58ch;
+  text-wrap: pretty;
+}
+
+/* ---------- foot ---------- */
+
 .land-foot {
+  border-top: 1px solid var(--line);
+}
+
+.land-foot-in {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
-  font-size: 0.82rem;
-  color: var(--faint);
+  gap: 16px 24px;
+  padding-top: 28px;
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
 }
 
-.land-foot a {
+.land-foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  font-size: 0.88rem;
+}
+
+.land-foot-links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.land-foot-links a:hover {
+  color: var(--text);
+}
+
+.land-foot-credit {
+  flex-basis: 100%;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
   color: var(--muted);
 }
 
-.land-foot-legal {
-  display: flex;
-  gap: 16px;
+.land-foot-credit a {
+  color: var(--muted);
+}
+
+/* ---------- motion: one rise on load, the preview's rows land in order ---------- */
+
+@keyframes land-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+.land-hero > *,
+.land-preview,
+.land-row,
+.land-sheet-foot {
+  animation: land-rise 700ms var(--ease) both;
+}
+
+.land-hero > :nth-child(2) {
+  animation-delay: 60ms;
+}
+.land-hero > :nth-child(3) {
+  animation-delay: 120ms;
+}
+.land-hero > :nth-child(n + 4) {
+  animation-delay: 180ms;
+}
+.land-preview {
+  animation-delay: 260ms;
+}
+.land-row {
+  animation-duration: 500ms;
+  animation-delay: 700ms;
+}
+.land-row + .land-row {
+  animation-delay: 850ms;
+}
+.land-sheet-foot {
+  animation-duration: 500ms;
+  animation-delay: 1000ms;
+}
+
+/* globals.css already shortens every animation; drop these outright so
+   nothing sits at opacity 0 for even a frame and the dot stays still. */
+@media (prefers-reduced-motion: reduce) {
+  .land *,
+  .land *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }

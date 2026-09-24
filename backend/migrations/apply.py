@@ -17,6 +17,13 @@
                                     needs 002, no-op if applied)
   python apply.py 005 --dry-run  -> apply 005 + verify inside one transaction, then ROLL BACK
   python apply.py 005 --check    -> re-run 005's verification against the committed schema
+  python apply.py 006            -> 006_api_keys.sql (personal API keys; needs 002, no-op if applied)
+  python apply.py 006 --dry-run  -> apply 006 + verify inside one transaction, then ROLL BACK
+  python apply.py 006 --check    -> re-run 006's verification against the committed schema
+  python apply.py 007            -> 007_api_key_auth.sql (api_key_auth checks the account before
+                                    it stamps last_used_at; needs 006, no-op if applied)
+  python apply.py 007 --dry-run  -> apply 007 + verify inside one transaction, then ROLL BACK
+  python apply.py 007 --check    -> re-run 007's verification against the committed schema
 
 Every migration runs in ONE transaction. 002 is verified before COMMIT (row
 counts unchanged, every existing row backfilled to the owner, RLS filters
@@ -29,14 +36,19 @@ insert with no tenant fails); a failed check rolls back. Guards:
   004 - logs.user_id must be present (002 applied); the index is CREATE INDEX IF NOT EXISTS,
         so re-applying is a no-op either way
   005 - logs.user_id must be present (002 applied) and `oura_tokens` absent; present -> no-op, exit 0
+  006 - logs.user_id must be present (002 applied) and `api_keys` absent; present -> no-op, exit 0
+  007 - `api_keys` must be present (006 applied) and api_key_auth must not carry 007's comment
+        marker; marked -> no-op, exit 0
 
 Never prints secret values (the owner's user id is an identifier, not a secret).
 """
 
+import hashlib
 import sys
 from pathlib import Path
 
 import psycopg
+from psycopg import sql as pgsql
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = MIGRATIONS_DIR.parent.parent
@@ -46,6 +58,8 @@ SQL_FILE_002 = MIGRATIONS_DIR / "002_multiuser.sql"
 SQL_FILE_003 = MIGRATIONS_DIR / "003_weights.sql"
 SQL_FILE_004 = MIGRATIONS_DIR / "004_entries_food_idx.sql"
 SQL_FILE_005 = MIGRATIONS_DIR / "005_oura.sql"
+SQL_FILE_006 = MIGRATIONS_DIR / "006_api_keys.sql"
+SQL_FILE_007 = MIGRATIONS_DIR / "007_api_key_auth.sql"
 
 EXPECTED_TABLES = {
     "foods",
@@ -158,12 +172,13 @@ def verify_002(cur, before: dict[str, int]) -> str:
         "WHERE n.nspname = 'public' AND c.relrowsecurity AND c.relforcerowsecurity"
     )
     rls = {r[0] for r in cur.fetchall()}
-    # 003's `weights` and 005's Oura tables are RLS-covered too once they exist
-    # (a --check after 003 / 005)
+    # 003's `weights`, 005's Oura tables and 006's `api_keys` are RLS-covered
+    # too once they exist (a --check after 003 / 005 / 006)
     expected_rls = (
         set(RLS_TABLES)
         | ({"weights"} if has_003(cur) else set())
         | (set(OURA_TABLES) if has_005(cur) else set())
+        | ({"api_keys"} if has_006(cur) else set())
     )
     assert rls == expected_rls, f"RLS enabled+forced on {sorted(rls)}, expected {sorted(expected_rls)}"
     cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")
@@ -497,12 +512,270 @@ def check_005(conn) -> None:
     print("CHECK OK: 005 invariants hold.")
 
 
+# ---------------------------------------------------------------------------
+# 006 — personal API keys (REST + MCP, 2026-09-23)
+# ---------------------------------------------------------------------------
+
+
+def has_006(cur) -> bool:
+    cur.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = 'api_keys'"
+    )
+    return cur.fetchone() is not None
+
+
+def _probe_hash(key_id: str) -> str:
+    """The stored hash of a well-formed probe key (backend/api_keys.py's format)."""
+    return hashlib.sha256(f"tally_live_{key_id}_{'0' * 64}".encode("utf-8")).hexdigest()
+
+
+def verify_006(cur) -> None:
+    """006's invariants inside the still-open transaction: RLS enabled AND
+    forced with one policy; the app role reads and writes its own keys and
+    sees nobody else's; a write with no tenant bound fails; and api_key_auth,
+    called as the app role with NO tenant bound (how a keyed request starts),
+    names the key's owner for the right hash and nothing for a wrong hash, a
+    revoked key or an expired key. The probe keys belong to the owner — the
+    function joins neon_auth for the email, so the user must be real — and
+    are rolled back to a savepoint, so a real apply commits no key."""
+    cur.execute(
+        "SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relname = 'api_keys'"
+    )
+    assert cur.fetchone() == (True, True), "api_keys: RLS must be enabled and forced"
+    cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'api_keys'")
+    assert cur.fetchone()[0] == 1, "api_keys: expected exactly one policy"
+    cur.execute(
+        "SELECT p.prosecdef, pg_get_userbyid(p.proowner) = current_user, "
+        "has_function_privilege(%s, p.oid, 'EXECUTE'), "
+        # a NULL acl is the default one, which lets PUBLIC execute
+        "p.proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) "
+        "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname = 'public' AND p.proname = 'api_key_auth'",
+        (APP_ROLE,),
+    )
+    assert cur.fetchone() == (True, True, True, False), (
+        "api_key_auth: must be SECURITY DEFINER, owned by the migrating role, "
+        f"executable by {APP_ROLE} and not by PUBLIC"
+    )
+    cur.execute(
+        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (OWNER_EMAIL,)
+    )
+    owners = cur.fetchall()
+    assert len(owners) == 1, f"expected exactly one Neon Auth user for the owner, found {len(owners)}"
+    owner_id = owners[0][0]
+    live_hash = _probe_hash("006c0ffee0000001")
+    revoked_hash = _probe_hash("006c0ffee0000002")
+    expired_hash = _probe_hash("006c0ffee0000003")
+
+    cur.execute("SAVEPOINT verify_006")
+    try:
+        cur.execute(f"SET LOCAL ROLE {APP_ROLE}")
+        cur.execute("SELECT set_config('app.user_id', %s, true)", (owner_id,))
+        cur.execute(
+            "INSERT INTO api_keys (id, label, key_hash, last_four, scopes, revoked_at, expires_at) VALUES "
+            "('006c0ffee0000001', '006 verify', %s, 'live', '{read}', NULL, NULL), "
+            "('006c0ffee0000002', '006 verify', %s, 'revk', '{read,write}', now(), NULL), "
+            "('006c0ffee0000003', '006 verify', %s, 'expd', '{read}', NULL, now() - interval '1 day')",
+            (live_hash, revoked_hash, expired_hash),
+        )
+        cur.execute("SELECT count(*) FROM api_keys WHERE id LIKE '006c0ffee%'")
+        assert cur.fetchone()[0] == 3, "api_keys: the owner cannot see their own keys under RLS"
+        cur.execute("SELECT set_config('app.user_id', '006-verify-b', true)")
+        cur.execute("SELECT count(*) FROM api_keys WHERE id LIKE '006c0ffee%'")
+        assert cur.fetchone()[0] == 0, "api_keys: RLS leaks rows to another tenant"
+
+        cur.execute("SELECT set_config('app.user_id', '', true)")
+        cur.execute("SELECT user_id, lower(email), email_verified, scopes FROM api_key_auth(%s, %s)",
+                    ("006c0ffee0000001", live_hash))
+        assert cur.fetchall() == [(owner_id, OWNER_EMAIL.lower(), True, ["read"])], (
+            "api_key_auth: the right hash must name the key's owner with no tenant bound"
+        )
+        for key_id, key_hash, why in (
+            ("006c0ffee0000001", revoked_hash, "a wrong hash"),
+            ("006c0ffee0000002", revoked_hash, "a revoked key"),
+            ("006c0ffee0000003", expired_hash, "an expired key"),
+        ):
+            cur.execute("SELECT count(*) FROM api_key_auth(%s, %s)", (key_id, key_hash))
+            assert cur.fetchone()[0] == 0, f"api_key_auth: {why} must name nobody"
+        try:
+            cur.execute(
+                "INSERT INTO api_keys (id, label, key_hash, last_four, scopes) "
+                "VALUES ('006c0ffee0000004', '006 verify', %s, 'none', '{read}')",
+                (_probe_hash("006c0ffee0000004"),),
+            )
+        except (psycopg.errors.NotNullViolation, psycopg.errors.InsufficientPrivilege):
+            pass
+        else:
+            raise AssertionError("api_keys: insert with no app.user_id must fail")
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT verify_006")  # probes gone, SET LOCAL ROLE undone with them
+    cur.execute("SET LOCAL ROLE NONE")
+
+
+def apply_006(conn, dry_run: bool) -> None:
+    sql = SQL_FILE_006.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        if not has_002(cur):
+            sys.exit("ERROR: refusing to apply 006 - 002 (logs.user_id) is not applied. No changes made.")
+        if has_006(cur):
+            print("Guard: table api_keys already exists - 006 already applied, nothing to do.")
+            sys.exit(0)
+        cur.execute(sql)
+        verify_006(cur)
+    if dry_run:
+        conn.rollback()
+        print("DRY RUN: 006_api_keys.sql applied and verified, then ROLLED BACK.")
+        return
+    conn.commit()
+    print(
+        "Applied 006_api_keys.sql: api_keys created, RLS enabled+forced, one policy, "
+        f"api_key_auth (SECURITY DEFINER) executable by {APP_ROLE} only."
+    )
+
+
+def check_006(conn) -> None:
+    """`--check`: 006's own verification against the committed schema, rolled back."""
+    with conn.cursor() as cur:
+        if not has_006(cur):
+            sys.exit("ERROR: 006 is not applied (table api_keys absent) - nothing to check.")
+        verify_006(cur)
+    conn.rollback()
+    print("CHECK OK: 006 invariants hold.")
+
+
+# ---------------------------------------------------------------------------
+# 007 — api_key_auth checks the account before it stamps (2026-09-23)
+# ---------------------------------------------------------------------------
+
+# A value per type for the probe account's NOT NULL columns that have no default
+_PROBE_VALUES = {
+    "text": pgsql.SQL("'007-verify'"),
+    "character varying": pgsql.SQL("'007-verify'"),
+    "uuid": pgsql.SQL("gen_random_uuid()"),
+    "boolean": pgsql.SQL("false"),
+    "timestamp with time zone": pgsql.SQL("now()"),
+    "timestamp without time zone": pgsql.SQL("now()"),
+}
+
+
+def has_007(cur) -> bool:
+    cur.execute(
+        "SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname = 'public' AND p.proname = 'api_key_auth' "
+        "AND obj_description(p.oid, 'pg_proc') LIKE '007:%'"
+    )
+    return cur.fetchone() is not None
+
+
+def verify_007(cur) -> None:
+    """007's invariants inside the still-open transaction: everything 006
+    checks still holds (owner, grants, the answers for right and wrong keys);
+    a banned account's live key names nobody AND is left unstamped; and the
+    owner's live key still resolves and is stamped. The banned account is a
+    probe row in neon_auth."user" whose NOT NULL columns are read from
+    information_schema, so a Neon Auth schema change fails loudly here. It
+    and the probe keys are rolled back to a savepoint, so a real apply
+    commits only the function."""
+    verify_006(cur)
+    assert has_007(cur), "api_key_auth: the 007 comment marker is missing"
+    cur.execute(
+        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (OWNER_EMAIL,)
+    )
+    owners = cur.fetchall()
+    assert len(owners) == 1, f"expected exactly one Neon Auth user for the owner, found {len(owners)}"
+    owner_id = owners[0][0]
+    cur.execute(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_schema = 'neon_auth' AND table_name = 'user' "
+        "AND is_nullable = 'NO' AND column_default IS NULL"
+    )
+    probe = {}
+    for name, dtype in cur.fetchall():
+        assert dtype in _PROBE_VALUES, f'neon_auth."user".{name}: no probe value for a NOT NULL {dtype}'
+        probe[name] = _PROBE_VALUES[dtype]
+    probe |= {"email": pgsql.Literal("007-verify-banned@example.invalid"), "banned": pgsql.SQL("true")}
+    banned_hash = _probe_hash("007c0ffee0000001")
+    owner_hash = _probe_hash("007c0ffee0000002")
+
+    cur.execute("SAVEPOINT verify_007")
+    try:
+        cur.execute(  # as the migrating role: the app role cannot write neon_auth
+            pgsql.SQL('INSERT INTO neon_auth."user" ({}) VALUES ({}) RETURNING id::text').format(
+                pgsql.SQL(", ").join(map(pgsql.Identifier, probe)), pgsql.SQL(", ").join(probe.values())
+            )
+        )
+        banned_id = cur.fetchone()[0]
+        cur.execute(f"SET LOCAL ROLE {APP_ROLE}")
+        for user_id, key_id, key_hash in (
+            (banned_id, "007c0ffee0000001", banned_hash),
+            (owner_id, "007c0ffee0000002", owner_hash),
+        ):
+            cur.execute("SELECT set_config('app.user_id', %s, true)", (user_id,))
+            cur.execute(
+                "INSERT INTO api_keys (id, label, key_hash, last_four, scopes) "
+                "VALUES (%s, '007 verify', %s, 'prob', '{read}')",
+                (key_id, key_hash),
+            )
+
+        cur.execute("SELECT set_config('app.user_id', '', true)")
+        cur.execute("SELECT count(*) FROM api_key_auth(%s, %s)", ("007c0ffee0000001", banned_hash))
+        assert cur.fetchone()[0] == 0, "api_key_auth: a banned account's key must name nobody"
+        cur.execute("SELECT user_id FROM api_key_auth(%s, %s)", ("007c0ffee0000002", owner_hash))
+        assert cur.fetchall() == [(owner_id,)], "api_key_auth: the owner's live key must still resolve"
+
+        # last_used_at = now(): NULL while unstamped, true once stamped in this transaction
+        for user_id, key_id, stamped, why in (
+            (banned_id, "007c0ffee0000001", None, "a refused key must stay unstamped"),
+            (owner_id, "007c0ffee0000002", True, "a used key must be stamped"),
+        ):
+            cur.execute("SELECT set_config('app.user_id', %s, true)", (user_id,))
+            cur.execute("SELECT last_used_at = now() FROM api_keys WHERE id = %s", (key_id,))
+            assert cur.fetchone() == (stamped,), f"api_key_auth: {why}"
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT verify_007")  # probes gone, SET LOCAL ROLE undone with them
+    cur.execute("SET LOCAL ROLE NONE")
+
+
+def apply_007(conn, dry_run: bool) -> None:
+    sql = SQL_FILE_007.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        if not has_006(cur):
+            sys.exit("ERROR: refusing to apply 007 - 006 (table api_keys) is not applied. No changes made.")
+        if has_007(cur):
+            print("Guard: api_key_auth already carries the 007 marker - 007 already applied, nothing to do.")
+            sys.exit(0)
+        cur.execute(sql)
+        verify_007(cur)
+    if dry_run:
+        conn.rollback()
+        print("DRY RUN: 007_api_key_auth.sql applied and verified, then ROLLED BACK.")
+        return
+    conn.commit()
+    print(
+        "Applied 007_api_key_auth.sql: api_key_auth refuses a banned or deleted account before "
+        f"it stamps last_used_at; still SECURITY DEFINER, executable by {APP_ROLE} only."
+    )
+
+
+def check_007(conn) -> None:
+    """`--check`: 007's own verification against the committed schema, rolled back."""
+    with conn.cursor() as cur:
+        if not has_007(cur):
+            sys.exit("ERROR: 007 is not applied (api_key_auth has no 007 marker) - nothing to check.")
+        verify_007(cur)
+    conn.rollback()
+    print("CHECK OK: 007 invariants hold.")
+
+
 def main(argv: list[str]) -> None:
     dry_run = "--dry-run" in argv
     check = "--check" in argv
     args = [a for a in argv if a not in ("--dry-run", "--check")]
     which = args[0] if args else "001"
-    if which not in ("001", "002", "003", "004", "005") or (which == "001" and (dry_run or check)) or (dry_run and check):
+    if which not in ("001", "002", "003", "004", "005", "006", "007") or (which == "001" and (dry_run or check)) or (dry_run and check):
         sys.exit(__doc__)
     dsn = read_database_url(ENV_FILE)
     with psycopg.connect(dsn) as conn:
@@ -510,6 +783,10 @@ def main(argv: list[str]) -> None:
             apply_001(conn)
         elif which == "005":
             check_005(conn) if check else apply_005(conn, dry_run)
+        elif which == "007":
+            check_007(conn) if check else apply_007(conn, dry_run)
+        elif which == "006":
+            check_006(conn) if check else apply_006(conn, dry_run)
         elif which == "004":
             check_004(conn) if check else apply_004(conn, dry_run)
         elif which == "003":

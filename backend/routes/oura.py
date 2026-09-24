@@ -28,7 +28,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 import db
-from auth import is_owner, require_user
+from auth import is_owner, require_session_user, require_user
 from routes.diary import local_date
 from services import oura
 
@@ -91,8 +91,11 @@ async def get_status() -> OuraStatus:
     )
 
 
+# A signed-in session only, like /api/keys: the signed state this returns lets
+# the unauthenticated callback store Oura tokens for the account, so an API key
+# (even read-only; this is a GET) must not be able to start a connection.
 @router.get("/api/oura/authorize", response_model=OuraAuthorize)
-async def authorize(user: dict = Depends(require_user)) -> OuraAuthorize:
+async def authorize(user: dict = Depends(require_session_user)) -> OuraAuthorize:
     _owner_only()
     try:
         return OuraAuthorize(url=oura.authorize_url(user["id"]))

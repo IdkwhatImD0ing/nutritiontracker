@@ -109,7 +109,13 @@ async def _load_food(food_id) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/foods/barcode", response_model=BarcodeResponse)
+# "write" for a read-only key's sake (auth.require_user): a code not seen
+# before is looked up on FDC/OFF and cached into the shared foods table.
+@router.get(
+    "/api/foods/barcode",
+    response_model=BarcodeResponse,
+    openapi_extra={"x-tally-scope": "write"},
+)
 async def lookup_barcode(code: str) -> BarcodeResponse:
     digits = re.sub(r"\D", "", code)
     if not digits:
