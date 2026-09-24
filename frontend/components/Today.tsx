@@ -418,10 +418,12 @@ export default function Today() {
   };
 
   // Oura (owner only, services/oura.py): opening or resuming Today is the
-  // sync trigger. The server skips it when the last sync is under half an
-  // hour old, and a failure changes nothing here — Settings shows the state.
+  // sync trigger, once Oura is connected (/api/me says so — no request that
+  // can only answer 409). The server skips it when the last sync, or failed
+  // attempt, is under half an hour old; a failure changes nothing here —
+  // Settings shows the state.
   const syncOuraFor = (m: Me | null) => {
-    if (m?.is_owner) syncOura().catch(() => {});
+    if (m?.is_owner && m.oura_connected) syncOura().catch(() => {});
   };
 
   // Installed, Tally is resumed far more often than it is loaded: iOS keeps a

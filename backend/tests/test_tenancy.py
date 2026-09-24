@@ -634,7 +634,9 @@ def test_me_shapes():
         async with isolated_db() as conn:
             owner = await _become(conn, "owner-3", is_owner=True)
             me = await me_routes.get_me(user=owner)
-            assert me.model_dump() == {"email": owner["email"], "is_owner": True, "demo": None}
+            assert me.model_dump() == {
+                "email": owner["email"], "is_owner": True, "demo": None, "oura_connected": False
+            }
 
             demo = await _become(conn, "demo-4")
             me = await me_routes.get_me(user=demo)
@@ -692,7 +694,7 @@ def test_http_429_body_and_me(monkeypatch):
         assert r.status_code == 200
         assert r.json() == {
             "email": "demo@example.test", "is_owner": False,
-            "demo": {"limit": 1, "used_today": 1, "resets_at": at},
+            "demo": {"limit": 1, "used_today": 1, "resets_at": at}, "oura_connected": False,
         }
     # handler not registered (main.py forgot): still a 429 carrying the sentence
     with TestClient(_app(register_handler=False)) as client:

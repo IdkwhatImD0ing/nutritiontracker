@@ -1581,6 +1581,11 @@ export interface components {
             /** Is Owner */
             is_owner: boolean;
             demo: components["schemas"]["DemoQuota"] | null;
+            /**
+             * Oura Connected
+             * @default false
+             */
+            oura_connected: boolean;
         };
         /**
          * Meal
@@ -1794,7 +1799,10 @@ export interface components {
              */
             days: components["schemas"]["OuraDay"][];
         };
-        /** OuraSync */
+        /**
+         * OuraSync
+         * @description One sync's outcome — also POST /api/oura/sync's answer.
+         */
         OuraSync: {
             /** Skipped */
             skipped: boolean;

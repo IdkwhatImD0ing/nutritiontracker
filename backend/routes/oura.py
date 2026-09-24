@@ -18,9 +18,7 @@ Between a push and `apply.py 005` the tables do not exist: GET and POST answer
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import asdict
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 
@@ -40,10 +38,6 @@ router = APIRouter(dependencies=[Depends(require_user)])
 public = APIRouter()  # the callback alone — see the module docstring
 
 STATUS_DAYS = 7  # how many days the Settings card lists
-# The callback's sync is a full backfill (a scope granted on this connect gets
-# its history); bound it well inside Vercel's 120 s so the redirect always
-# happens. Tokens are saved first, so the connection stands either way.
-FIRST_SYNC_TIMEOUT_S = 60
 
 
 class OuraDay(BaseModel):
@@ -63,14 +57,6 @@ class OuraStatus(BaseModel):
 
 class OuraAuthorize(BaseModel):
     url: str
-
-
-class OuraSync(BaseModel):
-    skipped: bool  # the last sync was under half an hour ago
-    days: int
-    workouts: int
-    last_synced_at: datetime | None
-    missing: list[str] = []  # scopes Oura refused this time (403)
 
 
 def _owner_only() -> None:
@@ -114,8 +100,8 @@ async def authorize(user: dict = Depends(require_user)) -> OuraAuthorize:
         raise HTTPException(503, str(e))
 
 
-@router.post("/api/oura/sync", response_model=OuraSync)
-async def post_sync(force: bool = Query(False)) -> OuraSync:
+@router.post("/api/oura/sync", response_model=oura.OuraSync)
+async def post_sync(force: bool = Query(False)) -> oura.OuraSync:
     _owner_only()
     try:
         result = await oura.sync(today=await _today(), force=force)
@@ -127,7 +113,7 @@ async def post_sync(force: bool = Query(False)) -> OuraSync:
         raise HTTPException(409, str(e))
     except oura.OuraError as e:
         raise HTTPException(502, str(e))
-    return OuraSync(**asdict(result))
+    return result
 
 
 @public.get("/api/oura/callback", include_in_schema=False)
@@ -161,12 +147,14 @@ async def callback(
         log.exception("oura: callback failed after the state checked out")
         return back("error")
     outcome = "missing_scope" if oura.missing_scopes(tokens.get("scope")) else "connected"
+    # A full backfill (a scope granted on this connect gets its history). The
+    # sync bounds its own network time (SYNC_BUDGET_S) and keeps what arrived,
+    # so the redirect happens inside Vercel's 120 s with nothing cancelled
+    # mid-write.
     try:
-        async with asyncio.timeout(FIRST_SYNC_TIMEOUT_S):
-            result = await oura.sync(today=await _today(), force=True, backfill=True)
+        result = await oura.sync(today=await _today(), force=True, backfill=True)
         if result.missing:
             outcome = "missing_scope"
-    except Exception:  # connected all the same: later syncs keep the recent days
-        # current, and Reconnect re-reads the whole period again
+    except Exception:  # connected all the same; the next sync picks up from here
         log.warning("oura: the first sync after connecting failed", exc_info=True)
     return back(outcome)

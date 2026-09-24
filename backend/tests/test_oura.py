@@ -31,6 +31,7 @@ from fastapi import HTTPException  # noqa: E402
 from test_tenancy import TEST_USER_ID, _become, _scalar, isolated_db  # noqa: E402
 
 import db  # noqa: E402
+from routes import me as me_route  # noqa: E402
 from routes import oura as oura_route  # noqa: E402
 from services import oura  # noqa: E402
 
@@ -42,6 +43,9 @@ def _oura_env(monkeypatch):
     monkeypatch.setenv("OURA_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("OURA_CLIENT_SECRET", SECRET)
     monkeypatch.delenv("OURA_REDIRECT_URI", raising=False)
+    monkeypatch.setenv("APP_ORIGIN", "https://tally.art3m1s.me")  # the callback derives from it
+    monkeypatch.delenv("VERCEL_PROJECT_PRODUCTION_URL", raising=False)
+    monkeypatch.setattr(oura, "_failed_at", {})  # the failure backoff, per test
     # a revocation waits out a possible concurrent refresh; keep that short here
     monkeypatch.setattr(oura, "_RACE_WAIT_S", 0.3)
     monkeypatch.setattr(oura, "_POLL_S", 0.02)
@@ -83,12 +87,13 @@ WORKOUTS = {
 class FakeOura:
     def __init__(self, *, tokens: list | None = None, data_401_once: bool = False,
                  forbidden: tuple[str, ...] = (), data_error: type | None = None,
-                 on_token=None):
+                 on_token=None, always_401: bool = False):
         # each token-endpoint call pops the next answer: dict = 200 JSON,
         # int = that status with an invalid_grant body, str = 200 with that
         # (non-JSON) body, an httpx exception class = that network failure
         self.tokens = list(tokens or [])
         self.data_401_once = data_401_once
+        self.always_401 = always_401  # every data call answers 401, even after a refresh
         self.forbidden = set(forbidden)  # collections that answer 403
         self.data_error = data_error  # an httpx exception class every data call raises
         self.on_token = on_token  # async hook run before a token answer (races)
@@ -117,7 +122,7 @@ class FakeOura:
         self.data_calls.append((request.url.path, params, auth))
         if self.data_error:
             raise self.data_error("fake network failure", request=request)
-        if self.data_401_once:
+        if self.data_401_once or self.always_401:
             self.data_401_once = False
             return httpx.Response(401, json={"detail": "expired"})
         name = request.url.path.rsplit("/", 1)[1]
@@ -134,6 +139,12 @@ class FakeOura:
             oura, "_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(self.handler))
         )
         return self
+
+
+def _calls(fake: FakeOura, path: str) -> list[dict]:
+    """The query params of each call to one collection, in order. The two
+    collections are fetched at once, so their calls interleave."""
+    return [c[1] for c in fake.data_calls if c[0].endswith(f"/{path}")]
 
 
 def _tokens(n: int, *, refresh: bool = True, scope: str = "daily workout") -> dict:
@@ -199,6 +210,23 @@ def test_authorize_url_asks_only_for_what_the_sync_reads():
     assert oura.read_state(q["state"]) == "user-1"
 
 
+def test_the_redirect_uri_comes_from_this_deployment(monkeypatch):
+    assert oura._config()[2] == "https://tally.art3m1s.me/api/oura/callback"  # APP_ORIGIN, from the fixture
+    monkeypatch.setenv("APP_ORIGIN", "https://new.example/, https://old.example")
+    assert oura._config()[2] == "https://new.example/api/oura/callback"  # its first entry
+    monkeypatch.delenv("APP_ORIGIN")
+    monkeypatch.setenv("VERCEL_PROJECT_PRODUCTION_URL", "prod.example")
+    monkeypatch.setenv("VERCEL_URL", "tally-git-branch.vercel.app")  # a preview: never used
+    assert oura._config()[2] == "https://prod.example/api/oura/callback"
+    monkeypatch.setenv("OURA_REDIRECT_URI", "https://pinned.example/cb")
+    assert oura._config()[2] == "https://pinned.example/cb"  # an explicit one wins
+    monkeypatch.delenv("OURA_REDIRECT_URI")
+    monkeypatch.delenv("VERCEL_PROJECT_PRODUCTION_URL")
+    with pytest.raises(oura.NotConfigured):
+        oura._config()  # nothing to derive it from
+    assert not oura.configured()
+
+
 def test_missing_scopes():
     assert oura.missing_scopes("daily workout") == []
     assert oura.missing_scopes("workout daily personal") == []
@@ -235,7 +263,7 @@ def test_callback_stores_encrypted_tokens_and_runs_the_first_sync(monkeypatch):
             # the code exchange sent what Oura needs, including the exact redirect URI
             form = fake.token_forms[0]
             assert form["grant_type"] == "authorization_code" and form["code"] == "the-code"
-            assert form["redirect_uri"] == oura.DEFAULT_REDIRECT_URI
+            assert form["redirect_uri"] == "https://tally.art3m1s.me/api/oura/callback"
             assert form["client_secret"] == SECRET
 
             # stored encrypted: ciphertext in the table, the plaintext only after decrypt
@@ -243,11 +271,9 @@ def test_callback_stores_encrypted_tokens_and_runs_the_first_sync(monkeypatch):
             assert raw != "acc-1" and await _stored_tokens(conn) == ("acc-1", "ref-1")
 
             # the first sync backfilled, following next_token, with the new token
-            assert [c[0].rsplit("/", 1)[1] for c in fake.data_calls] == [
-                "daily_activity", "daily_activity", "workout"
-            ]
+            assert len(_calls(fake, "daily_activity")) == 2 and len(_calls(fake, "workout")) == 1
             assert all(c[2] == "Bearer acc-1" for c in fake.data_calls)
-            first = fake.data_calls[0][1]
+            first = _calls(fake, "daily_activity")[0]
             today = await oura_route._today()
             assert first["start_date"] == (today - timedelta(days=oura.BACKFILL_DAYS)).isoformat()
             assert first["end_date"] == (today + timedelta(days=1)).isoformat()
@@ -368,14 +394,18 @@ def test_reconnecting_re_reads_the_whole_stored_period(monkeypatch):
                 await conn.execute("INSERT INTO oura_days (day, raw) VALUES (%s, '{}'::jsonb)", (day,))
 
             await oura.sync(today=today, force=True)  # an ordinary sync: the last few days
-            assert last_workout_window()["start_date"] == (
-                today - timedelta(days=oura.OVERLAP_DAYS)
+            assert _calls(fake, "daily_activity")[-2]["start_date"] == (
+                today - timedelta(days=oura.COLLECTIONS[0][3])
             ).isoformat()
 
             fake.forbidden.clear()  # the owner allows Workout this time
+            # the whole stored period, whatever else the fake has stored by now
+            stored_oldest = await _scalar(conn, "SELECT min(day) FROM oura_days")
             res = await oura_route.callback(code="c2", state=oura.make_state(TEST_USER_ID))
             assert res.headers["location"] == "/settings?oura=connected"
-            assert last_workout_window()["start_date"] == oldest.isoformat()  # the whole period
+            start = date.fromisoformat(last_workout_window()["start_date"])
+            assert start == min(stored_oldest, today - timedelta(days=oura.BACKFILL_DAYS))
+            assert start <= oldest
             assert await _scalar(conn, "SELECT count(*) FROM oura_workouts") == 1
             assert (await oura_route.get_status()).missing == []
 
@@ -428,9 +458,13 @@ def test_sync_throttles_then_forces_and_updates_in_place(monkeypatch):
             fake.workouts["data"][0]["calories"] = 230
             r3 = await oura.sync(today=today, force=True)
             assert not r3.skipped
-            # later syncs re-read a few days behind the newest stored day
-            assert fake.data_calls[3][1]["start_date"] == (
-                date(2026, 9, 20) - timedelta(days=oura.OVERLAP_DAYS)
+            # later syncs re-read each collection behind its own newest row:
+            # 3 days for days, 14 for workouts (a workout logged late)
+            assert _calls(fake, "daily_activity")[2]["start_date"] == (
+                date(2026, 9, 20) - timedelta(days=3)
+            ).isoformat()
+            assert _calls(fake, "workout")[1]["start_date"] == (
+                date(2026, 9, 19) - timedelta(days=14)
             ).isoformat()
             assert await _scalar(conn, "SELECT count(*) FROM oura_days") == 2  # no duplicates
             assert await _scalar(conn, "SELECT count(*) FROM oura_workouts") == 1
@@ -441,6 +475,92 @@ def test_sync_throttles_then_forces_and_updates_in_place(monkeypatch):
                 conn, "SELECT (raw->>'total_calories')::int FROM oura_days WHERE day = '2026-09-20'"
             ) == 2950
             assert float(await _scalar(conn, "SELECT calories FROM oura_workouts")) == 230.0
+
+    _run(scenario())
+
+
+def test_a_failed_sync_backs_off_until_forced(monkeypatch):
+    fake = FakeOura(data_error=httpx.ConnectError).install(monkeypatch)
+
+    async def scenario():
+        async with isolated_db():
+            await oura.save_tokens(_tokens(1))
+            today = date(2026, 9, 21)
+            with pytest.raises(oura.OuraError):
+                await oura.sync(today=today)
+            tried = len(fake.data_calls)
+            r = await oura.sync(today=today)  # an open right after: not asked again
+            assert r.skipped and len(fake.data_calls) == tried
+            with pytest.raises(oura.OuraError):
+                await oura.sync(today=today, force=True)  # Sync now still asks
+            assert len(fake.data_calls) > tried
+
+            fake.data_error = None  # Oura is back
+            assert not (await oura.sync(today=today, force=True)).skipped
+            assert oura._failed_at == {}  # a success clears the backoff
+
+    _run(scenario())
+
+
+def test_a_sync_past_its_budget_keeps_what_arrived(monkeypatch):
+    monkeypatch.setattr(oura, "SYNC_BUDGET_S", -1)  # out of time after the first page
+    FakeOura().install(monkeypatch)
+
+    async def scenario():
+        async with isolated_db() as conn:
+            await oura.save_tokens(_tokens(1))
+            r = await oura.sync(today=date(2026, 9, 21), force=True)
+            assert (r.days, r.workouts) == (1, 1)  # page 1 of the days, all of the workouts
+            assert await _scalar(conn, "SELECT count(*) FROM oura_days") == 1
+
+    _run(scenario())
+
+
+def test_an_unreadable_document_is_skipped_not_fatal(monkeypatch):
+    fake = FakeOura().install(monkeypatch)
+    fake.day_pages[0]["data"] += [{"id": "no-day"}, {"id": "bad", "day": "yesterday"}]
+    fake.workouts["data"].append({"day": "2026-09-19"})  # no id
+
+    async def scenario():
+        async with isolated_db() as conn:
+            odd = _tokens(1)
+            odd["expires_in"] = "soon"  # not a number: the documented day, not a crash
+            await oura.save_tokens(odd)
+            assert await _scalar(
+                conn, "SELECT expires_at > now() + interval '23 hours' FROM oura_tokens"
+            )
+            r = await oura.sync(today=date(2026, 9, 21), force=True)
+            assert (r.days, r.workouts) == (2, 1)
+            assert await _scalar(conn, "SELECT count(*) FROM oura_days") == 2
+
+    _run(scenario())
+
+
+def test_a_refused_retry_tells_the_owner_to_reconnect(monkeypatch):
+    FakeOura(tokens=[_tokens(2)], always_401=True).install(monkeypatch)
+
+    async def scenario():
+        async with isolated_db():
+            await oura.save_tokens(_tokens(1))
+            with pytest.raises(HTTPException) as exc:
+                await oura_route.post_sync(True)
+            assert exc.value.status_code == 502 and "reconnect" in exc.value.detail
+
+    _run(scenario())
+
+
+def test_me_says_whether_oura_is_connected(monkeypatch):
+    async def scenario():
+        async with isolated_db() as conn:
+            owner = {"id": TEST_USER_ID, "email": "test", "is_owner": True}
+            assert (await me_route.get_me(owner)).oura_connected is False
+            await oura.save_tokens(_tokens(1))
+            assert (await me_route.get_me(owner)).oura_connected is True
+            monkeypatch.delenv("OURA_CLIENT_SECRET")
+            assert (await me_route.get_me(owner)).oura_connected is False  # not usable here
+            monkeypatch.setenv("OURA_CLIENT_SECRET", SECRET)
+            demo = await _become(conn, "oura-demo", is_owner=False)
+            assert (await me_route.get_me(demo)).oura_connected is False
 
     _run(scenario())
 

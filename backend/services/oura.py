@@ -6,9 +6,12 @@ The owner connects once from Settings. Oura sends the browser back to
 /api/oura/callback with a code and our signed `state`; the code becomes an
 access + refresh token pair, stored encrypted. From then on the app keeps
 itself current: Today asks for a sync when it opens (skipped when the last
-one is under MIN_SYNC_INTERVAL old), which refreshes the access token when
-it is near expiry and re-reads the last few days — Oura keeps revising today
-and finalises yesterday as the ring reports in, so every sync upserts.
+one, or the last failed attempt, is under MIN_SYNC_INTERVAL old), which
+refreshes the access token when it is near expiry and re-reads the last few
+days of each collection — Oura keeps revising today and finalises yesterday
+as the ring reports in, so every sync upserts. The two collections are
+fetched at once through one HTTP client, within SYNC_BUDGET_S of network time;
+whatever arrived by then is stored, and the rest is the next sync's.
 
 Keys. The token cipher and the `state` signature are both derived from
 OURA_CLIENT_SECRET (HKDF, one label each), so there is one secret to manage.
@@ -45,36 +48,44 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
-from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
+import psycopg
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from psycopg.types.json import Json
+from pydantic import BaseModel
 
 import db
+
+log = logging.getLogger(__name__)
 
 AUTHORIZE_URL = "https://cloud.ouraring.com/oauth/authorize"
 TOKEN_URL = "https://api.ouraring.com/oauth/token"
 API_URL = "https://api.ouraring.com/v2/usercollection"
-SCOPES = "daily workout"  # only what the sync reads
-# the collection each scope unlocks, in sync order
-COLLECTIONS = (("daily", "daily_activity"), ("workout", "workout"))
-# Must match the redirect URI registered on the Oura app exactly.
-DEFAULT_REDIRECT_URI = "https://tally.art3m1s.me/api/oura/callback"
+
+# (scope, collection, table, days an ordinary sync re-reads behind that
+# table's newest stored day). Days: Oura revises today and finalises
+# yesterday. Workouts: one can be logged in the Oura app days after the fact.
+COLLECTIONS = (
+    ("daily", "daily_activity", "oura_days", 3),
+    ("workout", "workout", "oura_workouts", 14),
+)
+SCOPES = " ".join(c[0] for c in COLLECTIONS)  # only what the sync reads
 
 STATE_TTL_S = 600  # the owner has ten minutes on Oura's consent screen
 REFRESH_MARGIN = timedelta(minutes=5)
 BACKFILL_DAYS = 90  # the first sync reaches back this far
-OVERLAP_DAYS = 3  # later syncs re-read this many days behind the newest stored one
 MIN_SYNC_INTERVAL = timedelta(minutes=30)
 _TIMEOUT_S = 15.0
+SYNC_BUDGET_S = 60  # network time one sync may spend paging (Vercel allows 120 s)
 # how long an invalid_grant waits for a concurrent refresh to land before it
 # counts as a revocation: the longest that refresh's token call can take
 _RACE_WAIT_S = _TIMEOUT_S + 2
@@ -97,7 +108,11 @@ class NotConfigured(OuraError):
 
 
 class _Unauthorized(OuraError):
-    """A data call got 401 — the access token needs a forced refresh."""
+    """A data call got 401 — the access token needs a forced refresh. The
+    message is what the owner reads if the retry is refused too."""
+
+    def __init__(self, path: str):
+        super().__init__(f"Oura refused Tally's access to {path} — reconnect Oura from Settings")
 
 
 class _Forbidden(OuraError):
@@ -109,12 +124,25 @@ class _Forbidden(OuraError):
 # ---------------------------------------------------------------------------
 
 
+def _default_redirect() -> str | None:
+    """This deployment's own callback: APP_ORIGIN's first entry (list the
+    current domain first), else Vercel's production domain — never VERCEL_URL,
+    a preview's own address, which the Oura app does not have registered."""
+    origin = os.environ.get("APP_ORIGIN", "").split(",")[0].strip().rstrip("/")
+    if not origin:
+        host = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL", "").strip().rstrip("/")
+        origin = host if not host or "://" in host else f"https://{host}"
+    return f"{origin}/api/oura/callback" if origin else None
+
+
 def _config() -> tuple[str, str, str]:
     client_id = os.environ.get("OURA_CLIENT_ID", "").strip()
     client_secret = os.environ.get("OURA_CLIENT_SECRET", "").strip()
     if not client_id or not client_secret:
         raise NotConfigured("OURA_CLIENT_ID and OURA_CLIENT_SECRET must both be set")
-    redirect = os.environ.get("OURA_REDIRECT_URI", "").strip() or DEFAULT_REDIRECT_URI
+    redirect = os.environ.get("OURA_REDIRECT_URI", "").strip() or _default_redirect()
+    if not redirect:
+        raise NotConfigured("set OURA_REDIRECT_URI (or APP_ORIGIN) so Oura knows where to send you back")
     return client_id, client_secret, redirect
 
 
@@ -272,7 +300,11 @@ async def _store(conn, tokens: dict, *, keep_refresh: str | None = None) -> None
     refresh = tokens.get("refresh_token") or keep_refresh
     if not tokens.get("access_token") or not refresh:
         raise OuraError("Oura's token answer had no access or refresh token")
-    expires_at = _now() + timedelta(seconds=int(tokens.get("expires_in") or 86400))
+    try:
+        seconds = int(tokens.get("expires_in") or 86400)
+    except (TypeError, ValueError):
+        seconds = 86400  # Oura's documented lifetime; a refresh sorts out anything shorter
+    expires_at = _now() + timedelta(seconds=seconds)
     scope = tokens.get("scope") if isinstance(tokens.get("scope"), str) else None
     await conn.execute(
         """
@@ -290,6 +322,17 @@ async def _store(conn, tokens: dict, *, keep_refresh: str | None = None) -> None
 async def save_tokens(tokens: dict) -> None:
     async with db.tx() as conn:
         await _store(conn, tokens)
+
+
+async def connected() -> bool:
+    """Whether this user has an Oura grant this deployment can use — what
+    /api/me tells Today, so it only asks for a sync that can happen."""
+    if not configured():
+        return False
+    try:
+        return await db.fetchone("SELECT 1 AS ok FROM oura_tokens") is not None
+    except psycopg.errors.UndefinedTable:
+        return False  # 005 not applied yet
 
 
 _TOKENS_SQL = "SELECT access_token, refresh_token, expires_at FROM oura_tokens"
@@ -349,28 +392,33 @@ async def _access_token(*, force: bool = False) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _get_all(path: str, token: str, start: date, end: date) -> list[dict]:
+async def _get_all(
+    client: httpx.AsyncClient, path: str, token: str, start: date, end: date, deadline: float
+) -> tuple[list[dict], bool]:
+    """Every page of one collection, and whether it got them all: past
+    `deadline` no further page is asked for, and what arrived is returned."""
     params = {"start_date": start.isoformat(), "end_date": end.isoformat()}
     docs: list[dict] = []
     try:
-        async with _client() as client:
-            while True:
-                res = await client.get(
-                    f"{API_URL}/{path}", params=params, headers={"authorization": f"Bearer {token}"}
-                )
-                if res.status_code == 401:
-                    raise _Unauthorized(path)
-                if res.status_code == 403:
-                    raise _Forbidden(path)
-                if res.status_code == 429:
-                    raise OuraError("Oura is rate limiting this app — try again later")
-                if res.status_code >= 400:
-                    raise OuraError(f"Oura's {path} answered {res.status_code}")
-                body = _json(res, path)
-                docs.extend(body.get("data") or [])
-                if not body.get("next_token"):
-                    return docs
-                params = {**params, "next_token": body["next_token"]}
+        while True:
+            res = await client.get(
+                f"{API_URL}/{path}", params=params, headers={"authorization": f"Bearer {token}"}
+            )
+            if res.status_code == 401:
+                raise _Unauthorized(path)
+            if res.status_code == 403:
+                raise _Forbidden(path)
+            if res.status_code == 429:
+                raise OuraError("Oura is rate limiting this app — try again later")
+            if res.status_code >= 400:
+                raise OuraError(f"Oura's {path} answered {res.status_code}")
+            body = _json(res, path)
+            docs.extend(body.get("data") or [])
+            if not body.get("next_token"):
+                return docs, True
+            if time.monotonic() > deadline:
+                return docs, False
+            params = {**params, "next_token": body["next_token"]}
     except httpx.HTTPError as e:
         raise OuraError(f"Couldn't reach Oura's {path} ({type(e).__name__})")
 
@@ -408,6 +456,17 @@ def workout_row(doc: dict) -> tuple:
     )
 
 
+def _rows(docs: list[dict], build, what: str) -> list[tuple]:
+    """The rows of the documents Tally can read; an odd one is skipped, not fatal."""
+    rows = []
+    for doc in docs:
+        try:
+            rows.append(build(doc))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            log.warning("oura: skipped a %s document Tally could not read", what)
+    return rows
+
+
 _UPSERT_DAY = """
 INSERT INTO oura_days (day, total_calories, active_calories, steps, score, raw)
 VALUES (%s, %s, %s, %s, %s, %s)
@@ -426,65 +485,111 @@ SET day = EXCLUDED.day, activity = EXCLUDED.activity, start_at = EXCLUDED.start_
 """
 
 
-@dataclass
-class SyncResult:
-    skipped: bool
+class OuraSync(BaseModel):
+    """One sync's outcome — also POST /api/oura/sync's answer."""
+
+    skipped: bool  # the last sync, or failed attempt, was under half an hour ago
     days: int
     workouts: int
     last_synced_at: datetime | None
-    missing: list[str] = field(default_factory=list)  # scopes Oura refused (403)
+    missing: list[str] = []  # scopes Oura refused this time (403)
 
 
-async def sync(*, today: date, force: bool = False, backfill: bool = False) -> SyncResult:
+# When the last sync attempt failed, by user, on this instance: a failing Oura
+# (429, 5xx, network) is not asked again on every open. In memory, so a cold
+# start forgets it — enough for a backoff, and no column for it.
+_failed_at: dict[str, datetime] = {}
+
+
+async def sync(*, today: date, force: bool = False, backfill: bool = False) -> OuraSync:
     """Pull daily activity and workouts into oura_days / oura_workouts.
     `today` is the owner's local day (settings.timezone) — the window runs
     through it. `backfill` (every (re)connect) re-reads the whole stored period
     and at least BACKFILL_DAYS: a collection refused before and granted now
-    must get its history, not only the last few days."""
+    must get its history, not only the last few days. `force` (Sync now, the
+    callback) skips both half-hour waits."""
     row = await db.fetchone("SELECT last_synced_at FROM oura_tokens")
     if row is None:
         raise NotConnected(NOT_CONNECTED)
     last = row["last_synced_at"]
-    if not force and last is not None and _now() - last < MIN_SYNC_INTERVAL:
-        return SyncResult(skipped=True, days=0, workouts=0, last_synced_at=last)
+    user = db.current_user_id.get() or ""
+    if not force and any(
+        t is not None and _now() - t < MIN_SYNC_INTERVAL for t in (last, _failed_at.get(user))
+    ):
+        return OuraSync(skipped=True, days=0, workouts=0, last_synced_at=last)
+    try:
+        result = await _sync(today, backfill)
+    except (NotConnected, NotConfigured):
+        raise
+    except OuraError:
+        _failed_at[user] = _now()
+        raise
+    _failed_at.pop(user, None)
+    return result
 
-    span = await db.fetchone("SELECT min(day) AS oldest, max(day) AS newest FROM oura_days")
+
+async def _sync(today: date, backfill: bool) -> OuraSync:
     floor = today - timedelta(days=BACKFILL_DAYS)
-    if backfill or span["newest"] is None:
-        start = min(span["oldest"] or floor, floor)
+    starts: dict[str, date] = {}
+    if backfill:
+        oldest = (
+            await db.fetchone(
+                "SELECT least((SELECT min(day) FROM oura_days), "
+                "(SELECT min(day) FROM oura_workouts)) AS day"
+            )
+        )["day"]
+        starts = {path: min(oldest or floor, floor) for _, path, _, _ in COLLECTIONS}
     else:
-        start = span["newest"] - timedelta(days=OVERLAP_DAYS)
+        # each collection from its own newest row: a workout-only grant does
+        # not re-read 90 days every time, and a late-logged workout is caught
+        for _, path, table, overlap in COLLECTIONS:
+            newest = (await db.fetchone(f"SELECT max(day) AS day FROM {table}"))["day"]
+            starts[path] = newest - timedelta(days=overlap) if newest else floor
     end = today + timedelta(days=1)  # harmless if Oura's end_date is inclusive
+    deadline = time.monotonic() + SYNC_BUDGET_S
 
-    async def fetch(token: str) -> tuple[dict[str, list[dict]], list[str]]:
-        got: dict[str, list[dict]] = {}
-        missing: list[str] = []
-        for scope, path in COLLECTIONS:
-            try:
-                got[path] = await _get_all(path, token, start, end)
-            except _Forbidden:
-                missing.append(scope)
-        return got, missing
+    async def fetch(token: str) -> list:
+        async with _client() as client:
+
+            async def one(path: str):
+                try:
+                    return await _get_all(client, path, token, starts[path], end, deadline)
+                except _Forbidden:
+                    return None
+
+            results = await asyncio.gather(
+                *(one(path) for _, path, _, _ in COLLECTIONS), return_exceptions=True
+            )
+        errors = [r for r in results if isinstance(r, BaseException)]
+        if errors:  # a 401 first: it is the one a refresh can fix
+            raise next((e for e in errors if isinstance(e, _Unauthorized)), errors[0])
+        return results
 
     try:
-        got, missing = await fetch(await _access_token())
+        results = await fetch(await _access_token())
     except _Unauthorized:
-        got, missing = await fetch(await _access_token(force=True))
+        results = await fetch(await _access_token(force=True))
+    got = {c[1]: r for c, r in zip(COLLECTIONS, results) if r is not None}
+    missing = [c[0] for c, r in zip(COLLECTIONS, results) if r is None]
     if not got:
         raise OuraError("Oura refused every collection: reconnect and allow them, or check the membership")
+    for path, (_, complete) in got.items():
+        if not complete:
+            log.warning("oura: %s ran past the %ss budget; kept what arrived", path, SYNC_BUDGET_S)
 
-    days, workouts = got.get("daily_activity", []), got.get("workout", [])
+    days = _rows(got.get("daily_activity", ([], True))[0], day_row, "daily_activity")
+    workouts = _rows(got.get("workout", ([], True))[0], workout_row, "workout")
     async with db.tx() as conn:
         async with conn.cursor() as cur:
             if days:
-                await cur.executemany(_UPSERT_DAY, [day_row(d) for d in days])
+                await cur.executemany(_UPSERT_DAY, days)
             if workouts:
-                await cur.executemany(_UPSERT_WORKOUT, [workout_row(w) for w in workouts])
+                await cur.executemany(_UPSERT_WORKOUT, workouts)
         cur = await conn.execute(
             "UPDATE oura_tokens SET last_synced_at = now() RETURNING last_synced_at"
         )
         synced = await cur.fetchone()
-    return SyncResult(
+    return OuraSync(
         skipped=False,
         days=len(days),
         workouts=len(workouts),
