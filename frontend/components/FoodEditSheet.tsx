@@ -6,6 +6,7 @@ import {
   type AliasRow,
   type StagedItem,
 } from "@/lib/api";
+import SheetHeader from "./SheetHeader";
 
 type Props = {
   item: StagedItem;
@@ -89,7 +90,7 @@ export default function FoodEditSheet({
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Edit food">
-        <div className="subsheet-title">&ldquo;{item.phrase}&rdquo;</div>
+        <SheetHeader title={<>&ldquo;{item.phrase}&rdquo;</>} onClose={onClose} />
 
         {aliases?.length ? (
           <div>

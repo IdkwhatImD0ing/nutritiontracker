@@ -31,9 +31,11 @@
     background 120ms;
 }
 
-.photo-option:hover {
-  border-color: var(--line-strong);
-  background: var(--surface-3);
+@media (hover: hover) {
+  .photo-option:hover {
+    border-color: var(--line-strong);
+    background: var(--surface-3);
+  }
 }
 
 .photo-option svg {

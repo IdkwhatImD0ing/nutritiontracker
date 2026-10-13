@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   discardLog,
@@ -21,6 +22,7 @@ import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
 import type { DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
+import { parseISO } from "./HistoryApi";
 import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { getMe, type Me } from "./MeApi";
@@ -67,6 +69,11 @@ export default function Today() {
   const [totals, setTotals] = useState<DayTotals | null>(null);
   // §7.4 Today: the diary grouped by meal renders under the tracker.
   const [meals, setMeals] = useState<DiaryMeals | null>(null);
+  // The diary read failed. While no diary is on screen the tracker gives way
+  // to an error with a Retry: a day we couldn't read must not look like an
+  // empty one (BACKLOG 131's outage read as a wiped diary). A failed RE-read
+  // keeps what is already shown.
+  const [diaryError, setDiaryError] = useState(false);
   const [staging, setStaging] = useState<{
     log: LogResponse;
     restore: StagingSnapshot | null;
@@ -88,6 +95,15 @@ export default function Today() {
   const discardRef = useRef(discard);
   discardRef.current = discard;
   const discardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A commit closes the sheet with nothing else to say it landed — and a
+  // back-dated one (§7.2 when-shift) lands on a day this screen doesn't show.
+  // The undo toast's slot and clock; `day` is that other day, for its View.
+  const [committedNote, setCommittedNote] = useState<{
+    text: string;
+    day: string | null;
+  } | null>(null);
+  const committedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const router = useRouter();
   // Which item_index values each log has had removed. The server keeps a
   // removed row under its index but leaves it out of GET /api/logs/:id, so a
   // sheet reopened from a chat card cannot see the hole — and its "+ add
@@ -290,9 +306,10 @@ export default function Today() {
         if (cancelled) return;
         setTotals(d.totals);
         setMeals(d.meals);
+        setDiaryError(false);
       })
       .catch(() => {
-        /* zero-state renders gracefully without the diary */
+        if (!cancelled) setDiaryError(true); // the error notice, not a 0 kcal day
       });
     getMe()
       .then((m) => {
@@ -380,10 +397,13 @@ export default function Today() {
       .then((d) => {
         setTotals(d.totals);
         setMeals(d.meals);
+        setDiaryError(false);
       })
       .catch(() => {
         /* the tracker keeps what it has — nothing paints another day's numbers
-           over it, and the next read (or a foreground) corrects it */
+           over it, and the next read (or a foreground) corrects it. The flag
+           only shows while there is no diary to keep (see diaryError). */
+        setDiaryError(true);
       });
   };
 
@@ -444,8 +464,17 @@ export default function Today() {
   useOnForeground((awayMs) => {
     const day = localDateISO();
     const rolled = day !== dayRef.current;
-    if (!rolled && awayMs < RESUME_STALE_MS) return;
+    // A diary that failed to load is retried on any return, however short.
+    if (!rolled && awayMs < RESUME_STALE_MS && !diaryError) return;
     dayRef.current = day;
+    // Yesterday's diary is not today's to keep: drop it, so the read shows
+    // the loading tracker and, if it fails, the error — not yesterday's
+    // numbers under today's date.
+    if (rolled) {
+      setTotals(null);
+      setMeals(null);
+      setDiaryError(false); // a failed refresh of yesterday is not today's error
+    }
     reloadDiary();
     refreshMe();
     syncOuraFor(me);
@@ -609,7 +638,7 @@ export default function Today() {
         kind: "agent",
         id: crypto.randomUUID(),
         text: log.items.length
-          ? "That one had already gone through — here is what it staged."
+          ? "That one had already gone through — here is what it found."
           : "That one reached the server earlier, but its answer did not make it back here — if it asked you something, say it again.",
       });
     }
@@ -1022,6 +1051,33 @@ export default function Today() {
     setStaging({ log: d.log, restore: d.snap }); // local edits intact
   };
 
+  // `day` is the commit's totals_day: null when it wrote to more than one.
+  const noteCommitted = (day: string | null | undefined, landed: StagedItem[]) => {
+    if (landed.length === 0) return; // all still resolving — the pending pills say so
+    const kcal = Math.round(
+      landed.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0),
+    ).toLocaleString("en-US");
+    const mealSet = new Set(landed.map((i) => i.meal));
+    const meal = mealSet.size === 1 ? [...mealSet][0] : null;
+    const other = day != null && day !== localDateISO() ? day : null;
+    const text =
+      day == null
+        ? `Logged ${kcal} kcal across more than one day`
+        : other
+          ? `Logged ${kcal} kcal for ${parseISO(other).toLocaleDateString("en-US", {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+            })}`
+          : `Logged ${kcal} kcal${meal ? ` to ${meal[0].toUpperCase()}${meal.slice(1)}` : ""}`;
+    if (committedTimer.current) clearTimeout(committedTimer.current);
+    setCommittedNote({ text, day: other });
+    committedTimer.current = setTimeout(() => {
+      committedTimer.current = null;
+      setCommittedNote(null);
+    }, UNDO_MS);
+  };
+
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "short",
@@ -1039,7 +1095,7 @@ export default function Today() {
       docked={lane === "agent"}
       removedIndexes={removedIndexesRef.current.get(staging.log.log_id)}
       onRendered={() => stagedRendered(staging.log.log_id)}
-      onCommitted={(t, stragglers) => {
+      onCommitted={(t, stragglers, landed) => {
         // The commit's totals are for the day the entries landed on (§7.2
         // when-shift), which for a back-dated log is not the day this tracker
         // shows. `totals_day` says which day they describe — null when the
@@ -1052,6 +1108,7 @@ export default function Today() {
         if (stragglers.length > 0) {
           addPending({ logId: staging.log.log_id, items: stragglers });
         }
+        noteCommitted(t.totals_day, landed);
       }}
       onClose={closeStaging}
     />
@@ -1069,7 +1126,23 @@ export default function Today() {
 
       {demo ? <DemoBanner demo={demo} /> : null}
 
-      <Tracker totals={totals} />
+      {diaryError && meals === null ? (
+        <div className="notice error" role="alert">
+          <span>Couldn&rsquo;t load today&rsquo;s diary.</span>
+          <button
+            type="button"
+            className="notice-btn"
+            onClick={() => {
+              setDiaryError(false); // back to the loading tracker meanwhile
+              reloadDiary();
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <Tracker totals={totals} />
+      )}
 
       <WeightCard refreshKey={weightsKey} />
 
@@ -1203,6 +1276,21 @@ export default function Today() {
           <button type="button" onClick={() => setSavedNote(null)}>
             OK
           </button>
+        </div>
+      ) : null}
+
+      {/* one toast at a time: the undo and the saved-meal note outrank it */}
+      {committedNote && !discard && !savedNote ? (
+        <div className="toast under-sheets" role="status">
+          <span>{committedNote.text}</span>
+          {committedNote.day ? (
+            <button
+              type="button"
+              onClick={() => router.push(`/history/${committedNote.day}`)}
+            >
+              View
+            </button>
+          ) : null}
         </div>
       ) : null}
     </main>

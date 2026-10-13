@@ -16,6 +16,7 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
+import SheetHeader from "./SheetHeader";
 
 type Props = {
   /** null → §8.4 create path 3, "build one in Library" (POST /api/meals) */
@@ -172,9 +173,10 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Edit saved meal">
-        <div className="subsheet-title">
-          {!meal ? "New saved meal" : meal.is_active ? "Saved meal" : "Inactive meal"}
-        </div>
+        <SheetHeader
+          title={!meal ? "New saved meal" : meal.is_active ? "Saved meal" : "Inactive meal"}
+          onClose={onClose}
+        />
 
         <label className="m3-field">
           Name

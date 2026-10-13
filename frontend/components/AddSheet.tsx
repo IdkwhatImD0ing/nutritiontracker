@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { loadDetector } from "./barcodeDetector";
+import SheetHeader from "./SheetHeader";
 
 /** The + sheet (owner ruling, 2026-09-02): the mid-screen capture bar is
  *  gone; every way to log opens from the tab bar's + button. Exactly four
@@ -96,7 +97,7 @@ const ROWS = [
     // starts on open), typing the fallback; it looks things up and shows you
     lane: "agent",
     label: "Agent",
-    sub: "Say, type or snap it — it looks things up and stages them",
+    sub: "Say, type or snap it — it looks things up and fills in the rows",
     Icon: MicIcon,
   },
 ] as const;
@@ -124,7 +125,7 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet add-sheet" role="dialog" aria-label="Log food">
-        <div className="subsheet-title">Log food</div>
+        <SheetHeader title="Log food" onClose={onClose} closeButton={false} />
         {ROWS.map(({ lane, label, sub, Icon }) => (
           <button
             key={lane}

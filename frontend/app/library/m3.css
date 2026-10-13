@@ -99,8 +99,10 @@
     filter 150ms;
 }
 
-.tabbar .fab:hover {
-  filter: brightness(1.06);
+@media (hover: hover) {
+  .tabbar .fab:hover {
+    filter: brightness(1.06);
+  }
 }
 
 .tabbar .fab:active {
@@ -130,8 +132,10 @@ body:has(.tabbar) .shell {
   gap: 8px;
 }
 
-.add-sheet .subsheet-title {
-  margin-bottom: 6px;
+/* 0, not the sub-sheet's -6px: the head's own 6px under its row is this
+   sheet's extra room above the rows */
+.add-sheet .subsheet-head {
+  margin-bottom: 0;
 }
 
 .add-row {
@@ -154,9 +158,11 @@ body:has(.tabbar) .shell {
     transform 120ms var(--ease);
 }
 
-.add-row:hover {
-  border-color: var(--line-strong);
-  background: var(--surface-3);
+@media (hover: hover) {
+  .add-row:hover {
+    border-color: var(--line-strong);
+    background: var(--surface-3);
+  }
 }
 
 .add-row:active {
@@ -296,8 +302,10 @@ body:has(.tabbar) .shell {
     transform 120ms var(--ease);
 }
 
-.m3-card-btn:hover {
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .m3-card-btn:hover {
+    border-color: var(--line-strong);
+  }
 }
 
 .m3-card-btn:active {
@@ -336,9 +344,11 @@ body:has(.tabbar) .shell {
   text-decoration: none;
 }
 
-.m3-link-btn:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+@media (hover: hover) {
+  .m3-link-btn:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
 }
 
 .m3-link-btn.danger {
@@ -348,19 +358,6 @@ body:has(.tabbar) .shell {
 .m3-link-btn:disabled {
   color: var(--faint);
   cursor: default;
-}
-
-.m3-back {
-  align-self: flex-start;
-  color: var(--muted);
-  text-decoration: none;
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding-top: 6px;
-}
-
-.m3-back:hover {
-  color: var(--text);
 }
 
 .m3-note {
@@ -501,7 +498,6 @@ body:has(.tabbar) .shell {
 .m3-window input,
 .m3-window select {
   padding: 9px 10px;
-  font-size: 0.92rem;
 }
 
 /* iOS draws a time control at its own intrinsic width unless the native
@@ -511,10 +507,17 @@ body:has(.tabbar) .shell {
   -webkit-appearance: none;
   appearance: none;
   min-height: 42px;
+  /* at 16px (no iOS focus zoom) "05:00 PM" and Chromium's clock only fit
+     a 320px phone's half-row with the padding trimmed */
+  padding-inline: 8px 6px;
 }
 
 .m3-window input[type="time"]::-webkit-date-and-time-value {
   text-align: left;
+}
+
+.m3-window input[type="time"]::-webkit-calendar-picker-indicator {
+  margin-inline-start: 2px;
 }
 
 .m3-seg {
@@ -720,8 +723,10 @@ body:has(.tabbar) .shell {
   cursor: pointer;
 }
 
-.wizard-ghost:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .wizard-ghost:hover {
+    color: var(--text);
+  }
 }
 
 /* ---------- food detail (§7.1 "everything the database returned") ---------- */
@@ -920,9 +925,11 @@ body:has(.tabbar) .shell {
   cursor: pointer;
 }
 
-.account-signout:hover:not(:disabled) {
-  border-color: var(--red);
-  color: var(--red);
+@media (hover: hover) {
+  .account-signout:hover:not(:disabled) {
+    border-color: var(--red);
+    color: var(--red);
+  }
 }
 
 .account-signout:disabled {
@@ -992,9 +999,11 @@ body:has(.tabbar) .shell {
     color: var(--muted);
   }
 
-  .tabbar a:hover {
-    color: var(--text);
-    background: var(--surface-2);
+  @media (hover: hover) {
+    .tabbar a:hover {
+      color: var(--text);
+      background: var(--surface-2);
+    }
   }
 
   .tabbar a.active {
@@ -1063,7 +1072,7 @@ body:has(.tabbar) .shell {
     gap: 10px;
   }
 
-  .add-sheet .subsheet-title {
+  .add-sheet .subsheet-head {
     grid-column: 1 / -1;
   }
 
@@ -1173,8 +1182,10 @@ body:has(.tabbar) .shell {
   cursor: pointer;
 }
 
-.keys-btn:hover {
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .keys-btn:hover {
+    border-color: var(--line-strong);
+  }
 }
 
 .keys-btn.accent {
@@ -1362,11 +1373,6 @@ body:has(.tabbar) .shell {
 
 .keys-seg-note {
   margin-top: 8px;
-}
-
-.keys-cancel {
-  align-self: center;
-  min-height: 32px;
 }
 
 @media (min-width: 1140px) {

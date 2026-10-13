@@ -104,8 +104,10 @@
   border-radius: 6px;
 }
 
-.docs-header-label:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .docs-header-label:hover {
+    color: var(--text);
+  }
 }
 
 .docs-header-links {
@@ -132,8 +134,10 @@
   transition: filter 150ms;
 }
 
-.docs-btn:hover {
-  filter: brightness(1.08);
+@media (hover: hover) {
+  .docs-btn:hover {
+    filter: brightness(1.08);
+  }
 }
 
 .docs-btn.ghost {
@@ -143,9 +147,11 @@
   font-weight: 550;
 }
 
-.docs-btn.ghost:hover {
-  border-color: var(--spruce-soft);
-  filter: none;
+@media (hover: hover) {
+  .docs-btn.ghost:hover {
+    border-color: var(--spruce-soft);
+    filter: none;
+  }
 }
 
 .docs-btn.lg {
@@ -232,9 +238,11 @@
   text-decoration: none;
 }
 
-.docs-nav a:hover {
-  color: var(--text);
-  background: var(--surface-2);
+@media (hover: hover) {
+  .docs-nav a:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
 }
 
 .docs-nav a.active {
@@ -320,8 +328,10 @@
     text-decoration: none;
   }
 
-  .docs-toc a:hover {
-    color: var(--text);
+  @media (hover: hover) {
+    .docs-toc a:hover {
+      color: var(--text);
+    }
   }
 }
 
@@ -408,8 +418,10 @@
   text-underline-offset: 2px;
 }
 
-.docs-prose a:hover {
-  text-decoration-color: var(--accent);
+@media (hover: hover) {
+  .docs-prose a:hover {
+    text-decoration-color: var(--accent);
+  }
 }
 
 /* the CTA pills sit in the prose; keep their own ink over the link colour */
@@ -552,9 +564,11 @@
   cursor: pointer;
 }
 
-.docs-copy:hover {
-  color: var(--text);
-  border-color: var(--spruce-soft);
+@media (hover: hover) {
+  .docs-copy:hover {
+    color: var(--text);
+    border-color: var(--spruce-soft);
+  }
 }
 
 .docs-copy.done {
@@ -584,8 +598,10 @@
   cursor: pointer;
 }
 
-.docs-tab:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .docs-tab:hover {
+    color: var(--text);
+  }
 }
 
 .docs-tab[aria-selected="true"] {
@@ -654,8 +670,10 @@
     background 150ms;
 }
 
-.docs-mcp-tile:hover {
-  border-color: var(--spruce-soft);
+@media (hover: hover) {
+  .docs-mcp-tile:hover {
+    border-color: var(--spruce-soft);
+  }
 }
 
 .docs-mcp-tile[aria-selected="true"] {
@@ -872,8 +890,10 @@
   text-align: right;
 }
 
-.docs-pager-link:hover {
-  border-color: var(--accent-line);
+@media (hover: hover) {
+  .docs-pager-link:hover {
+    border-color: var(--accent-line);
+  }
 }
 
 .docs-pager-title {

@@ -52,10 +52,12 @@
   padding: 4px 10px;
 }
 
-.diary-meal-head .m3-link-btn:hover {
-  color: var(--text);
-  text-decoration: none;
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .diary-meal-head .m3-link-btn:hover {
+    color: var(--text);
+    text-decoration: none;
+    border-color: var(--line-strong);
+  }
 }
 
 .diary-meal-kcal {

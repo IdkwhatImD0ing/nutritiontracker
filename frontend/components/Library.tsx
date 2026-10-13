@@ -261,7 +261,7 @@ export default function Library() {
           <p className="m3-empty">Loading…</p>
         ) : groups.length === 0 ? (
           <p className="m3-empty">
-            Nothing learned yet. Every committed log teaches the app a phrase →
+            Nothing learned yet. Every meal you log teaches the app a phrase →
             food mapping; they show up here with use counts.
           </p>
         ) : null}

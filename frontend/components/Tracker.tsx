@@ -12,11 +12,12 @@ type DonutProps = {
   color: string;
   size: number;
   loud?: boolean;
+  loading?: boolean;
 };
 
 /** Remaining-vs-target ring (§7.4): ring fills with consumed/target, the
  *  center number is what's left. */
-function Donut({ label, consumed, target, color, size, loud }: DonutProps) {
+function Donut({ label, consumed, target, color, size, loud, loading }: DonutProps) {
   const stroke = loud ? 10 : 7;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
@@ -58,17 +59,19 @@ function Donut({ label, consumed, target, color, size, loud }: DonutProps) {
           dominantBaseline="middle"
           fontSize={loud ? 22 : 16}
         >
-          {fmt.format(centerNum)}g
+          {loading ? "—" : `${fmt.format(centerNum)}g`}
         </text>
-        <text
-          className="center-sub"
-          x="50%"
-          y={loud ? "66%" : "70%"}
-          textAnchor="middle"
-          fontSize={loud ? 11 : 9}
-        >
-          {centerSub}
-        </text>
+        {loading ? null : (
+          <text
+            className="center-sub"
+            x="50%"
+            y={loud ? "66%" : "70%"}
+            textAnchor="middle"
+            fontSize={loud ? 11 : 9}
+          >
+            {centerSub}
+          </text>
+        )}
       </svg>
       <span
         className="macro-label"
@@ -81,6 +84,10 @@ function Donut({ label, consumed, target, color, size, loud }: DonutProps) {
 }
 
 export default function Tracker({ totals }: { totals: DayTotals | null }) {
+  // null = the day hasn't been read yet. Same footprint, dashes and empty
+  // tracks: a 0 or "No targets set yet" would be a claim about a day we
+  // haven't seen (it read as a real empty day on every cold open).
+  const loading = totals === null;
   const kcal = totals?.kcal ?? 0;
   const protein = totals?.protein_g ?? 0;
   const carb = totals?.carb_g ?? 0;
@@ -99,13 +106,17 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
   const kcalLeft = kcalTarget - kcal;
 
   return (
-    <section className="tracker" aria-label="Daily tracker">
+    <section
+      className={`tracker${loading ? " is-loading" : ""}`}
+      aria-label="Daily tracker"
+      aria-busy={loading || undefined}
+    >
       <div>
         <div className="kcal-row">
           <div>
             <span className="label">Calories</span>
             <span className="figures num">
-              <strong>{fmt.format(kcal)}</strong>
+              <strong>{loading ? "—" : fmt.format(kcal)}</strong>
               {kcalTarget > 0 ? (
                 <span className="of">/ {fmt.format(kcalTarget)} kcal</span>
               ) : (
@@ -135,6 +146,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           target={carbTarget}
           color="var(--carb)"
           size={84}
+          loading={loading}
         />
         <Donut
           label="Protein"
@@ -143,6 +155,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           color="var(--mint)"
           size={116}
           loud
+          loading={loading}
         />
         <Donut
           label="Fat"
@@ -150,10 +163,11 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           target={fatTarget}
           color="var(--fat)"
           size={84}
+          loading={loading}
         />
       </div>
 
-      {!hasAnyTarget ? (
+      {!loading && !hasAnyTarget ? (
         <p className="zero-hint">No targets set yet — showing what you log.</p>
       ) : null}
     </section>
