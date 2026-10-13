@@ -32,6 +32,9 @@ logs.input_mode).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import hashlib
+import json
 import math
 import time
 from datetime import datetime
@@ -77,6 +80,7 @@ if TYPE_CHECKING:
     from services.agent import PhotoChange
     from services.places import Fix, Place
     from services.vision import VisionItem, VisionResult
+    from sources.bonappetit import CafeMeal, Dish
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -128,6 +132,15 @@ def sniff_image(head: bytes) -> str | None:
     return None
 
 
+def _local(captured_at: datetime, tz: str | None) -> datetime:
+    """The photo's local wall clock. `tz` is an unvalidated client string: an
+    unknown zone, or none, keeps captured_at's own offset."""
+    try:
+        return captured_at.astimezone(ZoneInfo(tz)) if tz else captured_at
+    except Exception:
+        return captured_at
+
+
 async def _photo_context(
     captured_at: datetime, tz: str | None, where: Fix | None = None
 ) -> tuple[str, list[Place]]:
@@ -157,10 +170,7 @@ async def _photo_context(
         db.fetchone("SELECT value FROM settings WHERE key = 'profile_notes'"), _near()
     )
     notes = (row["value"] if row and isinstance(row.get("value"), str) else "") or ""
-    try:
-        local = captured_at.astimezone(ZoneInfo(tz)) if tz else captured_at
-    except Exception:
-        local = captured_at
+    local = _local(captured_at, tz)
     when = f"This photo was taken on {local:%A %Y-%m-%d} at {local:%H:%M} local time."
     around = ""
     if near:
@@ -173,6 +183,20 @@ async def _photo_context(
             "same to a map."
         )
     return "\n\n".join(part for part in (notes.strip(), when, around) if part), near
+
+
+async def _cafe_meal(captured_at: datetime, tz: str | None) -> CafeMeal | None:
+    """§3.4b café menu (2026-09-30): what the Bon Appétit café the profile
+    notes name served at the meal the photo falls in, every dish with its
+    published numbers — None when the notes name no such café, it served
+    nothing at that hour, or its page could not be read. It runs beside
+    _photo_context and reads the notes itself, so that function's
+    (context, places) answer stays exactly as it is."""
+    from sources import bonappetit  # lazy: stubbed in route tests
+
+    row = await db.fetchone("SELECT value FROM settings WHERE key = 'profile_notes'")
+    site = bonappetit.site_in(row["value"] if row and isinstance(row.get("value"), str) else "")
+    return await bonappetit.meal_at(site, _local(captured_at, tz)) if site else None
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +397,182 @@ async def _stage_menu_food(item: StagedItem, v: VisionItem) -> StagedItem:
     )
 
 
+# ---------------------------------------------------------------------------
+# The café menu (§3.4b, 2026-09-30): a matched dish's published numbers
+# ---------------------------------------------------------------------------
+
+# The café publishes some protein figures that are plainly wrong (7 g in 7.7 oz
+# of honey mustard chicken, 3 g in 2.8 oz of roast chicken, checked
+# 2026-09-30), and a model asked to spot them caught half. So code does: when
+# the row's database food is a protein food (≥ 10 g per 100 g) and the dish
+# claims under 40% of its protein per gram, the database row stays.
+_GUARD_MIN_PROTEIN_PER_G = 0.10
+_GUARD_RATIO = 0.4
+
+
+def _protein_per_g(item: StagedItem) -> float | None:
+    """Protein per gram of the row's database food — None for a row with no
+    database food (still searching, or the numberless §3.4b placeholder) or
+    no gram serving to measure by."""
+    if item.status != "resolved" or item.food is None or item.estimated == "unresolved":
+        return None
+    for s in item.servings or []:
+        protein = (s.macros or {}).get("protein_g")
+        if s.grams and s.grams > 0 and protein is not None:
+            return protein / s.grams
+    return None
+
+
+def _numbers_look_wrong(item: StagedItem, dish: Dish) -> bool:
+    ref = _protein_per_g(item)
+    return (
+        ref is not None
+        and ref >= _GUARD_MIN_PROTEIN_PER_G
+        and dish.grams is not None
+        and dish.nutrients["protein_g"] / dish.grams < _GUARD_RATIO * ref
+    )
+
+
+async def _keep_database_row(log_id: UUID, item: StagedItem, dish: Dish) -> StagedItem | None:
+    """The guard tripped: the row keeps its database food, and its note says
+    why the café's dish was not used — in words, never the numbers."""
+    doubt = (
+        f"the café lists {dish.name}, but its published numbers look wrong, "
+        "so this row keeps the database's"
+    )
+    note = f"{item.estimate_note} — {doubt}" if item.estimate_note else doubt[0].upper() + doubt[1:]
+    row = await db.fetchone(
+        f"UPDATE item_resolutions SET staged = staged{KEEP_LOG_KEYS_SQL} "
+        "|| jsonb_build_object('estimate_note', %s::text) "
+        f"WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL} RETURNING staged",
+        (note, str(log_id), item.item_index),
+    )
+    return StagedItem.model_validate(row["staged"]) if row else None
+
+
+async def _stage_cafe_food(
+    log_id: UUID, item: StagedItem, v: VisionItem, dish: Dish, cafe: CafeMeal
+) -> StagedItem | None:
+    """The row becomes the café's dish: a `source='menu'` foods row carrying
+    every nutrient the page published for its serving, sized by the photo's
+    grams, flagged "portion" (the food is the café's, the amount a guess) and
+    cited to the day page. Written the way stage_estimate_food writes: KEEP
+    carries the old flag and note, so both are re-applied after it, and the
+    photo's spoken-quantity channel is carried over for a later search pick.
+    None when the row is no longer live."""
+    from services import menu_match  # lazy: stubbed in route tests
+
+    serving = {
+        "serving_id": "menu",
+        "description": dish.serving or "1 serving",
+        "grams": dish.grams,
+        "macros": dict(dish.nutrients),
+    }
+    # persist_food caches forever, so the numbers are part of the key: a dish
+    # the café re-publishes with new numbers is a new row, never a rewrite
+    # under a diary that already snapshotted the old ones
+    digest = hashlib.sha256(
+        json.dumps([serving["description"], serving["macros"]], sort_keys=True).encode()
+    ).hexdigest()[:12]
+    food_id = await foods_repo.persist_food(
+        {
+            "source": "menu",
+            "source_id": f"{cafe.site}.cafebonappetit.com#{dish.id}:{digest}",
+            "source_url": cafe.url,
+            "provenance": {
+                "cafe": {
+                    "site": cafe.site, "dish_id": dish.id, "station": dish.station,
+                    "date": cafe.day.isoformat(), "meal": cafe.label, "url": cafe.url,
+                },
+                # which model chose the dish: a wrong match has to be
+                # traceable to the run that made it
+                "model": menu_match.MODEL,
+            },
+            "name": dish.name,
+            "display_name": dish.name,
+            "brand": None,
+            "food_type": "generic",
+            "state": None,
+            "state_sensitive": False,
+            "servings": [serving],
+            "default_serving_id": "menu",
+            "per_100g": None,
+            "payload": {"dish": dataclasses.asdict(dish)},
+        }
+    )
+    grams = _grams(v)
+    qty = round(grams / dish.grams, 4) if grams and dish.grams else 1.0
+    note = (
+        f"Café menu ({cafe.label}): {dish.name} — the café's published numbers, "
+        f"per {serving['description']} ({cafe.url}); the amount is the photo's"
+        + (f" (~{grams:g} g)" if grams else ", one serving — check it")
+    )
+    staged = StagedItem(
+        item_index=item.item_index,
+        phrase=item.phrase,
+        status="resolved",
+        tier=None,
+        food=FoodRef(id=food_id, name=dish.name),
+        serving=ServingRef(id="menu", description=serving["description"]),
+        qty=qty,
+        macros=Macros(**cascade._scale_macros(dish.nutrients, qty)),
+        meal=item.meal,
+        confidence=v.confidence,
+        servings=[ServingOption(**s) for s in cascade._serving_options([serving])],
+        search_instead=False,
+        estimated="portion",
+        estimate_note=note,
+        web_source=WebSource(url=cafe.url, title=f"{dish.name} — {cafe.label} menu"),
+    )
+    row = await db.fetchone(
+        f"""
+        UPDATE item_resolutions
+        SET status = 'resolved',
+            staged = %s::jsonb
+                     || jsonb_build_object('spoken_qty', item_resolutions.staged->'spoken_qty',
+                                           'spoken_unit', item_resolutions.staged->'spoken_unit')
+                     {KEEP_LOG_KEYS_SQL}
+                     || jsonb_build_object('estimated', 'portion'::text, 'estimate_note', %s::text)
+        WHERE log_id = %s AND item_index = %s AND {_LIVE_SQL}
+        RETURNING staged
+        """,
+        (Json(staged.model_dump(mode="json", exclude_none=True)), note, str(log_id), item.item_index),
+    )
+    return StagedItem.model_validate(row["staged"]) if row else None
+
+
+async def _stage_cafe_rows(
+    log_id: UUID,
+    rows: list[StagedItem],
+    seen: VisionResult,
+    cafe: CafeMeal,
+    picks: dict[int, Dish],
+) -> tuple[list[StagedItem], list[str], list[str]]:
+    """Each matched item's row becomes the café's dish, unless the dish
+    published no numbers or the protein guard says they look wrong — then the
+    row stays as the cascade and tier 3 left it. Runs after the inline
+    lookups, because the guard's reference is the database food they found.
+    Returns (the rows, the dishes used, the dishes set aside)."""
+    by_index = {r.item_index: r for r in rows}  # one row per vision item, same index
+    used: list[str] = []
+    aside: list[str] = []
+    for i, dish in sorted(picks.items()):
+        item = by_index[i]
+        if not dish.nutrients:
+            aside.append(dish.name)
+            continue
+        if _numbers_look_wrong(item, dish):
+            written = await _keep_database_row(log_id, item, dish)
+            aside.append(dish.name)
+        else:
+            written = await _stage_cafe_food(log_id, item, seen.items[i], dish, cafe)
+            if written is not None:
+                used.append(dish.name)
+        if written is not None:
+            by_index[i] = written
+    return [by_index[r.item_index] for r in rows], used, aside
+
+
 def _summary(seen: VisionResult) -> str:
     """logs.raw_input for a photo log — the History line, never model input."""
     parts = []
@@ -547,17 +747,28 @@ async def _stage_photo(
     # billed too, and a place is only worth anything to a lane that can look
     # it up, so it rides the same gate.
     web_lane = is_owner()
+
+    async def cafe_menu() -> CafeMeal | None:
+        # the owner's, like the web lane: its rows land in the shared `foods`
+        return await _cafe_meal(captured_at, tz) if web_lane else None
+
     try:
-        context, near = await _photo_context(captured_at, tz, where if web_lane else None)
+        (context, near), cafe = await asyncio.gather(
+            _photo_context(captured_at, tz, where if web_lane else None), cafe_menu()
+        )
         if near and emit is not None:
             # the line went up before the lookup; the same id names the place on it
             await emit({
                 "type": "tool_call", "id": call_id, "name": "read_photo",
                 "args": {**args, "near": [p.name for p in near]},
             })
+        # With a café meal in hand the call runs without tools: the web lane
+        # cannot reach the café's numbers (script literals no page reader
+        # renders) and costs 15–20 s; the menu is matched below instead.
+        web = web_lane and cafe is None
         t0 = time.monotonic()
         seen = await vision.analyze(  # its span rides in this trace (§10)
-            image_bytes, sniffed, context=context, web=web_lane,
+            image_bytes, sniffed, context=context, web=web,
         )
     except OpenAIError as e:
         await _drop_empty_log(log_id)
@@ -580,6 +791,13 @@ async def _stage_photo(
         raise
     trace_id = tracing.current_trace_id()
     vision_ms = int((time.monotonic() - t0) * 1000)
+    # §3.4b café menu: which dish each item IS, chosen while the cascade and
+    # tier 3 run; menu_match never raises (None is a failed call)
+    matching = None
+    if cafe is not None and seen.items:
+        from services import menu_match  # lazy: stubbed in route tests
+
+        matching = asyncio.create_task(menu_match.match(seen.items, cafe))
 
     await db.execute("UPDATE logs SET raw_input = %s WHERE id = %s", (_summary(seen), log_id))
     meal = meal_hint or seen.meal_hint or await infer_meal(captured_at, tz)
@@ -632,7 +850,7 @@ async def _stage_photo(
         # to have read, so a `menu` block is a fabrication — and `foods` is
         # the shared table (§8.9), where a demo account must not be able to
         # plant a branded row with numbers nobody published.
-        if web_lane:
+        if web:
             r.staged = await _stage_menu_food(r.staged, v)
     await _persist(
         log_id, resolutions, meal,
@@ -642,6 +860,12 @@ async def _stage_photo(
         await emit({
             "type": "tool_result", "id": call_id, "name": "read_photo",
             "output": {"seen": [v.note.strip() or v.phrase for v in seen.items]},
+        })
+    menu_id = f"menu-{log_id}"
+    if emit is not None and matching is not None:
+        await emit({
+            "type": "tool_call", "id": menu_id, "name": "read_menu",
+            "args": {"meal": cafe.label, "site": cafe.site, "date": cafe.day.isoformat()},
         })
     # The chat turn's reply is this lane's own, built in code (photo_reply);
     # POST /api/logs/photo answers without one, as it always has.
@@ -697,6 +921,15 @@ async def _stage_photo(
                         and it.status == "resolved" and it.estimated != "unresolved")
             await emit({"type": "tool_result", "id": look_id, "name": "look_up",
                         "output": {"found": found, "looked_up": len(pending)}})
+    if matching is not None:
+        picks = await matching
+        staged, used, aside = await _stage_cafe_rows(log_id, staged, seen, cafe, picks or {})
+        if emit is not None:
+            await emit({
+                "type": "tool_result", "id": menu_id, "name": "read_menu",
+                "output": {"error": "unavailable"} if picks is None
+                else {"matched": used, "set_aside": aside},
+            })
     return LogCreateResponse(log_id=log_id, meal=meal, items=staged, agent=outcome(staged))
 
 
