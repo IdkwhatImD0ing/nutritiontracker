@@ -5,7 +5,8 @@ import { loadDetector } from "./barcodeDetector";
 
 type Props = {
   /** true while the parent's lookup / from-food round trip is in flight —
-   *  the detection loop pauses so one read can't fire twice */
+   *  the detection loop pauses so one read can't fire twice, and a loading
+   *  cover hides the camera so the read is visibly taken */
   busy: boolean;
   /** the parent's outcome for the last code (not found, lookup failed); the
    *  camera stays live so the user can try again, and search is offered */
@@ -203,7 +204,7 @@ export default function BarcodeScanner({
           </button>
         </div>
 
-        <div className="scan-view" hidden={hideView}>
+        <div className={`scan-view${busy ? " busy" : ""}`} hidden={hideView}>
           <video ref={videoRef} playsInline muted autoPlay />
           <div className="scan-frame" aria-hidden="true" />
           {torch != null ? (
@@ -215,6 +216,12 @@ export default function BarcodeScanner({
             >
               {torch ? "Torch off" : "Torch on"}
             </button>
+          ) : null}
+          {busy ? (
+            <div className="scan-loading">
+              <span className="spinner" />
+              Barcode found
+            </div>
           ) : null}
         </div>
 
