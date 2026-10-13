@@ -473,6 +473,7 @@ export default function Today() {
     if (rolled) {
       setTotals(null);
       setMeals(null);
+      setDiaryError(false); // a failed refresh of yesterday is not today's error
     }
     reloadDiary();
     refreshMe();
