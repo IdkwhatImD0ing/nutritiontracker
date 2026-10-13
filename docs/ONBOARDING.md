@@ -279,7 +279,8 @@ backend/
     tier3.py           the OpenAI-Agents food-resolution agent + its tools (web lane: chains + retail products)
     transcribe.py      Deepgram/OpenAI behind one interface
     quota.py           demo quota: one log a day, ten paid re-resolutions (§5 of DESIGN)
-  sources/             fdc.py (USDA), web.py (restaurant transcription lane)
+  sources/             fdc.py (USDA), web.py (restaurant transcription lane),
+                       bonappetit.py (a Bon Appétit café's day menu, for the photo lane)
   routes/              one module per API surface (me.py: GET /api/me; weights.py: the weigh-in log)
   tests/               pytest; `-m live` marks the ones that spend money; tenancy_harness.py
                        binds every isolated_db to a tenant
@@ -399,6 +400,15 @@ the `read_photo` line says *Reading the plate near …*. Owner only, skipped wit
 stored. `tests/test_places.py` (13, offline), four offline tests in `tests/test_photo_chat.py`
 and one DB test in `tests/test_photo.py`. **No iPhone has run it yet**: the permission prompt's
 timing against the camera, and whether iOS keeps the grant between launches, are unverified.
+
+**2026-09-30 — the café menu** (DESIGN §3.4b; BACKLOG 178, 202–203). When the owner's profile
+notes name a `*.cafebonappetit.com` site and a photo falls in one of that café's published
+meals, `sources/bonappetit.py` reads the day page's menu literals (every dish with its
+published nutrition), the vision call skips the web lane, and `services/menu_match.py`
+(`gpt-5.6-luna`) picks which dish each item is, by id, never seeing a number. A matched row
+becomes a `source='menu'` food sized by the photo's grams, unless a protein check in code says
+the café's numbers look wrong. The chat shows it as a `read_menu` line. `tests/test_bonappetit.py`
+(14 offline, 1 live and free: today's real page) and six DB tests in `tests/test_photo.py`.
 
 What comes next is the backlog, not a phase: the iPhone spike (below), the Neon dev branch
 (18, now 100), the preview-protection bypass token (19), the input-hardening pass (98), the

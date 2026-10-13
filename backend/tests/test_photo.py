@@ -38,7 +38,7 @@ import time
 import types
 from tracing_stub import make_tracing_stub
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -1380,3 +1380,312 @@ def test_a_camera_shot_s_location_names_the_places_around_it_for_the_owner_only(
         assert asked == [], (as_owner, where)
         assert len(calls) == 1 and "near" not in calls[0]
         assert "the phone was" not in told[-1]
+
+
+# ---------------------------------------------------------------------------
+# The café menu (§3.4b, 2026-09-30): the day's published dishes, matched by id
+# ---------------------------------------------------------------------------
+
+import httpx  # noqa: E402
+
+import services.menu_match as menu_match  # noqa: E402
+from sources import bonappetit  # noqa: E402
+
+
+def _dish(dish_id, name, *, oz, kcal, protein, carb, fat, **extra):
+    return bonappetit.Dish(
+        id=dish_id, name=name, station="Home", description="", serving=f"{oz} oz",
+        grams=round(oz * bonappetit._OZ_G, 1),
+        nutrients={"kcal": kcal, "protein_g": protein, "carb_g": carb, "fat_g": fat, **extra},
+    )
+
+
+def _cafe_meal(tag, dishes):
+    site = f"test-{tag}"
+    return bonappetit.CafeMeal(
+        url=f"https://{site}.cafebonappetit.com/cafe/2000-01-05/", site=site,
+        day=date(2000, 1, 5), label="Lunch", dishes=list(dishes),
+    )
+
+
+def _cafe_stubs(monkeypatch, meal, picks):
+    """The fetch and the matcher, each recording how it was called."""
+    calls = types.SimpleNamespace(fetched=[], matched=[])
+
+    async def meal_at(site, at):
+        calls.fetched.append((site, at))
+        return meal
+
+    async def match(items, cafe):
+        calls.matched.append(([v.phrase for v in items], cafe))
+        return picks
+
+    monkeypatch.setattr(bonappetit, "meal_at", meal_at)
+    monkeypatch.setattr(menu_match, "match", match)
+    return calls
+
+
+def _vision_web(monkeypatch, items):
+    """Vision's answer, and whether each call had the web lane's tools."""
+    webs: list[bool] = []
+
+    async def analyze(image, mime, *, context="", web=False):
+        webs.append(web)
+        return VREAL.VisionResult(items=items, meal_hint=None)
+
+    monkeypatch.setattr(sys.modules["services.vision"], "analyze", analyze)
+    return webs
+
+
+async def _set_notes(conn, text):
+    await conn.execute(
+        "UPDATE settings SET value = to_jsonb(%s::text) WHERE key = 'profile_notes'", (text,)
+    )
+
+
+async def _stage_chat(log_id, captured_at=CAPTURED):
+    events: list[dict] = []
+
+    async def emit(ev):
+        events.append(ev)
+
+    resp = await photo._stage_photo(PNG, "image/png", log_id, captured_at, None, TZ, emit)
+    return resp, events
+
+
+def _names(events):
+    return [(e["type"], e["name"]) for e in events]
+
+
+def test_a_cafe_dish_becomes_a_menu_row_sized_by_the_photos_grams(monkeypatch):
+    """The owner's notes name a Bon Appétit café and the photo falls in its
+    lunch: vision runs WITHOUT the web lane (it cannot reach these numbers),
+    the matcher names the dish, and the row becomes a `source='menu'` food
+    carrying every published nutrient, sized by the photo's grams, flagged,
+    cited — and it commits like any other row."""
+    async def run():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            chicken = _dish("9001", f"herb roasted chicken {tag}", oz=5.0, kcal=310, protein=28,
+                            carb=4, fat=20, sodium_mg=640, fiber_g=0.5)
+            meal = _cafe_meal(tag, [chicken])
+            calls = _cafe_stubs(monkeypatch, meal, {0: chicken})
+            webs = _vision_web(monkeypatch, [
+                vitem(f"roast chicken {tag}", est_grams=200, confidence="medium",
+                      note="sliced roast chicken"),
+                vitem(f"mystery sauce {tag}", est_grams=30, confidence="low", note="a brown sauce"),
+            ])
+            await _set_notes(conn, f"Weekday lunches: https://{meal.site}.cafebonappetit.com/")
+            log_id = uuid4()
+            resp, events = await _stage_chat(log_id)
+
+            # fetched for the photo's own local time; vision had no tools
+            [(site, at)] = calls.fetched
+            assert site == meal.site and (at.hour, at.minute) == (12, 15)
+            assert webs == [False]
+            assert calls.matched == [([f"roast chicken {tag}", f"mystery sauce {tag}"], meal)]
+
+            row, sauce = resp.items
+            qty = round(200 / chicken.grams, 4)
+            assert row.status == "resolved" and row.food.name == chicken.name
+            assert (row.serving.id, row.serving.description, row.qty) == ("menu", "5.0 oz", qty)
+            assert row.macros.kcal == round(310 * qty, 2) and row.macros.protein_g == round(28 * qty, 2)
+            assert row.macros.model_extra["sodium_mg"] == round(640 * qty, 2)
+            assert row.estimated == "portion" and row.confidence == "medium"
+            assert chicken.name in row.estimate_note and meal.url in row.estimate_note
+            assert "~200 g" in row.estimate_note
+            assert row.web_source.url == meal.url and row.search_instead is False
+            assert sauce.status == "searching" and sauce.food is None  # unmatched: untouched
+
+            # as stored: the vision record and the photo's amount ride along
+            stored = await item_row(log_id, 0)
+            assert stored["status"] == "resolved"
+            assert stored["staged"]["vision"]["est_grams"] == 200
+            assert (stored["staged"]["spoken_qty"], stored["staged"]["spoken_unit"]) == (200, "g")
+            assert stored["staged"]["estimated"] == "portion"
+            assert stored["staged"]["estimate_note"] == row.estimate_note
+
+            food = await db.fetchone("SELECT * FROM foods WHERE id = %s", (row.food.id,))
+            assert food["source"] == "menu" and food["source_url"] == meal.url
+            assert food["source_id"].startswith(f"{meal.site}.cafebonappetit.com#9001:")
+            assert food["provenance"] == {
+                "cafe": {"site": meal.site, "dish_id": "9001", "station": "Home",
+                         "date": "2000-01-05", "meal": "Lunch", "url": meal.url},
+                "model": "gpt-5.6-luna",
+            }
+            assert food["servings"][0]["grams"] == chicken.grams
+            assert food["servings"][0]["macros"] == chicken.nutrients
+
+            # the chat shows the menu being read, and what it gave
+            assert _names(events) == [
+                ("tool_call", "read_photo"), ("tool_result", "read_photo"),
+                ("tool_call", "read_menu"), ("tool_result", "read_menu"),
+            ]
+            assert events[2]["args"] == {"meal": "Lunch", "site": meal.site, "date": "2000-01-05"}
+            assert events[3]["output"] == {"matched": [chicken.name], "set_aside": []}
+
+            # the café's numbers reach the diary through the cached row
+            totals = await commit_route(log_id, CommitRequest(items=[row]))
+            assert totals.errors == []
+            entry = await db.fetchone(
+                "SELECT food_id, serving_id, qty, macros FROM entries WHERE log_id = %s", (log_id,)
+            )
+            assert (str(entry["food_id"]), entry["serving_id"], float(entry["qty"])) == (
+                row.food.id, "menu", qty,
+            )
+            assert entry["macros"]["protein_g"] == row.macros.protein_g
+
+    asyncio.run(run())
+
+
+def test_a_cafe_dish_whose_protein_looks_wrong_leaves_the_database_row(monkeypatch):
+    """Some published protein is plainly wrong (7 g in 7.7 oz of honey mustard
+    chicken). When the row's database food is a protein food and the dish
+    claims under 40% of its protein per gram, the database row stays, with a
+    note that says why and no number in it. A matched dish that published no
+    numbers is set aside too; the rest of the plate still gets the café's."""
+    async def run():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            roast = await insert_food(conn, f"roast chicken {tag}", [{
+                "serving_id": "srv-100g", "description": "100 g", "grams": 100,
+                "macros": {"kcal": 190, "protein_g": 29, "carb_g": 0, "fat_g": 7.4},
+            }])
+            await insert_alias(conn, f"roast chicken {tag}", roast)
+            honey = _dish("9101", f"honey mustard chicken {tag}", oz=7.7, kcal=390, protein=7,
+                          carb=20, fat=26)
+            cucumber = _dish("9102", f"cucumber {tag}", oz=1.0, kcal=5, protein=0.5, carb=1, fat=0)
+            special = bonappetit.Dish(id="9103", name=f"chef's special {tag}", station="Home",
+                                      description="", serving="6.0 oz", grams=170.1, nutrients={})
+            meal = _cafe_meal(tag, [honey, cucumber, special])
+            _cafe_stubs(monkeypatch, meal, {0: honey, 1: cucumber, 2: special})
+            _vision_web(monkeypatch, [
+                vitem(f"roast chicken {tag}", est_grams=200, note="glazed chicken pieces"),
+                vitem(f"cucumber {tag}", est_grams=40, note="sliced cucumber"),
+                vitem(f"stew {tag}", est_grams=150, note="a brown stew"),
+            ])
+            await _set_notes(conn, f"lunch menu: {meal.site}.cafebonappetit.com")
+            log_id = uuid4()
+            resp, events = await _stage_chat(log_id)
+            chicken, cuke, stew = resp.items
+
+            # the guard: the database food and its numbers, the photo's portion
+            assert chicken.food.id == roast and chicken.tier == 1
+            assert (chicken.serving.id, chicken.qty, chicken.macros.protein_g) == ("srv-100g", 2, 58)
+            assert chicken.estimated == "portion"
+            assert chicken.estimate_note == (
+                f"Photo: glazed chicken pieces (~200 g) — the café lists honey mustard chicken {tag}, "
+                "but its published numbers look wrong, so this row keeps the database's"
+            )
+            stored = await item_row(log_id, 0)
+            assert stored["staged"]["estimate_note"] == chicken.estimate_note
+            assert stored["staged"]["vision"]["note"] == "glazed chicken pieces"
+
+            # no database reference to doubt it by: the café's row
+            assert cuke.food.name == cucumber.name and cuke.serving.id == "menu"
+            assert cuke.qty == round(40 / cucumber.grams, 4)
+            # a dish with no published numbers changes nothing
+            assert stew.status == "searching" and stew.food is None
+
+            assert events[-1]["output"] == {
+                "matched": [cucumber.name], "set_aside": [honey.name, special.name],
+            }
+
+    asyncio.run(run())
+
+
+def test_the_cafe_menu_is_the_owners_only(monkeypatch):
+    """§8.9: `foods` is the shared table, so a demo account never fetches the
+    menu, never runs the matcher, and never writes a café row."""
+    import auth
+
+    async def run():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            dish = _dish("9201", f"herb roasted chicken {tag}", oz=5.0, kcal=310, protein=28,
+                         carb=4, fat=20)
+            meal = _cafe_meal(tag, [dish])
+            calls = _cafe_stubs(monkeypatch, meal, {0: dish})
+            webs = _vision_web(monkeypatch, [vitem(f"roast chicken {tag}", est_grams=200)])
+            await _set_notes(conn, f"https://{meal.site}.cafebonappetit.com/")
+            token = auth.current_user.set({"id": "t", "email": "test", "is_owner": False})
+            try:
+                resp, events = await _stage_chat(uuid4())
+            finally:
+                auth.current_user.reset(token)
+            assert (calls.fetched, calls.matched, webs) == ([], [], [False])
+            assert _names(events) == [("tool_call", "read_photo"), ("tool_result", "read_photo")]
+            assert resp.items[0].status == "searching"
+
+    asyncio.run(run())
+
+
+# 19:00 PT on CAPTURED's day: no meal's hours, give or take
+EVENING = datetime(2000, 1, 6, 3, 0, tzinfo=timezone.utc)
+_LUNCH_ONLY = (
+    'Bamco.menu_items = {"1": {"label": "roast chicken", "station": "@Home", "nutrition_details": '
+    '{"calories": {"value": "310", "unit": ""}, "proteinContent": {"value": "28", "unit": "g"}, '
+    '"carbohydrateContent": {"value": "4", "unit": "g"}, "fatContent": {"value": "20", "unit": "g"}, '
+    '"servingSize": {"value": "5.0", "unit": "oz"}}}};\n'
+    "Bamco.dayparts['1'] = {\"label\": \"Lunch\", \"starttime\": \"11:45\", \"endtime\": \"13:30\", "
+    '"stations": [{"items": ["1"]}]};'
+)
+
+
+@pytest.mark.parametrize("case", ["outside_meal_hours", "fetch_fails"])
+def test_without_a_cafe_meal_the_photo_takes_todays_path(monkeypatch, case):
+    """The real reader, a stubbed network. A photo outside every meal's hours,
+    or a page that cannot be read, is exactly the path before this step: the
+    web lane on, no matcher, no menu line, the cascade's rows."""
+    async def run():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            site = f"test-{tag}"
+            asked: list[str] = []
+
+            def handler(request):
+                asked.append(str(request.url))
+                if case == "fetch_fails":
+                    raise httpx.ConnectError("down")
+                return httpx.Response(200, text=_LUNCH_ONLY)
+
+            transport = httpx.MockTransport(handler)
+            monkeypatch.setattr(bonappetit, "_client", lambda: httpx.AsyncClient(transport=transport))
+
+            async def no_match(items, cafe):
+                raise AssertionError("the matcher must not run without a café meal")
+
+            monkeypatch.setattr(menu_match, "match", no_match)
+            webs = _vision_web(monkeypatch, [vitem(f"roast chicken {tag}", est_grams=200)])
+            await _set_notes(conn, f"https://{site}.cafebonappetit.com/")
+            resp, events = await _stage_chat(
+                uuid4(), EVENING if case == "outside_meal_hours" else CAPTURED
+            )
+            assert asked == [f"https://{site}.cafebonappetit.com/cafe/2000-01-05/"]
+            assert webs == [True]
+            assert _names(events) == [("tool_call", "read_photo"), ("tool_result", "read_photo")]
+            [row] = resp.items
+            assert row.status == "searching" and row.food is None and row.estimated == "portion"
+
+    asyncio.run(run())
+
+
+def test_a_failed_match_leaves_every_row_as_it_was(monkeypatch):
+    """The matcher answered None (a timeout, an API error): no café rows, and
+    the menu line says it did not go through rather than "nothing matched"."""
+    async def run():
+        async with isolated_db() as conn:
+            tag = uuid4().hex[:6]
+            dish = _dish("9301", f"herb roasted chicken {tag}", oz=5.0, kcal=310, protein=28,
+                         carb=4, fat=20)
+            meal = _cafe_meal(tag, [dish])
+            _cafe_stubs(monkeypatch, meal, None)
+            _vision_web(monkeypatch, [vitem(f"roast chicken {tag}", est_grams=200)])
+            await _set_notes(conn, f"https://{meal.site}.cafebonappetit.com/")
+            log_id = uuid4()
+            resp, events = await _stage_chat(log_id)
+            assert resp.items[0].status == "searching"
+            assert (await item_row(log_id, 0))["status"] == "searching"
+            assert events[-1]["output"] == {"error": "unavailable"}
+
+    asyncio.run(run())

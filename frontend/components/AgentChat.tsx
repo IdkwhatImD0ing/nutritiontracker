@@ -238,6 +238,24 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       ok = found == null ? "Done" : `Found ${found} of ${total}`;
       break;
     }
+    case "read_menu": {
+      // §3.4b (2026-09-30): the café's own menu for the meal the photo falls
+      // in — emitted by the photo turn itself, like read_photo
+      const used = out && Array.isArray(out.matched) ? (out.matched as unknown[]).map(str) : null;
+      const aside = out && Array.isArray(out.set_aside) ? (out.set_aside as unknown[]).map(str) : [];
+      doing = `Checking the café's ${str(a.meal).toLowerCase() || "day"} menu…`;
+      const usedText = used?.length
+        ? `Using the café's numbers for ${used.slice(0, 4).join(", ")}` +
+          (used.length > 4 ? ` +${used.length - 4} more` : "")
+        : "";
+      // matched, but the published numbers were missing or looked wrong
+      const asideText = aside.length ? `Kept the database's numbers for ${aside.join(", ")}` : "";
+      ok =
+        used == null
+          ? "Done"
+          : [usedText, asideText].filter(Boolean).join(" · ") || "Nothing on the plate matched the menu";
+      break;
+    }
     case "adjust_photo": {
       const changes = Array.isArray(a.changes)
         ? (a.changes as Record<string, unknown>[])
