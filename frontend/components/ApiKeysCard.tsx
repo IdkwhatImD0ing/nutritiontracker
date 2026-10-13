@@ -11,6 +11,7 @@ import {
   type ApiKey,
   type ApiKeyCreate,
 } from "./ApiKeysApi";
+import SheetHeader from "./SheetHeader";
 
 type Access = ApiKeyCreate["scopes"];
 type Expiry = NonNullable<ApiKeyCreate["expires_in_days"]> | null;
@@ -431,17 +432,16 @@ export default function ApiKeysCard() {
         <>
           <div className="subsheet-backdrop" onClick={closeSheet} />
           <div className="subsheet" role="dialog" aria-labelledby="keys-sheet-title">
+            <SheetHeader
+              title="New API key"
+              titleId="keys-sheet-title"
+              onClose={closeSheet}
+            />
+            <p className="subsheet-hint">
+              One key per script or agent, so revoking one breaks nothing
+              else. You see it once, right after you create it.
+            </p>
             <form className="keys-form" onSubmit={create}>
-              <div>
-                <div className="subsheet-title" id="keys-sheet-title">
-                  New API key
-                </div>
-                <p className="subsheet-hint">
-                  One key per script or agent, so revoking one breaks nothing
-                  else. You see it once, right after you create it.
-                </p>
-              </div>
-
               <label className="m3-field">
                 Label
                 <input
@@ -508,9 +508,6 @@ export default function ApiKeysCard() {
                 disabled={creating || !label.trim()}
               >
                 {creating ? "Creating…" : "Create key"}
-              </button>
-              <button type="button" className="m3-link-btn keys-cancel" onClick={closeSheet}>
-                Cancel
               </button>
             </form>
           </div>

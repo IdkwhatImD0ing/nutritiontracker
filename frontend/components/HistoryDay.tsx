@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { getDiary, type DayTotals } from "@/lib/api";
 import "@/app/history/history.css";
+import BackBar from "./BackBar";
 import type { DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
 import { longDate, parseISO } from "./HistoryApi";
@@ -15,9 +15,13 @@ export default function HistoryDay({ date }: { date: string }) {
   const [totals, setTotals] = useState<DayTotals | null>(null);
   const [meals, setMeals] = useState<DiaryMeals | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // `attempt` re-runs the read: the failure notice carries a Retry (the
+  // Library pattern) rather than asking for a page reload.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
     getDiary(date)
       .then((d) => {
         if (cancelled) return;
@@ -30,23 +34,33 @@ export default function HistoryDay({ date }: { date: string }) {
     return () => {
       cancelled = true;
     };
-  }, [date]);
+  }, [date, attempt]);
 
   return (
     <main className="shell day">
       <header className="brand">
-        <h1>
-          <Link href="/history" className="back-link" aria-label="Back to history">
-            ‹
-          </Link>
-          {longDate(parseISO(date))}
-        </h1>
+        <BackBar parent="/history" label="History" />
+        <h1>{longDate(parseISO(date))}</h1>
       </header>
 
-      <Tracker totals={totals} />
+      {/* A failed read is not an empty day: the error replaces the tracker
+          rather than sitting under a card of zeros. */}
+      {error ? (
+        <div className="notice error" role="alert">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="notice-btn"
+            onClick={() => setAttempt((n) => n + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <Tracker totals={totals} />
+      )}
 
-      {error ? <p className="hist-error">{error}</p> : null}
-      {meals ? (
+      {meals && !error ? (
         <DiaryList
           meals={meals}
           emptyText="Nothing logged this day."

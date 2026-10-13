@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { LogCreateResponse } from "@/lib/api";
 import PhotoCapture, { type PhotoShot } from "./PhotoCapture";
+import { SheetClose } from "./SheetHeader";
 import useVoiceCapture, {
   type VoiceClip,
   type VoiceFailure,
@@ -182,6 +183,37 @@ function host(url: string): string {
   }
 }
 
+/** A tool's refusal in words, by its error code (backend agent.py and the
+ *  deps in routes/logs.py and photo.py). The code itself stays in the raw
+ *  result under the line; one not listed reads as the plain failure. */
+const TOOL_ERRORS: Record<string, string> = {
+  already_called: "Skipped — already done this turn",
+  food_in_flight: "Too early — the food was still being looked up",
+  empty: "No foods were named",
+  no_items: "No foods were named",
+  empty_phrase: "One of the items named no food",
+  invalid_qty: "An amount wasn't above zero",
+  missing_grams: "A count of pieces needed its weight",
+  invalid_weight: "That weight didn't look right",
+  invalid_name: "No meal name was given",
+  nothing_to_change: "No change was named",
+  invalid_swap: "A swap didn't say what to swap in",
+  choose_one: "Got foods and a log — it takes one",
+  too_many: "Too many changes at once",
+  unavailable: "Not available here",
+  unknown_log: "That list isn't from this conversation",
+  not_staged: "That list was already logged or discarded",
+  not_saved: "That list was discarded — nothing to save",
+  nothing_to_save: "Nothing logged yet to save",
+  empty_log: "Nothing logged yet to save",
+  not_found: "No saved meal by that name",
+  duplicate_name: "A meal already has that name",
+  unresolved: "Couldn't find those foods",
+  ambiguous_item: "That matches more than one item",
+  unknown_item: "No item by that name",
+  repeated_item: "The same item was changed twice",
+};
+
 /** A tool line in words: what the agent is doing, then what came back. The
  *  raw call and result stay one tap away under it (the point of the window
  *  is seeing the work). A run that ended before the tool answered leaves the
@@ -280,8 +312,8 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
         rows == null
           ? "Done"
           : rows.length === 0
-            ? "Nothing to stage"
-            : `Staged ${found} item${found === 1 ? "" : "s"}` +
+            ? "Nothing to add"
+            : `Found ${found} item${found === 1 ? "" : "s"}` +
               (pending ? ` — still looking up ${pending}` : "") +
               (missing ? ` — ${missing} not found, pick ${missing === 1 ? "it" : "them"} in the list` : "");
       break;
@@ -293,12 +325,17 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       );
       const n = out ? count(out.items) : null;
       doing = `Estimating: ${parts.join(", ")}`;
-      ok = `Staged ${n ?? items.length} estimated row${n === 1 ? "" : "s"} — confirm them in the list`;
+      ok = `Estimated ${n ?? items.length} item${n === 1 ? "" : "s"} — confirm them in the list`;
       break;
     }
     case "log_weight":
       doing = `Logging weight: ${str(a.weight)} ${str(a.unit)}`;
       ok = "Saved";
+      break;
+    case "discard_log":
+      // §6.4 corrections: the earlier list goes, the corrected one follows
+      doing = "Discarding the earlier list";
+      ok = out?.already ? "It was already discarded" : "Discarded";
       break;
     case "past_foods": {
       // §6.4's one read — no effect to report, so the line names what it looked at.
@@ -319,7 +356,7 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       const meal = str(out?.meal ?? a.name);
       doing = `Saving meal “${str(a.name)}”`;
       ok = out?.pending
-        ? `Will save “${meal}” when you commit`
+        ? `Will save “${meal}” when you log it`
         : `Saved “${meal}” · ${n ?? "?"} item${n === 1 ? "" : "s"}` +
           (left ? ` — ${left} need${left === 1 ? "s" : ""} a first log` : "");
       break;
@@ -338,13 +375,15 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       break;
     }
     default:
-      doing = m.name;
+      // a tool this file has no words for yet: never its identifier on the
+      // line (the raw call under it names it)
+      doing = m.done ? "Checked something" : "Checking something…";
       ok = "Done";
   }
   if (!m.done) return { doing, result: null };
   if (err === "interrupted") return { doing, result: "Interrupted — the run ended before this finished" };
   if (raised) return { doing, result: "Didn't go through" };
-  if (err) return { doing, result: `Didn't go through (${err})` };
+  if (err) return { doing, result: TOOL_ERRORS[err] ?? "Didn't go through" };
   return { doing, result: ok };
 }
 
@@ -354,12 +393,11 @@ function ToolLine({ m }: { m: Extract<ChatMessage, { kind: "tool" }> }) {
     <div className={`tool-line${m.done ? "" : " running"}`}>
       <div className="tool-head">
         {m.done ? null : <span className="spinner" aria-hidden="true" />}
-        <span className="tool-name">{m.name}</span>
         <span className="tool-text">{doing}</span>
       </div>
       {result ? <div className="tool-result">{result}</div> : null}
       <details>
-        <summary>details</summary>
+        <summary>Raw call and result</summary>
         <pre>{JSON.stringify(m.args, null, 1)}</pre>
         {m.done && m.output !== undefined ? (
           <pre>{JSON.stringify(m.output, null, 1)}</pre>
@@ -385,13 +423,13 @@ function ResultCard({
     <div className="result-card">
       <span className="result-text">
         {m.photo ? "From the photo · " : ""}
-        {n} item{n === 1 ? "" : "s"} staged
+        {n} item{n === 1 ? "" : "s"} to review
         {kcal > 0 ? ` · ${kcalFmt.format(kcal)} kcal` : ""}
         {estimated ? (
           <span className="result-sub">
             {m.photo
               ? `${estimated} estimated — say what's off, or review them`
-              : `${estimated} estimated — confirm or adjust before committing`}
+              : `${estimated} estimated — confirm or adjust before logging`}
           </span>
         ) : null}
       </span>
@@ -402,7 +440,7 @@ function ResultCard({
       ) : (
         <span className="result-state">
           {m.state === "committed"
-            ? "Committed ✓"
+            ? "Logged ✓"
             : m.state === "replaced"
               ? "Replaced"
               : "Discarded"}
@@ -567,14 +605,7 @@ export default function AgentChat({
             <div className="grabber" />
             <div className="sheet-head-row">
               <span className="sheet-title">Agent</span>
-              <button
-                type="button"
-                className="sheet-close"
-                aria-label="Close"
-                onClick={onClose}
-              >
-                ✕
-              </button>
+              <SheetClose onClick={onClose} />
             </div>
           </div>
         )}
@@ -583,7 +614,7 @@ export default function AgentChat({
           {messages.length === 0 ? (
             <p className="chat-empty">
               {supported
-                ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it stages."
+                ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it adds."
                 : "No microphone here — type what you ate, or snap the plate."}
             </p>
           ) : null}

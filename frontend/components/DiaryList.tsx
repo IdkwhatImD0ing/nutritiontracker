@@ -11,6 +11,7 @@ import {
 } from "./DiaryApi";
 import DiaryEntryRow from "./DiaryEntryRow";
 import { createMeal, type SavedMeal } from "./LibraryApi";
+import SheetHeader from "./SheetHeader";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -77,7 +78,7 @@ function SaveMealSheet({
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Save as meal">
-        <div className="subsheet-title">Save this {meal} as a meal</div>
+        <SheetHeader title={`Save this ${meal} as a meal`} onClose={onClose} />
 
         <label className="m3-field">
           Name

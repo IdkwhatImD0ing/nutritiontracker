@@ -144,9 +144,11 @@
     background 150ms;
 }
 
-.land-nav-links a:not(.land-pill):hover {
-  color: var(--text);
-  background: var(--surface-2);
+@media (hover: hover) {
+  .land-nav-links a:not(.land-pill):hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
 }
 
 .land-pill {
@@ -164,8 +166,10 @@
   transition: filter 150ms;
 }
 
-.land-pill:hover {
-  filter: brightness(1.08);
+@media (hover: hover) {
+  .land-pill:hover {
+    filter: brightness(1.08);
+  }
 }
 
 /* 320px phones: the three links only just fit at 360 */
@@ -264,8 +268,10 @@
   transition: filter 150ms;
 }
 
-.land-btn:hover {
-  filter: brightness(1.08);
+@media (hover: hover) {
+  .land-btn:hover {
+    filter: brightness(1.08);
+  }
 }
 
 .land-btn.ghost {
@@ -276,9 +282,11 @@
   box-shadow: none;
 }
 
-.land-btn.ghost:hover {
-  border-color: var(--spruce-soft);
-  filter: none;
+@media (hover: hover) {
+  .land-btn.ghost:hover {
+    border-color: var(--spruce-soft);
+    filter: none;
+  }
 }
 
 .land-textlink {
@@ -297,12 +305,16 @@
   transition: transform 150ms var(--ease);
 }
 
-.land-textlink:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .land-textlink:hover {
+    color: var(--text);
+  }
 }
 
-.land-textlink:hover::after {
-  transform: translateX(3px);
+@media (hover: hover) {
+  .land-textlink:hover::after {
+    transform: translateX(3px);
+  }
 }
 
 .land-fine {
@@ -968,8 +980,10 @@
   text-decoration: none;
 }
 
-.land-foot-links a:hover {
-  color: var(--text);
+@media (hover: hover) {
+  .land-foot-links a:hover {
+    color: var(--text);
+  }
 }
 
 .land-foot-credit {

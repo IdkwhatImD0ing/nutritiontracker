@@ -38,7 +38,7 @@ export default function Privacy() {
             </li>
             <li>
               <strong>Your diary</strong> — the foods you log, portions, meals, timestamps and
-              the macro numbers captured at the moment you commit them.
+              the macro numbers captured at the moment you log them.
             </li>
             <li>
               <strong>What you said</strong> — the raw text or voice transcript of every

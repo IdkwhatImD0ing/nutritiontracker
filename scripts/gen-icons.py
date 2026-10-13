@@ -6,7 +6,10 @@ the spruce "U" left over from the app's old name (Usual) when the rename landed.
 Colours are globals.css tokens -- accent --spruce #ff8a4c on ground --bg #121318.
 
 Everything except the OG card is pure geometry, so `python scripts/gen-icons.py`
-reproduces it byte-for-byte anywhere. The OG card needs the display font: pass
+reproduces it byte-for-byte anywhere. That includes the iOS launch images in
+public/splash/ (one per iPhone screen in frontend/lib/splash-screens.json, which
+frontend/app/layout.tsx reads for the media queries): after adding a screen there,
+rerun the same command from the repo root. The OG card needs the display font: pass
 --font path/to/BricolageGrotesque-ExtraBold.ttf (or a .woff2 -- it converts one in
 memory). Without it the card is skipped rather than silently drawn in a wrong face.
 
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import struct
 from pathlib import Path
 
@@ -49,6 +53,23 @@ COMPACT = dict(bars=[34.0, 50.0, 66.0], y1=26.0, y2=74.0,
 SCALE_ANY = 1.42
 SCALE_MASKABLE = 1.12
 SCALE_APPLE = 1.25
+
+# iOS launch images. Safari ignores the manifest's background_color, so a cold
+# start of the installed app shows white unless an apple-touch-startup-image
+# matches the screen exactly: CSS width, CSS height, pixel ratio. Portrait only,
+# like the manifest. One table, shared with layout.tsx's media queries, so an
+# image and its <link> can never drift apart.
+SPLASH_SCREENS = [
+    (s["w"], s["h"], s["dpr"])
+    for s in json.loads(
+        (Path(__file__).resolve().parent.parent / "frontend/lib/splash-screens.json").read_text()
+    )
+]
+# The launch image's ground is the app's real one (globals.css --bg, the
+# manifest's background_color), not BG above: the page's first paint replaces it,
+# and any difference between the two reads as a flash.
+SPLASH_BG = (17, 17, 19)  # #111113
+SPLASH_MARK = 96  # the mark's box in CSS px, centred
 
 
 def _geom(compact: bool, scale: float, size: int) -> tuple[list, float]:
@@ -96,6 +117,14 @@ def svg(scale: float = SCALE_ANY, compact: bool = False) -> str:
         "  </g>\n"
         "</svg>\n"
     )
+
+
+def splash(css_w: int, css_h: int, dpr: int) -> Image.Image:
+    """Portrait launch image: the app ground with the mark in the middle."""
+    w, h, box = css_w * dpr, css_h * dpr, SPLASH_MARK * dpr
+    img = Image.new("RGB", (w, h), SPLASH_BG)
+    img.paste(render(box, SCALE_ANY, bg=SPLASH_BG), ((w - box) // 2, (h - box) // 2))
+    return img
 
 
 def write_ico(path: Path, images: list[Image.Image]) -> None:
@@ -204,6 +233,13 @@ def main() -> None:
                   render(32, SCALE_ANY, compact=True),
                   render(48, SCALE_ANY)])
     made.append(p)
+
+    splash_dir = pub / "splash"
+    splash_dir.mkdir(exist_ok=True)
+    for css_w, css_h, dpr in SPLASH_SCREENS:
+        p = splash_dir / f"{css_w * dpr}x{css_h * dpr}.png"
+        splash(css_w, css_h, dpr).save(p, optimize=True)
+        made.append(p)
 
     if a.font:
         p = pub / "og.png"

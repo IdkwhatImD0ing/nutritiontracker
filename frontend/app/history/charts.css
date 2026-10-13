@@ -70,9 +70,14 @@
   cursor: pointer;
 }
 
-.chart-bar.tap:hover rect:not([fill="transparent"]),
 .chart-bar.tap:focus-visible rect:not([fill="transparent"]) {
   filter: brightness(1.2);
+}
+
+@media (hover: hover) {
+  .chart-bar.tap:hover rect:not([fill="transparent"]) {
+    filter: brightness(1.2);
+  }
 }
 
 .chart-bar:focus-visible,

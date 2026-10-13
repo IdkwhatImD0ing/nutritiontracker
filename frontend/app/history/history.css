@@ -2,19 +2,6 @@
    globals.css's tokens + .shell/.brand/.kcal-bar; the tab bar and its .shell
    padding come from app/library/m3.css via components/TabBar. */
 
-.back-link {
-  color: var(--muted);
-  text-decoration: none;
-  margin-right: 4px;
-  font-weight: 500;
-  font-size: 1.4rem;
-  line-height: 1;
-}
-
-.back-link:hover {
-  color: var(--text);
-}
-
 /* streak chip */
 
 .streak-chip {
@@ -74,23 +61,9 @@
   color: var(--muted);
 }
 
-.hist-error {
-  color: var(--amber);
-  font-size: 0.82rem;
-  margin: 0;
-  text-align: center;
-}
-
 .hist-stale {
   opacity: 0.6;
   transition: opacity 150ms;
-}
-
-.hhint {
-  font-size: 0.78rem;
-  color: var(--faint);
-  text-align: center;
-  margin: 0;
 }
 
 .hcharts {
@@ -125,10 +98,15 @@
     transform 120ms var(--ease);
 }
 
-.hcard:hover,
 .hcard:focus-visible {
   border-color: var(--line-strong);
   outline: none;
+}
+
+@media (hover: hover) {
+  .hcard:hover {
+    border-color: var(--line-strong);
+  }
 }
 
 .hcard:active {
@@ -191,11 +169,17 @@
   margin-top: 4px;
 }
 
+.hcard-macro {
+  min-width: 0;
+}
+
+/* label above value: side by side, '120g / 180' outgrew a third of the card
+   and printed under the next column's label */
 .hcard-macro-row {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   font-size: 0.72rem;
   margin-bottom: 5px;
 }
@@ -210,7 +194,6 @@
 
 .hcard-macro-row .v {
   font-weight: 700;
-  white-space: nowrap;
 }
 
 .hcard-macro-row .of {

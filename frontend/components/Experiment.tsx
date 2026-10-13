@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import "@/app/experiment/experiment.css";
+import BackBar from "./BackBar";
 import {
   fetchMetrics,
   MetricsUnavailable,
@@ -41,12 +41,8 @@ export default function Experiment() {
   return (
     <main className="shell">
       <header className="brand">
-        <h1>
-          <Link href="/" className="back-link" aria-label="Back to Today">
-            ‹
-          </Link>
-          Experiment
-        </h1>
+        <BackBar parent="/settings" label="Settings" />
+        <h1>Experiment</h1>
         <span className="date">last {RANGE.replace("w", " weeks")}</span>
       </header>
       <p className="exp-intro">

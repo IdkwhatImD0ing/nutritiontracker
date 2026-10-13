@@ -7,6 +7,7 @@ import {
   searchFoods,
   type FoodSearchResult,
 } from "@/lib/api";
+import SheetHeader, { SheetClose } from "./SheetHeader";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -183,14 +184,7 @@ export default function ManualSearchSheet({
           <div className="sheet-head">
             <div className="sheet-head-row">
               <span className="sheet-title">Search</span>
-              <button
-                type="button"
-                className="sheet-close"
-                aria-label="Close"
-                onClick={onClose}
-              >
-                ✕
-              </button>
+              <SheetClose onClick={onClose} />
             </div>
           </div>
           <div className="sheet-body search-body">{body}</div>
@@ -203,7 +197,7 @@ export default function ManualSearchSheet({
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Manual food search">
-        <div className="subsheet-title">Find a food</div>
+        <SheetHeader title="Find a food" onClose={onClose} />
         {body}
       </div>
     </>

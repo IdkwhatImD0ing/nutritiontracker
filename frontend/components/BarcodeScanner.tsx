@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { loadDetector } from "./barcodeDetector";
+import SheetHeader from "./SheetHeader";
 
 type Props = {
   /** true while the parent's lookup / from-food round trip is in flight —
@@ -192,17 +193,7 @@ export default function BarcodeScanner({
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Scan barcode">
-        <div className="sheet-head-row">
-          <div className="subsheet-title">Scan barcode</div>
-          <button
-            type="button"
-            className="sheet-close"
-            aria-label="Close"
-            onClick={onClose}
-          >
-            ✕
-          </button>
-        </div>
+        <SheetHeader title="Scan barcode" onClose={onClose} />
 
         <div className={`scan-view${busy ? " busy" : ""}`} hidden={hideView}>
           <video ref={videoRef} playsInline muted autoPlay />
