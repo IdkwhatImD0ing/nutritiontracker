@@ -56,7 +56,7 @@ const LANES = [
   },
   {
     name: "Search",
-    body: "The boring escape hatch, on purpose. Your own foods first, then the USDA database.",
+    body: "For when you’d rather pick it yourself. Your own foods first, then the USDA database.",
     Icon: () => (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="11" cy="11" r="6.5" />
@@ -97,8 +97,8 @@ const CLAIMS = [
       <>
         Every meal you log teaches it the phrases you use, the foods they mean and the portions you
         take. A meal you have logged before resolves from your own history with{" "}
-        <strong>no AI call at all</strong> — one database round-trip. Only a food you have never
-        logged touches the network, once.
+        <strong>no AI call at all</strong>. Only a food you have never logged touches the
+        network, once.
       </>
     ),
   },
@@ -118,8 +118,9 @@ const CLAIMS = [
     title: "Your diary is yours",
     body: (
       <>
-        Accounts are kept apart by Postgres row-level security, not by application code — the
-        app runs as a database role that cannot bypass it. Photos are never stored.
+        Only you can see your diary. The database itself keeps accounts apart (Postgres
+        row-level security), not app code — see how in the{" "}
+        <Link href="/docs/security">security docs</Link>. Photos are never stored.
       </>
     ),
   },

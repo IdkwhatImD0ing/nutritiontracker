@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
+import { GITHUB_URL } from "@/lib/site";
 import { getMe, type Me } from "./MeApi";
 
 /**
@@ -61,10 +62,7 @@ export default function AccountCard() {
             {me.is_owner ? (
               <>
                 <span className="account-badge owner">Owner</span>
-                <span className="account-note">
-                  No daily limit. This is the account <code>ALLOWED_EMAIL</code>{" "}
-                  names on this instance.
-                </span>
+                <span className="account-note">No daily limit.</span>
               </>
             ) : (
               <>
@@ -75,7 +73,8 @@ export default function AccountCard() {
                       ? `Today's log is used. The next one is available at ${localReset(quota.resets_at)}.`
                       : `${quota.limit - quota.used_today} of ${quota.limit} log${quota.limit === 1 ? "" : "s"} left today.`
                     : "One log a day."}{" "}
-                  Run your own instance to keep a real diary.
+                  To keep a real diary, run your own copy of Tally — it’s{" "}
+                  <a href={GITHUB_URL}>open source</a>.
                 </span>
               </>
             )}

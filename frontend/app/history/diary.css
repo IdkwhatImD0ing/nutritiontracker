@@ -79,11 +79,10 @@
   gap: 8px;
 }
 
+/* not upper-cased: the serving carries units ("170 g" must not read "G") */
 .diary-edit > .k {
-  font-size: 0.66rem;
+  font-size: 0.78rem;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
 .diary-stepper button {

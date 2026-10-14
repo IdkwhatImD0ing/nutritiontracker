@@ -16,6 +16,7 @@ import WizardGoal from "./WizardGoal";
 import AccountCard from "./AccountCard";
 import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
+import { useMe } from "./MeApi";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -66,10 +67,11 @@ function describeBody(b: Body): string | null {
 }
 
 /** §7.4 Settings: targets, meal windows, timezone, profile_notes (the
- *  agent-visible free text, §6.1), the experiment link, the on-device-state
- *  note. One Save writes everything (PUT). The Cronometer baseline left this
- *  page on 2026-09-06 (owner feedback); the setting itself stays, read by the
- *  adherence chart, and PUT never touches a key it is not sent. */
+ *  agent-visible free text, §6.1), the experiment link (owner only), the
+ *  on-device-state note. One Save writes everything (PUT). The Cronometer
+ *  baseline left this page on 2026-09-06 (owner feedback); the setting itself
+ *  stays, read by the adherence chart, and PUT never touches a key it is not
+ *  sent. */
 export default function Settings() {
   const [form, setForm] = useState<SettingsT | null>(null);
   const [targets, setTargets] = useState<TargetText>(targetText({}));
@@ -77,6 +79,7 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [wizard, setWizard] = useState(false);
+  const me = useMe();
 
   const load = (s: SettingsT) => {
     setForm(s);
@@ -280,10 +283,10 @@ export default function Settings() {
             </div>
           </section>
 
-          <section className="m3-section" aria-label="Timezone">
-            <h2>Timezone</h2>
+          <section className="m3-section" aria-label="Time zone">
+            <h2>Time zone</h2>
             <label className="m3-field">
-              IANA name
+              Region/City
               <input
                 list="usual-tz-list"
                 value={form.timezone}
@@ -318,7 +321,7 @@ export default function Settings() {
           <section className="m3-section m3-wide" aria-label="Profile notes">
             <h2>Profile notes</h2>
             <label className="m3-field">
-              What the assistant should always know
+              What Tally should always know
               <textarea
                 value={form.profile_notes}
                 onChange={(e) =>
@@ -330,10 +333,9 @@ export default function Settings() {
               />
             </label>
             <p className="m3-note">
-              Injected verbatim every time a log is parsed, a food is searched
-              for, or a plate is photographed. Preferences, conventions, what a
-              word means to you — and where you usually eat: a menu named here
-              is one the photo lane can go read.
+              Tally reads this every time you log or photograph a meal, and when
+              it looks a food up. Add habits, what your words mean to you, and
+              where you usually eat.
             </p>
           </section>
 
@@ -351,12 +353,17 @@ export default function Settings() {
 
           <section className="m3-section" aria-label="More">
             <div className="m3-card">
-              <div className="m3-row">
-                <span className="k">Is it learning?</span>
-                <Link href="/experiment" className="m3-link-btn">
-                  Experiment charts →
-                </Link>
-              </div>
+              {/* owner only (Bill, 2026-10-13, BACKLOG 105): the charts are the
+                  owner's §9 instrument; a demo can still open /experiment by
+                  URL and sees its own series */}
+              {me?.is_owner ? (
+                <div className="m3-row">
+                  <span className="k">Is it learning?</span>
+                  <Link href="/experiment" className="m3-link-btn">
+                    Experiment charts →
+                  </Link>
+                </div>
+              ) : null}
               <p className="m3-note">
                 Deleting the home-screen icon clears the app&rsquo;s on-device
                 state (your sign-in, any late items still sending). Your diary

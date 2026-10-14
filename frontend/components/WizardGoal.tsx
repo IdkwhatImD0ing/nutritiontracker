@@ -50,26 +50,50 @@ const LIMITS: Record<keyof Targets, [number, number]> = {
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
-/** A 4xx says exactly what is wrong — show that, not "check your connection".
- *  FastAPI puts it in `detail`: a string, or a 422 list of {loc, msg}. */
+/** routes/settings.py field names (the last `loc` segment of a 422) → what
+ *  the form calls them. */
+const FIELD_LABEL: Record<string, string> = {
+  height_cm: "height",
+  weight_kg: "weight",
+  age: "age",
+  sex: "sex",
+  activity_level: "activity level",
+  activity: "activity level",
+  goal_weight_kg: "target weight",
+  target_weight_kg: "target weight",
+  weekly_rate_kg: "weekly rate",
+  kcal: "calories",
+  protein_g: "protein",
+  carb_g: "carbs",
+  fat_g: "fat",
+  timezone: "time zone",
+};
+
+/** A 4xx says what is wrong — show that, not "check your connection".
+ *  FastAPI puts it in `detail`: a string (ApiError has parsed it), or a 422
+ *  list of {loc, msg}. pydantic's msg is in kg/cm whatever units are picked,
+ *  so a 422 names the field instead. Anything else (an HTML 404 page, or
+ *  FastAPI's own "Not Found" / "Method Not Allowed" for a misroute — these
+ *  routes raise no 404 or 405 of their own) is null, and the caller's own
+ *  sentence shows. */
 function detailOf(e: unknown): string | null {
   if (!(e instanceof ApiError) || e.status < 400 || e.status >= 500) return null;
+  if (e.detail && e.status !== 404 && e.status !== 405) return e.detail;
   const body = e.message.slice(e.message.indexOf(":") + 1).trim();
+  let fields: string[] = [];
   try {
     const d = (JSON.parse(body) as { detail?: unknown }).detail;
-    if (typeof d === "string") return d;
     if (Array.isArray(d)) {
-      const msgs = d
-        .map((x) => (x as { loc?: unknown[]; msg?: string }).msg)
-        .filter((m): m is string => !!m);
-      if (msgs.length) return msgs.join("; ");
+      fields = d.map((x) => String((x as { loc?: unknown[] }).loc?.at(-1) ?? ""));
     }
   } catch {
     // ApiError caps the body at 200 chars, so a long 422 arrives truncated
-    const msgs = [...body.matchAll(/"msg":"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
-    if (msgs.length) return msgs.join("; ");
+    fields = [...body.matchAll(/"loc":\[([^\]]*)\]/g)].map((m) =>
+      (m[1].split(",").at(-1) ?? "").replace(/"/g, ""),
+    );
   }
-  return body || null;
+  const labels = [...new Set(fields.map((f) => FIELD_LABEL[f]).filter(Boolean))];
+  return labels.length ? `Check your ${labels.join(" and ")}.` : null;
 }
 
 function num(s: string): number {
@@ -216,6 +240,8 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
   });
   const macroKcal =
     (edited.protein_g ?? 0) * 4 + (edited.carb_g ?? 0) * 4 + (edited.fat_g ?? 0) * 9;
+  const macroOff =
+    Number.isFinite(edited.kcal ?? NaN) && Math.abs(macroKcal - (edited.kcal ?? 0)) > 50;
 
   const save = async () => {
     if (!editedValid) return;
@@ -425,7 +451,7 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
                 disabled={!goalValid || busy}
                 onClick={compute}
               >
-                {busy ? "Computing…" : "Compute targets"}
+                {busy ? "Computing…" : "See my targets"}
               </button>
               <button
                 type="button"
@@ -442,8 +468,9 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
           <>
             <h1>Your targets</h1>
             <p className="wizard-lead">
-              Mifflin-St Jeor × activity, minus your weekly rate. Protein by
-              bodyweight, a fat floor, carbs the remainder. Change anything.
+              Your resting burn (Mifflin-St Jeor) times your activity, minus
+              your weekly rate. Protein scales with bodyweight, fat has a floor,
+              carbs fill the rest. Change anything.
             </p>
 
             <div className="wizard-hero num">
@@ -461,9 +488,12 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               </div>
             </div>
 
-            {result.notes?.length ? (
-              <p className="m3-note">{result.notes.join(" · ")}.</p>
-            ) : null}
+            {/* services/goals.py writes each note as a sentence */}
+            {result.notes?.map((n) => (
+              <p className="m3-note warn" key={n}>
+                {n}
+              </p>
+            ))}
 
             <div className="m3-grid-4">
               {(
@@ -485,10 +515,9 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
                 </label>
               ))}
             </div>
-            <p className="m3-note num">
+            <p className={`m3-note num${macroOff ? " warn" : ""}`}>
               Macros add up to {fmt.format(macroKcal)} kcal
-              {Number.isFinite(edited.kcal ?? NaN) &&
-              Math.abs(macroKcal - (edited.kcal ?? 0)) > 50
+              {macroOff
                 ? ` — ${fmt.format(Math.abs(macroKcal - (edited.kcal ?? 0)))} ${
                     macroKcal > (edited.kcal ?? 0) ? "over" : "under"
                   } the calorie target`

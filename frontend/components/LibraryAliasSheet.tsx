@@ -94,8 +94,8 @@ export default function LibraryAliasSheet({
       <div className="subsheet" role="dialog" aria-label="Edit phrase">
         <SheetHeader title={`“${alias.alias_norm}”`} onClose={onClose} />
         <p className="subsheet-hint">
-          → {alias.food_name}
-          {alias.brand ? ` — ${alias.brand}` : ""} · used{" "}
+          Logs as {alias.food_name}
+          {alias.brand ? ` (${alias.brand})` : ""} · used{" "}
           <span className="num">{fmt0.format(alias.use_count)}×</span>
         </p>
 
@@ -179,14 +179,16 @@ export default function LibraryAliasSheet({
         <div className="m3-actions">
           {confirm ? (
             <>
-              <span className="m3-note">Forget this phrase → food mapping?</span>
+              <span className="m3-note">
+                Forget this phrase? Tally will stop matching it to this food.
+              </span>
               <button
                 type="button"
                 className="m3-link-btn danger"
                 disabled={busy}
                 onClick={remove}
               >
-                Yes, delete
+                Forget
               </button>
             </>
           ) : (
@@ -196,7 +198,7 @@ export default function LibraryAliasSheet({
               disabled={busy}
               onClick={() => setConfirm(true)}
             >
-              Delete mapping
+              Forget phrase
             </button>
           )}
         </div>

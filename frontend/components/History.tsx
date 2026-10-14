@@ -57,7 +57,7 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         setRange(null);
         setError(
           e instanceof HistoryUnavailable
-            ? "The year view needs GET /api/history — not wired yet."
+            ? "The year view isn't available right now."
             : "Couldn't load this range.",
         );
       })

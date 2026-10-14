@@ -18,7 +18,7 @@ export default function SignInPage() {
       alt={{
         text: "No account?",
         href: "/auth/sign-up",
-        label: "Sign up for a demo",
+        label: "Create a demo account",
       }}
     />
   );

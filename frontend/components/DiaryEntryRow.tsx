@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import { nutrientParts, portionText, statesGrams, withUnit } from "@/lib/format";
+import { sourceName } from "@/lib/sources";
 import type { DiaryEntry } from "./DiaryApi";
 import { getFood } from "./LibraryApi";
 import "@/app/photo.css"; // .badge.estimate
@@ -208,9 +209,10 @@ export default function DiaryEntryRow({
             {entry.qty === 1 && entry.grams != null && !statesGrams(entry.serving.description)
               ? ` · ${withUnit(fmt.format(entry.grams), "g")}`
               : ""}
-            {entry.source ? (
+            {/* a web row's badge and citation are on its name line already */}
+            {entry.source && !entry.web_source ? (
               <span className={`badge${entry.source === "web" ? " web" : ""}`}>
-                {entry.source}
+                {sourceName(entry.source)}
               </span>
             ) : null}
           </div>
@@ -332,7 +334,7 @@ export default function DiaryEntryRow({
                     disabled={busy}
                     onClick={onDelete}
                   >
-                    Really delete
+                    Delete entry
                   </button>
                   <button
                     type="button"
@@ -340,7 +342,7 @@ export default function DiaryEntryRow({
                     disabled={busy}
                     onClick={() => setConfirmDelete(false)}
                   >
-                    Keep
+                    Cancel
                   </button>
                 </>
               ) : (

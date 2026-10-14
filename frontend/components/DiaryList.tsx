@@ -90,7 +90,7 @@ function SaveMealSheet({
         </label>
 
         <label className="m3-field">
-          Trigger phrases
+          Phrases
           <input
             value={phrases}
             onChange={(e) => setPhrases(e.target.value)}
@@ -99,9 +99,9 @@ function SaveMealSheet({
           />
         </label>
         <p className="m3-note">
-          Comma-separated; leave empty to use the name. Saying one stages these{" "}
+          Comma-separated; leave empty to use the name. Saying one adds these{" "}
           {entries.length} item{entries.length === 1 ? "" : "s"} exactly as they
-          are now — no search, no AI.
+          are now.
         </p>
 
         <div className="m3-card">

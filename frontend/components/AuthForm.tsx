@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, type ReactNode } from "react";
 import { verifyEmailAction, type AuthFormState } from "@/app/auth/actions";
 
 type Props = {
@@ -10,6 +10,8 @@ type Props = {
   /** one line under the title — what the account being created gets */
   intro?: string;
   withName?: boolean;
+  /** a line under the submit — what creating the account agrees to */
+  legal?: ReactNode;
   alt: { text: string; href: string; label: string };
 };
 
@@ -19,6 +21,7 @@ export default function AuthForm({
   action,
   intro,
   withName,
+  legal,
   alt,
 }: Props) {
   const [state, formAction, pending] = useActionState(action, null);
@@ -54,6 +57,7 @@ export default function AuthForm({
         <button type="submit" disabled={pending}>
           {pending ? "…" : submitLabel}
         </button>
+        {legal ? <p className="auth-alt auth-legal">{legal}</p> : null}
         <p className="auth-alt">
           {alt.text} <a href={alt.href}>{alt.label}</a>
         </p>

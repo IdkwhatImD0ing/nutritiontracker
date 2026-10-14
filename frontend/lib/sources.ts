@@ -3,6 +3,10 @@
    the photo lane's café-menu foods (routes/photo.py), which that map does
    not list yet. Plain TS. */
 
+import type { components } from "./api-types";
+
+type FoodHit = components["schemas"]["FoodHit"];
+
 /** Short: a search result's sub-line, a row's badge. */
 export const SOURCE_LABEL: Record<string, string> = {
   fdc: "USDA",
@@ -24,4 +28,12 @@ export const SOURCE_LABEL_LONG: Record<string, string> = {
 /** A source code as words; an unknown code comes back as given. */
 export function sourceName(source: string, long = false): string {
   return (long ? SOURCE_LABEL_LONG : SOURCE_LABEL)[source] ?? source;
+}
+
+/** A search result's sub-line: the brand, then where its numbers come from
+ *  ("Fage · USDA", "Open Food Facts"). Not FDC's dataset name ("SR Legacy",
+ *  "Branded"), and not "my foods": a cached hit comes from the foods cache
+ *  every account shares (§8.9), so it may be a food you never logged. */
+export function hitSub(r: FoodHit): string {
+  return [r.brand, sourceName(r.source)].filter(Boolean).join(" · ");
 }

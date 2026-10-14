@@ -33,11 +33,6 @@
   line-height: 1.5;
 }
 
-.exp-notice code {
-  color: var(--sage);
-  font-size: 0.8rem;
-}
-
 /* §4 duplicate-suspect pairs (snapshot list) */
 
 .exp-dupes {

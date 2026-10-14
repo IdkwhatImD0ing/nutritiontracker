@@ -132,13 +132,13 @@ def test_kcal_target_safe_floor_clamps():
     assert bmr == 1139.0
     kt = goals.kcal_target(goals.tdee(bmr, "sedentary"), 50, "female", 45, 1.0)
     assert kt.kcal == 1200
-    assert any("floor" in n for n in kt.notes)
+    assert any("safe minimum" in n for n in kt.notes)
 
 
 def test_weekly_rate_clamped_to_max():
     kt = goals.kcal_target(2805.5, 82, "male", goal_weight_kg=70, weekly_rate_kg=3.0)
     assert kt.daily_delta_kcal == pytest.approx(-1100.0)  # 1.0 kg/week, not 3.0
-    assert any("clamped" in n for n in kt.notes)
+    assert any("capped" in n for n in kt.notes)
     assert kt.kcal == 1706  # 2805.5 - 1100 = 1705.5 → half-up
 
 
@@ -158,7 +158,7 @@ def test_macro_split_overrides_and_fat_floor():
     assert ms.carb_g == 249  # (2256 - 524 - 738) / 4 = 248.5 → 249
     low_fat = goals.macro_split(2256, 82, fat_g_per_kg=0.5)
     assert low_fat.fat_g == 66 and low_fat.fat_g_per_kg == 0.8
-    assert any("fat" in n for n in low_fat.notes)
+    assert any("Fat" in n for n in low_fat.notes)
 
 
 def test_macro_split_carbs_never_negative():

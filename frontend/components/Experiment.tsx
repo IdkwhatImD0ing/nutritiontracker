@@ -46,9 +46,9 @@ export default function Experiment() {
         <span className="date">last {RANGE.replace("w", " weeks")}</span>
       </header>
       <p className="exp-intro">
-        Does the app get faster and stickier as it learns? §9: latency, alias
-        hit rate, and adherence against the Cronometer baseline — weekly,
-        over committed logs.
+        Does Tally get faster and more used as it learns? Logging speed, how
+        often a phrase is recognised without a lookup, and days logged per week
+        against the Cronometer baseline — weekly, over logged meals.
       </p>
 
       {state === "loading" ? (
@@ -59,9 +59,7 @@ export default function Experiment() {
       ) : null}
       {state === "unwired" ? (
         <div className="exp-notice">
-          <strong>No metrics route yet.</strong> This page reads{" "}
-          <code>GET /api/metrics?range={RANGE}</code> (§5); the series render
-          as soon as it lands.
+          Charts aren&rsquo;t available on this server yet.
         </div>
       ) : null}
       {state === "error" ? (
@@ -69,7 +67,7 @@ export default function Experiment() {
       ) : null}
       {state === "ok" && data ? (
         data.weeks.length === 0 ? (
-          <p className="hhint">No committed logs in this range yet.</p>
+          <p className="hhint">No logged meals in this range yet.</p>
         ) : (
           <ExperimentCharts data={data} />
         )

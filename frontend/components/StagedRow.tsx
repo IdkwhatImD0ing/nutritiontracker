@@ -55,6 +55,8 @@ export default function StagedRow({
   const notFound = item.status === "not_found";
   const editable = !searching && !notFound; // §7.1: resolved/needs_input rows
   const name = item.food?.name ?? item.phrase;
+  // the phrase under the name only when it says something the name doesn't
+  const said = item.phrase !== name ? item.phrase : null;
   const macros = item.macros;
   // §3.4a: photo-lane rows carry what vision guessed. "portion" = database
   // food, photo-estimated amount; "unresolved" = no database match at all —
@@ -118,13 +120,9 @@ export default function StagedRow({
             ) : (
               name
             )}
-            {searching ? (
-              <span className="badge searching">searching</span>
-            ) : null}
-            {notFound ? <span className="badge not-found">not found</span> : null}
-            {item.status === "needs_input" ? (
-              <span className="badge needs-input">needs input</span>
-            ) : null}
+            {/* no status badges: the spinner and the sub-line say searching
+                and not found, and the question under the row says it needs
+                an answer */}
             {item.web_source ? (
               <span className="badge web">web</span>
             ) : null}
@@ -134,8 +132,11 @@ export default function StagedRow({
           </div>
           <div className="row-sub">
             {/* the middot separates two text runs; before the portion pill it
-                would dangle, so the pill's own border does the separating */}
-            {item.food?.brand ? `${item.food.brand}${portion ? " " : " · "}` : ""}
+                would dangle, so the pill's own border does the separating,
+                and with nothing after the brand there is nothing to separate */}
+            {item.food?.brand
+              ? `${item.food.brand}${portion ? " " : searching || notFound || said ? " · " : ""}`
+              : ""}
             {portion ? (
               <button
                 type="button"
@@ -151,11 +152,11 @@ export default function StagedRow({
                 {portion}
               </button>
             ) : searching ? (
-              "resolving…"
+              "Looking it up…"
             ) : notFound ? (
-              <span className="manual-hint">tap to search manually</span>
+              <span className="manual-hint">Not found — tap to search</span>
             ) : (
-              item.phrase
+              said
             )}
           </div>
         </div>
