@@ -16,7 +16,7 @@
   /* ink */
   --text: #f4f1ea;
   --muted: #a3a29f;
-  --faint: #6f6e6c;
+  --faint: #8e8c88; /* 4.7:1 on --surface-2: notes, units and empty lines are text */
 
   /* the accent family. Kept under the old names so every component that
      already says var(--spruce) / var(--mint) follows the theme unchanged. */
@@ -55,8 +55,8 @@
   --toast-bg: #26262d;
   --surface-hero: #1d1c22; /* the top of a hero card's gradient */
   --on-danger: #fff; /* text on a red fill */
-  /* new, not yet used: a field placeholder at 5.2:1 on --surface-2, where
-     --faint's 3.1:1 is under the 4.5:1 text minimum */
+  /* a field placeholder: 5.2:1 on --surface-2, 4.6:1 on a focused field's
+     --surface-3, where --faint drops to 4.1:1 */
   --placeholder: #969490;
 
   /* layout and type: one card edge, one form field, one micro label */
@@ -157,6 +157,14 @@ textarea {
   color: inherit;
 }
 
+/* One placeholder colour for every field; left to the UA, WebKit and
+   Chromium each drew their own grey, under the text minimum. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+
 /* iOS zooms the page into any focused field under 16px. This floors fields
    with no size of their own; a class rule outranks it, so keep those ≥ 1rem. */
 @media (pointer: coarse) {
@@ -170,9 +178,11 @@ textarea {
 /* Controls are chrome, not text: a long press raises no selection loupe or
    link callout, and a quick second tap doesn't zoom. Only links that act as
    controls are listed; a link in running text (a citation, the docs) stays
-   selectable. */
+   selectable. A diary or staged .row-main is a tap target that holds
+   controls, so it is listed by class rather than given a role. */
 button,
 [role="button"],
+.row-main,
 summary,
 .tabbar a,
 .nav-back,
@@ -201,9 +211,10 @@ a.m3-link-btn,
    finger only — a pressed pill doesn't dim the row it sits in. Opacity, not
    motion, so reduced motion has nothing to take away. Controls with a press
    of their own (a scale, a fill step) keep it, and zero specificity lets a
-   control's own opacity win. */
+   control's own opacity win. A row's kcal figure is that row's expander
+   (StagedRow, DiaryEntryRow), so its press dims the row, as it always did. */
 :where(
-  :is(button, [role="button"], a, summary):active:not(
+  :is(button, [role="button"], .row-main, a, summary):active:not(
       :disabled,
       .fab,
       .commit-btn,
@@ -215,8 +226,9 @@ a.m3-link-btn,
       .add-row,
       .m3-card-btn,
       .hcard,
-      .tabbar a
-    ):not(:has(:is(button, [role="button"], a, summary):active))
+      .tabbar a,
+      .row-kcal
+    ):not(:has(:is(button:not(.row-kcal), [role="button"], a, summary):active))
 ) {
   opacity: 0.6;
 }
@@ -342,6 +354,20 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+/* A sheet takes focus itself as it opens (useSheetFocus), so a screen reader
+   starts inside it; the sheet is not a control, so it draws no ring. */
+[role="dialog"]:focus {
+  outline: none;
+}
+
+/* A status line stays mounted so its text is announced as it arrives (a
+   region inserted together with its text is often skipped). Empty, it takes
+   no room and no flex gap, and stays in the accessibility tree — never
+   display: none. */
+[role="status"]:empty {
+  position: absolute;
+}
+
 a {
   color: var(--mint);
 }
@@ -357,6 +383,20 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* except what says "still working": a spinner frozen mid-arc looks hung.
+     A turn in place and an opacity pulse are what iOS itself keeps under
+     Reduce Motion; the halo's scale and the tracker's sweep stay stopped.
+     A class with !important outranks `*` with !important. */
+  .spinner {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .rec-dot {
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
   }
 }
 
@@ -749,7 +789,7 @@ a {
   letter-spacing: 0.12em;
   font-weight: 600;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin: 0 0 4px; /* an h2 */
 }
 
 .weight-main {
@@ -830,10 +870,6 @@ a {
   transition:
     border-color 150ms,
     background 150ms;
-}
-
-.capture input::placeholder {
-  color: var(--faint);
 }
 
 .capture input:focus {
@@ -1315,6 +1351,7 @@ a {
 }
 
 .sheet-title {
+  margin: 0; /* an h2: every sheet's title is a heading */
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1.15rem;
@@ -1581,6 +1618,20 @@ a.commit-btn {
   gap: 3px;
 }
 
+/* the row's expander for keyboard and VoiceOver: a button drawn as the
+   figure it always was. Longhands, not `font: inherit`, which would also
+   undo .num's tabular figures on the same element. */
+button.row-kcal {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
 .row-kcal .n {
   font-size: 1.3rem;
 }
@@ -1589,6 +1640,14 @@ a.commit-btn {
   font-size: var(--micro-size);
   color: var(--muted);
   letter-spacing: 0.04em;
+}
+
+/* the diary row's chevron rides inside its expander (the kcal button), to
+   turn with that button's aria-expanded: centred and spaced as it was when
+   it sat beside the figure in .row-main (3px gap + 9 = the row's 12) */
+.row-kcal .chev {
+  align-self: center;
+  margin-left: 9px;
 }
 
 /* no macros yet (searching) or none to have (not found, a numberless
@@ -2016,10 +2075,6 @@ a.commit-btn {
   outline: none;
 }
 
-.add-item input::placeholder {
-  color: var(--faint);
-}
-
 .add-item input:focus {
   border-color: var(--accent-line);
 }
@@ -2156,6 +2211,7 @@ a.commit-btn {
 }
 
 .subsheet-title {
+  margin: 0; /* an h2: every sheet's title is a heading */
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1.15rem; /* .sheet-title's: one title size for every sheet */
@@ -2684,6 +2740,16 @@ a.commit-btn {
 }
 
 /* ---------- undo toast (BACKLOG 11) + pending badge (BACKLOG 12) ---------- */
+
+/* A page's one live region for its toasts (Today, Settings, the diary's
+   saved-meal note). Out of flow, so it adds no .shell gap or grid slot; no
+   z-index, so no stacking context: each fixed toast keeps its own place and
+   layer. No .shell rise either: its transform would hold the fixed toasts
+   for 200ms, and each toast rises on its own. */
+.toast-host {
+  position: absolute;
+  animation: none;
+}
 
 .toast {
   position: fixed;

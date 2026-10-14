@@ -12,6 +12,7 @@ import {
 } from "./ApiKeysApi";
 import SheetHeader from "./SheetHeader";
 import Skeleton from "./Skeleton";
+import { useSheetFocus } from "./useSheetFocus";
 import { SheetFrame, usePresence } from "./useSheetPresence";
 
 type Access = ApiKeyCreate["scopes"];
@@ -133,6 +134,7 @@ export default function ApiKeysCard() {
   const secretEl = useRef<HTMLElement>(null);
   const timer = useRef<number | undefined>(undefined);
   const refocusRevoke = useRef<string | null>(null);
+  const sheetRef = useSheetFocus<HTMLDivElement>(sheet);
 
   useEffect(() => {
     let live = true;
@@ -454,7 +456,14 @@ export default function ApiKeysCard() {
       {sheetUp ? (
         <SheetFrame closing={sheetClosing}>
           <div className="subsheet-backdrop" onClick={closeSheet} />
-          <div className="subsheet" role="dialog" aria-labelledby="keys-sheet-title">
+          <div
+            ref={sheetRef}
+            className="subsheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="keys-sheet-title"
+            tabIndex={-1}
+          >
             <SheetHeader
               title="New API key"
               titleId="keys-sheet-title"

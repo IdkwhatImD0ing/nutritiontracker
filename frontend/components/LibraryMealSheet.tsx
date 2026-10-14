@@ -23,6 +23,7 @@ import { ArrowRight, Close } from "./icons";
 import { qtyInput, rescaleQty, stepQty } from "./portion";
 import SheetHeader, { DiscardConfirm } from "./SheetHeader";
 import { useAutoGrow } from "./useAutoGrow";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   /** null → §8.4 create path 3, "build one in Library" (POST /api/meals) */
@@ -73,6 +74,7 @@ function QtyInput({
  *  deactivate. Delete = deactivate, so old diary rows keep their context;
  *  normalization of trigger phrases happens server-side (§5). */
 export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [name, setName] = useState(meal?.name ?? "");
   const [phrases, setPhrases] = useState(meal?.trigger_phrases.join(", ") ?? "");
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
@@ -271,7 +273,14 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   return (
     <>
       <div className="subsheet-backdrop" onClick={requestClose} />
-      <div className="subsheet" role="dialog" aria-label="Edit saved meal">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit saved meal"
+        tabIndex={-1}
+      >
         <SheetHeader
           title={!meal ? "New saved meal" : meal.is_active ? "Saved meal" : "Inactive meal"}
           onClose={requestClose}
@@ -439,7 +448,11 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
         </div>
 
         <div className="subsheet-foot">
-          {error ? <p className="sheet-error">{error}</p> : null}
+          {error ? (
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
+          ) : null}
 
           {confirmDiscard ? (
             <DiscardConfirm

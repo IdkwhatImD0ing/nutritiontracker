@@ -210,19 +210,26 @@ export default function OuraCard() {
     <section className="m3-section" aria-label="Oura">
       <h2>Oura</h2>
       <div className="m3-card">
-        {/* a div, as ErrorNotice's: a <p> would bring its UA margins */}
-        {note?.kind === "ok" ? <p className="m3-status">{note.text}</p> : null}
-        {note && note.kind !== "ok" ? (
-          <div className={`notice ${note.kind}`}>
-            <span>{note.text}</span>
-          </div>
+        {/* kept mounted, so a note is announced as it appears. Divs, as
+            ErrorNotice's: a <p> would bring its UA margins */}
+        <div role="status">
+          {note?.kind === "ok" ? <p className="m3-status">{note.text}</p> : null}
+          {note && note.kind !== "ok" ? (
+            <div className={`notice ${note.kind}`}>
+              <span>{note.text}</span>
+            </div>
+          ) : null}
+          {hint ? (
+            <div className="notice warn">
+              <span>{hint}</span>
+            </div>
+          ) : null}
+        </div>
+        {error ? (
+          <p className="sheet-error" role="alert">
+            {error}
+          </p>
         ) : null}
-        {hint ? (
-          <div className="notice warn">
-            <span>{hint}</span>
-          </div>
-        ) : null}
-        {error ? <p className="sheet-error">{error}</p> : null}
         {status?.connected ? (
           <>
             <div className="m3-row">

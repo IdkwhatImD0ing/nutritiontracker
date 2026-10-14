@@ -1397,40 +1397,45 @@ export default function Today() {
 
       <SheetPresence>{lane === "agent" ? null : stageEl}</SheetPresence>
 
-      {discard ? (
-        <div className="toast" role="status">
-          <span>Log discarded</span>
-          <button type="button" onClick={undoDiscard}>
-            Undo
-          </button>
-        </div>
-      ) : null}
-
-      {savedNote ? (
-        <div className="toast" role="status">
-          <span>{savedNote.text}</span>
-          {savedNote.auto ? null : (
-            <button type="button" onClick={() => setSavedNote(null)}>
-              OK
+      {/* One live region for every toast, mounted with the page: a region
+          inserted together with its text is often skipped by VoiceOver, and
+          "Log discarded" has an undo clock running. */}
+      <div className="toast-host" role="status">
+        {discard ? (
+          <div className="toast">
+            <span>Log discarded</span>
+            <button type="button" onClick={undoDiscard}>
+              Undo
             </button>
-          )}
-        </div>
-      ) : null}
+          </div>
+        ) : null}
 
-      {/* one toast at a time: the undo and the saved-meal note outrank it */}
-      {committedNote && !discard && !savedNote ? (
-        <div className="toast under-sheets" role="status">
-          <span>{committedNote.text}</span>
-          {committedNote.day ? (
-            <button
-              type="button"
-              onClick={() => router.push(`/history/${committedNote.day}`)}
-            >
-              View
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+        {savedNote ? (
+          <div className="toast">
+            <span>{savedNote.text}</span>
+            {savedNote.auto ? null : (
+              <button type="button" onClick={() => setSavedNote(null)}>
+                OK
+              </button>
+            )}
+          </div>
+        ) : null}
+
+        {/* one toast at a time: the undo and the saved-meal note outrank it */}
+        {committedNote && !discard && !savedNote ? (
+          <div className="toast under-sheets">
+            <span>{committedNote.text}</span>
+            {committedNote.day ? (
+              <button
+                type="button"
+                onClick={() => router.push(`/history/${committedNote.day}`)}
+              >
+                View
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </main>
   );
 }

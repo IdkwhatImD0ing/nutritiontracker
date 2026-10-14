@@ -28,6 +28,7 @@ import { SheetClose } from "./SheetHeader";
 import { useSheetBack } from "./sheetBack";
 import StagedRow, { type PickOption } from "./StagedRow";
 import { useDragDismiss } from "./useDragDismiss";
+import { useSheetFocus } from "./useSheetFocus";
 import SheetPresence from "./useSheetPresence";
 import "@/app/photo.css";
 
@@ -124,6 +125,8 @@ export default function StagingSheet({
   docked = false,
   closeRef,
 }: Props) {
+  // docked, the split around it is the dialog and takes the focus (SplitSheet)
+  const sheetRef = useSheetFocus<HTMLDivElement>(!docked);
   const [items, setItems] = useState<StagedItem[]>(restore?.items ?? log.items);
   const [meal, setMeal] = useState<Meal>(restore?.meal ?? log.meal);
   const [mealPickerOpen, setMealPickerOpen] = useState(false);
@@ -390,6 +393,30 @@ export default function StagingSheet({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSearching, log.log_id]);
+
+  // A row leaving `searching` changes its spinner, badge and figure in
+  // silence, so the foot's screen-reader status says how it landed. Since
+  // 2026-09-11 tier 3 runs inline (§3.4): this is mostly the fallback path.
+  const [landed, setLanded] = useState("");
+  const wasSearchingRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const said: string[] = [];
+    for (const i of items) {
+      if (i.status === "searching" || !wasSearchingRef.current.has(i.item_index)) continue;
+      if (removedRef.current.has(i.item_index)) continue;
+      said.push(
+        i.status === "not_found"
+          ? `${i.phrase} not found`
+          : i.status === "needs_input"
+            ? `${i.phrase} needs input`
+            : `${i.food ? foodName(i.food.name) : i.phrase} found${i.macros ? `, ${fmt.format(i.macros.kcal)} kcal` : ""}`,
+      );
+    }
+    wasSearchingRef.current = new Set(
+      items.filter((i) => i.status === "searching").map((i) => i.item_index),
+    );
+    if (said.length) setLanded(said.join(". "));
+  }, [items]);
 
   const setRowBusy = (itemIndex: number, busy: boolean) =>
     setBusyRows((prev) => {
@@ -663,7 +690,6 @@ export default function StagingSheet({
   // a pull on the head closes exactly as the ✕ does (Today's closeStaging),
   // and so do Escape and Back; docked, they are the lane's (SplitSheet)
   const drag = useDragDismiss(close);
-  const sheetRef = useRef<HTMLDivElement>(null);
   useSheetBack(sheetRef, close, !docked);
   // an open meal picker sits above the list: Escape and Back shut it first,
   // rather than discarding the rows under it
@@ -746,6 +772,7 @@ export default function StagingSheet({
     <button
       type="button"
       className="meal-chip"
+      aria-label={`Meal: ${MEAL_LABEL[meal]}`}
       aria-expanded={mealPickerOpen}
       onClick={() => setMealPickerOpen((o) => !o)}
     >
@@ -771,6 +798,7 @@ export default function StagingSheet({
           key={m}
           type="button"
           className={m === meal ? "active" : undefined}
+          aria-pressed={m === meal}
           onClick={() => pickMeal(m)}
         >
           {MEAL_LABEL[m]}
@@ -783,16 +811,18 @@ export default function StagingSheet({
     <>
       {docked ? null : <div className="sheet-backdrop" onClick={close} />}
       <div
-        className={docked ? "split-pane stage-pane" : "sheet"}
-        role="dialog"
-        aria-label="Items to review"
         ref={sheetRef}
+        className={docked ? "split-pane stage-pane" : "sheet"}
+        role={docked ? "region" : "dialog"}
+        aria-modal={docked ? undefined : "true"}
+        aria-label="Items to review"
+        tabIndex={docked ? undefined : -1}
       >
         {docked ? null : (
           <div className="sheet-head" {...drag}>
             <div className="grabber" />
             <div className="sheet-head-row">
-              <span className="sheet-title">Review</span>
+              <h2 className="sheet-title">Review</h2>
               {mealChip}
               {discardBtn}
             </div>
@@ -871,10 +901,18 @@ export default function StagingSheet({
         </div>
 
         <div className="sheet-foot">
-          {error ? <p className="sheet-error">{error}</p> : null}
-          {searchFirst && !error ? (
-            <p className="sheet-reason">{searchFirst}</p>
+          {error ? (
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
           ) : null}
+          {/* kept mounted, so the heads-up is announced as it appears */}
+          <p className="sheet-reason" role="status">
+            {searchFirst && !error ? searchFirst : null}
+          </p>
+          <p className="sr-only" role="status">
+            {landed}
+          </p>
           {docked ? mealPicker : null}
           <div className={docked ? "stage-lip" : undefined}>
             {docked ? discardBtn : null}

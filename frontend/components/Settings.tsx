@@ -304,7 +304,9 @@ export default function Settings() {
       ) : error && !dirty ? (
         // a refresh that failed over the cached form (readCache); a refused
         // save shows in the save bar instead
-        <p className="sheet-error">{error}</p>
+        <p className="sheet-error" role="alert">
+          {error}
+        </p>
       ) : null}
 
       <AccountCard />
@@ -527,11 +529,14 @@ export default function Settings() {
               </button>
             </div>
           ) : null}
-          {status ? (
-            <div className="toast" role="status">
-              <span>{status}</span>
-            </div>
-          ) : null}
+          {/* kept mounted, so "Saved." is announced as it appears */}
+          <div className="toast-host" role="status">
+            {status ? (
+              <div className="toast">
+                <span>{status}</span>
+              </div>
+            ) : null}
+          </div>
         </>
       )}
 

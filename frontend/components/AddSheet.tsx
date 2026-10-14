@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { loadDetector } from "./barcodeDetector";
 import { Camera, ChevronRight, Mic } from "./icons";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 import { SheetFrame, usePresence } from "./useSheetPresence";
 
 /** The + sheet (owner ruling, 2026-09-02): the mid-screen capture bar is
@@ -107,6 +108,7 @@ const ROWS = [
 
 export default function AddSheet({ open, onClose, onPick, blocked, note }: Props) {
   const { mounted, closing } = usePresence(open);
+  const sheetRef = useSheetFocus<HTMLDivElement>(open);
 
   // Warm the barcode decoder (its ~1 MB wasm) the moment the sheet opens:
   // that download is the slow part of a first scan, and it is one HTTP-cached
@@ -120,7 +122,14 @@ export default function AddSheet({ open, onClose, onPick, blocked, note }: Props
   return (
     <SheetFrame closing={closing}>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet add-sheet" role="dialog" aria-label="Log food">
+      <div
+        ref={sheetRef}
+        className="subsheet add-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Log food"
+        tabIndex={-1}
+      >
         <SheetHeader title="Log food" onClose={onClose} closeButton={false} />
         {blocked || note ? (
           <div className="notice warn">
@@ -150,7 +159,9 @@ export default function AddSheet({ open, onClose, onPick, blocked, note }: Props
         {/* iOS's action-sheet Cancel. It lies where the + was, so a second
             tap on the + cancels rather than opening Agent, whose mic starts
             on open. Hidden from 900px (m3.css), where the rail's Log food is
-            nowhere near the tiles. */}
+            nowhere near the tiles, but only visually: with no ✕, and
+            aria-modal keeping VoiceOver off the backdrop, it is a screen
+            reader's way out there too. */}
         <button type="button" className="add-cancel" onClick={onClose}>
           Cancel
         </button>

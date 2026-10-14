@@ -107,7 +107,6 @@ function ThreeDays({
             key={d.date}
             className={`hcard${d.logged ? "" : " empty"}`}
             onClick={() => onDay(d.date)}
-            aria-label={`Open diary for ${d.date}`}
           >
             <div className="hcard-head">
               <span className="hcard-day">

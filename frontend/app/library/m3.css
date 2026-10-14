@@ -42,10 +42,10 @@
   padding: 0;
   color: var(--faint);
   text-decoration: none;
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  /* sentence case, like the rail and a native tab bar: spaced caps ran
+     LIBRARY into SETTINGS at 320 */
+  font-size: 11px;
+  font-weight: 500;
   border-radius: 14px;
   transition: color 150ms;
 }
@@ -261,7 +261,9 @@ body:has(.tabbar) .shell {
   gap: 10px;
 }
 
-.m3-section h2 {
+/* the section's own head only: a sheet inside a section (the API-key sheet)
+   titles itself with an h2 too */
+.m3-section > h2 {
   margin: 0;
   padding: 0 2px;
   font-size: 0.7rem;
@@ -536,8 +538,9 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
 
 /* A toast that lands while the bar is up ("Targets saved." from the
    wizard, other edits still unsaved) stacks above the bar (58px tall)
-   rather than covering it. */
-.shell.settings:has(> .m3-savebar) > .toast {
+   rather than covering it. (The toast sits in the page's .toast-host, its
+   live region.) */
+.shell.settings:has(> .m3-savebar) > .toast-host > .toast {
   bottom: calc(168px + env(safe-area-inset-bottom));
 }
 
@@ -1438,7 +1441,7 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
     padding-bottom: 112px;
   }
 
-  body:has(.tabbar) .shell.settings:has(> .m3-savebar) > .toast {
+  body:has(.tabbar) .shell.settings:has(> .m3-savebar) > .toast-host > .toast {
     bottom: 100px;
   }
 
@@ -1466,9 +1469,20 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
     display: none;
   }
 
-  /* the rail's Log food is nowhere near the tiles: nothing to land on */
+  /* the rail's Log food is nowhere near the tiles: nothing to land on. Out
+     of sight as .sr-only is, not display: none, so a screen reader keeps
+     the sheet's way out (AddSheet). */
   .add-cancel {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-height: 0;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .wizard-inner {

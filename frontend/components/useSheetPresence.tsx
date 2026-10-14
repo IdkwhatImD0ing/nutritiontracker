@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 /** How long a closed sheet stays mounted: globals.css's sheet-down, fade-out
  *  and modal-out run this long. A timer, not animationend — the sheet's own
@@ -23,6 +23,12 @@ export function usePresence(open: boolean) {
   return { mounted: open || closing, closing };
 }
 
+/** True inside a sheet playing its exit (SheetFrame). useSheetFocus reads it
+ *  to hand focus back as the exit starts, not EXIT_MS later at unmount, by
+ *  which time a sheet the same tap opened (Edit food giving way to Search)
+ *  has taken focus and recorded the leaving sheet's button as its opener. */
+export const SheetClosing = createContext(false);
+
 /** What a sheet closes inside: no box of its own (display: contents), and
  *  while `closing` it carries [data-closing] — the sheet slides down and its
  *  scrim fades (globals.css) — and is inert, so nothing in it takes a tap or
@@ -40,7 +46,7 @@ export function SheetFrame({
       data-closing={closing ? "" : undefined}
       inert={closing}
     >
-      {children}
+      <SheetClosing.Provider value={closing}>{children}</SheetClosing.Provider>
     </div>
   );
 }

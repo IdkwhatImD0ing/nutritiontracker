@@ -11,6 +11,7 @@ import { foodName } from "@/lib/labels";
 import { FOOD_FIELD_PROPS } from "./fieldProps";
 import { ArrowRight } from "./icons";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   item: StagedItem;
@@ -68,6 +69,7 @@ export default function FoodEditSheet({
   onManualSearch,
   onClose,
 }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [text, setText] = useState(item.phrase);
   // Seeded from the row, so the section is there at open and the GET only
   // replaces it — the sheet no longer jumps taller when the list lands.
@@ -95,7 +97,14 @@ export default function FoodEditSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Change food">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Change food"
+        tabIndex={-1}
+      >
         <SheetHeader title="Change food" onClose={onClose} />
         <p className="subsheet-hint">You said &ldquo;{item.phrase}&rdquo;</p>
 

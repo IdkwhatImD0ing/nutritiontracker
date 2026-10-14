@@ -16,6 +16,7 @@ import { createMeal, type SavedMeal } from "./LibraryApi";
 import SheetHeader, { DiscardConfirm } from "./SheetHeader";
 import { useAutoGrow } from "./useAutoGrow";
 import { useFlash } from "./useFlash";
+import { useSheetFocus } from "./useSheetFocus";
 import SheetPresence from "./useSheetPresence";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -52,6 +53,7 @@ function SaveMealSheet({
   onSaved: (m: SavedMeal) => void;
   onClose: () => void;
 }) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [name, setName] = useState(`usual ${meal}`);
   const [phrases, setPhrases] = useState("");
   const [busy, setBusy] = useState(false);
@@ -99,7 +101,14 @@ function SaveMealSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={requestClose} />
-      <div className="subsheet" role="dialog" aria-label="Save as meal">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Save as meal"
+        tabIndex={-1}
+      >
         <SheetHeader title={`Save this ${meal} as a meal`} onClose={requestClose} />
 
         <label className="m3-field">
@@ -148,7 +157,11 @@ function SaveMealSheet({
         </div>
 
         <div className="subsheet-foot">
-          {error ? <p className="sheet-error">{error}</p> : null}
+          {error ? (
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
+          ) : null}
 
           {confirmDiscard ? (
             <DiscardConfirm
@@ -266,10 +279,11 @@ export default function DiaryList({
       {groups.map((g) => (
         <div className="diary-meal" key={g.meal}>
           <div className="diary-meal-head">
-            <span className="diary-meal-name">{mealLabel(g.meal)}</span>
+            <h2 className="diary-meal-name">{mealLabel(g.meal)}</h2>
             <button
               type="button"
               className="m3-link-btn"
+              aria-label={`Save as meal: ${mealLabel(g.meal)}`}
               onClick={() => setSaveGroup(g)}
             >
               Save as meal
@@ -320,14 +334,17 @@ export default function DiaryList({
           ))}
         </div>
       ))}
-      {savedMeal ? (
-        <div className="toast under-sheets" role="status">
-          <span>{savedMeal}</span>
-          <button type="button" onClick={() => flashSavedMeal(null)}>
-            OK
-          </button>
-        </div>
-      ) : null}
+      {/* kept mounted, so the confirmation is announced as it appears */}
+      <div className="toast-host" role="status">
+        {savedMeal ? (
+          <div className="toast under-sheets">
+            <span>{savedMeal}</span>
+            <button type="button" onClick={() => flashSavedMeal(null)}>
+              OK
+            </button>
+          </div>
+        ) : null}
+      </div>
       <SheetPresence>
         {saveGroup ? (
           <SaveMealSheet

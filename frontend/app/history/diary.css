@@ -38,6 +38,7 @@
 }
 
 .diary-meal-name {
+  margin: 0; /* an h2: each meal is a section to VoiceOver's rotor */
   font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;

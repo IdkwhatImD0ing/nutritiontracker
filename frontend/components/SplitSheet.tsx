@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { SheetClose } from "./SheetHeader";
 import { useSheetBack } from "./sheetBack";
 import { useDragDismiss } from "./useDragDismiss";
+import { useSheetFocus } from "./useSheetFocus";
 
 /** The Agent lane's one sheet (§7.1, Bill 2026-09-09: "I just wanna chat with
  *  the stage window open"). Before this, Review opened the staging sheet as a
@@ -35,6 +36,12 @@ import { useDragDismiss } from "./useDragDismiss";
 const STOPS = { peek: 0.2, half: 0.48, full: 0.8 } as const;
 type Stop = keyof typeof STOPS;
 const ORDER: Stop[] = ["peek", "half", "full"];
+/** what the divider says, rather than a bare 20 / 48 / 80 */
+const SAID: Record<Stop, string> = {
+  peek: "List collapsed",
+  half: "List half height",
+  full: "List full height",
+};
 
 /** A sheet shorter than this (an SE; a mini only at Display Zoom, 320 wide)
  *  opens at `peek`: at `half` its chat was 118–165px, too little to show the
@@ -72,7 +79,9 @@ export default function SplitSheet({
 }: Props) {
   const [split, setSplit] = useState<number>(STOPS.half);
   const [dragging, setDragging] = useState(false);
-  const shellRef = useRef<HTMLDivElement>(null);
+  // the dialog (the panes inside it are regions): focus moves in on open
+  const shellRef = useSheetFocus<HTMLDivElement>();
+  const titleId = useId();
   // Where the drag started. A ref, not state: it changes on every pointermove
   // and nothing renders from it.
   const from = useRef<{ id: number; y: number; at: number } | null>(null);
@@ -125,6 +134,10 @@ export default function SplitSheet({
       <div
         className="sheet split-sheet"
         ref={shellRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         data-snap={dragging ? undefined : nearest(split)}
         // the slim title is for a staged lane only (globals.css .split-head)
         data-staged={staged || undefined}
@@ -135,7 +148,9 @@ export default function SplitSheet({
         <div className="sheet-head split-head" {...drag}>
           <div className="grabber" />
           <div className="sheet-head-row">
-            <span className="sheet-title">Agent</span>
+            <h2 className="sheet-title" id={titleId}>
+              Agent
+            </h2>
             {/* §7.1 (Bill, 2026-10-13): always here, and it puts the whole
                 lane away in one tap — with rows staged, through the tray's
                 own close first (the §5 discard with its Undo). The tray's
@@ -155,6 +170,7 @@ export default function SplitSheet({
             aria-valuenow={Math.round(split * 100)}
             aria-valuemin={Math.round(STOPS.peek * 100)}
             aria-valuemax={Math.round(STOPS.full * 100)}
+            aria-valuetext={SAID[nearest(split)]}
             tabIndex={0}
             onPointerDown={(e) => {
               from.current = { id: e.pointerId, y: e.clientY, at: split };

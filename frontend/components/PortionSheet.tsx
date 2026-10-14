@@ -5,6 +5,7 @@ import { fmt0, withUnit } from "@/lib/format";
 import { Check } from "./icons";
 import { isGramServing, rescaleQty, stepQty } from "./portion";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 /** A serving option normalized from the staged payload (§7.1 portion sheet). */
 export type PortionChoice = {
@@ -57,6 +58,7 @@ export default function PortionSheet({
   onApply,
   onClose,
 }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [servingId, setServingId] = useState(initialServingId ?? "");
   const [qtyText, setQtyText] = useState(fmtQty(initialQty));
   const captionId = useId();
@@ -108,11 +110,18 @@ export default function PortionSheet({
         className="subsheet-backdrop"
         onClick={busy ? undefined : onClose}
       />
-      <div className="subsheet" role="dialog" aria-label="Portion">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Portion"
+        tabIndex={-1}
+      >
         <SheetHeader title={title} onClose={onClose} canClose={!busy} />
 
         <div className="stepper num">
-          <button type="button" aria-label="Less" onClick={() => step(-1)}>
+          <button type="button" aria-label="Decrease quantity" onClick={() => step(-1)}>
             −
           </button>
           <input
@@ -122,7 +131,7 @@ export default function PortionSheet({
             aria-label="Quantity"
             aria-describedby={chosen ? captionId : undefined}
           />
-          <button type="button" aria-label="More" onClick={() => step(1)}>
+          <button type="button" aria-label="Increase quantity" onClick={() => step(1)}>
             +
           </button>
         </div>
@@ -170,7 +179,11 @@ export default function PortionSheet({
         ) : null}
 
         <div className="subsheet-foot">
-          {error ? <p className="sheet-error">{error}</p> : null}
+          {error ? (
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
+          ) : null}
 
           <button
             type="button"

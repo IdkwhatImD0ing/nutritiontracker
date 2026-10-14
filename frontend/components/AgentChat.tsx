@@ -389,6 +389,16 @@ function ToolLine({
 
 const kcalFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
+/** The result card's line in words, for the chat's spoken status. */
+function resultLine(m: Extract<ChatMessage, { kind: "result" }>): string {
+  const n = m.log.items.length;
+  const kcal = m.log.items.reduce((sum, it) => sum + (it.macros?.kcal ?? 0), 0);
+  return (
+    `${m.photo ? "From the photo: " : ""}${n} item${n === 1 ? "" : "s"} to review` +
+    (kcal > 0 ? `, ${kcalFmt.format(kcal)} kcal` : "")
+  );
+}
+
 function ResultCard({
   m,
   onReview,
@@ -414,7 +424,11 @@ function ResultCard({
         ) : null}
       </span>
       {m.state === "staged" ? (
-        <button type="button" onClick={() => onReview(m.log)}>
+        <button
+          type="button"
+          aria-label={`Review ${n} item${n === 1 ? "" : "s"}`}
+          onClick={() => onReview(m.log)}
+        >
           Review
         </button>
       ) : (
@@ -641,6 +655,41 @@ export default function AgentChat({
     }
   };
 
+  // The conversation is not a live region: that read every echo of what was
+  // just typed, "Thinking…" and each raw call aloud. What is new is said
+  // here instead (§6.4: you hear what it looks up): each tool's doing line as
+  // it starts and its result as it lands, the reply, the result card, and a
+  // voice transcript as it replaces "Transcribing…". `said` keys what was
+  // spoken, so a re-attached stream's replay stays quiet; whatever the chat
+  // mounted with is history, not news.
+  const [spoken, setSpoken] = useState("");
+  const saidRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const quiet = saidRef.current == null;
+    const said = (saidRef.current ??= new Set());
+    const lines: string[] = [];
+    const say = (key: string, text: string | null) => {
+      if (said.has(key)) return;
+      said.add(key);
+      if (text && !quiet) lines.push(text);
+    };
+    for (const m of messages) {
+      if (m.kind === "user") {
+        if (m.pending) said.add(`${m.id}:pending`);
+        else if (said.has(`${m.id}:pending`)) say(m.id, m.text);
+      } else if (m.kind === "tool") {
+        const { doing, result } = describeTool(m);
+        say(`${m.id}:start`, doing);
+        if (m.done) say(`${m.id}:end`, result);
+      } else if (m.kind === "agent") {
+        say(m.id, m.text);
+      } else if (m.kind === "result") {
+        say(m.id, resultLine(m));
+      }
+    }
+    if (lines.length) setSpoken(lines.join(". "));
+  }, [messages]);
+
   const last = messages[messages.length - 1];
   // "Thinking…" between the send and the first tool line, and between a
   // finished tool and the reply — never while a tool line already spins or
@@ -672,8 +721,9 @@ export default function AgentChat({
       {docked ? null : <div className="agent-backdrop" onClick={onClose} />}
       <div
         className={docked ? "split-pane chat-pane" : "sheet agent-sheet"}
-        role="dialog"
-        aria-label="Agent"
+        // docked, it is a pane of SplitSheet's dialog, not a second dialog
+        role={docked ? "region" : "dialog"}
+        aria-label={docked ? "Conversation" : "Agent"}
         ref={paneRef}
       >
         {docked ? null : (
@@ -686,12 +736,7 @@ export default function AgentChat({
           </div>
         )}
 
-        <div
-          className="sheet-body chat-body"
-          ref={bodyRef}
-          onScroll={onBodyScroll}
-          aria-live="polite"
-        >
+        <div className="sheet-body chat-body" ref={bodyRef} onScroll={onBodyScroll}>
           {/* just above the composer, by the thumb. No tappable examples:
               sending one would log a meal or a weigh-in for real. */}
           {messages.length === 0 ? (
@@ -797,6 +842,9 @@ export default function AgentChat({
             </div>
           ) : null}
         </div>
+        <p className="sr-only" role="status">
+          {spoken}
+        </p>
 
         <div className="sheet-foot chat-foot">
           {away ? (
@@ -830,7 +878,7 @@ export default function AgentChat({
             </div>
           ) : null}
           {recording ? (
-            <div className="chat-rec" aria-live="polite">
+            <div className="chat-rec">
               <button
                 type="button"
                 className="voice-big"
@@ -926,8 +974,15 @@ export default function AgentChat({
               </button>
             </form>
           )}
-          {error && !errorShown ? <p className="capture-error">{error}</p> : null}
-          {notice && !error ? <p className="capture-notice">{notice}</p> : null}
+          {error && !errorShown ? (
+            <p className="capture-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {/* kept mounted, so the notice is announced as it appears */}
+          <p className="capture-notice" role="status">
+            {notice && !error ? notice : null}
+          </p>
         </div>
       </div>
 

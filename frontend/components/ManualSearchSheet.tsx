@@ -16,6 +16,7 @@ import { ArrowRight, Close } from "./icons";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 import Skeleton from "./Skeleton";
 import { useSheetBack } from "./sheetBack";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -64,6 +65,8 @@ export default function ManualSearchSheet({
   onSelect,
   onClose,
 }: Props) {
+  // focus in and back out; also what useSheetBack ranks (full screen)
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [query, setQuery] = useState(phrase);
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [recent, setRecent] = useState<FoodSearchResult[] | null>(null);
@@ -83,7 +86,6 @@ export default function ManualSearchSheet({
   // parent's select runs; the rest stay readable but can't be tapped.
   const [picked, setPicked] = useState<string | null>(null);
   const pickedKey = busy ? picked : null;
-  const sheetRef = useRef<HTMLDivElement>(null);
 
   const run = async (q: string) => {
     const trimmed = q.trim();
@@ -277,14 +279,16 @@ export default function ManualSearchSheet({
       <>
         <div className="sheet-backdrop" onClick={onClose} />
         <div
+          ref={sheetRef}
           className="sheet search-sheet"
           role="dialog"
+          aria-modal="true"
           aria-label="Search foods"
-          ref={sheetRef}
+          tabIndex={-1}
         >
           <div className="sheet-head">
             <div className="sheet-head-row">
-              <span className="sheet-title">Search</span>
+              <h2 className="sheet-title">Search</h2>
               <SheetClose onClick={onClose} />
             </div>
           </div>
@@ -297,7 +301,14 @@ export default function ManualSearchSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Manual food search">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Manual food search"
+        tabIndex={-1}
+      >
         <SheetHeader title="Search" onClose={onClose} />
         {body}
       </div>

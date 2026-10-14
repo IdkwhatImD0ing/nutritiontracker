@@ -94,7 +94,7 @@ export default function WeightCard({
     return (
       <section className="weight-card is-loading" aria-label="Weight" aria-busy="true">
         <div className="weight-main">
-          <span className="label">Weight</span>
+          <h2 className="label">Weight</h2>
           <Skeleton height={24} width={96} />
           <div className="weight-sub">&nbsp;</div>
         </div>
@@ -107,7 +107,7 @@ export default function WeightCard({
     return (
       <section className="weight-card" aria-label="Weight">
         <div className="weight-main">
-          <span className="label">Weight</span>
+          <h2 className="label">Weight</h2>
           <p className="weight-empty">Couldn&rsquo;t load your weight.</p>
         </div>
       </section>
@@ -118,7 +118,7 @@ export default function WeightCard({
     return (
       <section className="weight-card" aria-label="Weight">
         <div className="weight-main">
-          <span className="label">Weight</span>
+          <h2 className="label">Weight</h2>
           <p className="weight-empty">No weigh-ins yet.</p>
         </div>
         {onLog ? (
@@ -163,7 +163,7 @@ export default function WeightCard({
   return (
     <section className="weight-card" aria-label="Weight">
       <div className="weight-main">
-        <span className="label">Weight</span>
+        <h2 className="label">Weight</h2>
         <div className="weight-num num">
           <strong>{value.toFixed(1)}</strong>
           <span className="unit">{unit}</span>

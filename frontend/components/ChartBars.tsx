@@ -181,9 +181,13 @@ export default function ChartBars({
           ) : null}
         </div>
       ) : null}
+      {/* Tappable bars are buttons, and an img's children are presentational —
+          VoiceOver would hear one picture and reach no bar. So a chart you
+          can tap is a group of its bars, and its tick text is hidden; in
+          select mode the svg is the one control, a slider. */}
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        role={select ? "slider" : "img"}
+        role={select ? "slider" : tap ? "group" : "img"}
         aria-label={title}
         className="chart-svg"
         tabIndex={select ? 0 : undefined}
@@ -197,12 +201,12 @@ export default function ChartBars({
         onPointerLeave={select ? () => setHoverKey(null) : undefined}
         onKeyDown={select ? step : undefined}
       >
-        <g className="chart-grid">
+        <g className="chart-grid" aria-hidden="true">
           {ticks.map((t) => (
             <line key={t} x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} />
           ))}
         </g>
-        <g className="chart-axis">
+        <g className="chart-axis" aria-hidden="true">
           {ticks.map((t) => (
             <text key={t} x={PAD.l - 6} y={y(t) + 3} textAnchor="end">
               {format(t)}
@@ -224,6 +228,7 @@ export default function ChartBars({
               className={cls}
               onClick={tap ? () => tap(b.key) : undefined}
               role={tap ? "button" : undefined}
+              aria-label={tap ? hintOf(b) : undefined}
               tabIndex={tap ? 0 : undefined}
               onKeyDown={
                 tap
@@ -283,7 +288,9 @@ export default function ChartBars({
           </g>
         ) : null}
         {/* text last: bars, then the target line, then every label, so the
-            line never strikes through a value. Taps fall through to the bar. */}
+            line never strikes through a value. Taps fall through to the bar.
+            Each bar's own name already says its value and day, so those
+            labels are hidden from a screen reader; the target's is not. */}
         <g pointerEvents="none">
           {bars.map((b, i) => {
             const v = b.value;
@@ -294,6 +301,7 @@ export default function ChartBars({
               <text
                 key={b.key}
                 className={`chart-value${has ? "" : " none"}`}
+                aria-hidden="true"
                 x={barX(i) + barW / 2}
                 y={(has ? y(v) : y(0)) - 4}
                 textAnchor="middle"
@@ -307,6 +315,7 @@ export default function ChartBars({
               <text
                 key={b.key}
                 className={`chart-xlabel${b.active ? " today" : ""}`}
+                aria-hidden="true"
                 x={barX(i) + barW / 2}
                 y={H - 6}
                 textAnchor="middle"

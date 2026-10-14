@@ -5,6 +5,7 @@ import { loadDetector } from "./barcodeDetector";
 import { ArrowRight } from "./icons";
 import { SheetClose } from "./SheetHeader";
 import { useSheetBack } from "./sheetBack";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   /** true while the parent's lookup / from-food round trip is in flight —
@@ -64,10 +65,11 @@ export default function BarcodeScanner({
   onSearchInstead,
   onClose,
 }: Props) {
+  // focus in on open, back to the opener on close; also what useSheetBack ranks
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const sheetRef = useRef<HTMLDivElement>(null);
   const [camera, setCamera] = useState<Camera>("starting");
   const [attempt, setAttempt] = useState(0); // bump → re-request the camera
   const [torch, setTorch] = useState<boolean | null>(null); // null = none
@@ -203,14 +205,16 @@ export default function BarcodeScanner({
     <>
       <div className="sheet-backdrop" onClick={onClose} />
       <div
+        ref={sheetRef}
         className="sheet scan-sheet"
         role="dialog"
+        aria-modal="true"
         aria-label="Scan barcode"
-        ref={sheetRef}
+        tabIndex={-1}
       >
         <div className="sheet-head">
           <div className="sheet-head-row">
-            <span className="sheet-title">Scan barcode</span>
+            <h2 className="sheet-title">Scan barcode</h2>
             <SheetClose onClick={onClose} />
           </div>
         </div>
@@ -302,7 +306,9 @@ export default function BarcodeScanner({
 
           {notice ? (
             <>
-              <p className="sheet-error">{notice}</p>
+              <p className="sheet-error" role="alert">
+                {notice}
+              </p>
               {onSearchInstead ? (
                 <div className="chips">
                   <button

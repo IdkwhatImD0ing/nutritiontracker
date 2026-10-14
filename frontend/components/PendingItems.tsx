@@ -199,44 +199,50 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
 
   if (idle) return null;
 
+  // The wrap is the live region, not each pill: a count change or a pill
+  // turning into "needs attention" is announced, not just the first mount.
+  // The Find it sheet sits beside it, not in it: a live region would read
+  // out the whole sheet.
   return (
-    <div className="pending-wrap">
-      {waiting.length > 0 ? (
-        <div className="pending-pill" role="status">
-          <span className="spinner" />
-          {waiting.length === 1 ? (
-            <>Adding &ldquo;{waiting[0].phrase}&rdquo;…</>
-          ) : (
-            `${waiting.length} pending items…`
-          )}
-        </div>
-      ) : null}
-      {failed.map((f) => (
-        <div key={f.item_index} className="pending-pill failed" role="status">
-          <span>Couldn&rsquo;t add &ldquo;{f.phrase}&rdquo;</span>
-          <button
-            type="button"
-            className="pending-find"
-            onClick={() => {
-              setFindError(null);
-              setFinding(f);
-            }}
-          >
-            Find it
-          </button>
-          <button
-            type="button"
-            aria-label="Dismiss"
-            onClick={() =>
-              setFailed((prev) =>
-                prev.filter((x) => x.item_index !== f.item_index),
-              )
-            }
-          >
-            <Close />
-          </button>
-        </div>
-      ))}
+    <>
+      <div className="pending-wrap" role="status">
+        {waiting.length > 0 ? (
+          <div className="pending-pill">
+            <span className="spinner" />
+            {waiting.length === 1 ? (
+              <>Adding &ldquo;{waiting[0].phrase}&rdquo;…</>
+            ) : (
+              `${waiting.length} pending items…`
+            )}
+          </div>
+        ) : null}
+        {failed.map((f) => (
+          <div key={f.item_index} className="pending-pill failed">
+            <span>Couldn&rsquo;t add &ldquo;{f.phrase}&rdquo;</span>
+            <button
+              type="button"
+              className="pending-find"
+              onClick={() => {
+                setFindError(null);
+                setFinding(f);
+              }}
+            >
+              Find it
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() =>
+                setFailed((prev) =>
+                  prev.filter((x) => x.item_index !== f.item_index),
+                )
+              }
+            >
+              <Close />
+            </button>
+          </div>
+        ))}
+      </div>
       <SheetPresence>
         {finding ? (
           <ManualSearchSheet
@@ -248,6 +254,6 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
           />
         ) : null}
       </SheetPresence>
-    </div>
+    </>
   );
 }

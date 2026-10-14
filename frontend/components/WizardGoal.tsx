@@ -19,6 +19,7 @@ import {
   type GoalResult,
   type Sex,
 } from "./WizardMath";
+import { useSheetFocus } from "./useSheetFocus";
 import "@/app/library/m3.css";
 
 type Props = {
@@ -119,6 +120,7 @@ function nearestRate(kg: number | undefined): number {
  *  kcal + macro targets, every number shown and editable before saving to
  *  settings. Re-runnable from Settings any time. */
 export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const init = initial ?? {};
   const [step, setStep] = useState(0);
   const [units, setUnits] = useState<Units>(init.units ?? "imperial");
@@ -298,7 +300,14 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
   }, [onCancel]);
 
   return (
-    <div className="wizard" role="dialog" aria-label="Goal wizard">
+    <div
+      ref={sheetRef}
+      className="wizard"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Goal wizard"
+      tabIndex={-1}
+    >
       <div className="wizard-inner">
         <div className="top-bar wizard-top">
           {onCancel ? (
@@ -321,12 +330,13 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
               you burn in a day. Every target you get is editable.
             </p>
 
-            <div className="m3-seg" role="radiogroup" aria-label="Units">
+            <div className="m3-seg" role="group" aria-label="Units">
               {(["imperial", "metric"] as Units[]).map((u) => (
                 <button
                   key={u}
                   type="button"
                   className={units === u ? "active" : undefined}
+                  aria-pressed={units === u}
                   onClick={() => switchUnits(u)}
                 >
                   {u === "imperial" ? "lb · ft" : "kg · cm"}
@@ -334,12 +344,13 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
               ))}
             </div>
 
-            <div className="m3-seg" role="radiogroup" aria-label="Sex">
+            <div className="m3-seg" role="group" aria-label="Sex">
               {(["male", "female"] as Sex[]).map((s) => (
                 <button
                   key={s}
                   type="button"
                   className={sex === s ? "active" : undefined}
+                  aria-pressed={sex === s}
                   onClick={() => setSex(s)}
                 >
                   {s === "male" ? "Male" : "Female"}
@@ -529,7 +540,11 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
             ) : null}
             {goalProblem ? <p className="m3-note">{goalProblem}</p> : null}
 
-            {error ? <p className="sheet-error">{error}</p> : null}
+            {error ? (
+              <p className="sheet-error" role="alert">
+                {error}
+              </p>
+            ) : null}
 
             <div className="wizard-foot">
               <button
@@ -632,7 +647,11 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
               </p>
             ) : null}
 
-            {error ? <p className="sheet-error">{error}</p> : null}
+            {error ? (
+              <p className="sheet-error" role="alert">
+                {error}
+              </p>
+            ) : null}
 
             <div className="wizard-foot">
               <button

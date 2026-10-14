@@ -7,6 +7,7 @@ import { foodName } from "@/lib/labels";
 import { Check } from "./icons";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   alias: AliasRow;
@@ -27,6 +28,7 @@ export default function LibraryAliasSheet({
   onDeleted,
   onClose,
 }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [pinned, setPinned] = useState(alias.pinned);
   const [servingId, setServingId] = useState(alias.default_serving_id ?? "");
   const [qtyText, setQtyText] = useState(
@@ -100,7 +102,14 @@ export default function LibraryAliasSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Edit phrase">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit phrase"
+        tabIndex={-1}
+      >
         <SheetHeader title={`“${alias.alias_norm}”`} onClose={onClose} />
         <p className="subsheet-hint">
           Logs as {foodName(alias.food_name)}
@@ -152,7 +161,7 @@ export default function LibraryAliasSheet({
             <>
               {hasDefault ? (
                 <div className="stepper num" style={{ marginBottom: 8 }}>
-                  <button type="button" aria-label="Less" onClick={() => step(-0.5)}>
+                  <button type="button" aria-label="Decrease quantity" onClick={() => step(-0.5)}>
                     −
                   </button>
                   <input
@@ -161,7 +170,7 @@ export default function LibraryAliasSheet({
                     inputMode="decimal"
                     aria-label="Default quantity"
                   />
-                  <button type="button" aria-label="More" onClick={() => step(0.5)}>
+                  <button type="button" aria-label="Increase quantity" onClick={() => step(0.5)}>
                     +
                   </button>
                 </div>
@@ -170,6 +179,7 @@ export default function LibraryAliasSheet({
                 <button
                   type="button"
                   className={!hasDefault ? "active" : undefined}
+                  aria-pressed={!hasDefault}
                   onClick={() => setServingId("")}
                 >
                   <span>No default — use my recent portions</span>
@@ -180,6 +190,7 @@ export default function LibraryAliasSheet({
                     key={s.serving_id}
                     type="button"
                     className={s.serving_id === servingId ? "active" : undefined}
+                    aria-pressed={s.serving_id === servingId}
                     onClick={() => setServingId(s.serving_id)}
                   >
                     <span>
@@ -199,7 +210,11 @@ export default function LibraryAliasSheet({
         </div>
 
         <div className="subsheet-foot">
-          {error ? <p className="sheet-error">{error}</p> : null}
+          {error ? (
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
+          ) : null}
 
           <button
             type="button"

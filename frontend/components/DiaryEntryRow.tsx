@@ -162,20 +162,10 @@ export default function DiaryEntryRow({
           it, and the chevron says so. The name used to be a link into food
           detail inside this toggle, and a long name covered most of the
           row, so a tap meant to expand drilled in instead; the drill-in is
-          now the expanded panel's "Food details" row. The keys give the
-          keyboard the same way in, since the name link no longer does. */}
-      <div
-        className="row-main"
-        onClick={onToggle}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault(); // Space would scroll the page
-          onToggle();
-        }}
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-      >
+          now the expanded panel's "Food details" row. The row is a tap
+          target, not a button: the kcal figure is the expander's button for
+          keyboard and VoiceOver, and its click bubbles to this handler. */}
+      <div className="row-main" onClick={onToggle}>
         <div className="row-info">
           <div className="row-name">
             <span>{name}</span>
@@ -191,11 +181,17 @@ export default function DiaryEntryRow({
             {portion}
           </div>
         </div>
-        <div className="row-kcal num">
+        <button
+          type="button"
+          className="row-kcal num"
+          aria-expanded={expanded}
+          aria-label={`${name}, ${fmt.format(m.kcal)} kcal, details`}
+        >
           <span className="n">{fmt.format(m.kcal)}</span>
           <span className="u">kcal</span>
-        </div>
-        <span className="chev" aria-hidden="true" />
+          {/* inside the button, so it turns with the button's aria-expanded */}
+          <span className="chev" aria-hidden="true" />
+        </button>
       </div>
 
       {/* §3.4a: visible, clickable citation — collapsed or expanded. */}
