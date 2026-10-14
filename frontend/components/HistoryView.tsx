@@ -121,6 +121,7 @@ function ThreeDays({
                   ? `${d.entries} ${d.entries === 1 ? "entry" : "entries"}`
                   : "nothing logged"}
               </span>
+              <span className="chev" aria-hidden="true" />
             </div>
             <div className="hcard-kcal num">
               <strong>{fmt.format(d.kcal)}</strong>

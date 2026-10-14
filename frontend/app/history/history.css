@@ -93,9 +93,7 @@
   font: inherit;
   color: inherit;
   box-shadow: var(--shadow-card);
-  transition:
-    border-color 120ms,
-    transform 120ms var(--ease);
+  transition: border-color 120ms;
 }
 
 .hcard:focus-visible {
@@ -109,8 +107,10 @@
   }
 }
 
+/* pressed: a surface step, which a finger can see — a 1% scale it couldn't
+   (the saved-meal cards, m3.css, press the same way) */
 .hcard:active {
-  transform: scale(0.99);
+  background: var(--surface-2);
 }
 
 .hcard.empty {
@@ -137,6 +137,12 @@
 .hcard-entries {
   font-size: 0.74rem;
   color: var(--faint);
+  margin-left: auto; /* the count and the chevron sit together on the right */
+}
+
+.hcard-head .chev {
+  align-self: center;
+  margin-left: 10px;
 }
 
 .hcard-kcal {

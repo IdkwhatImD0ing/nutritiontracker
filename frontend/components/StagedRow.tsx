@@ -1,6 +1,7 @@
 "use client";
 
 import type { Meal, StagedItem } from "@/lib/api";
+import { Pencil } from "./icons";
 import { readEstimate } from "./PhotoApi";
 import "@/app/photo.css";
 
@@ -117,6 +118,9 @@ export default function StagedRow({
                 }}
               >
                 {name}
+                {/* the edit cue; the word joiner keeps it on the last line */}
+                {"\u2060"}
+                <Pencil className="name-edit" />
               </button>
             ) : (
               name

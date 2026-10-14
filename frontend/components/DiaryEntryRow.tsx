@@ -40,9 +40,10 @@ type Props = {
 
 /** One committed diary row (§7.1 row display rule applied to the diary):
  *  the headline number is calories; tapping expands to protein/carbs/fat,
- *  then every micro the snapshot carries; web-sourced rows show the
- *  citation as a visible, clickable link (§3.4a); photo-portion rows carry
- *  an "estimate" badge (M4); the portion — qty, and which serving it counts,
+ *  then every micro the snapshot carries, and a "Food details" row (§7.4's
+ *  drill-in); web-sourced rows show the citation as a visible, clickable
+ *  link (§3.4a); photo-portion rows carry an "estimate" badge (M4); the
+ *  portion — qty, and which serving it counts,
  *  behind "Change serving" — is editable and the row is deletable (§5
  *  `/api/entries/:id`). The serving list costs a GET /api/foods/:id whose
  *  FoodDetail carries the whole provider payload, so it is fetched on that
@@ -81,14 +82,15 @@ export default function DiaryEntryRow({
     };
   }, [picking, foodId, servings, servingsFailed]);
 
-  // A collapsed row drops the draft: an abandoned qty or serving must not sit
-  // there armed behind a closed row. The fetched list survives — it is this
-  // food's, not this draft's.
+  // A collapsed row drops the draft: an abandoned qty or serving — or a
+  // delete confirm — must not sit there armed behind a closed row. The
+  // fetched list survives — it is this food's, not this draft's.
   useEffect(() => {
     if (expanded) return;
     setQtyText(null);
     setServingId(null);
     setPicking(false);
+    setConfirmDelete(false);
   }, [expanded]);
 
   const m = entry.macros;
@@ -127,29 +129,28 @@ export default function DiaryEntryRow({
   };
 
   return (
-    <div className={`row diary-row${entry.web_source ? " web" : ""}`}>
+    <div className="row diary-row">
+      {/* One target (owner, 2026-10-13): a tap anywhere on the row expands
+          it, and the chevron says so. The name used to be a link into food
+          detail inside this toggle, and a long name covered most of the
+          row, so a tap meant to expand drilled in instead; the drill-in is
+          now the expanded panel's "Food details" row. The keys give the
+          keyboard the same way in, since the name link no longer does. */}
       <div
         className="row-main"
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault(); // Space would scroll the page
+          onToggle();
+        }}
         role="button"
+        tabIndex={0}
         aria-expanded={expanded}
       >
         <div className="row-info">
           <div className="row-name">
-            {/* §7.4: food detail is a drill-in from any diary row. The row's
-                own tap still toggles the expander. prefetch off: this renders
-                once per diary row, and /library/food/[id] is a dynamic
-                auth-gated route, so the default viewport prefetch costs a
-                middleware invocation per row on screen for a page the user
-                only reaches by deliberately tapping the name. */}
-            <Link
-              className="name-btn food-name"
-              href={`/library/food/${encodeURIComponent(entry.food.id)}`}
-              prefetch={false}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {entry.food.name}
-            </Link>
+            <span className="food-name">{entry.food.name}</span>
             {entry.web_source ? <span className="badge web">web</span> : null}
             {/* M4: the portion was read off a photo (and confirmed before
                 commit) — flagged the way the staged row was. */}
@@ -166,6 +167,7 @@ export default function DiaryEntryRow({
           <span className="n">{fmt.format(m.kcal)}</span>
           <span className="u">kcal</span>
         </div>
+        <span className="chev" aria-hidden="true" />
       </div>
 
       {/* §3.4a: visible, clickable citation — collapsed or expanded. */}
@@ -219,6 +221,20 @@ export default function DiaryEntryRow({
               </span>
             ) : null}
           </div>
+
+          {/* §7.4: food detail is a drill-in from any diary row — from here,
+              one row down, so the row's own tap only ever expands it.
+              prefetch off: /library/food/[id] is a dynamic auth-gated route,
+              so a prefetch costs a middleware invocation for a page the user
+              only reaches by deliberately tapping this. */}
+          <Link
+            className="diary-food-link"
+            href={`/library/food/${encodeURIComponent(entry.food.id)}`}
+            prefetch={false}
+          >
+            Food details
+            <span className="chev" aria-hidden="true" />
+          </Link>
 
           <div className="diary-edit">
             {/* a disclosure, not a one-way door: the same button closes the
@@ -305,30 +321,38 @@ export default function DiaryEntryRow({
                 +
               </button>
             </div>
-            <div className="diary-actions">
-              <button
-                type="button"
-                className="diary-save"
-                disabled={busy || !dirty}
-                onClick={() => {
-                  void onSave({
-                    qty: draftNum,
-                    ...(servingMoved ? { serving_id: chosenId } : {}),
-                  }).then((saved) => {
-                    // Only a landed PATCH hands the row back to the entry.
-                    // Clearing eagerly flashed the old portion back for the
-                    // length of the round trip, and threw the user's choice
-                    // away exactly when a refusal asked them to change it.
-                    if (!saved) return;
-                    setQtyText(null);
-                    setServingId(null);
-                    setPicking(false);
-                  });
-                }}
-              >
-                {busy ? <span className="spinner" /> : null}
-                Save portion
-              </button>
+            {/* While a delete is being confirmed the only choices are delete
+                or keep: Save steps out (its busy spinner moves to the
+                delete), and the two share the row equally, one line each
+                even at 320 (diary.css). */}
+            <div
+              className={`diary-actions${confirmDelete ? " confirming" : ""}`}
+            >
+              {confirmDelete ? null : (
+                <button
+                  type="button"
+                  className="diary-save"
+                  disabled={busy || !dirty}
+                  onClick={() => {
+                    void onSave({
+                      qty: draftNum,
+                      ...(servingMoved ? { serving_id: chosenId } : {}),
+                    }).then((saved) => {
+                      // Only a landed PATCH hands the row back to the entry.
+                      // Clearing eagerly flashed the old portion back for the
+                      // length of the round trip, and threw the user's choice
+                      // away exactly when a refusal asked them to change it.
+                      if (!saved) return;
+                      setQtyText(null);
+                      setServingId(null);
+                      setPicking(false);
+                    });
+                  }}
+                >
+                  {busy ? <span className="spinner" /> : null}
+                  Save portion
+                </button>
+              )}
               {confirmDelete ? (
                 <>
                   <button
@@ -337,6 +361,7 @@ export default function DiaryEntryRow({
                     disabled={busy}
                     onClick={onDelete}
                   >
+                    {busy ? <span className="spinner" /> : null}
                     Really delete
                   </button>
                   <button

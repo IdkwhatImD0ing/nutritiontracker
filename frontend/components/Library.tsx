@@ -267,23 +267,24 @@ export default function Library() {
         ) : null}
         {groups.map((g) => (
           <div className="m3-card" key={g.food_id}>
-            <div className="m3-card-head">
-              <div className="m3-card-title food-name">
-                {/* prefetch off: this list is unbounded, and /library/food/[id]
-                    is a dynamic auth-gated route, so the default viewport
-                    prefetch would burn a middleware invocation per learned food
-                    that scrolls past. The drill-in is a deliberate tap, not a
-                    likely next navigation. */}
-                <Link
-                  href={`/library/food/${encodeURIComponent(g.food_id)}`}
-                  prefetch={false}
-                >
-                  {g.food_name}
-                </Link>
+            {/* The whole upper card is the drill-in, not just the name text.
+                prefetch off: this list is unbounded, and /library/food/[id]
+                is a dynamic auth-gated route, so the default viewport
+                prefetch would burn a middleware invocation per learned food
+                that scrolls past. The drill-in is a deliberate tap, not a
+                likely next navigation. */}
+            <Link
+              className="m3-card-link"
+              href={`/library/food/${encodeURIComponent(g.food_id)}`}
+              prefetch={false}
+            >
+              <div className="m3-card-head">
+                <div className="m3-card-title food-name">{g.food_name}</div>
+                <span className="m3-card-stat num">{g.total}×</span>
+                <span className="chev" aria-hidden="true" />
               </div>
-              <span className="m3-card-stat num">{g.total}×</span>
-            </div>
-            {g.brand ? <div className="m3-card-sub">{g.brand}</div> : null}
+              {g.brand ? <div className="m3-card-sub">{g.brand}</div> : null}
+            </Link>
             <div className="chips">
               {g.aliases.map((a) => (
                 <button

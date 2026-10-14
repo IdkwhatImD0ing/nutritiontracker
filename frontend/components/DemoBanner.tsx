@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { DemoQuota } from "./MeApi";
+import { SheetClose } from "./SheetHeader";
 
 /** Two dismissals, because the strip says two different things: the quota
  *  ("fresh") and, once it is spent, when the next log opens ("spent"). A
@@ -56,14 +57,7 @@ export default function DemoBanner({ demo }: Props) {
         Demo account — {demo.limit} {demo.limit === 1 ? "log" : "logs"} per day
         {spent ? ` · next log ${nextLogAt(demo.resets_at)}` : ""}
       </span>
-      <button
-        type="button"
-        className="sheet-close"
-        aria-label="Dismiss"
-        onClick={dismiss}
-      >
-        ✕
-      </button>
+      <SheetClose label="Dismiss" onClick={dismiss} />
     </div>
   );
 }

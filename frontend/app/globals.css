@@ -177,13 +177,24 @@ button,
 summary,
 .tabbar a,
 .nav-back,
-a.name-btn,
+.diary-food-link,
 a.m3-link-btn,
-.m3-card-title a {
+.m3-card-link {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+}
+
+/* Headings and big figures are display, not prose: a long press on them
+   raises no loupe or Copy bubble. Not the whole .shell — older iOS can then
+   refuse typing in a field, and chat replies and citations stay copyable. */
+.brand h1,
+.tracker,
+.weight-card,
+.diary-meal-head {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Pressed. The tap highlight is off (body), so a control answers a touch
@@ -241,6 +252,9 @@ a.m3-link-btn,
   .account-signout,
   .diary-actions button,
   .diary-stepper button,
+  .row-undo,
+  .auth-alt a,
+  .auth-card button.auth-linkish,
   .web-cite a {
     position: relative;
   }
@@ -266,6 +280,10 @@ a.m3-link-btn,
   .account-signout::before,
   .diary-actions button::before,
   .diary-stepper button::before,
+  .row-undo::before,
+  .auth-alt a::before,
+  .auth-card button.auth-linkish::before,
+  .web-cite a::before /* clipped to the line's padding (.web-cite) */,
   .scan-torch::before /* already absolute: its own containing block */ {
     content: "";
     position: absolute;
@@ -1418,6 +1436,42 @@ a {
   }
 }
 
+/* A removed row inside its Undo window (§7.1): one quiet line where the row
+   was, until the window closes or Undo brings the row back. */
+.row.row-removed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.row-removed-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-undo {
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.row-undo:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 .row.searching .row-name {
   color: var(--muted);
 }
@@ -1460,19 +1514,32 @@ a {
   color: #8fd0e6;
 }
 
+/* The padding stands in for the old 4px top margin, and the -8px bottom
+   margin cancels the rest, so the line sits where it did. It is there for
+   the link's hit area, which overflow (the ellipsis) clips to this box: 4px
+   up, never into the row above, and 8px down. */
 .web-cite {
   font-size: 0.78rem;
   color: var(--muted);
-  margin: 4px 0 0;
+  margin: 0 0 -8px;
+  padding: 4px 0 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Visible and clickable is the requirement, hyperlink blue isn't: a quiet
+   sage link like the portion pill, and ↗ says it leaves the app. The second
+   `content` keeps the arrow out of the link's spoken name where supported. */
 .web-cite a {
-  color: #8fd0e6;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  color: var(--sage);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.web-cite a::after {
+  content: " \2197";
+  content: " \2197" / "";
 }
 
 .spinner {
@@ -1618,7 +1685,9 @@ a {
   text-underline-offset: 3px;
 }
 
-/* tappable food name → §7.1 edit sheet (BACKLOG 23) */
+/* tappable food name → §7.1 edit sheet (BACKLOG 23). Its cue is a small
+   trailing pencil (owner, 2026-10-13): the dotted underline it replaces read
+   as a web link, under every name in the list. */
 
 .name-btn {
   background: none;
@@ -1628,10 +1697,14 @@ a {
   color: inherit;
   text-align: left; /* a wrapped name's lines start flush, not centred (button UA default) */
   cursor: pointer;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: var(--faint);
-  text-underline-offset: 3px;
+}
+
+.name-btn .name-edit {
+  width: 0.8em;
+  height: 0.8em;
+  margin-left: 0.35em;
+  vertical-align: -0.05em;
+  color: var(--faint);
 }
 
 /* A cached food's display name is stored lowercase (the adapters' trigram
