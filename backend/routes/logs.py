@@ -314,7 +314,7 @@ _LATE_LUNCH_END = "17:00"
 
 async def infer_meal(captured_at: datetime, tz: str | None) -> Meal:
     """§7.2: configurable clock windows from settings, corrected by today's
-    diary — food within 45 minutes of the last entry joins that entry's meal,
+    diary — food within 45 minutes of today's last entry joins that entry's meal,
     and a dinner-window capture before 17:00 with no lunch or dinner yet
     today is a late lunch. No model involved."""
     row = await db.fetchone("SELECT value FROM settings WHERE key = 'meal_windows'")
@@ -337,11 +337,14 @@ async def infer_meal(captured_at: datetime, tz: str | None) -> Meal:
 
     # Diary time (logged_at), not capture time: a back-dated breakfast spoken
     # at 12:38 sits at 08:00 and must not pull a 12:46 lunch into breakfast.
+    # A sitting never crosses midnight: a 00:10 bite joining last night's
+    # dinner would be today's "dinner" and switch the late lunch off all day.
     diary = await db.fetchone(
         """
         SELECT
           (SELECT meal FROM entries
-            WHERE logged_at > %(sitting)s AND logged_at <= %(at)s
+            WHERE logged_at > %(sitting)s AND logged_at >= %(day)s
+              AND logged_at <= %(at)s
             ORDER BY logged_at DESC LIMIT 1) AS sitting_meal,
           EXISTS (SELECT 1 FROM entries
             WHERE logged_at >= %(day)s AND logged_at < %(at)s

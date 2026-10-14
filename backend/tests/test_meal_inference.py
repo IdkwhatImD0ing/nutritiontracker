@@ -119,3 +119,18 @@ def test_same_sitting_reads_diary_time_not_capture_time():
             return noon, dessert, midnight
 
     assert asyncio.run(run()) == (Meal.lunch, Meal.dinner, Meal.snack)
+
+
+def test_a_sitting_never_crosses_midnight():
+    """A 00:10 bite 20 minutes after a 23:50 dinner entry is a snack on the
+    new day, so that day's first food after lunch closes is still lunch."""
+
+    async def run():
+        async with isolated_db() as conn:
+            await _entry(conn, at(15, "23:50"), "dinner")
+            after_midnight = await infer_meal(at(16, "00:10"), TZ)
+            await _entry(conn, at(16, "00:10"), after_midnight.value)
+            late_lunch = await infer_meal(at(16, "15:40"), TZ)
+            return after_midnight, late_lunch
+
+    assert asyncio.run(run()) == (Meal.snack, Meal.lunch)
