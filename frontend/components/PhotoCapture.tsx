@@ -123,12 +123,13 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
   const whereRef = useRef<Fix | null>(null);
   const { mounted, closing } = usePresence(open);
 
-  // A reopened sheet starts clean.
+  // A reopened sheet starts clean — reset once it is gone, not as it closes,
+  // so it slides out showing what it showed.
   useEffect(() => {
-    if (open) return;
+    if (mounted) return;
     setPhase("pick");
     setError(null);
-  }, [open]);
+  }, [mounted]);
 
   // Where the phone is, asked when the sheet opens rather than on the camera
   // tap: the permission prompt then comes before the camera instead of over

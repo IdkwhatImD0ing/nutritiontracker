@@ -1879,13 +1879,15 @@ a {
   background: var(--surface);
 }
 
+/* the sheet's 14px gap high, so at rest it lies over the gap and nothing
+   else */
 .subsheet-foot::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
   bottom: 100%;
-  height: 16px;
+  height: 14px;
   background: linear-gradient(transparent, var(--surface));
   pointer-events: none;
 }

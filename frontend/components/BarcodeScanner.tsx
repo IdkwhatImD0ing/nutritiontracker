@@ -136,7 +136,9 @@ export default function BarcodeScanner({
       // (no attempts run while busy), so a "not found" that took a second
       // cannot re-submit the code still in frame on the first dropped frame.
       const tick = async () => {
-        if (cancelled) return;
+        // closed but still sliding out (useSheetPresence): a code that comes
+        // into view now must not log anything
+        if (cancelled || video.closest("[data-closing]")) return;
         // readyState ≥ HAVE_CURRENT_DATA: detect() throws on a frameless video
         if (!busyRef.current && video.readyState >= 2) {
           let code: string | undefined;
@@ -149,7 +151,9 @@ export default function BarcodeScanner({
             missingSince = null;
             if (code !== last) {
               last = code;
-              if (!cancelled) onCodeRef.current(code);
+              if (!cancelled && !video.closest("[data-closing]")) {
+                onCodeRef.current(code);
+              }
             }
           } else if (last) {
             missingSince ??= performance.now();

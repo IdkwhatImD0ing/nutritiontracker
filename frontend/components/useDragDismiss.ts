@@ -72,12 +72,15 @@ export function useDragDismiss(onClose: () => void, canDismiss = true) {
       // screen. Checked a beat later, once React has had time to unmount a
       // sheet that did close — sooner, it would flash back for a frame. One
       // that did close but is still playing its exit (useSheetPresence) stays
-      // where the pull left it, off screen.
-      setTimeout(() => {
-        if (sheet.isConnected && !sheet.closest("[data-closing]")) {
-          sheet.style.translate = "";
-        }
-      }, SETTLE_MS);
+      // where the pull left it, off screen, and is looked at again: gone by
+      // then, or reopened mid-exit (an `open`-prop sheet keeps its element),
+      // in which case it comes back up.
+      const settle = () => {
+        if (!sheet.isConnected) return;
+        if (sheet.closest("[data-closing]")) setTimeout(settle, SETTLE_MS);
+        else sheet.style.translate = "";
+      };
+      setTimeout(settle, SETTLE_MS);
     }, SETTLE_MS);
   };
 

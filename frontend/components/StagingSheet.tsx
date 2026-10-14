@@ -566,6 +566,10 @@ export default function StagingSheet({
   const drag = useDragDismiss(close);
   const sheetRef = useRef<HTMLDivElement>(null);
   useSheetBack(sheetRef, close, !docked);
+  // an open meal picker sits above the list: Escape and Back shut it first,
+  // rather than discarding the rows under it
+  const pickerRef = useRef<HTMLDivElement>(null);
+  useSheetBack(pickerRef, () => setMealPickerOpen(false), mealPickerOpen);
 
   const visible = items.filter((i) => !removed.has(i.item_index));
   const totalKcal = visible.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
@@ -659,7 +663,7 @@ export default function StagingSheet({
     <SheetClose label="Discard these items" onClick={close} />
   );
   const mealPicker = mealPickerOpen ? (
-    <div className="meal-picker">
+    <div className="meal-picker" ref={pickerRef}>
       {MEALS.map((m) => (
         <button
           key={m}
