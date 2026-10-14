@@ -2024,6 +2024,12 @@ a {
   cursor: default;
 }
 
+/* after a demo 429 on a pick: every row would meet it again (the notice
+   above says why), so they read as off, not just busy */
+.search-results button.refused {
+  opacity: 0.5;
+}
+
 .search-results button[aria-busy="true"] {
   position: relative;
   padding-right: 40px;
@@ -2370,6 +2376,13 @@ a {
   color: var(--muted);
 }
 
+/* a field's hint under its input ("At least 8 characters"), in sentence case */
+.auth-card label .subsheet-hint {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
 .auth-card input {
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -2382,6 +2395,11 @@ a {
 
 .auth-card input:focus {
   border-color: var(--accent-line);
+}
+
+/* the field the error line is about; after :focus, which it is moved to */
+.auth-card input[aria-invalid="true"] {
+  border-color: var(--red);
 }
 
 .auth-card button[type="submit"] {
@@ -2411,6 +2429,9 @@ a {
   color: var(--red);
   font-size: 0.85rem;
   margin: 0;
+  /* rendered empty until there is an error: one line (the body's 1.4
+     line-height) is held, so the centred card doesn't jump when one arrives */
+  min-height: 1.4em;
 }
 
 .auth-alt {
@@ -2432,7 +2453,8 @@ a {
   color: var(--mint);
   padding: 0;
   margin-top: 0;
-  min-height: 0;
+  /* a full finger's height; the text stays a line */
+  min-height: 44px;
   box-shadow: none;
   font-size: 0.82rem;
   font-weight: 500;
@@ -2584,6 +2606,7 @@ a {
 
   .shell.today > .brand,
   .shell.today > .demo-banner,
+  .shell.today > .offline-note,
   .shell.day > .brand {
     grid-column: 1 / -1;
   }

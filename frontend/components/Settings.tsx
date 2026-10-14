@@ -173,26 +173,16 @@ export default function Settings() {
     }
   };
 
-  if (wizard && form) {
-    return (
-      <WizardGoal
-        initial={form.body}
-        onDone={(s) => {
-          load(s);
-          setWizard(false);
-          flashStatus("Targets saved.");
-        }}
-        onSkip={() => setWizard(false)}
-      />
-    );
-  }
-
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const body = form ? describeBody(form.body) : null;
   const noTargets = form != null && targetsEmpty(form);
 
+  // The wizard is an overlay over the page, not in its place: the page keeps
+  // its scroll and its cards (no refetch) for the return. inert keeps Tab
+  // and the screen reader out of what it covers.
   return (
-    <main className="shell settings">
+    <>
+    <main className="shell settings" inert={wizard && form != null}>
       <header className="brand">
         <h1>Settings</h1>
       </header>
@@ -434,5 +424,17 @@ export default function Settings() {
         </div>
       </section>
     </main>
+    {wizard && form ? (
+      <WizardGoal
+        initial={form.body}
+        onDone={(s) => {
+          load(s);
+          setWizard(false);
+          flashStatus("Targets saved.");
+        }}
+        onSkip={() => setWizard(false)}
+      />
+    ) : null}
+    </>
   );
 }

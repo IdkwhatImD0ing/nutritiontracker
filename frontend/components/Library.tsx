@@ -16,6 +16,7 @@ import LibraryAliasSheet from "./LibraryAliasSheet";
 import LibraryMealSheet from "./LibraryMealSheet";
 import Skeleton from "./Skeleton";
 import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
+import { OFFLINE_NOTE, useOnline } from "./useOnline";
 
 type FoodGroup = {
   food_id: string;
@@ -101,6 +102,7 @@ export default function Library() {
   const [mealSheet, setMealSheet] = useState<SavedMeal | null>(null);
   /** the same sheet with no meal = the §8.4 "build one in Library" path */
   const [newMeal, setNewMeal] = useState(false);
+  const online = useOnline();
 
   // `attempt` re-runs both reads: each section's failure notice carries a
   // Retry rather than asking for a page reload.
@@ -173,6 +175,12 @@ export default function Library() {
           {aliases ? `${groups.length} food${groups.length === 1 ? "" : "s"}` : ""}
         </span>
       </header>
+
+      {online ? null : (
+        <div className="notice warn offline-note" role="status">
+          <span>{OFFLINE_NOTE}</span>
+        </div>
+      )}
 
       <section className="m3-section lib-search" aria-label="Find a food">
         <form className="capture" onSubmit={runSearch}>

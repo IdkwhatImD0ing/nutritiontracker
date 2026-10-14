@@ -17,8 +17,8 @@ function readDismissed(): string | null {
 }
 
 /** "at 4:00 PM", or "tomorrow at 4:00 PM" when the next UTC midnight lands
- *  on a different local date than now. */
-function nextLogAt(iso: string): string {
+ *  on a different local date than now. The + sheet's spent line uses it too. */
+export function nextLogAt(iso: string): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "tomorrow";
   const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });

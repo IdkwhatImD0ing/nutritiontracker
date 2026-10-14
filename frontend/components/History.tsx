@@ -16,6 +16,7 @@ import ErrorNotice from "./ErrorNotice";
 import HistoryView from "./HistoryView";
 import Skeleton from "./Skeleton";
 import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
+import { OFFLINE_NOTE, useOnline } from "./useOnline";
 
 const KINDS: { kind: RangeKind; label: string; title: string }[] = [
   { kind: "3d", label: "3D", title: "3 days" },
@@ -55,6 +56,7 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
   const [error, setError] = useState<"unavailable" | "failed" | null>(null);
   // `attempt` re-runs the read: the failure notice carries a Retry.
   const [attempt, setAttempt] = useState(0);
+  const online = useOnline();
 
   // Installed, there is no reload and no pull-to-refresh (useOnForeground):
   // a resume on a new local date moves every range to end on the new today,
@@ -102,6 +104,12 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
           </span>
         ) : null}
       </header>
+
+      {online ? null : (
+        <div className="notice warn offline-note" role="status">
+          <span>{OFFLINE_NOTE}</span>
+        </div>
+      )}
 
       <div className="segmented" role="tablist" aria-label="Range">
         {KINDS.map((k) => (

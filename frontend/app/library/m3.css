@@ -159,7 +159,7 @@ body:has(.tabbar) .shell {
 }
 
 @media (hover: hover) {
-  .add-row:hover {
+  .add-row:hover:not(:disabled) {
     border-color: var(--line-strong);
     background: var(--surface-3);
   }
@@ -167,6 +167,13 @@ body:has(.tabbar) .shell {
 
 .add-row:active {
   transform: scale(0.985);
+}
+
+/* offline (§8.6): the lanes stay in view, the note above says why */
+.add-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
 }
 
 .add-row-icon {
@@ -622,6 +629,8 @@ body:has(.tabbar) .shell {
   z-index: 90;
   background: var(--bg);
   overflow-y: auto;
+  /* Settings stays mounted beneath it: a short step must not scroll that page */
+  overscroll-behavior: contain;
   /* the first-run takeover lands over a Today that has already painted */
   animation: fade 200ms ease-out;
 }
@@ -1082,7 +1091,8 @@ body:has(.tabbar) .shell {
     gap: 10px;
   }
 
-  .add-sheet .subsheet-head {
+  .add-sheet .subsheet-head,
+  .add-sheet > .notice {
     grid-column: 1 / -1;
   }
 
@@ -1118,6 +1128,7 @@ body:has(.tabbar) .shell {
 
   .shell.library > .brand,
   .shell.library > .sheet-error,
+  .shell.library > .offline-note,
   .shell.library > .lib-search {
     grid-column: 1 / -1;
   }

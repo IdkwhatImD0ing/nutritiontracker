@@ -4,6 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import AddSheet, { ADD_EVENT, ADD_HANDOFF_KEY, type AddLane } from "./AddSheet";
+import { nextLogAt } from "./DemoBanner";
+import { getMe, useMe } from "./MeApi";
+import { OFFLINE_NOTE, useOnline } from "./useOnline";
 import "@/app/library/m3.css";
 
 /** §7.4 navigation: Today · History · [+] · Library · Settings — five equal
@@ -79,6 +82,15 @@ export default function TabBar() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
+  const online = useOnline();
+  // A spent demo quota is said at the top of the + sheet, the lanes left
+  // usable: searching and barcode lookups are free (Bill, 2026-10-13).
+  const demo = useMe()?.demo ?? null;
+  const quotaNote =
+    demo && demo.used_today >= demo.limit
+      ? `Today's demo ${demo.limit === 1 ? "log is" : "logs are"} used. ` +
+        `Next ${nextLogAt(demo.resets_at)}. Search still works.`
+      : null;
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
@@ -122,7 +134,11 @@ export default function TabBar() {
             aria-label="Log food"
             aria-haspopup="dialog"
             aria-expanded={addOpen}
-            onClick={() => setAddOpen(true)}
+            onClick={() => {
+              setAddOpen(true);
+              // the quota moves with every log, on this device or another
+              if (demo) getMe().catch(() => {});
+            }}
           >
             <PlusIcon />
             <span className="rail-only">Log food</span>
@@ -143,6 +159,8 @@ export default function TabBar() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         onPick={pick}
+        blocked={online ? null : OFFLINE_NOTE}
+        note={quotaNote}
       />
     </>
   );

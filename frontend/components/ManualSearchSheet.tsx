@@ -19,6 +19,9 @@ type Props = {
   busy: boolean;
   /** the parent's select failure, rendered above the results */
   error?: string | null;
+  /** a pick met the demo quota's 429: every result would meet it again, so
+   *  none takes a tap (searching itself is free) */
+  refused?: boolean;
   /** the + sheet's Search lane: the whole screen (owner ruling, 2026-09-06),
    *  not the sub-sheet a staged row opens over the staging sheet */
   fullScreen?: boolean;
@@ -36,6 +39,7 @@ export default function ManualSearchSheet({
   phrase,
   busy,
   error,
+  refused = false,
   fullScreen = false,
   onSelect,
   onClose,
@@ -126,7 +130,8 @@ export default function ManualSearchSheet({
     <button
       key={`${r.source}:${r.source_id}:${i}`}
       type="button"
-      disabled={busy}
+      className={refused ? "refused" : undefined}
+      disabled={busy || refused}
       aria-busy={pickedKey === `${r.source}:${r.source_id}` || undefined}
       onClick={() => {
         setPicked(`${r.source}:${r.source_id}`);
