@@ -69,12 +69,12 @@ function ago(iso: string): string {
 }
 
 function amount(n: number | null, unit: string): string {
-  return n == null ? `— ${unit}` : `${n.toLocaleString()} ${unit}`;
+  return n == null ? `—\u00a0${unit}` : `${n.toLocaleString()}\u00a0${unit}`;
 }
 
 function DayRow({ d }: { d: OuraStatus["days"][number] }) {
   return (
-    <div className="m3-row">
+    <div className="m3-row oura-day">
       <span className="k">{dayLabel(d.day)}</span>
       <span>
         {amount(d.total_calories, "kcal burned")} · {amount(d.steps, "steps")}

@@ -312,8 +312,8 @@ export default function FoodDetail({ id }: { id: string }) {
               <span>
                 {/* no grams beside a description that states them */}
                 {[
-                  s.grams != null && !statesGrams(s.description) ? `${fmt.format(s.grams)} g` : null,
-                  typeof s.macros?.kcal === "number" ? `${fmt.format(s.macros.kcal)} kcal` : null,
+                  s.grams != null && !statesGrams(s.description) ? `${fmt.format(s.grams)}\u00a0g` : null,
+                  typeof s.macros?.kcal === "number" ? `${fmt.format(s.macros.kcal)}\u00a0kcal` : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")}

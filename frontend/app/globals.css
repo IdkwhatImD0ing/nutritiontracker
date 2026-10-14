@@ -650,6 +650,19 @@ a {
   display: block;
 }
 
+/* 320px phones: 84 + 116 + 84 needs 300px and the card has 246, so the
+   third ring was sliced off. The viewBox scales strokes and text along. */
+@media (max-width: 359px) {
+  .donut svg {
+    width: 66px;
+    height: 66px;
+  }
+  .donut.loud svg {
+    width: 92px;
+    height: 92px;
+  }
+}
+
 .donut .center-num {
   font-weight: 800;
   fill: var(--text);
@@ -773,6 +786,7 @@ a {
   font-size: 0.78rem;
   color: var(--muted);
   margin-top: 5px;
+  text-wrap: pretty;
 }
 
 .weight-empty {
@@ -895,6 +909,21 @@ a {
 .chat-foot .capture .photo-btn {
   width: 44px;
   height: 44px;
+}
+
+/* 320px phones: the field was down to ~86px of text and cut 'Tell the
+   agent…' mid-word. Tighter edges and gaps give it ~118px. */
+@media (max-width: 359px) {
+  .sheet-foot.chat-foot {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .chat-foot .capture {
+    gap: 6px;
+  }
+  .chat-foot .capture input {
+    padding: 0 10px;
+  }
 }
 
 .capture .mic-btn.rec {
@@ -1542,10 +1571,15 @@ a.commit-btn {
   margin-top: 8px;
 }
 
+/* Alternates and aliases are food names, some FDC-length, so a chip wraps:
+   a fixed radius of half its one-line height (as .portion-btn), left-aligned
+   — a capsule on one line, a rounded rectangle on two, not a centred lozenge. */
 .chip {
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 16px;
+  max-width: 100%;
+  text-align: left;
   padding: 6px 12px;
   font-size: 0.8rem;
   font-weight: 500;
@@ -1622,8 +1656,11 @@ a.commit-btn {
   gap: 5px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  /* A pill whose text can wrap takes a fixed radius of half its one-line
+     height, not 999px: a capsule on one line, a rounded rectangle on two. */
+  border-radius: 13px;
   padding: 4px 9px;
+  text-align: left;
   font-size: 0.78rem;
   color: var(--sage);
   cursor: pointer;
@@ -1761,7 +1798,7 @@ a.commit-btn {
   letter-spacing: 0.08em;
 }
 
-.detail-meal .chips {
+.detail-meal .meal-picker {
   margin-top: 6px;
 }
 
@@ -1964,11 +2001,6 @@ a.commit-btn {
   margin-left: 4px;
 }
 
-.chip.active .alias-count {
-  color: var(--on-accent);
-  opacity: 0.7;
-}
-
 /* a row that opens the search sheet, not a second empty field */
 .edit-manual-btn {
   display: flex;
@@ -2021,6 +2053,12 @@ a.commit-btn {
 .search-results button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* the food the row is on now (the edit sheet's "Foods you've used for this") */
+.search-results button.active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
 }
 
 .search-results .result-name {
@@ -2237,15 +2275,19 @@ a.commit-btn {
   gap: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  /* half the one-line height (~38px), not 999px: a spoken phrase wraps the
+     pill, and the stack keeps one shape — capsules, rounded rectangles */
+  border-radius: 19px;
   padding: 9px 14px;
   font-size: 0.82rem;
   color: var(--muted);
 }
 
+/* the ✕ stays top-right of a wrapped phrase, not mid-edge */
 .pending-pill.failed {
   color: var(--amber);
   justify-content: space-between;
+  align-items: flex-start;
 }
 
 .pending-pill.failed button {
@@ -2399,6 +2441,28 @@ a.commit-btn {
   box-shadow: none;
   font-size: 0.82rem;
   font-weight: 500;
+}
+
+/* ---------- short landscape ----------
+   A phone on its side (~390px tall). iOS home-screen apps rotate whatever
+   the manifest's portrait lock says, and the sticky header plus the tab bar
+   left ~200px of content. A cheap guard, not a landscape design (owner's
+   choice, 2026-10-13): the header scrolls away with the page (relative, so
+   its ::after hairline stays put), and sheets take the full height. The
+   tab bar's half is in m3.css. From 900px the rail and modals apply. */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 899px) {
+  .brand {
+    position: relative;
+  }
+
+  .sheet {
+    height: var(--vvh, 100dvh);
+    border-radius: 0;
+  }
+
+  .subsheet {
+    max-height: min(94dvh, calc(var(--vvh, 100dvh) - 8px));
+  }
 }
 
 /* ---------- desktop ----------
@@ -2689,7 +2753,10 @@ a.commit-btn {
   color: var(--faint);
 }
 
+/* beside the ✕, Commit pushed right: .meal-chip's own margin-left:auto
+   (the header's) left it centred between the two */
 .stage-lip .meal-chip {
+  margin-left: 0;
   margin-right: auto;
 }
 
@@ -3088,8 +3155,22 @@ a.commit-btn {
   margin: 0 0 2px;
 }
 
+/* the clock and caption take the middle; neither it nor 'Type instead'
+   wraps (they read 'Listening — tap to / stop' and 'Type / instead' in a
+   52px capsule at 375px) */
+.chat-rec > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-rec .voice-caption {
+  white-space: nowrap;
+}
+
 .chat-rec .voice-alt {
   margin: 0 0 0 auto;
+  white-space: nowrap;
+  padding: 10px 14px;
 }
 
 /* a picked shot waiting above the composer — it sends with the next line */

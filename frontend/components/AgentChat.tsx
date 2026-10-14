@@ -440,7 +440,7 @@ function ResultCard({
       <span className="result-text">
         {m.photo ? "From the photo · " : ""}
         {n} item{n === 1 ? "" : "s"} to review
-        {kcal > 0 ? ` · ${kcalFmt.format(kcal)} kcal` : ""}
+        {kcal > 0 ? ` · ${kcalFmt.format(kcal)}\u00a0kcal` : ""}
         {estimated ? (
           <span className="result-sub">
             {m.photo
@@ -754,7 +754,7 @@ export default function AgentChat({
                 <div className="voice-timer num">{mmss(elapsedMs)}</div>
                 <div className="voice-caption">
                   <span className="rec-dot" />
-                  Listening — tap to stop
+                  Listening…
                 </div>
               </div>
               <button type="button" className="voice-alt" onClick={typeInstead}>
@@ -811,7 +811,7 @@ export default function AgentChat({
                 type="text"
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                placeholder={attached ? "Ask about it — or just send it" : "Tell the agent…"}
+                placeholder={attached ? "Ask about it…" : "Tell the agent…"}
                 aria-label="Tell the agent"
                 enterKeyHint="send"
                 autoComplete="off"

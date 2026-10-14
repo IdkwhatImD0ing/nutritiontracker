@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import TallyMark from "@/components/TallyMark";
+import { CopyButton } from "@/components/docs/CopyButton";
 import { GITHUB_URL, SITE_URL } from "@/lib/site";
 import "./landing.css";
 
@@ -140,6 +141,9 @@ const TOOLS = [
 ];
 
 const KEY = "tally_live_...";
+// The two commands the terminal panel shows, as its Copy buttons copy them.
+const MCP_CMD = `claude mcp add --transport http tally ${SITE_URL}/api/mcp --header "Authorization: Bearer ${KEY}"`;
+const CURL_CMD = `curl ${SITE_URL}/api/diary -H "Authorization: Bearer ${KEY}"`;
 
 function Preview() {
   return (
@@ -312,11 +316,15 @@ export default function Welcome() {
 
           <div className="land-dev-side">
             <div className="land-term">
-              <div className="land-term-bar" aria-hidden="true">
+              <div className="land-term-bar">
                 <i />
                 <i />
                 <i />
-                <span>terminal</span>
+                <span aria-hidden="true">terminal</span>
+                <div className="land-term-copy">
+                  <CopyButton text={MCP_CMD} label="MCP command" idleText="Copy MCP" />
+                  <CopyButton text={CURL_CMD} label="curl command" idleText="Copy curl" />
+                </div>
               </div>
               {/* focusable so a keyboard can scroll the long lines */}
               <pre className="land-code" tabIndex={0}>

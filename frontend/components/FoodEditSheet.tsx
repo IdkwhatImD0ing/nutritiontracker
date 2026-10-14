@@ -97,25 +97,34 @@ export default function FoodEditSheet({
         {aliases?.length ? (
           <div>
             <div className="edit-label">Foods you&rsquo;ve used for this</div>
-            <div className="chips">
-              {aliases.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className={`chip${
-                    a.food_id === item.food?.id ? " active" : ""
-                  }`}
-                  disabled={busy}
-                  onClick={() => onPickAlias(a)}
-                >
-                  {a.pinned ? <span className="usual-dot" /> : null}
-                  {a.food_name}
-                  {a.brand ? ` — ${a.brand}` : ""}
-                  {typeof a.use_count === "number" ? (
-                    <span className="alias-count num"> {fmt0.format(a.use_count)}×</span>
-                  ) : null}
-                </button>
-              ))}
+            {/* Rows, not chips: these are whole food names, often FDC-length,
+                and a chip wrapped them into centred two-line lozenges. */}
+            <div className="search-results">
+              {aliases.map((a) => {
+                const current = a.food_id === item.food?.id;
+                const sub = [
+                  a.brand,
+                  a.pinned ? "your usual" : null,
+                  typeof a.use_count === "number"
+                    ? `logged ${fmt0.format(a.use_count)}×`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={current ? "active" : undefined}
+                    aria-pressed={current}
+                    disabled={busy}
+                    onClick={() => onPickAlias(a)}
+                  >
+                    <span className="result-name">{a.food_name}</span>
+                    {sub ? <span className="result-sub">{sub}</span> : null}
+                  </button>
+                );
+              })}
             </div>
           </div>
         ) : null}

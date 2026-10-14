@@ -104,13 +104,17 @@ function SaveMealSheet({
           are now.
         </p>
 
+        {/* Library's item layout: the portion on its own line under the
+            name, so a long serving never squeezes into '1 mug / (12 fl / oz)' */}
         <div className="m3-card">
           {entries.map((e) => (
-            <div className="m3-row" key={e.id}>
-              <span className="k">{e.food.name}</span>
-              <span className="num">
-                {portionText(e.qty, e.serving.description, e.grams)}
-              </span>
+            <div className="m3-item" key={e.id}>
+              <div className="info">
+                <div className="name">{e.food.name}</div>
+                <div className="sub num">
+                  {portionText(e.qty, e.serving.description, e.grams)}
+                </div>
+              </div>
             </div>
           ))}
         </div>

@@ -16,18 +16,6 @@
   flex-direction: column;
 }
 
-.docs-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* the small mono uppercase label: sidebar groups, eyebrows, code bars */
 .docs-label,
 .docs-eyebrow {
@@ -158,6 +146,20 @@
   min-height: 46px;
   padding: 0 22px;
   font-size: 0.95rem;
+}
+
+/* 320px phones: the header row needs ~342px. The Docs chip goes (the
+   "Browse docs" fold still reaches /docs) and the rest tightens. */
+@media (max-width: 359px) {
+  .docs-header-label {
+    display: none;
+  }
+  .docs-header-in {
+    gap: 8px;
+  }
+  .docs-btn {
+    padding: 0 10px;
+  }
 }
 
 /* ---------- body grid + sidebar ---------- */
@@ -752,14 +754,17 @@
   border-top: 1px solid var(--line);
 }
 
+/* One row: a long path wraps (overflow-wrap from .docs code) and the
+   method and scope chips stay put, the scope top-right. */
 .docs-ep-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px 10px;
 }
 
 .docs .docs-ep-path {
+  flex: 1;
+  min-width: 0;
   background: none;
   border: 0;
   padding: 0;
@@ -783,6 +788,7 @@
 
 .docs-method,
 .docs-scope {
+  flex-shrink: 0;
   font-family: var(--docs-mono);
   font-size: 0.66rem;
   font-weight: 500;
@@ -852,6 +858,16 @@
   padding: 9px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+}
+
+/* Code and headers stay whole in a table: an auto-layout table can't shrink
+   below its min-content width, so .docs-table's frame scrolls instead of
+   ["read"] breaking into letters. Comes after .docs code, which has the
+   same specificity. */
+.docs-table code,
+.docs-table th {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .docs-table td {

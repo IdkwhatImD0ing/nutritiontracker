@@ -7,8 +7,19 @@ type State = "idle" | "copied" | "failed";
 
 /** "Copy" for a code sample. The button's own text flips to "Copied"; the
  *  polite live region beside it is what a screen reader hears. `label` names
- *  what is copied, since a page has several of these buttons. */
-export function CopyButton({ text, label }: { text: string; label: string }) {
+ *  what is copied, since a page has several of these buttons; `idleText`
+ *  replaces the visible "Copy" where two buttons share one bar (the landing's
+ *  terminal panel). The live region is the global .sr-only, so the button
+ *  also works off the docs routes, where docs.css isn't loaded. */
+export function CopyButton({
+  text,
+  label,
+  idleText = "Copy",
+}: {
+  text: string;
+  label: string;
+  idleText?: string;
+}) {
   const [state, setState] = useState<State>("idle");
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -34,9 +45,9 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
         onClick={copy}
         aria-label={`Copy ${label}`}
       >
-        {said || "Copy"}
+        {said || idleText}
       </button>
-      <span className="docs-sr" aria-live="polite">
+      <span className="sr-only" aria-live="polite">
         {said}
       </span>
     </>

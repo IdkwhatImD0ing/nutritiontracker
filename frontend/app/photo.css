@@ -109,21 +109,18 @@
    caps pills stacked down the tray shout over the calorie figure, which this
    file's own rule makes the headline of a row. And they label the wrong
    thing: the food is the database's, only the AMOUNT is a guess, and the
-   amount is right there in the sub-line. So mark that: a tilde and the amber.
-   Says more, an order of magnitude quieter, and it survives a list where
-   every row is flagged. The diary keeps its badge (History mixes estimated
-   rows in among ordinary ones, so there the word is the exception). */
+   amount is right there in the sub-line. So mark that: a tilde in the pill
+   (StagedRow writes it, so a wrapped line can't strand it outside the
+   border), and the amber. Says more, an order of magnitude quieter, and it
+   survives a list where every row is flagged. The diary keeps its badge
+   (History mixes estimated rows in among ordinary ones, so there the word is
+   the exception). */
 .row.estimated .badge.estimate {
   display: none;
 }
 
 .row.estimated .row-sub {
   color: var(--amber);
-}
-
-.row.estimated .row-sub::before {
-  content: "~";
-  margin-right: 1px;
 }
 
 /* The figure is NOT muted any more. Muting it made sense when an estimate was

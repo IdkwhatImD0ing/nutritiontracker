@@ -148,7 +148,9 @@ export default function StagedRow({
                 }}
               >
                 {/* the amber pill is the flag (§7.1: one signal); the label
-                    says it for a screen reader */}
+                    says it for a screen reader. The '~' of an estimate sits
+                    inside the pill, beside the amount it qualifies. */}
+                {estimated ? "~" : ""}
                 {portion}
               </button>
             ) : searching ? (
@@ -206,7 +208,7 @@ export default function StagedRow({
         <p className="estimate-note">
           {est.estimated === "unresolved"
             ? `${est.note ? `${est.note} · ` : ""}No database match, so no numbers — search to pick a food`
-            : `Portion estimated${est.note ? ` · ${est.note}` : ""}`}
+            : est.note || "Portion estimated"}
         </p>
       ) : null}
 
@@ -312,15 +314,16 @@ export default function StagedRow({
             </div>
           ) : null}
           {/* per-item meal chip: overrides the header for mixed logs (§7.1);
-              a 4-option picker, never blind-cycle */}
+              a 4-option picker, never blind-cycle — the header's segmented
+              row, so the four never wrap 3 + 1 on a narrow phone */}
           <div className="detail-meal">
             <span className="k">Meal</span>
-            <div className="chips">
+            <div className="meal-picker">
               {MEALS.map((m) => (
                 <button
                   key={m}
                   type="button"
-                  className={`chip${item.meal === m ? " active" : ""}`}
+                  className={item.meal === m ? "active" : undefined}
                   onClick={() => onMeal(m)}
                 >
                   {m}

@@ -32,11 +32,11 @@ export type GoalResult = {
 };
 
 export const ACTIVITY: { id: Activity; label: string }[] = [
-  { id: "sedentary", label: "Sedentary — desk job, little exercise" },
-  { id: "light", label: "Light — 1–3 sessions a week" },
-  { id: "moderate", label: "Moderate — 3–5 sessions a week" },
-  { id: "active", label: "Active — 6–7 sessions a week" },
-  { id: "very_active", label: "Very active — hard daily training" },
+  { id: "sedentary", label: "Sedentary — desk job" },
+  { id: "light", label: "Light — 1–3×/week" },
+  { id: "moderate", label: "Moderate — 3–5×/week" },
+  { id: "active", label: "Active — 6–7×/week" },
+  { id: "very_active", label: "Very active — daily training" },
 ];
 
 /** Shape check for the server's answer — a differently-shaped response is an
