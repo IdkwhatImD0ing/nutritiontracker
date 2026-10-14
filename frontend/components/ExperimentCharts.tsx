@@ -88,6 +88,7 @@ export default function ExperimentCharts({ data }: { data: MetricsResponse }) {
           target={data.baseline_days_per_week}
           targetLabel="Cronometer"
           color="var(--spruce-soft)"
+          overColor={null}
           unit="days"
           showValues={weeks.length <= 14}
           labelEvery={Math.max(1, Math.ceil(weeks.length / 6))}

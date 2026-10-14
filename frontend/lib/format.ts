@@ -30,11 +30,11 @@ const UNITS: Record<string, string> = { g: "g", mg: "mg", mcg: "mcg", ug: "mcg",
 
 /** A macros key as a label and a unit: "vitamin_c_mg" → {name: "Vitamin C",
  *  unit: "mg"}, "vitamin_d_ug" → {…, unit: "mcg"}, "carb_g" → {name: "Carbs",
- *  unit: "g"}. The one rule behind StagedRow's and DiaryEntryRow's humanizeKey
- *  and FoodDetail's humanize/unitOf, which still keep their own copies: the
- *  name is each word capitalised with the unit suffix dropped, and the unit
- *  is FoodDetail's (µg as "mcg", "IU"). A key with no known unit suffix has
- *  unit "". Render as `name` then `withUnit(value, unit)`. */
+ *  unit: "g"}, for the micro lines in StagedRow and DiaryEntryRow and the
+ *  nutrient lists in FoodDetail: the name is each word capitalised with the
+ *  unit suffix dropped, and the unit is FoodDetail's (µg as "mcg", "IU"). A
+ *  key with no known unit suffix has unit "". Render as `name` then
+ *  `withUnit(value, unit)`. */
 export function nutrientParts(key: string): { name: string; unit: string } {
   const core = CORE_PARTS[key];
   if (core) return core;

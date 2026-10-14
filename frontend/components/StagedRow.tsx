@@ -1,6 +1,7 @@
 "use client";
 
 import type { Meal, StagedItem } from "@/lib/api";
+import { nutrientParts, portionText, withUnit } from "@/lib/format";
 import { readEstimate } from "./PhotoApi";
 import "@/app/photo.css";
 
@@ -9,17 +10,6 @@ const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
-const UNITS = new Set(["g", "mg", "mcg", "ug", "iu", "kcal"]);
-
-function humanizeKey(key: string): string {
-  const parts = key.split("_");
-  const last = parts[parts.length - 1]?.toLowerCase();
-  const unit = last && UNITS.has(last) ? parts.pop() : null;
-  const name = parts
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(" ");
-  return unit ? `${name} (${unit})` : name;
-}
 
 /** A tapped question option or alternates chip. Id-bearing picks resolve
  * locally (§3.4/§7.1); an id-less label is a free-text answer. */
@@ -75,9 +65,16 @@ export default function StagedRow({
   const est = readEstimate(item);
   const estimated = est.estimated !== "none";
 
+  // the grams eaten, when the serving's weight is known — not the
+  // per-serving "(148 g)" the description carries
+  const servingGrams = item.servings?.find((s) => s.serving_id === item.serving?.id)?.grams;
   const portion =
     item.serving != null
-      ? `${item.qty != null && item.qty !== 1 ? `${fmt1.format(item.qty)} × ` : ""}${item.serving.description}`
+      ? portionText(
+          item.qty,
+          item.serving.description,
+          servingGrams != null && item.qty != null ? servingGrams * item.qty : null,
+        )
       : null;
   const verify =
     item.confidence === "low" ||
@@ -143,14 +140,15 @@ export default function StagedRow({
               <button
                 type="button"
                 className={`portion-btn${verify ? " verify" : ""}`}
-                aria-label={`Change portion for ${name}`}
+                aria-label={`Change portion for ${name}${verify ? ", check this amount" : ""}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onPortion();
                 }}
               >
+                {/* the amber pill is the flag (§7.1: one signal); the label
+                    says it for a screen reader */}
                 {portion}
-                {verify ? " · verify" : ""}
               </button>
             ) : searching ? (
               "resolving…"
@@ -301,12 +299,15 @@ export default function StagedRow({
           ) : null}
           {microEntries.length ? (
             <div className="micro-list num">
-              {microEntries.map(([k, v]) => (
-                <div className="micro-line" key={k}>
-                  <span className="k">{humanizeKey(k)}</span>
-                  <span>{fmt1.format(v as number)}</span>
-                </div>
-              ))}
+              {microEntries.map(([k, v]) => {
+                const { name: label, unit } = nutrientParts(k);
+                return (
+                  <div className="micro-line" key={k}>
+                    <span className="k">{label}</span>
+                    <span>{withUnit(v as number, unit)}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
           {/* per-item meal chip: overrides the header for mixed logs (§7.1);

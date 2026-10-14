@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
+import { fmt0 } from "@/lib/format";
 import {
   cacheFood,
   getAliases,
@@ -281,7 +282,7 @@ export default function Library() {
                   {g.food_name}
                 </Link>
               </div>
-              <span className="m3-card-stat num">{g.total}×</span>
+              <span className="m3-card-stat num">{fmt0.format(g.total)}×</span>
             </div>
             {g.brand ? <div className="m3-card-sub">{g.brand}</div> : null}
             <div className="chips">
@@ -294,7 +295,7 @@ export default function Library() {
                 >
                   {a.pinned ? <span className="usual-dot" /> : null}
                   {a.alias_norm}
-                  <span className="alias-count num"> {a.use_count}×</span>
+                  <span className="alias-count num"> {fmt0.format(a.use_count)}×</span>
                 </button>
               ))}
             </div>

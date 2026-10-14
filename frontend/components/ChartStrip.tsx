@@ -1,6 +1,7 @@
 "use client";
 
 import "@/app/history/charts.css";
+import { fitLabels } from "./ChartBars";
 
 export type StripCell = {
   key: string;
@@ -30,6 +31,11 @@ export default function ChartStrip({ title, cells, onTap }: Props) {
   const W = 360;
   const cw = (W - GAP * (n - 1)) / n;
   const H = CELL_H + LABEL_H;
+  // ChartBars' overlap guard; these labels hang right from the cell's left edge
+  const labelled = fitLabels(
+    cells.map((c, i) => ({ x: i * (cw + GAP), text: c.label ?? "" })),
+    "start",
+  );
   return (
     <figure className="chart">
       <figcaption className="chart-title">{title}</figcaption>
@@ -67,7 +73,7 @@ export default function ChartStrip({ title, cells, onTap }: Props) {
                   opacity={0.25 + 0.75 * Math.min(c.level, 1)}
                 />
               ) : null}
-              {c.label ? (
+              {labelled.has(i) ? (
                 <text className="chart-xlabel" x={x} y={H - 3} textAnchor="start">
                   {c.label}
                 </text>

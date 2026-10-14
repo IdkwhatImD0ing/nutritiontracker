@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { nutrientParts, statesGrams, withUnit } from "@/lib/format";
 import BackBar from "./BackBar";
 import {
   getFood,
@@ -44,19 +45,6 @@ const NUTRIENTS: [string, string][] = [
   ["vitamin_b6_mg", "Vitamin B6"],
 ];
 const KNOWN = new Set(NUTRIENTS.map(([k]) => k));
-const UNITS = new Set(["g", "mg", "mcg", "ug", "iu"]);
-
-function unitOf(key: string): string {
-  const last = key.split("_").pop() ?? "";
-  if (!UNITS.has(last)) return "";
-  return last === "ug" ? "mcg" : last === "iu" ? "IU" : last;
-}
-
-function humanize(key: string): string {
-  const parts = key.split("_");
-  if (UNITS.has(parts[parts.length - 1] ?? "")) parts.pop();
-  return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
-}
 
 function sourceBadge(source: string): { cls: string; label: string } {
   if (source === "fdc") return { cls: "fdc", label: "USDA FDC" };
@@ -110,9 +98,7 @@ function NutrientLine({ k, label, v }: { k: string; label: string; v: unknown })
     <div className="nutrient-line">
       <span className="k">{label}</span>
       {typeof v === "number" ? (
-        <span>
-          {fmt1.format(v)} {unitOf(k)}
-        </span>
+        <span>{withUnit(fmt1.format(v), nutrientParts(k).unit)}</span>
       ) : (
         <span className="nm">not measured</span>
       )}
@@ -259,7 +245,7 @@ export default function FoodDetail({ id }: { id: string }) {
             <NutrientLine key={k} k={k} label={label} v={macros[k]} />
           ))}
           {extras.map(([k, v]) => (
-            <NutrientLine key={k} k={k} label={humanize(k)} v={v} />
+            <NutrientLine key={k} k={k} label={nutrientParts(k).name} v={v} />
           ))}
         </div>
         <p className="m3-note">
@@ -298,12 +284,7 @@ export default function FoodDetail({ id }: { id: string }) {
           <h2>Per 100 g</h2>
           <div className="m3-card nutrient-list num">
             {Object.entries(food.per_100g).map(([k, v]) => (
-              <NutrientLine
-                key={k}
-                k={k}
-                label={k === "kcal" ? "Calories" : humanize(k)}
-                v={v}
-              />
+              <NutrientLine key={k} k={k} label={nutrientParts(k).name} v={v} />
             ))}
           </div>
         </section>
@@ -321,10 +302,13 @@ export default function FoodDetail({ id }: { id: string }) {
                 {s.serving_id === food.default_serving_id ? " · default" : ""}
               </span>
               <span>
-                {s.grams != null ? `${fmt.format(s.grams)} g` : ""}
-                {typeof s.macros?.kcal === "number"
-                  ? `${s.grams != null ? " · " : ""}${fmt.format(s.macros.kcal)} kcal`
-                  : ""}
+                {/* no grams beside a description that states them */}
+                {[
+                  s.grams != null && !statesGrams(s.description) ? `${fmt.format(s.grams)} g` : null,
+                  typeof s.macros?.kcal === "number" ? `${fmt.format(s.macros.kcal)} kcal` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
             </div>
           ))}
@@ -352,7 +336,7 @@ export default function FoodDetail({ id }: { id: string }) {
                 >
                   {a.pinned ? <span className="usual-dot" /> : null}
                   {a.alias_norm}
-                  <span className="alias-count num"> {a.use_count}×</span>
+                  <span className="alias-count num"> {fmt.format(a.use_count)}×</span>
                 </button>
               ))}
             </div>

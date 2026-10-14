@@ -13,22 +13,28 @@ type DonutProps = {
   size: number;
   loud?: boolean;
   loading?: boolean;
+  /** an overage reads amber (carbs, fat). Protein's target is a floor, so
+   *  going past it is the goal met, not a warning. */
+  warnOver?: boolean;
 };
 
 /** Remaining-vs-target ring (§7.4): ring fills with consumed/target, the
- *  center number is what's left. */
-function Donut({ label, consumed, target, color, size, loud, loading }: DonutProps) {
+ *  center number is what's left — or, past the target, how far over
+ *  ("+16g over") on a full ring. */
+function Donut({ label, consumed, target, color, size, loud, loading, warnOver }: DonutProps) {
   const stroke = loud ? 10 : 7;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const hasTarget = target > 0;
   const frac = hasTarget ? Math.min(consumed / target, 1) : 0;
   const remaining = hasTarget ? Math.max(target - consumed, 0) : 0;
-  const centerNum = hasTarget ? remaining : consumed;
-  const centerSub = hasTarget ? "left" : "logged";
+  // rounded like the figure, so 0.3 g past reads "0g left", not "+0g over"
+  const over = hasTarget && Math.round(consumed - target) > 0;
+  const centerNum = !hasTarget ? consumed : over ? consumed - target : remaining;
+  const centerSub = !hasTarget ? "logged" : over ? "over" : "left";
 
   return (
-    <div className={`donut${loud ? " loud" : ""}`}>
+    <div className={`donut${loud ? " loud" : ""}${over ? " over" : ""}${over && warnOver ? " warn" : ""}`}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <circle
           cx={size / 2}
@@ -59,7 +65,7 @@ function Donut({ label, consumed, target, color, size, loud, loading }: DonutPro
           dominantBaseline="middle"
           fontSize={loud ? 22 : 16}
         >
-          {loading ? "—" : `${fmt.format(centerNum)}g`}
+          {loading ? "—" : `${over ? "+" : ""}${fmt.format(centerNum)}g`}
         </text>
         {loading ? null : (
           <text
@@ -147,6 +153,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           color="var(--carb)"
           size={84}
           loading={loading}
+          warnOver
         />
         <Donut
           label="Protein"
@@ -164,6 +171,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           color="var(--fat)"
           size={84}
           loading={loading}
+          warnOver
         />
       </div>
 

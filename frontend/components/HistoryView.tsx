@@ -53,19 +53,24 @@ function MacroBar({
   target,
   color,
   loud,
+  warnOver,
 }: {
   label: string;
   value: number;
   target: number;
   color: string;
   loud?: boolean;
+  /** an overage reads amber (carbs, fat); protein's target is a floor */
+  warnOver?: boolean;
 }) {
   const frac = target > 0 ? Math.min(value / target, 1) : 0;
+  // the Tracker donut's rule, rounded like the figure
+  const over = warnOver && target > 0 && Math.round(value - target) > 0;
   return (
     <div className={`hcard-macro${loud ? " loud" : ""}`}>
       <div className="hcard-macro-row">
         <span className="k">{label}</span>
-        <span className="v num">
+        <span className={`v num${over ? " over" : ""}`}>
           {fmt.format(value)}g
           {target > 0 ? <span className="of"> / {fmt.format(target)}</span> : null}
         </span>
@@ -144,8 +149,8 @@ function ThreeDays({
                 color="var(--mint)"
                 loud
               />
-              <MacroBar label="Carbs" value={d.carb_g} target={targets.carb_g} color="var(--carb)" />
-              <MacroBar label="Fat" value={d.fat_g} target={targets.fat_g} color="var(--fat)" />
+              <MacroBar label="Carbs" value={d.carb_g} target={targets.carb_g} color="var(--carb)" warnOver />
+              <MacroBar label="Fat" value={d.fat_g} target={targets.fat_g} color="var(--fat)" warnOver />
             </div>
             {mealChips.length ? (
               <div className="hcard-meals num">
@@ -220,6 +225,7 @@ function Daily({
         bars={toBar((d) => d.protein_g, "g")}
         target={range.targets.protein_g}
         color="var(--mint)"
+        overColor={null}
         unit="g"
         showValues={week}
         labelEvery={1}
@@ -286,6 +292,7 @@ function Year({ range }: { range: HistoryRange }) {
         bars={bars((w) => w.avg?.protein_g ?? null, "g")}
         target={range.targets.protein_g}
         color="var(--mint)"
+        overColor={null}
         unit="g"
         labelEvery={1}
         format={(v) => `${fmt.format(v)}g`}

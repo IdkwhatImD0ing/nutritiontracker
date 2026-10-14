@@ -60,9 +60,27 @@
   stroke-dasharray: 4 3;
 }
 
+/* drawn under the dashes: where the line crosses a bar (amber when over
+   target) the gaps show the card, not more bar */
+.chart-target .chart-target-halo {
+  stroke: var(--surface);
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+
 .chart-target text {
   fill: var(--amber);
   font-size: 10px;
+}
+
+/* a card-coloured outline, so a value or the target label stays readable
+   where it crosses the target line or a bar */
+.chart-value,
+.chart-target text {
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .chart-bar.tap,

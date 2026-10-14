@@ -21,6 +21,9 @@ type Props = {
   target?: number | null;
   targetLabel?: string;
   color?: string;
+  /** fill for a bar past the target (default amber, the kcal overshoot);
+   *  null keeps `color`, for a target that is a floor (protein, days logged) */
+  overColor?: string | null;
   unit?: string;
   height?: number;
   /** print the value above each bar (fine for ≤ 14 bars) */
@@ -36,6 +39,33 @@ type Props = {
 const W = 360;
 const PAD = { l: 36, r: 10, t: 14, b: 20 };
 const fmt0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+/** Chart text size in viewBox units (charts.css .chart-xlabel and friends);
+ *  fitLabels estimates label widths from it. */
+export const CHART_TEXT_PX = 10;
+
+/** The x labels that fit, as indices into `labels` ("" = none). Walks from
+ *  the newest (right) end and keeps a label only when it ends at least 4
+ *  units left of the last one kept, so "Oct 1" beats "Sep 30" beside it and
+ *  "Nov" a partial first "Oct". `x` is the text's anchor: its centre for
+ *  "middle", its left edge for "start". */
+export function fitLabels(
+  labels: { x: number; text: string }[],
+  anchor: "middle" | "start",
+): Set<number> {
+  const kept = new Set<number>();
+  let edge = Infinity;
+  for (let i = labels.length - 1; i >= 0; i--) {
+    const { x, text } = labels[i];
+    if (!text) continue;
+    const w = text.length * CHART_TEXT_PX * 0.6;
+    const left = anchor === "middle" ? x - w / 2 : x;
+    if (left + w + 4 <= edge) {
+      kept.add(i);
+      edge = left;
+    }
+  }
+  return kept;
+}
 
 const NICE = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
 
@@ -56,6 +86,7 @@ export default function ChartBars({
   target,
   targetLabel = "target",
   color = "var(--spruce-soft)",
+  overColor = "var(--amber)",
   unit = "",
   height = 150,
   showValues = false,
@@ -76,6 +107,11 @@ export default function ChartBars({
   const group = plotW / n;
   const barW = Math.max(2, group * (n > 20 ? 0.68 : 0.6));
   const every = labelEvery ?? Math.max(1, Math.ceil(n / 8));
+  const barX = (i: number) => PAD.l + i * group + (group - barW) / 2;
+  const labelled = fitLabels(
+    bars.map((b, i) => ({ x: barX(i) + barW / 2, text: i % every === 0 ? b.label : "" })),
+    "middle",
+  );
   // the midline sits exactly where its label says (7 → 0 · 4 · 7, not 3.5)
   const mid = yMax >= 10 ? yMax / 2 : Math.round(yMax / 2);
   // rounding can collapse the midline onto 0 or the top (yMax 1 → mid 1)
@@ -103,7 +139,7 @@ export default function ChartBars({
           ))}
         </g>
         {bars.map((b, i) => {
-          const x0 = PAD.l + i * group + (group - barW) / 2;
+          const x0 = barX(i);
           const v = b.value;
           const top = v == null ? y(0) : y(v);
           const h = Math.max(0, y(0) - top);
@@ -155,40 +191,64 @@ export default function ChartBars({
                   width={barW}
                   height={h}
                   rx={Math.min(3, barW / 2)}
-                  fill={over ? "var(--amber)" : color}
+                  fill={over && overColor ? overColor : color}
                 />
               )}
-              {showValues && v != null && v > 0 ? (
-                <text
-                  className="chart-value"
-                  x={x0 + barW / 2}
-                  y={top - 4}
-                  textAnchor="middle"
-                >
-                  {format(v)}
-                </text>
-              ) : null}
-              {b.label && i % every === 0 ? (
-                <text
-                  className="chart-xlabel"
-                  x={x0 + barW / 2}
-                  y={H - 6}
-                  textAnchor="middle"
-                >
-                  {b.label}
-                </text>
-              ) : null}
             </g>
           );
         })}
         {hasTarget ? (
-          <g className="chart-target">
+          <g className="chart-target" pointerEvents="none">
+            {/* a surface band under the dashes keeps the line visible where
+                it crosses a bar, amber or not */}
+            <line
+              className="chart-target-halo"
+              x1={PAD.l}
+              x2={W - PAD.r}
+              y1={y(target)}
+              y2={y(target)}
+            />
             <line x1={PAD.l} x2={W - PAD.r} y1={y(target)} y2={y(target)} />
-            <text x={W - PAD.r} y={y(target) - 4} textAnchor="end">
-              {targetLabel} {format(target)}
-            </text>
           </g>
         ) : null}
+        {/* text last: bars, then the target line, then every label, so the
+            line never strikes through a value. Taps fall through to the bar. */}
+        <g pointerEvents="none">
+          {bars.map((b, i) => {
+            const v = b.value;
+            return showValues && v != null && v > 0 ? (
+              <text
+                key={b.key}
+                className="chart-value"
+                x={barX(i) + barW / 2}
+                y={y(v) - 4}
+                textAnchor="middle"
+              >
+                {format(v)}
+              </text>
+            ) : null;
+          })}
+          {bars.map((b, i) =>
+            labelled.has(i) ? (
+              <text
+                key={b.key}
+                className="chart-xlabel"
+                x={barX(i) + barW / 2}
+                y={H - 6}
+                textAnchor="middle"
+              >
+                {b.label}
+              </text>
+            ) : null,
+          )}
+          {hasTarget ? (
+            <g className="chart-target">
+              <text x={W - PAD.r} y={y(target) - 4} textAnchor="end">
+                {targetLabel} {format(target)}
+              </text>
+            </g>
+          ) : null}
+        </g>
       </svg>
     </figure>
   );

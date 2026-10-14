@@ -7,6 +7,9 @@ const LB_PER_KG = 2.2046226; // WizardMath's constant; the card shows the unit t
 const DAYS = 30;
 const W = 96;
 const H = 34;
+/** the sparkline's least y range (~2.2 lb; the series is kg in either unit),
+ *  so a few tenths of scale noise don't draw a cliff across the full height */
+const MIN_SPAN_KG = 1;
 
 type Unit = WeightEntry["unit"];
 
@@ -98,13 +101,16 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
         : `${delta > 0 ? "up" : "down"} ${Math.abs(delta).toFixed(1)} ${unit} since ${when(prev.day, today)}`
       : null;
 
-  // sparkline: x by day within the 30-day window, y by the window's range
+  // sparkline: x by day within the 30-day window, y by the window's range,
+  // widened about its middle to at least MIN_SPAN_KG (a flat series sits
+  // mid-height)
   const start = isoDate(new Date(parseISO(today).getTime() - (DAYS - 1) * 86_400_000));
   const kgs = series.map((e) => e.weight_kg);
-  const lo = Math.min(...kgs);
-  const hi = Math.max(...kgs);
+  const mid = (Math.min(...kgs) + Math.max(...kgs)) / 2;
+  const lo = Math.min(...kgs, mid - MIN_SPAN_KG / 2);
+  const hi = Math.max(...kgs, mid + MIN_SPAN_KG / 2);
   const x = (day: string) => 3 + (Math.max(0, daysBetween(start, day)) / (DAYS - 1)) * (W - 6);
-  const y = (kg: number) => 3 + (hi === lo ? 0.5 : 1 - (kg - lo) / (hi - lo)) * (H - 6);
+  const y = (kg: number) => 3 + (1 - (kg - lo) / (hi - lo)) * (H - 6);
   const path = series
     .map((e, i) => `${i === 0 ? "M" : "L"}${x(e.day).toFixed(1)},${y(e.weight_kg).toFixed(1)}`)
     .join(" ");

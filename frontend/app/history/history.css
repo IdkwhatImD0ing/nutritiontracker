@@ -196,6 +196,11 @@
   font-weight: 700;
 }
 
+/* past a carbs or fat target (the Tracker's .donut.over.warn) */
+.hcard-macro-row .v.over {
+  color: var(--amber);
+}
+
 .hcard-macro-row .of {
   color: var(--faint);
   font-weight: 400;

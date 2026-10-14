@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { StagedServing } from "@/lib/api";
+import { fmt0, withUnit } from "@/lib/format";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
 
@@ -95,7 +96,7 @@ export default function LibraryAliasSheet({
         <p className="subsheet-hint">
           → {alias.food_name}
           {alias.brand ? ` — ${alias.brand}` : ""} · used{" "}
-          <span className="num">{alias.use_count}×</span>
+          <span className="num">{fmt0.format(alias.use_count)}×</span>
         </p>
 
         <div>
@@ -151,7 +152,11 @@ export default function LibraryAliasSheet({
                 onClick={() => setServingId(s.serving_id)}
               >
                 {s.description}
-                {s.grams != null ? ` · ${Math.round(s.grams)} g` : ""}
+                {/* kcal, not grams: FDC descriptions already state theirs
+                    ("1 container (170 g)"), so a grams suffix repeated them */}
+                {typeof s.macros?.kcal === "number"
+                  ? ` · ${withUnit(fmt0.format(s.macros.kcal), "kcal")}`
+                  : ""}
               </button>
             ))}
             {servings == null ? (
