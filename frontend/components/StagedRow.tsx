@@ -329,8 +329,6 @@ export default function StagedRow({
           {portion ? (
             <div className="detail-serving">
               Portion: {portion}
-              {item.qty != null ? ` (qty ${fmt1.format(item.qty)})` : ""}
-              {item.tier != null ? ` · tier ${item.tier}` : ""}
             </div>
           ) : null}
         </div>

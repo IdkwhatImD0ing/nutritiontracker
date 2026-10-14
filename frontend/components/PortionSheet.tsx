@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { StagedItem } from "@/lib/api";
+import SheetHeader from "./SheetHeader";
 
 /** A serving option normalized from the staged payload (§7.1 portion sheet). */
 export type PortionChoice = {
@@ -76,7 +77,10 @@ export default function PortionSheet({ item, onApply, onClose }: Props) {
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Portion">
-        <div className="subsheet-title food-name">{item.food?.name ?? item.phrase}</div>
+        <SheetHeader
+          title={<span className="food-name">{item.food?.name ?? item.phrase}</span>}
+          onClose={onClose}
+        />
 
         <div className="stepper num">
           <button type="button" aria-label="Less" onClick={() => step(-0.5)}>

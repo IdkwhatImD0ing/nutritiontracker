@@ -1,7 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Archivo, Bricolage_Grotesque, IBM_Plex_Mono } from "next/font/google";
+import { NavTrail } from "@/components/BackBar";
+import { KeyboardInset } from "@/components/KeyboardInset";
 import { SITE_URL } from "@/lib/site";
+import SPLASH_SCREENS from "@/lib/splash-screens.json";
 import "./globals.css";
 import { LegacyChatCleanup } from "./legacy-storage";
 import { ServiceWorkerProvider } from "./serwist/provider";
@@ -40,6 +43,12 @@ const description =
 // Absolute URLs for Open Graph and Twitter cards. Without it Next warns and
 // emits relative URLs, which link previews cannot resolve. SITE_URL reads
 // NEXT_PUBLIC_SITE_URL, so a fork can point it at its own domain (lib/site.ts).
+
+// iOS launch images, one per screen (CSS size × pixel ratio), portrait only. Safari
+// ignores the manifest's background_color, so without an image whose media query
+// matches the screen exactly, a cold start of the installed app shows white.
+// One table (lib/splash-screens.json) feeds both these media queries and
+// scripts/gen-icons.py, which draws the PNGs.
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -84,6 +93,10 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "Tally",
+    startupImage: SPLASH_SCREENS.map(({ w, h, dpr }) => ({
+      url: `/splash/${w * dpr}x${h * dpr}.png`,
+      media: `(device-width: ${w}px) and (device-height: ${h}px) and (-webkit-device-pixel-ratio: ${dpr}) and (orientation: portrait)`,
+    })),
   },
   formatDetection: {
     telephone: false,
@@ -128,6 +141,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <ServiceWorkerProvider>
           <LegacyChatCleanup />
+          <NavTrail />
+          <KeyboardInset />
           {children}
         </ServiceWorkerProvider>
       </body>

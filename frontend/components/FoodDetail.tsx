@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
+import BackBar from "./BackBar";
 import {
   getFood,
   type AliasRow,
@@ -154,9 +154,9 @@ export default function FoodDetail({ id }: { id: string }) {
   if (!food) {
     return (
       <main className="shell">
-        <Link href="/library" className="m3-back">
-          ‹ Library
-        </Link>
+        <header className="brand">
+          <BackBar parent="/library" label="Library" />
+        </header>
         <p className="m3-empty">{error ?? "Loading…"}</p>
       </main>
     );
@@ -183,9 +183,11 @@ export default function FoodDetail({ id }: { id: string }) {
 
   return (
     <main className="shell">
-      <Link href="/library" className="m3-back">
-        ‹ Library
-      </Link>
+      {/* The sticky bar carries only the way back: a food's name can run to
+          several lines, too much to pin over the page it describes. */}
+      <header className="brand">
+        <BackBar parent="/library" label="Library" />
+      </header>
 
       <header className="fd-head">
         <h1 className="food-name">{food.display_name}</h1>
@@ -409,10 +411,13 @@ export default function FoodDetail({ id }: { id: string }) {
             </p>
           ))}
         </div>
-        <details className="fd-raw">
-          <summary>Raw record from the source</summary>
-          <pre>{JSON.stringify(food.payload ?? null, null, 2)}</pre>
-        </details>
+        {/* no record from the source, no disclosure: it would open onto "null" */}
+        {Object.keys(payload).length ? (
+          <details className="fd-raw">
+            <summary>Raw record from the source</summary>
+            <pre>{JSON.stringify(payload, null, 2)}</pre>
+          </details>
+        ) : null}
       </section>
 
       {aliasSheet ? (
