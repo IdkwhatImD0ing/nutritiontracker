@@ -14,11 +14,15 @@ import {
  * Settings' Oura section. Owner only: it renders nothing for a demo account,
  * or on a deployment without OURA_CLIENT_ID / OURA_CLIENT_SECRET (the server
  * answers `available: false`). Not connected: one Connect button. Connected:
- * when it last synced, Sync now, the last week's burn and steps, and
- * Reconnect — the way to grant a data type that was unticked on Oura's
- * consent screen (a reconnect re-reads the stored period, so it arrives with
- * its history). Oura's redirect back lands here with ?oura=, which is read
- * once and then dropped from the URL so a reload is quiet.
+ * when it last synced, Sync now, the latest day's burn and steps with the
+ * rest of the week behind a "Last 7 days" disclosure (Bill, 2026-10-13, so
+ * the card no longer pushes targets below the fold), and Reconnect — the way
+ * to grant a data type that was unticked on Oura's consent screen (a
+ * reconnect re-reads the stored period, so it arrives with its history). It
+ * is always offered, but quietly until Oura is withholding something, when
+ * it reads "Allow workouts & activity". Oura's redirect back lands here with
+ * ?oura=, which is read once and then dropped from the URL so a reload is
+ * quiet.
  */
 
 const RETURN_NOTES = new Map<string, string>([
@@ -66,6 +70,17 @@ function ago(iso: string): string {
 
 function amount(n: number | null, unit: string): string {
   return n == null ? `— ${unit}` : `${n.toLocaleString()} ${unit}`;
+}
+
+function DayRow({ d }: { d: OuraStatus["days"][number] }) {
+  return (
+    <div className="m3-row">
+      <span className="k">{dayLabel(d.day)}</span>
+      <span>
+        {amount(d.total_calories, "kcal burned")} · {amount(d.steps, "steps")}
+      </span>
+    </div>
+  );
 }
 
 export default function OuraCard() {
@@ -168,30 +183,46 @@ export default function OuraCard() {
                 {busy ? "Working…" : "Sync now"}
               </button>
             </div>
+            {/* newest first: the latest day, then the rest of the week */}
             {status.days.length ? (
-              status.days.map((d) => (
-                <div className="m3-row" key={d.day}>
-                  <span className="k">{dayLabel(d.day)}</span>
-                  <span>
-                    {amount(d.total_calories, "kcal burned")} ·{" "}
-                    {amount(d.steps, "steps")}
-                  </span>
-                </div>
-              ))
+              <DayRow d={status.days[0]} />
             ) : (
               <p className="m3-note">No days from Oura this week yet.</p>
             )}
-            <div className="m3-row">
-              <span className="k">Missing workouts or daily activity?</span>
-              <button
-                type="button"
-                className="m3-link-btn"
-                disabled={busy}
-                onClick={connect}
-              >
-                Reconnect
-              </button>
-            </div>
+            {status.days.length > 1 ? (
+              <details className="disclosure oura-week">
+                <summary>Last 7 days</summary>
+                <div className="oura-days">
+                  {status.days.slice(1).map((d) => (
+                    <DayRow d={d} key={d.day} />
+                  ))}
+                </div>
+              </details>
+            ) : null}
+            {status.missing.length ? (
+              <div className="m3-row">
+                <button
+                  type="button"
+                  className="m3-link-btn"
+                  disabled={busy}
+                  onClick={connect}
+                >
+                  Allow workouts &amp; activity
+                </button>
+              </div>
+            ) : (
+              <div className="m3-row oura-reconnect">
+                <span>Missing workouts or daily activity?</span>
+                <button
+                  type="button"
+                  className="m3-link-btn quiet"
+                  disabled={busy}
+                  onClick={connect}
+                >
+                  Reconnect
+                </button>
+              </div>
+            )}
           </>
         ) : status ? (
           <div className="m3-row">

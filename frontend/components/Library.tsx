@@ -15,6 +15,8 @@ import {
 } from "./LibraryApi";
 import LibraryAliasSheet from "./LibraryAliasSheet";
 import LibraryMealSheet from "./LibraryMealSheet";
+import { peek, put } from "./readCache";
+import { useScrollMemory } from "./useScrollMemory";
 
 type FoodGroup = {
   food_id: string;
@@ -78,8 +80,14 @@ function MealCard({
 
 export default function Library() {
   const router = useRouter();
-  const [aliases, setAliases] = useState<AliasRow[] | null>(null);
-  const [meals, setMeals] = useState<SavedMeal[] | null>(null);
+  // A return to the tab paints the lists it last showed (readCache) while
+  // the read below refreshes them.
+  const [aliases, setAliases] = useState<AliasRow[] | null>(() =>
+    peek<AliasRow[]>("library:aliases"),
+  );
+  const [meals, setMeals] = useState<SavedMeal[] | null>(() =>
+    peek<SavedMeal[]>("library:meals"),
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
@@ -112,6 +120,15 @@ export default function Library() {
       cancelled = true;
     };
   }, [attempt]);
+
+  // Written through, so an alias edit or a saved meal is in the next paint too.
+  useEffect(() => {
+    if (aliases) put("library:aliases", aliases);
+  }, [aliases]);
+  useEffect(() => {
+    if (meals) put("library:meals", meals);
+  }, [meals]);
+  useScrollMemory(aliases !== null && meals !== null);
 
   const groups = useMemo(() => groupByFood(aliases ?? []), [aliases]);
   const activeMeals = (meals ?? []).filter((m) => m.is_active);
@@ -179,7 +196,7 @@ export default function Library() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search the food database"
+            placeholder="Look up a food"
             aria-label="Search foods"
             autoComplete="off"
           />

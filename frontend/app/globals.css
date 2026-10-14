@@ -376,11 +376,14 @@ a {
    The stagger this used to carry (40/80/120/160ms) cost more than it bought:
    `backwards` pins each child at opacity 0 for the whole delay, so the last
    card sat invisible for 160ms and finished ~580ms in — on data we already
-   had, and again on every remount. `backwards`, not `both`: a lingering
-   transform would make each card the containing block for any position:fixed
-   sheet mounted inside it (DiaryList's save-as-meal sheet lives inside
-   .diary). */
-.shell > * {
+   had. `backwards`, not `both`: a lingering transform would make each card
+   the containing block for any position:fixed sheet mounted inside it
+   (DiaryList's save-as-meal sheet lives inside .diary). The document's first
+   page only: NavTrail marks <html> data-navigated on the first navigation,
+   so a tab switch or drill-in cuts like a native app instead of replaying it.
+   :where() keeps this at one class, so `.brand { animation: none }` still
+   wins and the sticky header never rises. */
+:where(html:not([data-navigated])) .shell > * {
   animation: rise 200ms var(--ease) backwards;
 }
 
@@ -481,6 +484,32 @@ a {
   stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* The sticky top bar of a screen with no .brand header (the goal wizard,
+   sign-in and sign-up). Like .brand it carries the status-bar inset itself:
+   the status bar is black-translucent, so a scrolled page has to pass under
+   a blurred band, not straight under the clock. One 44px row under the inset
+   holds the screen's controls; each screen sets the bar's edges against its
+   own padding (.wizard-top, .auth-top). */
+.top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: calc(44px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+
+/* a back control in the bar (the auth pages): centred in the row, its
+   chevron still pulled into the gutter */
+.top-bar .nav-back {
+  margin: 0 0 0 -12px;
 }
 
 /* Quiet one-line states, shared by History and Experiment (which never
@@ -1329,6 +1358,14 @@ a {
   cursor: default;
 }
 
+/* the same button as a link (the not-found page's way into the app) */
+a.commit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .sheet-error {
   color: var(--red);
   font-size: 0.82rem;
@@ -1996,6 +2033,26 @@ a {
   color: var(--muted);
 }
 
+/* Library's search opens a result's food detail, where the +'s Search
+   stages a log: its rows carry a trailing drill-in chevron (drawn as .chev
+   is) so the two read differently */
+.lib-search .search-results button {
+  position: relative;
+  padding-right: 36px;
+}
+
+.lib-search .search-results button::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 4px);
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(-45deg);
+}
+
 /* the "Previously added" heading over the recent-foods list */
 .search-label {
   font-size: 0.7rem;
@@ -2216,12 +2273,20 @@ a {
 
 /* ---------- auth ---------- */
 
+/* a column: the sticky top bar (which takes the top inset), then the card,
+   centred in what is left by its auto margins */
 .auth-wrap {
   min-height: 100dvh;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+  padding: 0 20px calc(24px + env(safe-area-inset-bottom));
+}
+
+.auth-top {
+  align-self: stretch;
+  margin: 0 -20px;
+  padding-inline: 20px;
 }
 
 .auth-card {
@@ -2236,6 +2301,7 @@ a {
   gap: 14px;
   box-shadow: var(--shadow-card);
   animation: rise 420ms var(--ease);
+  margin-block: auto;
 }
 
 .auth-card h1 {

@@ -16,7 +16,13 @@ import {
   type LogResponse,
   type StagedItem,
 } from "@/lib/api";
-import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
+import {
+  ADD_EVENT,
+  ADD_HANDOFF_FROM_KEY,
+  ADD_HANDOFF_KEY,
+  isAddLane,
+  type AddLane,
+} from "./AddSheet";
 import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
@@ -25,16 +31,18 @@ import DiaryList from "./DiaryList";
 import { parseISO } from "./HistoryApi";
 import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
-import { getMe, type Me } from "./MeApi";
+import { getMe, peekMe, type Me } from "./MeApi";
 import { syncOura } from "./OuraApi";
 import PendingItems from "./PendingItems";
 import { photoErrorMessage } from "./PhotoApi";
 import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
+import { peek, put } from "./readCache";
 import SplitSheet from "./SplitSheet";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import { useOnForeground } from "./useOnForeground";
+import { useScrollMemory } from "./useScrollMemory";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
 
@@ -65,10 +73,19 @@ function localDateISO(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** readCache: the day's diary as last shown, keyed by its date, so a return
+ *  to Today paints it at once and yesterday's is never read for today. */
+type CachedDay = { totals: DayTotals; meals: DiaryMeals };
+const dayKey = (day: string) => `diary:${day}`;
+
 export default function Today() {
-  const [totals, setTotals] = useState<DayTotals | null>(null);
+  const [totals, setTotals] = useState<DayTotals | null>(
+    () => peek<CachedDay>(dayKey(localDateISO()))?.totals ?? null,
+  );
   // §7.4 Today: the diary grouped by meal renders under the tracker.
-  const [meals, setMeals] = useState<DiaryMeals | null>(null);
+  const [meals, setMeals] = useState<DiaryMeals | null>(
+    () => peek<CachedDay>(dayKey(localDateISO()))?.meals ?? null,
+  );
   // The diary read failed. While no diary is on screen the tracker gives way
   // to an error with a Retry: a day we couldn't read must not look like an
   // empty one (BACKLOG 131's outage read as a wiped diary). A failed RE-read
@@ -117,7 +134,8 @@ export default function Today() {
   // log attempt so "next log at …" shows the moment the day's log is spent.
   // Owner → demo null → no banner. A failed read renders nothing: the
   // server enforces the quota; the banner only explains it.
-  const [me, setMe] = useState<Me | null>(null);
+  // Seeded with the visit's last read, so a return to Today keeps the banner.
+  const [me, setMe] = useState<Me | null>(peekMe);
   const demo = me?.demo ?? null;
   const quotaSpent = demo != null && demo.used_today >= demo.limit;
   // Owner ruling (2026-09-02): the capture bar left the Today screen; every
@@ -125,6 +143,12 @@ export default function Today() {
   // is up. The pick arrives from TabBar as a window event (Today mounted) or
   // a sessionStorage handoff (navigated here from another tab).
   const [lane, setLane] = useState<AddLane | null>(null);
+  // A lane handed over from another tab remembers that tab (`originRef`), so
+  // closing it before anything was sent (`sentRef`) goes back there rather
+  // than stranding the user on Today. Once something is sent, landing here
+  // on the diary is the point, and the lane closes in place.
+  const originRef = useRef<string | null>(null);
+  const sentRef = useRef(false);
   // §3.4b (2026-09-08): the photo lane IS the agent lane now — "Take photo"
   // opens the chat with the picker up, so the plate lands in the conversation
   // that is going to correct it. This is which of the two the lane opened for.
@@ -368,6 +392,15 @@ export default function Today() {
     }
     setOpenWith(next === "photo" ? "photo" : "mic");
     setLane(target);
+    sentRef.current = false; // a new lane (or Search instead) starts unused
+  };
+  // Every way a lane closes. TabBar pushed Today over the origin, so the
+  // entry behind this one is that page.
+  const closeLane = () => {
+    setLane(null);
+    const from = originRef.current;
+    originRef.current = null;
+    if (from && !sentRef.current) router.back();
   };
   // The + listener is bound once; the ref keeps it on the current closure.
   const pickRef = useRef(pickLane);
@@ -380,9 +413,14 @@ export default function Today() {
     // Picked on another tab: TabBar stashed the lane and navigated here.
     try {
       const stashed = sessionStorage.getItem(ADD_HANDOFF_KEY);
+      const from = sessionStorage.getItem(ADD_HANDOFF_FROM_KEY);
+      sessionStorage.removeItem(ADD_HANDOFF_FROM_KEY);
       if (stashed != null) {
         sessionStorage.removeItem(ADD_HANDOFF_KEY);
-        if (isAddLane(stashed)) pickRef.current(stashed);
+        if (isAddLane(stashed)) {
+          originRef.current = from;
+          pickRef.current(stashed);
+        }
       }
     } catch {
       /* storage unavailable — the + is one tap away again */
@@ -481,6 +519,14 @@ export default function Today() {
     // The card owns the series; Today only tells it the world moved (§6.4).
     setWeightsKey((k) => k + 1);
   });
+
+  // Whatever the diary now says (a read, a commit's totals, an inline edit)
+  // is what the next return to Today paints first (readCache), under the day
+  // this screen shows.
+  useEffect(() => {
+    if (totals && meals) put(dayKey(dayRef.current!), { totals, meals });
+  }, [totals, meals]);
+  useScrollMemory(meals !== null);
 
   // A demo 429 carries the server's own sentence and the reset instant: the
   // sentence goes in the lane's error surface verbatim (never the generic
@@ -676,6 +722,7 @@ export default function Today() {
   };
 
   const submit = async (text: string): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -740,6 +787,7 @@ export default function Today() {
   // chat as soon as the server has it, then the same stream as text.
   // staged_ms measures stop-tap → rendered (§11: "capture stop → staged").
   const submitAudio = async (clip: VoiceClip): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -831,6 +879,7 @@ export default function Today() {
   // turn — the model sees the image and answers what was asked — where the
   // bare shot stays the deterministic vision parse.
   const submitPhoto = async (shot: PhotoShot, said = ""): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -923,7 +972,7 @@ export default function Today() {
         captured_at: new Date().toISOString(),
       });
       quickRef.current = null;
-      setLane(null);
+      closeLane();
       enterStaging(log);
     } catch (e) {
       t0Ref.current = null;
@@ -936,6 +985,7 @@ export default function Today() {
   // Search lane: an FDC hit is cached first (POST /api/foods/select, the
   // library path) — from-food takes a foods.id, never a raw source id.
   const searchSelect = async (hit: FoodSearchResult): Promise<void> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     let foodId: string;
@@ -950,6 +1000,7 @@ export default function Today() {
   };
 
   const scanCode = async (code: string): Promise<void> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     let hit: Awaited<ReturnType<typeof lookupBarcode>>;
@@ -1199,7 +1250,7 @@ export default function Today() {
           // above the split it is theirs, and while rows are staged the staged
           // list's own × is what acts (SplitSheet hides this one then).
           onDismiss={() => {
-            if (!staging) setLane(null);
+            if (!staging) closeLane();
           }}
           chat={
             <AgentChat
@@ -1231,7 +1282,7 @@ export default function Today() {
                 setStaging({ log, restore: null });
               }}
               onClose={() => {
-                if (!staging) setLane(null);
+                if (!staging) closeLane();
               }}
             />
           }
@@ -1245,7 +1296,7 @@ export default function Today() {
           busy={captureBusy}
           error={captureError}
           onSelect={searchSelect}
-          onClose={() => setLane(null)}
+          onClose={closeLane}
         />
       ) : null}
 
@@ -1256,7 +1307,7 @@ export default function Today() {
           onCode={scanCode}
           // a spent quota meets the same 429 in the search lane — don't offer it
           onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}
-          onClose={() => setLane(null)}
+          onClose={closeLane}
         />
       ) : null}
 

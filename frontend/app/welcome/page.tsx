@@ -9,6 +9,11 @@ import "./landing.css";
  *  repo or a link learns what Tally is before being asked for an email.
  *  Signed-in visitors never see it — `/` renders Today for them.
  *
+ *  It is also the installed app's signed-out screen (a cold launch, or where
+ *  Sign out lands). There, landing.css's display-mode: standalone block
+ *  trims it to the pitch and the preview, with the two ways in pinned at the
+ *  foot (Bill, 2026-10-13); the website's parts stay with the browser.
+ *
  *  The structure is FireTrace's landing (header, mono eyebrow, display
  *  headline, framed preview, numbered claims); the brand is Tally's. The
  *  preview is a static picture of the staging sheet in plain elements, not
@@ -238,11 +243,11 @@ export default function Welcome() {
             <Link href="/auth/sign-up" className="land-btn">
               Try a demo
             </Link>
-            <Link href="/docs" className="land-btn ghost">
-              Read the docs
-            </Link>
-            <Link href="/auth/sign-in" className="land-textlink">
+            <Link href="/auth/sign-in" className="land-btn ghost">
               Sign in
+            </Link>
+            <Link href="/docs" className="land-textlink">
+              Read the docs
             </Link>
           </div>
           <p className="land-fine">One log a day on a demo account. No card, no trial timer.</p>
@@ -382,10 +387,14 @@ export default function Welcome() {
             <span>Tally</span>
           </Link>
           <nav className="land-foot-links" aria-label="Footer">
-            <Link href="/docs">Docs</Link>
+            <Link href="/docs" className="land-web">
+              Docs
+            </Link>
             <Link href="/privacy">Privacy</Link>
             <Link href="/terms">Terms</Link>
-            <a href={GITHUB_URL}>GitHub</a>
+            <a href={GITHUB_URL} className="land-web">
+              GitHub
+            </a>
           </nav>
           <p className="land-foot-credit">
             Nutrition data from <a href="https://fdc.nal.usda.gov/">USDA FoodData Central</a>

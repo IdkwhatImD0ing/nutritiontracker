@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getSettings,
   putSettings,
@@ -17,6 +17,8 @@ import AccountCard from "./AccountCard";
 import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
 import { useMe } from "./MeApi";
+import { peek, put } from "./readCache";
+import { useScrollMemory } from "./useScrollMemory";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -67,23 +69,33 @@ function describeBody(b: Body): string | null {
 }
 
 /** §7.4 Settings: targets, meal windows, timezone, profile_notes (the
- *  agent-visible free text, §6.1), the experiment link (owner only), the
- *  on-device-state note. One Save writes everything (PUT). The Cronometer
- *  baseline left this page on 2026-09-06 (owner feedback); the setting itself
- *  stays, read by the adherence chart, and PUT never touches a key it is not
- *  sent. */
+ *  agent-visible free text, §6.1), then an About group: rows to the
+ *  experiment charts (owner only), the API-key docs and the legal pages
+ *  over the on-device-state note and the data credits. One Save writes
+ *  everything (PUT). The Cronometer baseline left this page on 2026-09-06
+ *  (owner feedback); the setting itself stays, read by the adherence chart,
+ *  and PUT never touches a key it is not sent. */
 export default function Settings() {
-  const [form, setForm] = useState<SettingsT | null>(null);
-  const [targets, setTargets] = useState<TargetText>(targetText({}));
+  // A return to the tab paints the settings last read (readCache: the
+  // server's copy, never an unsaved edit) while the read below refreshes them.
+  const [form, setForm] = useState<SettingsT | null>(() => peek<SettingsT>("settings"));
+  const [targets, setTargets] = useState<TargetText>(() =>
+    targetText(form?.targets ?? {}),
+  );
+  // what the page opened with, so the read below can tell an edit begun on
+  // the cached form (kept) from the form as painted (refreshed)
+  const opened = useRef({ form, targets }).current;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [wizard, setWizard] = useState(false);
   const me = useMe();
 
+  // the server's answer to a save or the wizard
   const load = (s: SettingsT) => {
     setForm(s);
     setTargets(targetText(s.targets));
+    put("settings", s);
   };
 
   // `attempt` re-runs the read: the failure notice carries a Retry rather
@@ -94,7 +106,10 @@ export default function Settings() {
     setError(null);
     getSettings()
       .then((s) => {
-        if (!cancelled) load(s);
+        if (cancelled) return;
+        setForm((f) => (f === opened.form ? s : f));
+        setTargets((t) => (t === opened.targets ? targetText(s.targets) : t));
+        put("settings", s);
       })
       .catch(() => {
         if (!cancelled) setError("Couldn't load your settings.");
@@ -103,6 +118,8 @@ export default function Settings() {
       cancelled = true;
     };
   }, [attempt]);
+
+  useScrollMemory(form !== null);
 
   const setWindow = (
     meal: (typeof WINDOW_MEALS)[number],
@@ -164,7 +181,7 @@ export default function Settings() {
           setWizard(false);
           setStatus("Targets saved.");
         }}
-        onSkip={() => setWizard(false)}
+        onCancel={() => setWizard(false)}
       />
     );
   }
@@ -351,26 +368,46 @@ export default function Settings() {
 
           <ApiKeysCard />
 
-          <section className="m3-section" aria-label="More">
-            <div className="m3-card">
+          <section className="m3-section" aria-label="About">
+            <h2>About</h2>
+            {/* The docs and the legal pages are the public website: opened
+                over the app (iOS's Safari sheet with Done, a new tab
+                elsewhere) rather than in its window, whose only way back
+                from them is the logo. */}
+            <div className="m3-card m3-links">
               {/* owner only (Bill, 2026-10-13, BACKLOG 105): the charts are the
                   owner's §9 instrument; a demo can still open /experiment by
                   URL and sees its own series */}
               {me?.is_owner ? (
-                <div className="m3-row">
-                  <span className="k">Is it learning?</span>
-                  <Link href="/experiment" className="m3-link-btn">
-                    Experiment charts →
-                  </Link>
-                </div>
+                <Link href="/experiment" className="m3-nav-row">
+                  Experiment charts
+                  <span className="chev" aria-hidden="true" />
+                </Link>
               ) : null}
-              <p className="m3-note">
-                Deleting the home-screen icon clears the app&rsquo;s on-device
-                state (your sign-in, any late items still sending). Your diary
-                lives on the server and is untouched.
-              </p>
-              <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
+              <a
+                href="/docs/api-keys"
+                target="_blank"
+                rel="noopener"
+                className="m3-nav-row"
+              >
+                How to use API keys
+                <span className="chev" aria-hidden="true" />
+              </a>
+              <a href="/privacy" target="_blank" rel="noopener" className="m3-nav-row">
+                Privacy
+                <span className="chev" aria-hidden="true" />
+              </a>
+              <a href="/terms" target="_blank" rel="noopener" className="m3-nav-row">
+                Terms
+                <span className="chev" aria-hidden="true" />
+              </a>
             </div>
+            <p className="m3-note">
+              Deleting the home-screen icon clears the app&rsquo;s on-device
+              state (your sign-in, any late items still sending). Your diary
+              lives on the server and is untouched.
+            </p>
+            <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
           </section>
         </>
       )}

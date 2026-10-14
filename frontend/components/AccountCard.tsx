@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { GITHUB_URL } from "@/lib/site";
-import { getMe, type Me } from "./MeApi";
+import { getMe, peekMe, type Me } from "./MeApi";
 
 /**
  * The account section of Settings: who you are signed in as, whether this
@@ -17,7 +17,9 @@ import { getMe, type Me } from "./MeApi";
  * survive on screen.
  */
 export default function AccountCard() {
-  const [me, setMe] = useState<Me | null>(null);
+  // what this visit already read paints at once; the read below refreshes
+  // the quota
+  const [me, setMe] = useState<Me | null>(peekMe);
   const [failed, setFailed] = useState(false);
   const [leaving, setLeaving] = useState(false);
 

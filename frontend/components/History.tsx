@@ -13,6 +13,8 @@ import {
   type RangeKind,
 } from "./HistoryApi";
 import HistoryView from "./HistoryView";
+import { peek, put } from "./readCache";
+import { useScrollMemory } from "./useScrollMemory";
 
 const KINDS: { kind: RangeKind; label: string; title: string }[] = [
   { kind: "3d", label: "3D", title: "3 days" },
@@ -33,14 +35,28 @@ function spanLabel(range: HistoryRange): string {
     : `${monthShort(a)} ${a.getDate()} – ${monthShort(b)} ${b.getDate()}`;
 }
 
+/* The range last picked, kept for as long as the document lasts: back from
+   a day, or a return to the tab, finds History on it, as native tabs do. A
+   hard load is "3d" on server and client alike, so hydration is unaffected;
+   only a reload resets it. */
+let lastKind: RangeKind | null = null;
+
+const rangeKey = (kind: RangeKind, today: string) => `history:${kind}:${today}`;
+
 /** §7.4 History: segmented 3D · W · M · Y (every range ends today, per
  *  routes/history.py), streak chip up top, tap a day → /history/<date>.
  *  The tab bar mounts from app/history/layout.tsx. */
 export default function History({ initialKind = "3d" }: { initialKind?: RangeKind }) {
   const router = useRouter();
   const [today] = useState(() => isoDate(new Date()));
-  const [kind, setKind] = useState<RangeKind>(initialKind);
-  const [range, setRange] = useState<HistoryRange | null>(null);
+  const [kind, setKindState] = useState<RangeKind>(() => lastKind ?? initialKind);
+  const setKind = (k: RangeKind) => {
+    lastKind = k;
+    setKindState(k);
+  };
+  const [range, setRange] = useState<HistoryRange | null>(() =>
+    peek<HistoryRange>(rangeKey(kind, today)),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,7 +66,9 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
     setError(null);
     fetchHistory(kind, today)
       .then((r) => {
-        if (!cancelled) setRange(r);
+        if (cancelled) return;
+        setRange(r);
+        put(rangeKey(kind, today), r);
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -70,6 +88,7 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
   }, [kind, today]);
 
   const streak = range?.streak ?? null;
+  useScrollMemory(range !== null);
 
   return (
     <main className="shell history">
@@ -113,7 +132,9 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         </p>
       ) : null}
       {range ? (
-        <div className={loading ? "hist-stale" : undefined}>
+        // dimmed only while it is another range's: a cached one being
+        // re-read is this range already
+        <div className={loading && range.range !== kind ? "hist-stale" : undefined}>
           <HistoryView
             kind={range.range}
             range={range}
