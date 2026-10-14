@@ -10,7 +10,7 @@
  * is still a copy, which costs nothing but a few lines.
  */
 
-import { ApiError, type DayTotals } from "@/lib/api";
+import { ApiError, type DayTotals, type Meal } from "@/lib/api";
 import type { components } from "@/lib/api-types";
 import { getToken } from "@/lib/auth/token";
 
@@ -51,15 +51,38 @@ export type EntryPatchResponse = {
 };
 
 /** §3.5: a qty-only PATCH scales the stored snapshot (BACKLOG 28 base); a
- *  `serving_id` re-derives it from the foods cache and resets that base. */
+ *  `serving_id` re-derives it from the foods cache and resets that base; a
+ *  `meal` refiles the entry and leaves the portion alone. */
 export function patchEntry(
   entryId: string,
-  patch: { qty?: number; serving_id?: string },
+  patch: { qty?: number; serving_id?: string; meal?: Meal },
 ): Promise<EntryPatchResponse> {
   return apiRequest(`/api/entries/${entryId}`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+/** A landed PATCH back into the diary state. The entry keeps its place in
+ *  its meal; one the PATCH moved leaves its old group and joins the new one
+ *  in the diary's own order (GET /api/diary sorts by logged_at). */
+export function placeEntry(meals: DiaryMeals, entry: DiaryEntry): DiaryMeals {
+  const next: DiaryMeals = {};
+  let kept = false;
+  for (const [meal, list] of Object.entries(meals)) {
+    next[meal] = list.flatMap((e) => {
+      if (e.id !== entry.id) return [e];
+      if (meal !== entry.meal) return [];
+      kept = true;
+      return [entry];
+    });
+  }
+  if (!kept) {
+    next[entry.meal] = [...(next[entry.meal] ?? []), entry].sort(
+      (a, b) => Date.parse(a.logged_at) - Date.parse(b.logged_at),
+    );
+  }
+  return next;
 }
 
 /** DELETE /api/entries/:id → the day's updated totals. */

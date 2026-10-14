@@ -1274,7 +1274,8 @@ export interface components {
         };
         /**
          * EntryPatch
-         * @description Any subset: qty scales; serving_id re-derives; food_id corrects + learns.
+         * @description Any subset: qty scales; serving_id re-derives; food_id corrects + learns;
+         *     meal refiles the entry under another meal and leaves the portion alone.
          */
         EntryPatch: {
             /** Qty */
@@ -1283,6 +1284,7 @@ export interface components {
             serving_id?: string | null;
             /** Food Id */
             food_id?: string | null;
+            meal?: components["schemas"]["Meal"] | null;
         };
         /** EntryPatchResponse */
         EntryPatchResponse: {

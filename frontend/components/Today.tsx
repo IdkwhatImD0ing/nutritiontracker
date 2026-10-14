@@ -19,7 +19,7 @@ import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet"
 import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
-import type { DiaryMeals } from "./DiaryApi";
+import { placeEntry, type DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
 import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
@@ -1091,14 +1091,7 @@ export default function Today() {
           meals={meals}
           onPatched={(entry, t) => {
             setTotals(t);
-            setMeals((cur) => {
-              if (!cur) return cur;
-              const next: DiaryMeals = {};
-              for (const [meal, list] of Object.entries(cur)) {
-                next[meal] = list.map((e) => (e.id === entry.id ? entry : e));
-              }
-              return next;
-            });
+            setMeals((cur) => (cur ? placeEntry(cur, entry) : cur));
           }}
           onDeleted={(id, t) => {
             setTotals(t);

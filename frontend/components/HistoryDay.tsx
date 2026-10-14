@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getDiary, type DayTotals } from "@/lib/api";
 import "@/app/history/history.css";
-import type { DiaryMeals } from "./DiaryApi";
+import { placeEntry, type DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
 import { longDate, parseISO } from "./HistoryApi";
 import Tracker from "./Tracker";
@@ -52,14 +52,7 @@ export default function HistoryDay({ date }: { date: string }) {
           emptyText="Nothing logged this day."
           onPatched={(entry, t) => {
             setTotals(t);
-            setMeals((cur) => {
-              if (!cur) return cur;
-              const next: DiaryMeals = {};
-              for (const [meal, list] of Object.entries(cur)) {
-                next[meal] = list.map((e) => (e.id === entry.id ? entry : e));
-              }
-              return next;
-            });
+            setMeals((cur) => (cur ? placeEntry(cur, entry) : cur));
           }}
           onDeleted={(id, t) => {
             setTotals(t);
