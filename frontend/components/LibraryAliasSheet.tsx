@@ -30,6 +30,10 @@ export default function LibraryAliasSheet({
     alias.default_qty != null ? fmtQty(alias.default_qty) : "1",
   );
   const [servings, setServings] = useState<StagedServing[] | null>(null);
+  // A failed read leaves `servings` null rather than [], which would read as
+  // "this food has no servings"; `attempt` re-runs it.
+  const [servingsFailed, setServingsFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
@@ -42,12 +46,12 @@ export default function LibraryAliasSheet({
         if (!cancelled) setServings(f.servings ?? []);
       })
       .catch(() => {
-        if (!cancelled) setServings([]);
+        if (!cancelled) setServingsFailed(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [alias.food_id]);
+  }, [alias.food_id, attempt]);
 
   const qty = Number.parseFloat(qtyText);
   const qtyValid = Number.isFinite(qty) && qty > 0;
@@ -119,45 +123,63 @@ export default function LibraryAliasSheet({
 
         <div>
           <div className="edit-label">Default portion</div>
-          {hasDefault ? (
-            <div className="stepper num" style={{ marginBottom: 8 }}>
-              <button type="button" aria-label="Less" onClick={() => step(-0.5)}>
-                −
-              </button>
-              <input
-                value={qtyText}
-                onChange={(e) => setQtyText(e.target.value)}
-                inputMode="decimal"
-                aria-label="Default quantity"
-              />
-              <button type="button" aria-label="More" onClick={() => step(0.5)}>
-                +
-              </button>
-            </div>
-          ) : null}
-          <div className="serving-list">
-            <button
-              type="button"
-              className={!hasDefault ? "active" : undefined}
-              onClick={() => setServingId("")}
-            >
-              No default — use my recent portions
-            </button>
-            {(servings ?? []).map((s) => (
+          {/* Nothing to pick until the list is in: a stored default can't be
+              cleared against servings he never saw. Save still resends it. */}
+          {servings == null ? (
+            servingsFailed ? (
               <button
-                key={s.serving_id}
                 type="button"
-                className={s.serving_id === servingId ? "active" : undefined}
-                onClick={() => setServingId(s.serving_id)}
+                className="m3-link-btn"
+                onClick={() => {
+                  setServingsFailed(false);
+                  setAttempt((n) => n + 1);
+                }}
               >
-                {s.description}
-                {s.grams != null ? ` · ${Math.round(s.grams)} g` : ""}
+                Couldn’t load this food’s servings — retry
               </button>
-            ))}
-            {servings == null ? (
+            ) : (
               <p className="subsheet-hint">Loading servings…</p>
-            ) : null}
-          </div>
+            )
+          ) : (
+            <>
+              {hasDefault ? (
+                <div className="stepper num" style={{ marginBottom: 8 }}>
+                  <button type="button" aria-label="Less" onClick={() => step(-0.5)}>
+                    −
+                  </button>
+                  <input
+                    value={qtyText}
+                    onChange={(e) => setQtyText(e.target.value)}
+                    inputMode="decimal"
+                    aria-label="Default quantity"
+                  />
+                  <button type="button" aria-label="More" onClick={() => step(0.5)}>
+                    +
+                  </button>
+                </div>
+              ) : null}
+              <div className="serving-list">
+                <button
+                  type="button"
+                  className={!hasDefault ? "active" : undefined}
+                  onClick={() => setServingId("")}
+                >
+                  No default — use my recent portions
+                </button>
+                {servings.map((s) => (
+                  <button
+                    key={s.serving_id}
+                    type="button"
+                    className={s.serving_id === servingId ? "active" : undefined}
+                    onClick={() => setServingId(s.serving_id)}
+                  >
+                    {s.description}
+                    {s.grams != null ? ` · ${Math.round(s.grams)} g` : ""}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {error ? <p className="sheet-error">{error}</p> : null}

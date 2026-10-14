@@ -8,6 +8,7 @@ import {
   type FoodSearchResult,
 } from "@/lib/api";
 import SheetHeader, { SheetClose } from "./SheetHeader";
+import Skeleton from "./Skeleton";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -41,6 +42,7 @@ export default function ManualSearchSheet({
   const [query, setQuery] = useState(phrase);
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [recent, setRecent] = useState<FoodSearchResult[] | null>(null);
+  const [recentFailed, setRecentFailed] = useState(false);
   const [fdcDown, setFdcDown] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -73,8 +75,9 @@ export default function ManualSearchSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The previously logged foods, once per open. A failed read shows nothing
-  // in their place — the list is a convenience, search still works.
+  // The previously logged foods, once per open. A failed read says so in one
+  // quiet line, never the first-run copy — the list is a convenience, search
+  // still works.
   useEffect(() => {
     let cancelled = false;
     recentFoods()
@@ -82,7 +85,7 @@ export default function ManualSearchSheet({
         if (!cancelled) setRecent(r);
       })
       .catch(() => {
-        if (!cancelled) setRecent([]);
+        if (!cancelled) setRecentFailed(true);
       });
     return () => {
       cancelled = true;
@@ -163,10 +166,17 @@ export default function ManualSearchSheet({
             <p className="subsheet-hint">
               Foods you log show up here, newest first.
             </p>
-          ) : null}
+          ) : recentFailed ? (
+            <p className="subsheet-hint">
+              Couldn&rsquo;t load your recent foods. Search still works.
+            </p>
+          ) : (
+            <Skeleton rows={5} height={52} />
+          )}
         </div>
       ) : (
         <div className="search-results">
+          {searching && results == null ? <Skeleton rows={4} height={52} /> : null}
           {(results ?? []).map(hit)}
           {results != null && results.length === 0 && !searching && !searchError ? (
             <p className="subsheet-hint">No matches — try fewer words.</p>

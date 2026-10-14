@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getWeights, type WeightEntry } from "@/lib/api";
+import Skeleton from "./Skeleton";
 
 const LB_PER_KG = 2.2046226; // WizardMath's constant; the card shows the unit the weigh-in was said in
 const DAYS = 30;
@@ -48,7 +49,8 @@ type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
  *  re-reads it (Today bumps it when an agent log recorded a weigh-in). A
  *  read that fails renders nothing — never a stale or invented number. */
 export default function WeightCard({ refreshKey }: { refreshKey: number }) {
-  const [data, setData] = useState<Data | null>(null);
+  // undefined = the first read is in flight, null = it failed
+  const [data, setData] = useState<Data | null | undefined>(undefined);
   // Derived per render, not frozen in state: an installed PWA lives across
   // midnight, and a `useState` initialiser would have gone on calling
   // yesterday's weigh-in today's for as long as the app stayed open. Today
@@ -69,6 +71,20 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
     };
   }, [refreshKey]);
 
+  // Held at the card's height while the first read is out: the diary below
+  // usually lands first, and must not drop ~100px under a thumb when this
+  // does. A refetch keeps the old data until the new arrives.
+  if (data === undefined) {
+    return (
+      <section className="weight-card is-loading" aria-label="Weight" aria-busy="true">
+        <div className="weight-main">
+          <span className="label">Weight</span>
+          <Skeleton height={24} width={96} />
+          <div className="weight-sub">&nbsp;</div>
+        </div>
+      </section>
+    );
+  }
   if (!data) return null;
   const latest = data.latest;
   if (!latest) {

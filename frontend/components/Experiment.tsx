@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import "@/app/experiment/experiment.css";
 import BackBar from "./BackBar";
+import ErrorNotice from "./ErrorNotice";
 import {
   fetchMetrics,
   MetricsUnavailable,
   type MetricsResponse,
 } from "./ExperimentApi";
 import ExperimentCharts from "./ExperimentCharts";
+import Skeleton from "./Skeleton";
 
 const RANGE = "12w";
 
@@ -20,6 +22,8 @@ export default function Experiment() {
   const [state, setState] = useState<"loading" | "ok" | "unwired" | "error">(
     "loading",
   );
+  // `attempt` re-runs the read: the failure notice carries a Retry.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +40,7 @@ export default function Experiment() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
   return (
     <main className="shell">
@@ -51,12 +55,8 @@ export default function Experiment() {
         over committed logs.
       </p>
 
-      {state === "loading" ? (
-        <p className="hhint">
-          <span className="spinner" />
-          Loading…
-        </p>
-      ) : null}
+      {/* the three Primary charts, roughly to size */}
+      {state === "loading" ? <Skeleton rows={3} height={240} /> : null}
       {state === "unwired" ? (
         <div className="exp-notice">
           <strong>No metrics route yet.</strong> This page reads{" "}
@@ -65,7 +65,13 @@ export default function Experiment() {
         </div>
       ) : null}
       {state === "error" ? (
-        <p className="hist-error">Couldn&rsquo;t load the metrics.</p>
+        <ErrorNotice
+          message="Couldn’t load the metrics."
+          onRetry={() => {
+            setState("loading");
+            setAttempt((n) => n + 1);
+          }}
+        />
       ) : null}
       {state === "ok" && data ? (
         data.weeks.length === 0 ? (

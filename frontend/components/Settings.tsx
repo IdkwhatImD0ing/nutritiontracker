@@ -16,6 +16,7 @@ import WizardGoal from "./WizardGoal";
 import AccountCard from "./AccountCard";
 import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
+import Skeleton from "./Skeleton";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -194,7 +195,13 @@ export default function Settings() {
       <OuraCard />
 
       {!form ? (
-        error ? null : <p className="m3-empty">Loading…</p>
+        // Daily targets and Meal windows, roughly to size
+        error ? null : (
+          <>
+            <Skeleton height={150} />
+            <Skeleton height={220} />
+          </>
+        )
       ) : (
         <>
           <section className="m3-section" aria-label="Daily targets">
@@ -346,27 +353,28 @@ export default function Settings() {
             {busy ? "Saving…" : "Save settings"}
           </button>
           {status ? <p className="m3-status">{status}</p> : null}
-
-          <ApiKeysCard />
-
-          <section className="m3-section" aria-label="More">
-            <div className="m3-card">
-              <div className="m3-row">
-                <span className="k">Is it learning?</span>
-                <Link href="/experiment" className="m3-link-btn">
-                  Experiment charts →
-                </Link>
-              </div>
-              <p className="m3-note">
-                Deleting the home-screen icon clears the app&rsquo;s on-device
-                state (your sign-in, any late items still sending). Your diary
-                lives on the server and is untouched.
-              </p>
-              <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
-            </div>
-          </section>
         </>
       )}
+
+      {/* Neither needs the settings read, so a failed one doesn't hide them. */}
+      <ApiKeysCard />
+
+      <section className="m3-section" aria-label="More">
+        <div className="m3-card">
+          <div className="m3-row">
+            <span className="k">Is it learning?</span>
+            <Link href="/experiment" className="m3-link-btn">
+              Experiment charts →
+            </Link>
+          </div>
+          <p className="m3-note">
+            Deleting the home-screen icon clears the app&rsquo;s on-device
+            state (your sign-in, any late items still sending). Your diary
+            lives on the server and is untouched.
+          </p>
+          <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
+        </div>
+      </section>
     </main>
   );
 }

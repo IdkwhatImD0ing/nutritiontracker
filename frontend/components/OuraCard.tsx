@@ -8,6 +8,7 @@ import {
   syncOura,
   type OuraStatus,
 } from "./OuraApi";
+import Skeleton from "./Skeleton";
 
 /**
  * Settings' Oura section. Owner only: it renders nothing for a demo account,
@@ -19,6 +20,13 @@ import {
  * its history). Oura's redirect back lands here with ?oura=, which is read
  * once and then dropped from the URL so a reload is quiet.
  */
+
+/** What the card was on the last visit ("connected" or "available"), so the
+ *  owner's Settings holds its place while the status loads instead of the
+ *  tall connected card popping in above Daily targets. A demo account's
+ *  status says available: false, which clears it: those keep rendering
+ *  nothing. */
+const SEEN_KEY = "tally.oura.card.v1";
 
 const RETURN_NOTES = new Map<string, string>([
   ["connected", "Oura connected."],
@@ -72,6 +80,8 @@ export default function OuraCard() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // read from storage after mount (the server render has no storage)
+  const [placeholder, setPlaceholder] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -87,9 +97,28 @@ export default function OuraCard() {
       );
     }
     let live = true;
+    try {
+      setPlaceholder(localStorage.getItem(SEEN_KEY));
+    } catch {
+      /* storage unavailable — the card just arrives */
+    }
     getOuraStatus()
-      .then((s) => live && setStatus(s))
+      .then((s) => {
+        if (!live) return;
+        setStatus(s);
+        setPlaceholder(null);
+        try {
+          if (s.available) {
+            localStorage.setItem(SEEN_KEY, s.connected ? "connected" : "available");
+          } else {
+            localStorage.removeItem(SEEN_KEY);
+          }
+        } catch {
+          /* fine — no placeholder next visit */
+        }
+      })
       .catch((e) => {
+        if (live) setPlaceholder(null);
         // Only the owner can get a 503 here (not migrated / not configured) —
         // anything else stays silent, so a demo account never sees the card.
         if (live && e instanceof ApiError && e.status === 503) {
@@ -139,7 +168,14 @@ export default function OuraCard() {
     setBusy(false);
   };
 
-  if (!status?.available && !error) return null;
+  if (!status?.available && !error) {
+    return placeholder ? (
+      <section className="m3-section" aria-label="Oura">
+        <h2>Oura</h2>
+        <Skeleton height={placeholder === "connected" ? 440 : 72} />
+      </section>
+    ) : null;
+  }
 
   const hint = status?.connected && !note ? missingNote(status.missing) : null;
 

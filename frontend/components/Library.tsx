@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
+import ErrorNotice from "./ErrorNotice";
 import {
   cacheFood,
   getAliases,
@@ -13,6 +14,7 @@ import {
 } from "./LibraryApi";
 import LibraryAliasSheet from "./LibraryAliasSheet";
 import LibraryMealSheet from "./LibraryMealSheet";
+import Skeleton from "./Skeleton";
 
 type FoodGroup = {
   food_id: string;
@@ -78,7 +80,9 @@ export default function Library() {
   const router = useRouter();
   const [aliases, setAliases] = useState<AliasRow[] | null>(null);
   const [meals, setMeals] = useState<SavedMeal[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // Which read failed. A failed list stays null rather than [], so its
+  // section says it couldn't load instead of "0 foods" and the first-run copy.
+  const [failed, setFailed] = useState({ aliases: false, meals: false });
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
@@ -92,24 +96,27 @@ export default function Library() {
   /** the same sheet with no meal = the §8.4 "build one in Library" path */
   const [newMeal, setNewMeal] = useState(false);
 
-  // `attempt` re-runs both reads: the failure notice carries a Retry rather
-  // than asking for a page reload.
+  // `attempt` re-runs both reads: each section's failure notice carries a
+  // Retry rather than asking for a page reload.
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    setLoadError(null);
     Promise.allSettled([getAliases(), getMeals()]).then(([a, m]) => {
       if (cancelled) return;
-      setAliases(a.status === "fulfilled" ? a.value : []);
-      setMeals(m.status === "fulfilled" ? m.value : []);
-      if (a.status === "rejected" || m.status === "rejected") {
-        setLoadError("Couldn't load part of your library.");
-      }
+      setAliases(a.status === "fulfilled" ? a.value : null);
+      setMeals(m.status === "fulfilled" ? m.value : null);
+      setFailed({ aliases: a.status === "rejected", meals: m.status === "rejected" });
     });
     return () => {
       cancelled = true;
     };
   }, [attempt]);
+  const retry = () => {
+    setFailed({ aliases: false, meals: false });
+    setAliases(null);
+    setMeals(null);
+    setAttempt((n) => n + 1);
+  };
 
   const groups = useMemo(() => groupByFood(aliases ?? []), [aliases]);
   const activeMeals = (meals ?? []).filter((m) => m.is_active);
@@ -155,23 +162,6 @@ export default function Library() {
           {aliases ? `${groups.length} food${groups.length === 1 ? "" : "s"}` : ""}
         </span>
       </header>
-
-      {loadError ? (
-        <div className="notice error" role="alert">
-          <span>{loadError}</span>
-          <button
-            type="button"
-            className="notice-btn"
-            onClick={() => {
-              setAliases(null);
-              setMeals(null);
-              setAttempt((n) => n + 1);
-            }}
-          >
-            Retry
-          </button>
-        </div>
-      ) : null}
 
       <section className="m3-section lib-search" aria-label="Find a food">
         <form className="capture" onSubmit={runSearch}>
@@ -226,8 +216,10 @@ export default function Library() {
           Saved meals
           <span className="count num">{meals ? activeMeals.length : ""}</span>
         </h2>
-        {meals == null ? (
-          <p className="m3-empty">Loading…</p>
+        {failed.meals ? (
+          <ErrorNotice message="Couldn't load your saved meals." onRetry={retry} />
+        ) : meals == null ? (
+          <Skeleton rows={2} height={64} />
         ) : meals.length === 0 ? (
           <p className="m3-empty">
             No saved meals yet. Say “save this as my usual breakfast” after
@@ -257,8 +249,10 @@ export default function Library() {
             {aliases ? `${aliases.length} phrase${aliases.length === 1 ? "" : "s"}` : ""}
           </span>
         </h2>
-        {aliases == null ? (
-          <p className="m3-empty">Loading…</p>
+        {failed.aliases ? (
+          <ErrorNotice message="Couldn't load your foods." onRetry={retry} />
+        ) : aliases == null ? (
+          <Skeleton rows={2} height={64} />
         ) : groups.length === 0 ? (
           <p className="m3-empty">
             Nothing learned yet. Every meal you log teaches the app a phrase →

@@ -12,6 +12,7 @@ import {
   type HistoryRange,
   type RangeKind,
 } from "./HistoryApi";
+import ErrorNotice from "./ErrorNotice";
 import HistoryView from "./HistoryView";
 
 const KINDS: { kind: RangeKind; label: string; title: string }[] = [
@@ -43,6 +44,8 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
   const [range, setRange] = useState<HistoryRange | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // `attempt` re-runs the read: the failure notice carries a Retry.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +70,7 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
     return () => {
       cancelled = true;
     };
-  }, [kind, today]);
+  }, [kind, today, attempt]);
 
   const streak = range?.streak ?? null;
 
@@ -105,7 +108,9 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         <p className="range-label">{spanLabel(range)}</p>
       ) : null}
 
-      {error ? <p className="hist-error">{error}</p> : null}
+      {error ? (
+        <ErrorNotice message={error} onRetry={() => setAttempt((n) => n + 1)} />
+      ) : null}
       {loading && !range ? (
         <p className="hhint">
           <span className="spinner" />

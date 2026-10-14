@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import BackBar from "./BackBar";
+import ErrorNotice from "./ErrorNotice";
 import {
   getFood,
   type AliasRow,
@@ -10,6 +11,7 @@ import {
   type NutrientRow,
 } from "./LibraryApi";
 import LibraryAliasSheet from "./LibraryAliasSheet";
+import Skeleton from "./Skeleton";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
@@ -126,7 +128,9 @@ function NutrientLine({ k, label, v }: { k: string; label: string; v: unknown })
  *  badge with date + citation link. */
 export default function FoodDetail({ id }: { id: string }) {
   const [food, setFood] = useState<Food | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // A 404 is final; any other failure carries a Retry (`attempt`).
+  const [error, setError] = useState<"not-found" | "failed" | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [servingId, setServingId] = useState("");
   const [aliasSheet, setAliasSheet] = useState<AliasRow | null>(null);
 
@@ -140,16 +144,12 @@ export default function FoodDetail({ id }: { id: string }) {
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setError(
-          e instanceof ApiError && e.status === 404
-            ? "Food not found."
-            : "Couldn't load this food.",
-        );
+        setError(e instanceof ApiError && e.status === 404 ? "not-found" : "failed");
       });
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, attempt]);
 
   if (!food) {
     return (
@@ -157,7 +157,25 @@ export default function FoodDetail({ id }: { id: string }) {
         <header className="brand">
           <BackBar parent="/library" label="Library" />
         </header>
-        <p className="m3-empty">{error ?? "Loading…"}</p>
+        {error === "not-found" ? (
+          <div className="notice">
+            <span>Food not found.</span>
+          </div>
+        ) : error ? (
+          <ErrorNotice
+            message="Couldn't load this food."
+            onRetry={() => {
+              setError(null);
+              setAttempt((n) => n + 1);
+            }}
+          />
+        ) : (
+          // the page's shape while it loads: the name, then the two cards
+          <>
+            <Skeleton height={28} width="60%" />
+            <Skeleton rows={2} height={160} />
+          </>
+        )}
       </main>
     );
   }

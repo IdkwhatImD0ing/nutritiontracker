@@ -483,15 +483,8 @@ a {
   stroke-linejoin: round;
 }
 
-/* Quiet one-line states, shared by History and Experiment (which never
+/* Quiet one-line hints, shared by History and Experiment (which never
    loads history.css). */
-.hist-error {
-  color: var(--amber);
-  font-size: 0.82rem;
-  margin: 0;
-  text-align: center;
-}
-
 .hhint {
   font-size: 0.78rem;
   color: var(--faint);
@@ -2189,12 +2182,32 @@ a {
   padding: 2px 6px;
 }
 
-/* the demo strip under the Today header */
+/* the demo strip under the Today header. It arrives when /api/me answers,
+   after Today has painted, so it grows into place (closing the .shell gap
+   too) rather than shoving the tracker down in one frame. */
 .pending-pill.demo-banner {
   border-radius: var(--radius-sm);
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--text);
+  /* clips the text while it grows; the ✕'s 44px tap area (8px over its
+     28px) still fits inside the 9px padding */
+  overflow: hidden;
+  animation: banner-in 220ms var(--ease);
+}
+
+/* max-height can't animate to `none`, so it ends at a cap above the strip's
+   two-line height */
+@keyframes banner-in {
+  from {
+    max-height: 0;
+    padding-block: 0;
+    opacity: 0;
+    margin-bottom: -18px; /* the .shell gap */
+  }
+  to {
+    max-height: 80px;
+  }
 }
 
 .pending-pill.demo-banner .sheet-close {

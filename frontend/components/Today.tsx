@@ -37,6 +37,7 @@ import Tracker from "./Tracker";
 import { useOnForeground } from "./useOnForeground";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
+import { TARGETS_EVENT } from "./WizardGate";
 
 const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
@@ -406,6 +407,14 @@ export default function Today() {
         setDiaryError(true);
       });
   };
+
+  // The goal wizard saved targets; the tracker's come from the diary totals.
+  // reloadDiary only touches state setters, so the first render's copy is fine.
+  useEffect(() => {
+    const onTargets = () => reloadDiary();
+    window.addEventListener(TARGETS_EVENT, onTargets);
+    return () => window.removeEventListener(TARGETS_EVENT, onTargets);
+  }, []);
 
   // The queue is written through the ref, not through a functional setState:
   // it is persisted in the same breath, and a state updater has to stay pure

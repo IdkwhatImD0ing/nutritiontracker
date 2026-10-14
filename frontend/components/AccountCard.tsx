@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { getMe, type Me } from "./MeApi";
+import Skeleton from "./Skeleton";
 
 /**
  * The account section of Settings: who you are signed in as, whether this
@@ -52,7 +53,7 @@ export default function AccountCard() {
         <div className="account-who">
           <span className="account-label">Signed in as</span>
           <span className="account-email">
-            {me?.email ?? (failed ? "—" : "…")}
+            {me?.email ?? (failed ? "—" : <Skeleton height={14} width={160} />)}
           </span>
         </div>
 
