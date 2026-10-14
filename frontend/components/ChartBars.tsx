@@ -104,6 +104,7 @@ export default function ChartBars({
   format = (v) => fmt0.format(v),
 }: Props) {
   const [selKey, setSelKey] = useState<string | null>(null);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
   const H = height;
   const plotW = W - PAD.l - PAD.r;
   const plotH = H - PAD.t - PAD.b;
@@ -129,25 +130,35 @@ export default function ChartBars({
     b.hint ?? `${b.label}: ${b.value == null ? "—" : format(b.value)}${unit ? ` ${unit}` : ""}`;
 
   // select mode: the picked bar by key (so a new range keeps nothing stale),
-  // else today's, else the newest
-  const picked = bars.findIndex((b) => b.key === selKey);
+  // else today's, else the newest. A mouse's hover only previews: leaving the
+  // plot goes back to the bar last pressed, so the way up to Open (which
+  // crosses other bars) doesn't change the day it opens.
+  const picked = bars.findIndex((b) => b.key === (hoverKey ?? selKey));
   const today = bars.findIndex((b) => b.active);
   const selIdx = !select ? -1 : picked >= 0 ? picked : today >= 0 ? today : bars.length - 1;
   const sel = selIdx >= 0 ? bars[selIdx] : undefined;
   const tap = select ? undefined : onTap;
   // a press, a drag, or a mouse's hover: the bar under the pointer's x
   const scrub = (e: PointerEvent<SVGSVGElement>) => {
-    if (e.pointerType !== "mouse" && e.buttons === 0) return;
+    const hover = e.buttons === 0;
+    if (hover && e.pointerType !== "mouse") return;
     const r = e.currentTarget.getBoundingClientRect();
     const i = Math.floor((((e.clientX - r.left) / r.width) * W - PAD.l) / group);
     const b = bars[Math.min(Math.max(i, 0), bars.length - 1)];
-    if (b) setSelKey(b.key);
+    if (!b) return;
+    if (hover) {
+      setHoverKey(b.key);
+    } else {
+      setSelKey(b.key);
+      setHoverKey(null);
+    }
   };
   const step = (e: KeyboardEvent<SVGSVGElement>) => {
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       e.preventDefault();
       const i = Math.min(Math.max(selIdx + (e.key === "ArrowRight" ? 1 : -1), 0), bars.length - 1);
       if (bars[i]) setSelKey(bars[i].key);
+      setHoverKey(null);
     } else if (e.key === "Enter" && onTap && sel) {
       e.preventDefault();
       onTap(sel.key);
@@ -180,6 +191,7 @@ export default function ChartBars({
         style={select ? { touchAction: "pan-y" } : undefined}
         onPointerDown={select ? scrub : undefined}
         onPointerMove={select ? scrub : undefined}
+        onPointerLeave={select ? () => setHoverKey(null) : undefined}
         onKeyDown={select ? step : undefined}
       >
         <g className="chart-grid">

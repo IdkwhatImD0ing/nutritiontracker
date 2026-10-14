@@ -24,13 +24,17 @@
 }
 
 /* select mode (History M and Y): the picked bar's value in HTML, where a
-   finger can read it — an SVG <title> never shows on touch */
+   finger can read it — an SVG <title> never shows on touch. Two lines tall
+   whatever the hint: a Y week's hint wraps on a phone and an empty week's
+   doesn't, and a row that grew mid-scrub would move the plot under the
+   finger. */
 .chart-readout {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 22px;
+  min-height: 2.6em;
+  line-height: 1.3;
   font-size: 0.8rem;
   color: var(--text);
 }
