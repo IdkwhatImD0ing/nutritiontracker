@@ -113,18 +113,20 @@ export default function PortionSheet({ item, onApply, onClose }: Props) {
           ) : null}
         </div>
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={!valid || !chosen}
-          onClick={() => {
-            if (valid && chosen) onApply(chosen, Math.round(qty * 100) / 100);
-          }}
-        >
-          <span className="num">
-            Done{kcal != null ? ` · ${Math.round(kcal)} kcal` : ""}
-          </span>
-        </button>
+        <div className="subsheet-foot">
+          <button
+            type="button"
+            className="commit-btn"
+            disabled={!valid || !chosen}
+            onClick={() => {
+              if (valid && chosen) onApply(chosen, Math.round(qty * 100) / 100);
+            }}
+          >
+            <span className="num">
+              Done{kcal != null ? ` · ${Math.round(kcal)} kcal` : ""}
+            </span>
+          </button>
+        </div>
       </div>
     </>
   );

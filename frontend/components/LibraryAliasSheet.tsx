@@ -160,40 +160,42 @@ export default function LibraryAliasSheet({
           </div>
         </div>
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        <div className="subsheet-foot">
+          {error ? <p className="sheet-error">{error}</p> : null}
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={busy || (hasDefault && !qtyValid)}
-          onClick={save}
-        >
-          Save
-        </button>
+          <button
+            type="button"
+            className="commit-btn"
+            disabled={busy || (hasDefault && !qtyValid)}
+            onClick={save}
+          >
+            Save
+          </button>
 
-        <div className="m3-actions">
-          {confirm ? (
-            <>
-              <span className="m3-note">Forget this phrase → food mapping?</span>
+          <div className="m3-actions">
+            {confirm ? (
+              <>
+                <span className="m3-note">Forget this phrase → food mapping?</span>
+                <button
+                  type="button"
+                  className="m3-link-btn danger"
+                  disabled={busy}
+                  onClick={remove}
+                >
+                  Yes, delete
+                </button>
+              </>
+            ) : (
               <button
                 type="button"
                 className="m3-link-btn danger"
                 disabled={busy}
-                onClick={remove}
+                onClick={() => setConfirm(true)}
               >
-                Yes, delete
+                Delete mapping
               </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="m3-link-btn danger"
-              disabled={busy}
-              onClick={() => setConfirm(true)}
-            >
-              Delete mapping
-            </button>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </>

@@ -16,7 +16,7 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
-import SheetHeader from "./SheetHeader";
+import SheetHeader, { DiscardConfirm } from "./SheetHeader";
 
 type Props = {
   /** null → §8.4 create path 3, "build one in Library" (POST /api/meals) */
@@ -37,6 +37,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // a close that would lose edits asks first, in place of Save
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   // create mode only: the food search that fills the item list. Servings are
   // kept per food so the picked portion can be changed without another fetch.
@@ -169,13 +171,28 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
 
   const valid = name.trim().length > 0 && items.length > 0;
 
+  // Edits a backdrop tap, the ✕, a pull, Escape or Back would throw away:
+  // anything changed from what the sheet opened with (a new meal: anything
+  // typed or added). Those closes ask first, in the foot.
+  const itemKey = (list: SavedMealItem[]) =>
+    JSON.stringify(list.map(({ food_id, serving_id, qty }) => [food_id, serving_id, qty]));
+  const dirty = meal
+    ? name !== meal.name ||
+      phrases !== meal.trigger_phrases.join(", ") ||
+      itemKey(items) !== itemKey(meal.items)
+    : name.trim() !== "" || phrases.trim() !== "" || items.length > 0;
+  const requestClose = () => {
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  };
+
   return (
     <>
-      <div className="subsheet-backdrop" onClick={onClose} />
+      <div className="subsheet-backdrop" onClick={requestClose} />
       <div className="subsheet" role="dialog" aria-label="Edit saved meal">
         <SheetHeader
           title={!meal ? "New saved meal" : meal.is_active ? "Saved meal" : "Inactive meal"}
-          onClose={onClose}
+          onClose={requestClose}
         />
 
         <label className="m3-field">
@@ -307,41 +324,52 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           </div>
         ) : null}
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        <div className="subsheet-foot">
+          {error ? <p className="sheet-error">{error}</p> : null}
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={busy || !valid}
-          onClick={save}
-        >
-          {meal ? "Save" : "Create meal"}
-        </button>
-
-        {meal ? (
-          <div className="m3-actions">
-            {meal.is_active ? (
+          {confirmDiscard ? (
+            <DiscardConfirm
+              onKeep={() => setConfirmDiscard(false)}
+              onDiscard={onClose}
+            />
+          ) : (
+            <>
               <button
                 type="button"
-                className="m3-link-btn danger"
-                disabled={busy}
-                onClick={() => run({ is_active: false })}
+                className="commit-btn"
+                disabled={busy || !valid}
+                onClick={save}
               >
-                Deactivate
+                {meal ? "Save" : "Create meal"}
               </button>
-            ) : (
-              <button
-                type="button"
-                className="m3-link-btn"
-                disabled={busy}
-                onClick={() => run({ is_active: true })}
-              >
-                Reactivate
-              </button>
-            )}
-            <span className="m3-note">Past diary entries keep their numbers.</span>
-          </div>
-        ) : null}
+
+              {meal ? (
+                <div className="m3-actions">
+                  {meal.is_active ? (
+                    <button
+                      type="button"
+                      className="m3-link-btn danger"
+                      disabled={busy}
+                      onClick={() => run({ is_active: false })}
+                    >
+                      Deactivate
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="m3-link-btn"
+                      disabled={busy}
+                      onClick={() => run({ is_active: true })}
+                    >
+                      Reactivate
+                    </button>
+                  )}
+                  <span className="m3-note">Past diary entries keep their numbers.</span>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
     </>
   );

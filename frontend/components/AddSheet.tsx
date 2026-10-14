@@ -3,12 +3,15 @@
 import { useEffect } from "react";
 import { loadDetector } from "./barcodeDetector";
 import SheetHeader from "./SheetHeader";
+import { SheetFrame, usePresence } from "./useSheetPresence";
 
 /** The + sheet (owner ruling, 2026-09-02): the mid-screen capture bar is
  *  gone; every way to log opens from the tab bar's + button. Exactly four
- *  rows, in this order. The sheet only reports the pick — TabBar routes it
- *  to Today (a window event while Today is mounted, a sessionStorage handoff
- *  plus a navigation home when it isn't), and Today mounts the lane's sheet. */
+ *  rows, in this order, and under them a Cancel that is the sheet's exit,
+ *  not a fifth lane (Bill, 2026-10-13). The sheet only reports the pick —
+ *  TabBar routes it to Today (a window event while Today is mounted, a
+ *  sessionStorage handoff plus a navigation home when it isn't), and Today
+ *  mounts the lane's sheet. */
 
 export const ADD_LANES = ["barcode", "photo", "search", "agent"] as const;
 export type AddLane = (typeof ADD_LANES)[number];
@@ -103,14 +106,7 @@ const ROWS = [
 ] as const;
 
 export default function AddSheet({ open, onClose, onPick }: Props) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const { mounted, closing } = usePresence(open);
 
   // Warm the barcode decoder (its ~1 MB wasm) the moment the sheet opens:
   // that download is the slow part of a first scan, and it is one HTTP-cached
@@ -119,10 +115,10 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
     if (open) loadDetector().catch(() => {});
   }, [open]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
-    <>
+    <SheetFrame closing={closing}>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet add-sheet" role="dialog" aria-label="Log food">
         <SheetHeader title="Log food" onClose={onClose} closeButton={false} />
@@ -145,7 +141,14 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
             </span>
           </button>
         ))}
+        {/* iOS's action-sheet Cancel. It lies where the + was, so a second
+            tap on the + cancels rather than opening Agent, whose mic starts
+            on open. Hidden from 900px (m3.css), where the rail's Log food is
+            nowhere near the tiles. */}
+        <button type="button" className="add-cancel" onClick={onClose}>
+          Cancel
+        </button>
       </div>
-    </>
+    </SheetFrame>
   );
 }

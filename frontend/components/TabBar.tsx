@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import AddSheet, { ADD_EVENT, ADD_HANDOFF_KEY, type AddLane } from "./AddSheet";
+import { releaseForNavigation } from "./sheetBack";
 import "@/app/library/m3.css";
 
 /** §7.4 navigation: Today · History · [+] · Library · Settings — five equal
@@ -107,7 +108,11 @@ export default function TabBar() {
     } catch {
       /* storage unavailable — Today opens and the + is one tap away again */
     }
-    router.push("/");
+    // The open + sheet holds a history entry at this page's URL (sheetBack).
+    // Home replaces it, so Back from Today still lands on this page — not
+    // back() over it and then a push, two history moves that would race.
+    if (releaseForNavigation()) router.replace("/");
+    else router.push("/");
   };
 
   return (

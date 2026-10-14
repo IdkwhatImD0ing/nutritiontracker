@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import "@/app/photo.css";
 import SheetHeader from "./SheetHeader";
+import { SheetFrame, usePresence } from "./useSheetPresence";
 
 /** Vision needs nothing sharper than this; a 12 MP phone JPEG is ~4 MB and
  *  the route caps uploads at 12 MB, so downscale client-side, always. */
@@ -120,6 +121,7 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
   const whereRef = useRef<Fix | null>(null);
+  const { mounted, closing } = usePresence(open);
 
   // A reopened sheet starts clean.
   useEffect(() => {
@@ -186,7 +188,7 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
     }
   };
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const locked = phase === "preparing";
   const close = () => {
@@ -194,7 +196,7 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
   };
 
   return (
-    <>
+    <SheetFrame closing={closing}>
       <div className="subsheet-backdrop" onClick={close} />
       <div className="subsheet" role="dialog" aria-label="Log a photo">
         <SheetHeader title="Log a photo" onClose={close} canClose={!locked} />
@@ -297,6 +299,6 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
           </>
         ) : null}
       </div>
-    </>
+    </SheetFrame>
   );
 }

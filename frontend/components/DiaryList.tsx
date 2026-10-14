@@ -11,7 +11,8 @@ import {
 } from "./DiaryApi";
 import DiaryEntryRow from "./DiaryEntryRow";
 import { createMeal, type SavedMeal } from "./LibraryApi";
-import SheetHeader from "./SheetHeader";
+import SheetHeader, { DiscardConfirm } from "./SheetHeader";
+import SheetPresence from "./useSheetPresence";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -45,6 +46,15 @@ function SaveMealSheet({
   const [phrases, setPhrases] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  // A close that would throw away a typed name or phrases (the backdrop, the
+  // ✕, a pull, Escape, Back) asks first, in the foot.
+  const dirty = name !== `usual ${meal}` || phrases !== "";
+  const requestClose = () => {
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  };
 
   const save = async () => {
     setBusy(true);
@@ -76,9 +86,9 @@ function SaveMealSheet({
 
   return (
     <>
-      <div className="subsheet-backdrop" onClick={onClose} />
+      <div className="subsheet-backdrop" onClick={requestClose} />
       <div className="subsheet" role="dialog" aria-label="Save as meal">
-        <SheetHeader title={`Save this ${meal} as a meal`} onClose={onClose} />
+        <SheetHeader title={`Save this ${meal} as a meal`} onClose={requestClose} />
 
         <label className="m3-field">
           Name
@@ -116,16 +126,25 @@ function SaveMealSheet({
           ))}
         </div>
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        <div className="subsheet-foot">
+          {error ? <p className="sheet-error">{error}</p> : null}
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={busy || !name.trim()}
-          onClick={save}
-        >
-          {busy ? "Saving…" : "Save meal"}
-        </button>
+          {confirmDiscard ? (
+            <DiscardConfirm
+              onKeep={() => setConfirmDiscard(false)}
+              onDiscard={onClose}
+            />
+          ) : (
+            <button
+              type="button"
+              className="commit-btn"
+              disabled={busy || !name.trim()}
+              onClick={save}
+            >
+              {busy ? "Saving…" : "Save meal"}
+            </button>
+          )}
+        </div>
       </div>
     </>
   );
@@ -239,17 +258,19 @@ export default function DiaryList({
         </div>
       ))}
       {savedMeal ? <p className="m3-status">{savedMeal}</p> : null}
-      {saveGroup ? (
-        <SaveMealSheet
-          meal={saveGroup.meal}
-          entries={saveGroup.entries}
-          onSaved={(m) => {
-            setSaveGroup(null);
-            setSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
-          }}
-          onClose={() => setSaveGroup(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {saveGroup ? (
+          <SaveMealSheet
+            meal={saveGroup.meal}
+            entries={saveGroup.entries}
+            onSaved={(m) => {
+              setSaveGroup(null);
+              setSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
+            }}
+            onClose={() => setSaveGroup(null)}
+          />
+        ) : null}
+      </SheetPresence>
     </section>
   );
 }

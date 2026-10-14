@@ -12,6 +12,7 @@ import {
   type ApiKeyCreate,
 } from "./ApiKeysApi";
 import SheetHeader from "./SheetHeader";
+import { SheetFrame, usePresence } from "./useSheetPresence";
 
 type Access = ApiKeyCreate["scopes"];
 type Expiry = NonNullable<ApiKeyCreate["expires_in_days"]> | null;
@@ -110,6 +111,8 @@ export default function ApiKeysCard() {
   const [error, setError] = useState<string | null>(null);
 
   const [sheet, setSheet] = useState(false);
+  // the new-key sheet stays up through its exit animation
+  const { mounted: sheetUp, closing: sheetClosing } = usePresence(sheet);
   const [label, setLabel] = useState("");
   const [access, setAccess] = useState<Access>("read_write");
   const [expiry, setExpiry] = useState<Expiry>(null);
@@ -159,15 +162,6 @@ export default function ApiKeysCard() {
     setSheet(false);
     newBtn.current?.focus();
   }, []);
-
-  useEffect(() => {
-    if (!sheet) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeSheet();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [sheet, closeSheet]);
 
   // A fresh sheet every time. It opens on Read & write, the API's own
   // default: logging food is what most agents are for.
@@ -428,8 +422,8 @@ export default function ApiKeysCard() {
         )}
       </div>
 
-      {sheet ? (
-        <>
+      {sheetUp ? (
+        <SheetFrame closing={sheetClosing}>
           <div className="subsheet-backdrop" onClick={closeSheet} />
           <div className="subsheet" role="dialog" aria-labelledby="keys-sheet-title">
             <SheetHeader
@@ -496,22 +490,24 @@ export default function ApiKeysCard() {
                 </div>
               </div>
 
-              {createError ? (
-                <p className="sheet-error" role="alert">
-                  {createError}
-                </p>
-              ) : null}
+              <div className="subsheet-foot">
+                {createError ? (
+                  <p className="sheet-error" role="alert">
+                    {createError}
+                  </p>
+                ) : null}
 
-              <button
-                type="submit"
-                className="commit-btn"
-                disabled={creating || !label.trim()}
-              >
-                {creating ? "Creating…" : "Create key"}
-              </button>
+                <button
+                  type="submit"
+                  className="commit-btn"
+                  disabled={creating || !label.trim()}
+                >
+                  {creating ? "Creating…" : "Create key"}
+                </button>
+              </div>
             </form>
           </div>
-        </>
+        </SheetFrame>
       ) : null}
     </section>
   );

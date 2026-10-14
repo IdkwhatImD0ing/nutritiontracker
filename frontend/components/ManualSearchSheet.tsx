@@ -8,6 +8,7 @@ import {
   type FoodSearchResult,
 } from "@/lib/api";
 import SheetHeader, { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -45,6 +46,7 @@ export default function ManualSearchSheet({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const seq = useRef(0);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   const run = async (q: string) => {
     const trimmed = q.trim();
@@ -89,13 +91,8 @@ export default function ManualSearchSheet({
     };
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Escape and Back: the sub-sheet's come through its SheetHeader
+  useSheetBack(sheetRef, onClose, fullScreen);
 
   // Until a search has run — or once the field is cleared again — the
   // previously logged foods take the results' place. A pre-searched row
@@ -180,7 +177,12 @@ export default function ManualSearchSheet({
     return (
       <>
         <div className="sheet-backdrop" onClick={onClose} />
-        <div className="sheet search-sheet" role="dialog" aria-label="Search foods">
+        <div
+          className="sheet search-sheet"
+          role="dialog"
+          aria-label="Search foods"
+          ref={sheetRef}
+        >
           <div className="sheet-head">
             <div className="sheet-head-row">
               <span className="sheet-title">Search</span>

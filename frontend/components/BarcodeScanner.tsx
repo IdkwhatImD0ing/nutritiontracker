@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { loadDetector } from "./barcodeDetector";
-import SheetHeader from "./SheetHeader";
+import { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
 
 type Props = {
   /** true while the parent's lookup / from-food round trip is in flight —
@@ -45,7 +46,10 @@ const CAMERA_TEXT: Record<Camera, string> = {
  *  the + sheet opens — `loadDetector`). Camera via getUserMedia, rear-facing,
  *  720p requested, tracks stopped on close;
  *  a torch toggle where the track advertises one; a typed-number fallback
- *  when the camera is denied or the code won't read. */
+ *  when the camera is denied or the code won't read. Full screen, like the
+ *  Search lane (BACKLOG 142): the camera is the whole sheet, with the head and
+ *  a panel of the rest laid over it, so a miss grows the panel upward rather
+ *  than moving the viewfinder. */
 export default function BarcodeScanner({
   busy,
   notice,
@@ -56,6 +60,7 @@ export default function BarcodeScanner({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const [camera, setCamera] = useState<Camera>("starting");
   const [attempt, setAttempt] = useState(0); // bump → re-request the camera
   const [torch, setTorch] = useState<boolean | null>(null); // null = none
@@ -66,13 +71,7 @@ export default function BarcodeScanner({
   const onCodeRef = useRef(onCode);
   onCodeRef.current = onCode;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useSheetBack(sheetRef, onClose);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -191,9 +190,19 @@ export default function BarcodeScanner({
 
   return (
     <>
-      <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Scan barcode">
-        <SheetHeader title="Scan barcode" onClose={onClose} />
+      <div className="sheet-backdrop" onClick={onClose} />
+      <div
+        className="sheet scan-sheet"
+        role="dialog"
+        aria-label="Scan barcode"
+        ref={sheetRef}
+      >
+        <div className="sheet-head">
+          <div className="sheet-head-row">
+            <span className="sheet-title">Scan barcode</span>
+            <SheetClose onClick={onClose} />
+          </div>
+        </div>
 
         <div className={`scan-view${busy ? " busy" : ""}`} hidden={hideView}>
           <video ref={videoRef} playsInline muted autoPlay />
@@ -216,63 +225,65 @@ export default function BarcodeScanner({
           ) : null}
         </div>
 
-        <p className="scan-status" aria-live="polite">
-          {busy ? "Looking it up…" : CAMERA_TEXT[camera]}
-        </p>
-        {hideView ? (
-          <div className="chips">
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setAttempt((n) => n + 1)}
-            >
-              Try the camera again
-            </button>
-          </div>
-        ) : null}
+        <div className="scan-panel">
+          <p className="scan-status" aria-live="polite">
+            {busy ? "Looking it up…" : CAMERA_TEXT[camera]}
+          </p>
+          {hideView ? (
+            <div className="chips">
+              <button
+                type="button"
+                className="chip"
+                onClick={() => setAttempt((n) => n + 1)}
+              >
+                Try the camera again
+              </button>
+            </div>
+          ) : null}
 
-        {notice ? (
-          <>
-            <p className="sheet-error">{notice}</p>
-            {onSearchInstead ? (
-              <div className="chips">
-                <button
-                  type="button"
-                  className="chip search-instead"
-                  onClick={onSearchInstead}
-                >
-                  Search instead
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
+          {notice ? (
+            <>
+              <p className="sheet-error">{notice}</p>
+              {onSearchInstead ? (
+                <div className="chips">
+                  <button
+                    type="button"
+                    className="chip search-instead"
+                    onClick={onSearchInstead}
+                  >
+                    Search instead
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
 
-        <form
-          className="capture"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (busy || digits.length < MIN_DIGITS) return;
-            onCode(digits);
-          }}
-        >
-          <input
-            ref={inputRef}
-            value={manual}
-            onChange={(e) => setManual(e.target.value)}
-            inputMode="numeric"
-            placeholder="Or type the number under the bars"
-            aria-label="Barcode number"
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            disabled={busy || digits.length < MIN_DIGITS}
-            aria-label="Look up"
+          <form
+            className="capture"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (busy || digits.length < MIN_DIGITS) return;
+              onCode(digits);
+            }}
           >
-            {busy ? <span className="spinner" /> : "→"}
-          </button>
-        </form>
+            <input
+              ref={inputRef}
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              inputMode="numeric"
+              placeholder="Or type the number under the bars"
+              aria-label="Barcode number"
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              disabled={busy || digits.length < MIN_DIGITS}
+              aria-label="Look up"
+            >
+              {busy ? <span className="spinner" /> : "→"}
+            </button>
+          </form>
+        </div>
       </div>
     </>
   );

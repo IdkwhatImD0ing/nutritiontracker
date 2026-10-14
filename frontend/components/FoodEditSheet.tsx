@@ -118,34 +118,38 @@ export default function FoodEditSheet({
           </div>
         ) : null}
 
-        <form
-          className="capture"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const trimmed = text.trim();
-            if (trimmed && !busy) onRephrase(trimmed);
-          }}
-        >
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Describe it differently"
-            aria-label="Re-resolve food"
-            autoComplete="off"
-          />
-          <button type="submit" disabled={busy || !text.trim()} aria-label="Resolve">
-            →
-          </button>
-        </form>
+        {/* the field and the search stay pinned at the foot, by the thumb and
+            above the keyboard; only the alias chips scroll */}
+        <div className="subsheet-foot">
+          <form
+            className="capture"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const trimmed = text.trim();
+              if (trimmed && !busy) onRephrase(trimmed);
+            }}
+          >
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Describe it differently"
+              aria-label="Re-resolve food"
+              autoComplete="off"
+            />
+            <button type="submit" disabled={busy || !text.trim()} aria-label="Resolve">
+              →
+            </button>
+          </form>
 
-        <button
-          type="button"
-          className="edit-manual-btn"
-          disabled={busy}
-          onClick={onManualSearch}
-        >
-          Search the food database…
-        </button>
+          <button
+            type="button"
+            className="edit-manual-btn"
+            disabled={busy}
+            onClick={onManualSearch}
+          >
+            Search the food database…
+          </button>
+        </div>
       </div>
     </>
   );

@@ -205,6 +205,22 @@ body:has(.tabbar) .shell {
   font-size: 1.1rem;
 }
 
+/* Cancel (Bill, 2026-10-13): iOS's action-sheet exit, not a fifth lane —
+   quiet, centred, no icon, the rows' height. It lies where the + was, so a
+   second tap on the + lands here and not on Agent, which starts the mic. */
+.add-cancel {
+  width: 100%;
+  min-height: 64px;
+  margin-top: 4px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
 /* ---------- page furniture ---------- */
 
 .m3-section {
@@ -1085,6 +1101,11 @@ body:has(.tabbar) .shell {
   }
 
   .add-row-chev {
+    display: none;
+  }
+
+  /* the rail's Log food is nowhere near the tiles: nothing to land on */
+  .add-cancel {
     display: none;
   }
 
