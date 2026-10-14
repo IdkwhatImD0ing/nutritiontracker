@@ -466,6 +466,13 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   padding-bottom: calc(172px + env(safe-area-inset-bottom));
 }
 
+/* A toast that lands while the bar is up ("Targets saved." from the
+   wizard, other edits still unsaved) stacks above the bar (58px tall)
+   rather than covering it. */
+.shell.settings:has(> .m3-savebar) > .toast {
+  bottom: calc(168px + env(safe-area-inset-bottom));
+}
+
 .m3-row {
   display: flex;
   justify-content: space-between;
@@ -1221,6 +1228,10 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
 
   body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
     padding-bottom: 112px;
+  }
+
+  body:has(.tabbar) .shell.settings:has(> .m3-savebar) > .toast {
+    bottom: 100px;
   }
 
   /* the + sheet: four lanes as a 2 × 2 of tiles */

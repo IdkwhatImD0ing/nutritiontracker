@@ -443,11 +443,28 @@ export default function StagingSheet({
     );
   };
 
+  // Undo hands focus back to the restored row's ✕, the control the Undo took
+  // it from, rather than dropping it on the page. The rows are the sheet
+  // body's first children, in `visible` order.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const refocusRef = useRef<number | null>(null);
   const undoRemove = (itemIndex: number) => {
     clearTimeout(undoTimersRef.current.get(itemIndex));
     undoTimersRef.current.delete(itemIndex);
     dropUndoable(itemIndex);
+    refocusRef.current = itemIndex;
   };
+  useEffect(() => {
+    const idx = refocusRef.current;
+    if (idx == null) return;
+    refocusRef.current = null;
+    const pos = items
+      .filter((i) => !removed.has(i.item_index))
+      .findIndex((i) => i.item_index === idx);
+    bodyRef.current?.children[pos]
+      ?.querySelector<HTMLButtonElement>(".row-remove")
+      ?.focus();
+  }, [undoable, items, removed]);
 
   // The sheet going away (Log, the ✕, a photo card's close) closes every
   // open Undo window at once: those rows are removed, so the server hears it
@@ -726,7 +743,7 @@ export default function StagingSheet({
           </div>
         )}
 
-        <div className="sheet-body">
+        <div className="sheet-body" ref={bodyRef}>
           {visible.map((item) =>
             undoable.has(item.item_index) ? (
               <div className="row row-removed" key={item.item_index}>
