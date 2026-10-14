@@ -627,7 +627,17 @@ body:has(.tabbar) .shell {
   gap: 18px;
 }
 
+/* the wizard's top bar (globals.css .top-bar), sticky inside the .wizard
+   scroller. It takes over .wizard-inner's top padding, inset included, and
+   gives back the gap under it, so at rest the steps and the title sit about
+   where they did. */
+.wizard-top {
+  margin: calc(-22px - env(safe-area-inset-top)) -18px -18px;
+  padding-inline: 18px;
+}
+
 .wizard-steps {
+  flex: 1;
   display: flex;
   gap: 6px;
 }

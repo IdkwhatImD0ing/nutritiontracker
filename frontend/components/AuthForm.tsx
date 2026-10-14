@@ -27,6 +27,7 @@ export default function AuthForm({
 
   return (
     <main className="auth-wrap">
+      <div className="top-bar auth-top" />
       <form className="auth-card" action={formAction}>
         <h1>{title}</h1>
         {intro ? <p className="subsheet-hint auth-intro">{intro}</p> : null}
@@ -78,6 +79,7 @@ function VerifyEmail({ verify }: { verify: Verify }) {
 
   return (
     <main className="auth-wrap">
+      <div className="top-bar auth-top" />
       <form className="auth-card" action={formAction}>
         <h1>Verify your email</h1>
         <p className="subsheet-hint auth-intro">

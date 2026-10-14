@@ -533,12 +533,24 @@ export default function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supported, openWith]);
 
+  // The picker dismissed without a pick. The lane's one send-on-pick is
+  // spent, or the composer's next camera tap would send instead of attach.
+  // And when the lane opened only for that picker (+ → Take photo) and
+  // nothing has been said, the empty chat under it was never asked for:
+  // the whole lane closes.
+  const dismissPicker = () => {
+    const laneOnly = openedLaneRef.current && messages.length === 0;
+    openedLaneRef.current = false;
+    setPickerOpen(false);
+    if (laneOnly) onClose();
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // the picker is stacked above the chat — Escape is its own first
       if (pickerOpen) {
-        setPickerOpen(false);
+        dismissPicker();
         return;
       }
       // then the attachment: closing would destroy a picture that may not be
@@ -551,7 +563,7 @@ export default function AgentChat({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, pickerOpen, attached]);
+  }, [onClose, pickerOpen, attached, messages]);
 
   // The parent worded the failure (a demo 429: "Demo accounts can log once a
   // day — resets at …") — drop this sheet's own "type it instead" notice so
@@ -808,12 +820,7 @@ export default function AgentChat({
       <PhotoCapture
         open={pickerOpen}
         locate={locate}
-        onClose={() => {
-          // dismissed without a pick: the lane's one send-on-pick is spent,
-          // or the composer's next camera tap would send instead of attach
-          openedLaneRef.current = false;
-          setPickerOpen(false);
-        }}
+        onClose={dismissPicker}
         onPicked={(shot) => {
           setPickerOpen(false);
           setNotice(null);

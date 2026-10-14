@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { ChevronLeft } from "./icons";
 
 /* The pages behind the one on screen, oldest first, as this document saw
@@ -19,12 +19,25 @@ let trail: string[] = [];
 /** Pages stepped back over, most recent last: where a forward pop lands. */
 let ahead: string[] = [];
 let popTo: string | null = null;
+/** The navigation under way is a router.replace (markReplace). */
+let replacing = false;
+
+/** Call just before a router.replace: the new page takes the place of the
+ *  one on screen in the trail rather than stacking on it (the day view's
+ *  day stepper), so its back still names the page behind both. */
+export function markReplace() {
+  replacing = true;
+}
 
 /** The trail (and what lies ahead) once `path` is on screen. Pure, so a page
  *  rendering ahead of NavTrail's effect sees the navigation still settling. */
 function settle(path: string): { trail: string[]; ahead: string[] } {
   if (trail.at(-1) === path) return { trail, ahead };
-  if (popTo !== path) return { trail: [...trail, path], ahead: [] };
+  if (popTo !== path) {
+    // a replace keeps the forward entries, as replaceState does
+    if (replacing) return { trail: [...trail.slice(0, -1), path], ahead };
+    return { trail: [...trail, path], ahead: [] };
+  }
   // A popstate does not say which way it went, only where it landed.
   const back = trail.at(-2) === path;
   const forward = ahead.at(-1) === path;
@@ -49,6 +62,14 @@ export function NavTrail() {
   useEffect(() => {
     ({ trail, ahead } = settle(pathname));
     popTo = null;
+    replacing = false;
+  }, [pathname]);
+  // The shell's rise (globals.css) is for the document's first paint only:
+  // every later page is a tab switch or a drill-in, where a native app cuts.
+  // Set in a layout effect, so it lands before the new page paints.
+  const loaded = useRef(pathname);
+  useLayoutEffect(() => {
+    if (pathname !== loaded.current) document.documentElement.dataset.navigated = "";
   }, [pathname]);
   return null;
 }

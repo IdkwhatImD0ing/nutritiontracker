@@ -239,6 +239,91 @@
   letter-spacing: 0.06em;
 }
 
+/* the day view's header: ‹ › step a day from the right end of the back
+   row, where iOS puts a pushed screen's actions, so the 1.6rem date under
+   it keeps the full width ("Wednesday, Sep 30" and two 44px buttons don't
+   share a 320px row). Their negative margins reach into the header's
+   padding, as .nav-back's do, so the row doesn't grow. */
+.shell.day .brand .nav-back {
+  grid-column: 1;
+}
+
+.shell.day .brand h1 {
+  grid-column: 1 / -1;
+}
+
+.day-step {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  display: flex;
+  margin: -10px -12px -4px 0;
+}
+
+.day-step button {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.day-step button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.day-step svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.2;
+}
+
+/* the date opens a picker: a native date input over it, invisible, so the
+   tap is the input's own and the OS picker opens (owner, 2026-10-13). The
+   input reaches 8px under the title for a taller target, not above it,
+   where the back link's hit area ends. */
+.day-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.day-pick svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+.day-pick input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100% + 8px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px; /* under 16px iOS zooms on focus */
+  cursor: pointer;
+}
+
+.day-pick:has(input:focus-visible) {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
 /* ---------- desktop ----------
    From 900px (the rail and the wider .shell live in m3.css / globals.css):
    the range control and its span label share a row, the 3-day cards tile as

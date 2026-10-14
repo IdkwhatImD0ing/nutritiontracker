@@ -242,10 +242,12 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
   return (
     <div className="wizard" role="dialog" aria-label="Goal wizard">
       <div className="wizard-inner">
-        <div className="wizard-steps" aria-hidden="true">
-          {[0, 1, 2].map((i) => (
-            <span key={i} className={i <= step ? "done" : undefined} />
-          ))}
+        <div className="top-bar wizard-top">
+          <div className="wizard-steps" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <span key={i} className={i <= step ? "done" : undefined} />
+            ))}
+          </div>
         </div>
 
         {step === 0 ? (

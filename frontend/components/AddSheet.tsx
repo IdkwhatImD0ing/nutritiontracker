@@ -17,6 +17,8 @@ export type AddLane = (typeof ADD_LANES)[number];
 export const ADD_EVENT = "tally:add";
 /** sessionStorage key carrying the pick across a navigation to Today */
 export const ADD_HANDOFF_KEY = "tally.add.v1";
+/** …and the page it was picked on, where a lane closed unused goes back to */
+export const ADD_HANDOFF_FROM_KEY = "tally.add.from.v1";
 
 export function isAddLane(v: unknown): v is AddLane {
   return typeof v === "string" && (ADD_LANES as readonly string[]).includes(v);

@@ -24,7 +24,9 @@ const GAP = 2;
 const LABEL_H = 14;
 
 /** §7.4 year view: the adherence strip — one cell per week, opacity = share
- *  of days with ≥1 entry. Tap a week → that week in the W view. */
+ *  of days with ≥1 entry. Read-only, like the year's bars: every range ends
+ *  today, so a week can't open in the W view, and a day older than the M
+ *  view is reached from the day view's date picker (owner, 2026-10-13). */
 export default function ChartStrip({ title, cells, onTap }: Props) {
   const n = Math.max(cells.length, 1);
   const W = 360;

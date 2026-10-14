@@ -16,7 +16,13 @@ import {
   type LogResponse,
   type StagedItem,
 } from "@/lib/api";
-import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
+import {
+  ADD_EVENT,
+  ADD_HANDOFF_FROM_KEY,
+  ADD_HANDOFF_KEY,
+  isAddLane,
+  type AddLane,
+} from "./AddSheet";
 import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
@@ -137,6 +143,12 @@ export default function Today() {
   // is up. The pick arrives from TabBar as a window event (Today mounted) or
   // a sessionStorage handoff (navigated here from another tab).
   const [lane, setLane] = useState<AddLane | null>(null);
+  // A lane handed over from another tab remembers that tab (`originRef`), so
+  // closing it before anything was sent (`sentRef`) goes back there rather
+  // than stranding the user on Today. Once something is sent, landing here
+  // on the diary is the point, and the lane closes in place.
+  const originRef = useRef<string | null>(null);
+  const sentRef = useRef(false);
   // §3.4b (2026-09-08): the photo lane IS the agent lane now — "Take photo"
   // opens the chat with the picker up, so the plate lands in the conversation
   // that is going to correct it. This is which of the two the lane opened for.
@@ -380,6 +392,15 @@ export default function Today() {
     }
     setOpenWith(next === "photo" ? "photo" : "mic");
     setLane(target);
+    sentRef.current = false; // a new lane (or Search instead) starts unused
+  };
+  // Every way a lane closes. TabBar pushed Today over the origin, so the
+  // entry behind this one is that page.
+  const closeLane = () => {
+    setLane(null);
+    const from = originRef.current;
+    originRef.current = null;
+    if (from && !sentRef.current) router.back();
   };
   // The + listener is bound once; the ref keeps it on the current closure.
   const pickRef = useRef(pickLane);
@@ -392,9 +413,14 @@ export default function Today() {
     // Picked on another tab: TabBar stashed the lane and navigated here.
     try {
       const stashed = sessionStorage.getItem(ADD_HANDOFF_KEY);
+      const from = sessionStorage.getItem(ADD_HANDOFF_FROM_KEY);
+      sessionStorage.removeItem(ADD_HANDOFF_FROM_KEY);
       if (stashed != null) {
         sessionStorage.removeItem(ADD_HANDOFF_KEY);
-        if (isAddLane(stashed)) pickRef.current(stashed);
+        if (isAddLane(stashed)) {
+          originRef.current = from;
+          pickRef.current(stashed);
+        }
       }
     } catch {
       /* storage unavailable — the + is one tap away again */
@@ -696,6 +722,7 @@ export default function Today() {
   };
 
   const submit = async (text: string): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -760,6 +787,7 @@ export default function Today() {
   // chat as soon as the server has it, then the same stream as text.
   // staged_ms measures stop-tap → rendered (§11: "capture stop → staged").
   const submitAudio = async (clip: VoiceClip): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -851,6 +879,7 @@ export default function Today() {
   // turn — the model sees the image and answers what was asked — where the
   // bare shot stays the deterministic vision parse.
   const submitPhoto = async (shot: PhotoShot, said = ""): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -943,7 +972,7 @@ export default function Today() {
         captured_at: new Date().toISOString(),
       });
       quickRef.current = null;
-      setLane(null);
+      closeLane();
       enterStaging(log);
     } catch (e) {
       t0Ref.current = null;
@@ -956,6 +985,7 @@ export default function Today() {
   // Search lane: an FDC hit is cached first (POST /api/foods/select, the
   // library path) — from-food takes a foods.id, never a raw source id.
   const searchSelect = async (hit: FoodSearchResult): Promise<void> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     let foodId: string;
@@ -970,6 +1000,7 @@ export default function Today() {
   };
 
   const scanCode = async (code: string): Promise<void> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     let hit: Awaited<ReturnType<typeof lookupBarcode>>;
@@ -1219,7 +1250,7 @@ export default function Today() {
           // above the split it is theirs, and while rows are staged the staged
           // list's own × is what acts (SplitSheet hides this one then).
           onDismiss={() => {
-            if (!staging) setLane(null);
+            if (!staging) closeLane();
           }}
           chat={
             <AgentChat
@@ -1250,7 +1281,7 @@ export default function Today() {
                 setStaging({ log, restore: null });
               }}
               onClose={() => {
-                if (!staging) setLane(null);
+                if (!staging) closeLane();
               }}
             />
           }
@@ -1264,7 +1295,7 @@ export default function Today() {
           busy={captureBusy}
           error={captureError}
           onSelect={searchSelect}
-          onClose={() => setLane(null)}
+          onClose={closeLane}
         />
       ) : null}
 
@@ -1275,7 +1306,7 @@ export default function Today() {
           onCode={scanCode}
           // a spent quota meets the same 429 in the search lane — don't offer it
           onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}
-          onClose={() => setLane(null)}
+          onClose={closeLane}
         />
       ) : null}
 
