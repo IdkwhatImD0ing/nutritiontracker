@@ -1275,6 +1275,12 @@ a {
   overscroll-behavior: contain;
 }
 
+/* the rows are locked while Log is in flight (StagingSheet) — an edit then
+   would be lost; the lock lifts if the commit fails */
+.sheet-body[inert] {
+  opacity: 0.6;
+}
+
 .sheet-foot {
   padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
@@ -1314,6 +1320,14 @@ a {
   color: var(--faint);
   box-shadow: none;
   cursor: default;
+}
+
+/* busy is not unavailable: a button doing what was asked keeps its fill,
+   with a .spinner.on-accent ahead of its "…ing" label */
+.commit-btn[aria-busy="true"] {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  cursor: progress;
 }
 
 .sheet-error {
@@ -1385,6 +1399,15 @@ a {
   letter-spacing: 0.04em;
 }
 
+/* no macros yet (searching) or none to have (not found, a numberless
+   estimate): body font, normal weight, faint */
+.row-kcal.empty .n {
+  font-family: var(--font);
+  font-weight: 400;
+  font-size: 1rem;
+  color: var(--faint);
+}
+
 .row-remove {
   width: 30px;
   height: 30px;
@@ -1415,8 +1438,9 @@ a {
   color: var(--muted);
 }
 
+/* not found needs the user's tap, so it must not read as disabled */
 .row.not-found .row-name {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .badge {
@@ -1431,14 +1455,10 @@ a {
   vertical-align: 2px;
 }
 
-.badge.searching {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
+/* the app's one attention colour, as needs input */
 .badge.not-found {
-  background: var(--surface-3);
-  color: var(--faint);
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 
 .badge.needs-input {
@@ -1478,6 +1498,13 @@ a {
   animation: spin 0.8s linear infinite;
   vertical-align: -1px;
   margin-right: 6px;
+}
+
+/* on an accent fill (a busy Log / Save / Sign in), where the accent arc
+   would vanish */
+.spinner.on-accent {
+  border-color: color-mix(in srgb, var(--on-accent) 25%, transparent);
+  border-top-color: var(--on-accent);
 }
 
 @keyframes spin {
@@ -1604,13 +1631,6 @@ a {
   color: var(--amber);
 }
 
-.manual-hint {
-  color: var(--sage);
-  text-decoration: underline;
-  text-decoration-color: var(--faint);
-  text-underline-offset: 3px;
-}
-
 /* tappable food name → §7.1 edit sheet (BACKLOG 23) */
 
 .name-btn {
@@ -1715,6 +1735,25 @@ a {
 
 .detail-meal .chips {
   margin-top: 6px;
+}
+
+/* every staged row removed: say so, over the add field */
+.stage-empty {
+  text-align: center;
+  padding: 32px 12px 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.stage-empty p {
+  margin: 0;
+}
+
+.stage-empty .stage-empty-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 
 /* ---------- add-item field (§7.1) ---------- */
@@ -1935,6 +1974,21 @@ a {
 .edit-manual-btn:disabled {
   color: var(--faint);
   cursor: default;
+}
+
+/* every staged row removed: Discard stands where Log did, at Log's size, so
+   the foot doesn't jump — a full-width band, or the lip's pill */
+.sheet-foot .edit-manual-btn {
+  width: 100%;
+  min-height: 54px;
+  text-align: center;
+}
+
+.stage-lip .edit-manual-btn {
+  width: auto;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
 }
 
 /* manual search results (BACKLOG 3 — deliberately boring) */
@@ -2311,6 +2365,11 @@ a {
   cursor: default;
 }
 
+.auth-card button[type="submit"][aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
 .auth-error {
   color: var(--red);
   font-size: 0.85rem;
@@ -2665,6 +2724,12 @@ a {
   cursor: default;
 }
 
+.commit-pill[aria-busy="true"] {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  cursor: progress;
+}
+
 /* The tray's edge, not a divider component: no fill and no rules of its own,
    just the sheet's own grabber shape sitting in the gap under the tray. Same
    affordance the sheet itself uses at the top, so it reads as "this edge
@@ -2797,13 +2862,41 @@ a {
   padding: 12px 18px 16px;
 }
 
+/* nothing said yet: a glyph, a title and the sentence, sat just above the
+   composer (and the thumb) rather than mid-sheet */
 .chat-empty {
-  margin: auto 0;
-  padding: 24px 12px;
+  margin: auto 0 0;
+  padding: 24px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   text-align: center;
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+.chat-empty p {
+  margin: 0;
+}
+
+.chat-empty-glyph {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 1.35rem;
+}
+
+.chat-empty .chat-empty-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
 }
 
 .bubble {

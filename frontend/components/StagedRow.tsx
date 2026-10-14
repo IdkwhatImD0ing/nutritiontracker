@@ -121,9 +121,6 @@ export default function StagedRow({
             ) : (
               name
             )}
-            {searching ? (
-              <span className="badge searching">searching</span>
-            ) : null}
             {notFound ? <span className="badge not-found">not found</span> : null}
             {item.status === "needs_input" ? (
               <span className="badge needs-input">needs input</span>
@@ -153,22 +150,37 @@ export default function StagedRow({
                 {verify ? " · verify" : ""}
               </button>
             ) : searching ? (
-              "resolving…"
+              "Looking up…"
             ) : notFound ? (
-              <span className="manual-hint">tap to search manually</span>
+              <button
+                type="button"
+                className="portion-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onManualSearch();
+                }}
+              >
+                Search foods
+              </button>
             ) : (
               item.phrase
             )}
           </div>
         </div>
-        <div className="row-kcal num">
-          <span className="n">
-            {macros != null
-              ? `${estimated ? "~" : ""}${fmt.format(macros.kcal)}`
-              : "—"}
-          </span>
-          <span className="u">kcal</span>
-        </div>
+        {/* no numbers yet (or none to have): a quiet dash, not a display-
+            weight slab brighter than the row's own name */}
+        {macros != null ? (
+          <div className="row-kcal num">
+            <span className="n">
+              {`${estimated ? "~" : ""}${fmt.format(macros.kcal)}`}
+            </span>
+            <span className="u">kcal</span>
+          </div>
+        ) : (
+          <div className="row-kcal empty num">
+            <span className="n">–</span>
+          </div>
+        )}
         <button
           type="button"
           className="row-remove"

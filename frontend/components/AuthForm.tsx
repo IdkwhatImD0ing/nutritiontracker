@@ -6,6 +6,8 @@ import { verifyEmailAction, type AuthFormState } from "@/app/auth/actions";
 type Props = {
   title: string;
   submitLabel: string;
+  /** the submit button's label while the action runs ("Signing in…") */
+  pendingLabel: string;
   action: (prev: AuthFormState, formData: FormData) => Promise<AuthFormState>;
   /** one line under the title — what the account being created gets */
   intro?: string;
@@ -16,6 +18,7 @@ type Props = {
 export default function AuthForm({
   title,
   submitLabel,
+  pendingLabel,
   action,
   intro,
   withName,
@@ -51,8 +54,15 @@ export default function AuthForm({
           />
         </label>
         {state?.error ? <p className="auth-error">{state.error}</p> : null}
-        <button type="submit" disabled={pending}>
-          {pending ? "…" : submitLabel}
+        <button type="submit" disabled={pending} aria-busy={pending}>
+          {pending ? (
+            <>
+              <span className="spinner on-accent" />
+              {pendingLabel}
+            </>
+          ) : (
+            submitLabel
+          )}
         </button>
         <p className="auth-alt">
           {alt.text} <a href={alt.href}>{alt.label}</a>
@@ -104,8 +114,18 @@ function VerifyEmail({ verify }: { verify: Verify }) {
           name="intent"
           value={sent ? "verify" : "send"}
           disabled={pending}
+          aria-busy={pending}
         >
-          {pending ? "…" : sent ? "Verify" : "Send verification code"}
+          {pending ? (
+            <>
+              <span className="spinner on-accent" />
+              {sent ? "Verifying…" : "Sending…"}
+            </>
+          ) : sent ? (
+            "Verify"
+          ) : (
+            "Send verification code"
+          )}
         </button>
         {sent ? (
           <button

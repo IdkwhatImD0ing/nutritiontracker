@@ -13,6 +13,7 @@ export default function SignUpPage() {
       title="Create your account"
       intro="New accounts are demos: one log a day — by voice, photo, barcode, or search — in a diary only you can see."
       submitLabel="Sign up"
+      pendingLabel="Creating account…"
       action={signUpAction}
       withName
       alt={{

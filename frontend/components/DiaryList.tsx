@@ -123,9 +123,17 @@ function SaveMealSheet({
           type="button"
           className="commit-btn"
           disabled={busy || !name.trim()}
+          aria-busy={busy}
           onClick={save}
         >
-          {busy ? "Saving…" : "Save meal"}
+          {busy ? (
+            <>
+              <span className="spinner on-accent" />
+              Saving…
+            </>
+          ) : (
+            "Save meal"
+          )}
         </button>
       </div>
     </>
@@ -142,7 +150,11 @@ export default function DiaryList({
   emptyText = "Nothing logged yet.",
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  // which row is waiting, and on what — the spinner goes in the tapped button
+  const [busy, setBusy] = useState<{
+    id: string;
+    kind: "save" | "delete";
+  } | null>(null);
   // a failed edit, kept with its row so it shows where the user is looking
   const [error, setError] = useState<{ id: string; text: string } | null>(null);
   const [saveGroup, setSaveGroup] = useState<{
@@ -170,8 +182,12 @@ export default function DiaryList({
   }
 
   /** true when `fn` landed — the row keeps its draft on a refusal. */
-  const run = async (id: string, fn: () => Promise<void>): Promise<boolean> => {
-    setBusy(id);
+  const run = async (
+    id: string,
+    kind: "save" | "delete",
+    fn: () => Promise<void>,
+  ): Promise<boolean> => {
+    setBusy({ id, kind });
     setError(null);
     try {
       await fn();
@@ -214,7 +230,7 @@ export default function DiaryList({
               key={e.id}
               entry={e}
               expanded={expanded === e.id}
-              busy={busy === e.id}
+              busy={busy?.id === e.id ? busy.kind : null}
               error={error?.id === e.id ? error.text : null}
               onToggle={() => {
                 // an error belongs to the open row; any toggle closes that row
@@ -222,7 +238,7 @@ export default function DiaryList({
                 setExpanded((cur) => (cur === e.id ? null : e.id));
               }}
               onSave={(patch) =>
-                run(e.id, async () => {
+                run(e.id, "save", async () => {
                   const res = await patchEntry(e.id, patch);
                   // routes/entries.py builds its DiaryEntry without the
                   // source/citation/estimate fields — keep the ones already
@@ -240,7 +256,7 @@ export default function DiaryList({
                 })
               }
               onDelete={() =>
-                run(e.id, async () => {
+                run(e.id, "delete", async () => {
                   const totals = await deleteEntry(e.id);
                   onDeleted(e.id, totals);
                 })

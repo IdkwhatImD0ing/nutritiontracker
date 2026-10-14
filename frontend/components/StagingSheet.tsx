@@ -680,7 +680,8 @@ export default function StagingSheet({
           </div>
         )}
 
-        <div className="sheet-body">
+        {/* locked while Log is in flight: an edit then would be lost */}
+        <div className="sheet-body" inert={committing}>
           {visible.map((item) => (
             <StagedRow
               key={item.item_index}
@@ -701,9 +702,10 @@ export default function StagingSheet({
             />
           ))}
           {visible.length === 0 ? (
-            <p className="zero-hint" style={{ marginTop: 24 }}>
-              Nothing left to log.
-            </p>
+            <div className="stage-empty">
+              <p className="stage-empty-title">No foods left</p>
+              <p>Add one below, or discard this log.</p>
+            </div>
           ) : null}
 
           <form
@@ -735,18 +737,30 @@ export default function StagingSheet({
           <div className={docked ? "stage-lip" : undefined}>
             {docked ? discardBtn : null}
             {docked ? mealChip : null}
-            <button
-              type="button"
-              className={docked ? "commit-pill" : "commit-btn"}
-              disabled={committing || visible.length === 0}
-              onClick={commit}
-            >
-              {committing ? (
-                "Logging…"
-              ) : (
-                <span className="num">Log · {fmt.format(totalKcal)} kcal</span>
-              )}
-            </button>
+            {/* nothing to log: the way on is Discard (close — Today's undo
+                toast, or back to the chat), not a dead "Log · 0 kcal" */}
+            {visible.length === 0 ? (
+              <button type="button" className="edit-manual-btn" onClick={close}>
+                Discard
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={docked ? "commit-pill" : "commit-btn"}
+                disabled={committing}
+                aria-busy={committing}
+                onClick={commit}
+              >
+                {committing ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Logging…
+                  </>
+                ) : (
+                  <span className="num">Log · {fmt.format(totalKcal)} kcal</span>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>

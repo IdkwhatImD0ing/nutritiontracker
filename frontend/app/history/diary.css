@@ -112,8 +112,11 @@
   text-align: left;
 }
 
+/* wraps, never nowrap: Save portion · Really delete · Keep need ~325px and
+   the panel is ~296px on a 390 phone, so Delete and Keep drop a line */
 .diary-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }

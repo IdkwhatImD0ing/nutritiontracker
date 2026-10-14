@@ -28,7 +28,8 @@ function humanizeKey(key: string): string {
 type Props = {
   entry: DiaryEntry;
   expanded: boolean;
-  busy: boolean;
+  /** a save or delete in flight: every control waits, the tapped one spins */
+  busy: "save" | "delete" | null;
   /** this row's failed save or delete, shown over its actions */
   error?: string | null;
   onToggle: () => void;
@@ -123,6 +124,8 @@ export default function DiaryEntryRow({
   const servingMoved = chosenId !== entry.serving.id;
   const dirty =
     draftValid && (Math.abs(draftNum - entry.qty) > 1e-9 || servingMoved);
+
+  const locked = busy !== null;
 
   const step = (delta: number) => {
     const next = Math.max(0.25, Math.round((draftNum + delta) * 100) / 100);
@@ -247,7 +250,7 @@ export default function DiaryEntryRow({
                         className={
                           sv.serving_id === chosenId ? "active" : undefined
                         }
-                        disabled={busy || !ok}
+                        disabled={locked || !ok}
                         title={
                           ok
                             ? undefined
@@ -286,7 +289,7 @@ export default function DiaryEntryRow({
               <button
                 type="button"
                 aria-label="Less"
-                disabled={busy || !draftValid}
+                disabled={locked || !draftValid}
                 onClick={() => step(-1)}
               >
                 −
@@ -296,13 +299,13 @@ export default function DiaryEntryRow({
                 inputMode="decimal"
                 value={draft}
                 aria-label="Quantity"
-                disabled={busy}
+                disabled={locked}
                 onChange={(e) => setQtyText(e.target.value)}
               />
               <button
                 type="button"
                 aria-label="More"
-                disabled={busy || !draftValid}
+                disabled={locked || !draftValid}
                 onClick={() => step(1)}
               >
                 +
@@ -317,7 +320,7 @@ export default function DiaryEntryRow({
               <button
                 type="button"
                 className="diary-save"
-                disabled={busy || !dirty}
+                disabled={locked || !dirty}
                 onClick={() => {
                   void onSave({
                     qty: draftNum,
@@ -334,7 +337,7 @@ export default function DiaryEntryRow({
                   });
                 }}
               >
-                {busy ? <span className="spinner" /> : null}
+                {busy === "save" ? <span className="spinner" /> : null}
                 Save portion
               </button>
               {confirmDelete ? (
@@ -342,15 +345,16 @@ export default function DiaryEntryRow({
                   <button
                     type="button"
                     className="diary-delete confirm"
-                    disabled={busy}
+                    disabled={locked}
                     onClick={onDelete}
                   >
+                    {busy === "delete" ? <span className="spinner" /> : null}
                     Really delete
                   </button>
                   <button
                     type="button"
                     className="diary-cancel"
-                    disabled={busy}
+                    disabled={locked}
                     onClick={() => setConfirmDelete(false)}
                   >
                     Keep
@@ -360,7 +364,7 @@ export default function DiaryEntryRow({
                 <button
                   type="button"
                   className="diary-delete"
-                  disabled={busy}
+                  disabled={locked}
                   onClick={() => setConfirmDelete(true)}
                 >
                   Delete

@@ -443,6 +443,12 @@ body:has(.tabbar) .shell {
   border-color: var(--accent-line);
 }
 
+/* a field Save refused (Settings' half-filled targets); after :focus, so it
+   stays red while being fixed */
+.m3-field input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
 .m3-field input.num {
   font-family: var(--font-display);
   font-weight: 700;
@@ -1156,6 +1162,13 @@ body:has(.tabbar) .shell {
     width: auto;
     justify-self: start;
     padding: 14px 36px;
+  }
+
+  /* a refused Save says why just above the button, wherever it is ordered */
+  .shell.settings > .sheet-error {
+    order: 2;
+    margin: 0;
+    text-align: left;
   }
 }
 

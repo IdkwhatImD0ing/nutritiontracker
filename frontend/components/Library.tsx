@@ -90,7 +90,11 @@ export default function Library() {
   const [fdcDown, setFdcDown] = useState(false);
   const [searching, setSearching] = useState(false);
   const [opening, setOpening] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  // `retry`: a failed search re-runs; a failed open is tapped again instead
+  const [searchError, setSearchError] = useState<{
+    text: string;
+    retry: boolean;
+  } | null>(null);
 
   const [aliasSheet, setAliasSheet] = useState<AliasRow | null>(null);
   const [mealSheet, setMealSheet] = useState<SavedMeal | null>(null);
@@ -128,8 +132,8 @@ export default function Library() {
   const activeMeals = (meals ?? []).filter((m) => m.is_active);
   const inactiveMeals = (meals ?? []).filter((m) => !m.is_active);
 
-  const runSearch = async (e: FormEvent) => {
-    e.preventDefault();
+  const runSearch = async (e?: FormEvent) => {
+    e?.preventDefault();
     const q = query.trim();
     if (!q) return;
     setSearching(true);
@@ -140,7 +144,7 @@ export default function Library() {
       setFdcDown(r.fdcError != null);
     } catch {
       setResults([]);
-      setSearchError("Search failed. Try again.");
+      setSearchError({ text: "Search failed.", retry: true });
     } finally {
       setSearching(false);
     }
@@ -155,7 +159,7 @@ export default function Library() {
       const id = await cacheFood(hit);
       router.push(`/library/food/${encodeURIComponent(id)}`);
     } catch {
-      setSearchError("Couldn't open that food.");
+      setSearchError({ text: "Couldn't open that food.", retry: false });
       setOpening(false);
     }
   };
@@ -186,7 +190,12 @@ export default function Library() {
             {searching ? <span className="spinner" /> : "→"}
           </button>
         </form>
-        {searchError ? <p className="sheet-error">{searchError}</p> : null}
+        {searchError ? (
+          <ErrorNotice
+            message={searchError.text}
+            onRetry={searchError.retry ? () => void runSearch() : undefined}
+          />
+        ) : null}
         {fdcDown ? (
           <p className="subsheet-hint">
             Food database unreachable — showing your foods only.

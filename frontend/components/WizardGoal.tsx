@@ -423,9 +423,17 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
                 type="button"
                 className="commit-btn"
                 disabled={!goalValid || busy}
+                aria-busy={busy}
                 onClick={compute}
               >
-                {busy ? "Computing…" : "Compute targets"}
+                {busy ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Computing…
+                  </>
+                ) : (
+                  "Compute targets"
+                )}
               </button>
               <button
                 type="button"
@@ -508,9 +516,17 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
                 type="button"
                 className="commit-btn"
                 disabled={!editedValid || busy}
+                aria-busy={busy}
                 onClick={save}
               >
-                {busy ? "Saving…" : "Save targets"}
+                {busy ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Saving…
+                  </>
+                ) : (
+                  "Save targets"
+                )}
               </button>
               <button
                 type="button"

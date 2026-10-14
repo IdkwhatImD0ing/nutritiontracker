@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LogCreateResponse } from "@/lib/api";
+import { Camera, Mic } from "./icons";
 import PhotoCapture, { type PhotoShot } from "./PhotoCapture";
 import { SheetClose } from "./SheetHeader";
 import useVoiceCapture, {
@@ -90,7 +91,7 @@ type Props = {
 
 const NOTICE: Record<VoiceFailure, string> = {
   permission_denied: "Mic permission denied — type it instead.",
-  recorder_error: "Mic capture failed — type it instead.",
+  recorder_error: "Couldn't use the mic — type it instead.",
   too_short: "That was too short — hold the mic longer, or type it.",
   silent_blob: "No audio came through — type it instead.",
 };
@@ -620,12 +621,20 @@ export default function AgentChat({
         )}
 
         <div className="sheet-body chat-body" ref={bodyRef} aria-live="polite">
+          {/* just above the composer, by the thumb. No tappable examples:
+              sending one would log a meal or a weigh-in for real. */}
           {messages.length === 0 ? (
-            <p className="chat-empty">
-              {supported
-                ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it adds."
-                : "No microphone here — type what you ate, or snap the plate."}
-            </p>
+            <div className="chat-empty">
+              <span className="chat-empty-glyph" aria-hidden="true">
+                {supported ? <Mic /> : <Camera />}
+              </span>
+              <p className="chat-empty-title">Tell it what you ate</p>
+              <p>
+                {supported
+                  ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it adds."
+                  : "No microphone here — type what you ate, or snap the plate."}
+              </p>
+            </div>
           ) : null}
           {messages.map((m) => {
             switch (m.kind) {
@@ -790,7 +799,10 @@ export default function AgentChat({
                 ref={inputRef}
                 type="text"
                 value={text}
-                onChange={(e) => setText(e.target.value)}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setNotice(null); // typing is the fallback taken
+                }}
                 placeholder={attached ? "Ask about it — or just send it" : "Tell the agent…"}
                 aria-label="Tell the agent"
                 enterKeyHint="send"

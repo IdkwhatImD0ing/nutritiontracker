@@ -34,7 +34,8 @@ export default function LibraryAliasSheet({
   // "this food has no servings"; `attempt` re-runs it.
   const [servingsFailed, setServingsFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [busy, setBusy] = useState(false);
+  // which request is in flight: only Save shows a spinner for its own
+  const [busy, setBusy] = useState<"save" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
 
@@ -64,7 +65,7 @@ export default function LibraryAliasSheet({
 
   const save = async () => {
     if (hasDefault && !qtyValid) return;
-    setBusy(true);
+    setBusy("save");
     setError(null);
     try {
       const updated = await patchAlias(alias.id, {
@@ -75,19 +76,19 @@ export default function LibraryAliasSheet({
       onSaved({ ...alias, ...updated });
     } catch {
       setError("Couldn't save — try again.");
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const remove = async () => {
-    setBusy(true);
+    setBusy("delete");
     setError(null);
     try {
       await deleteAlias(alias.id);
       onDeleted(alias.id);
     } catch {
       setError("Couldn't delete — try again.");
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -187,10 +188,18 @@ export default function LibraryAliasSheet({
         <button
           type="button"
           className="commit-btn"
-          disabled={busy || (hasDefault && !qtyValid)}
+          disabled={busy !== null || (hasDefault && !qtyValid)}
+          aria-busy={busy === "save"}
           onClick={save}
         >
-          Save
+          {busy === "save" ? (
+            <>
+              <span className="spinner on-accent" />
+              Saving…
+            </>
+          ) : (
+            "Save"
+          )}
         </button>
 
         <div className="m3-actions">
@@ -200,7 +209,7 @@ export default function LibraryAliasSheet({
               <button
                 type="button"
                 className="m3-link-btn danger"
-                disabled={busy}
+                disabled={busy !== null}
                 onClick={remove}
               >
                 Yes, delete
@@ -210,7 +219,7 @@ export default function LibraryAliasSheet({
             <button
               type="button"
               className="m3-link-btn danger"
-              disabled={busy}
+              disabled={busy !== null}
               onClick={() => setConfirm(true)}
             >
               Delete mapping

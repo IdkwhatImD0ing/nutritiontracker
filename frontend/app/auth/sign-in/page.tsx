@@ -14,6 +14,7 @@ export default function SignInPage() {
     <AuthForm
       title="Sign in to Tally"
       submitLabel="Sign in"
+      pendingLabel="Signing in…"
       action={signInAction}
       alt={{
         text: "No account?",

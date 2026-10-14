@@ -7,6 +7,7 @@ import {
   searchFoods,
   type FoodSearchResult,
 } from "@/lib/api";
+import ErrorNotice from "./ErrorNotice";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 import Skeleton from "./Skeleton";
 
@@ -45,7 +46,11 @@ export default function ManualSearchSheet({
   const [recentFailed, setRecentFailed] = useState(false);
   const [fdcDown, setFdcDown] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  // `retry` is false for a demo 429: a second try meets the same refusal
+  const [searchError, setSearchError] = useState<{
+    text: string;
+    retry: boolean;
+  } | null>(null);
   const seq = useRef(0);
 
   const run = async (q: string) => {
@@ -63,7 +68,12 @@ export default function ManualSearchSheet({
       if (seq.current !== id) return;
       setResults([]);
       // a demo 429 says why in its own words — show those, not the generic line
-      setSearchError(quotaRefusal(e)?.detail ?? "Search failed. Try again.");
+      const quota = quotaRefusal(e);
+      setSearchError(
+        quota
+          ? { text: quota.detail, retry: false }
+          : { text: "Search failed.", retry: true },
+      );
     } finally {
       if (seq.current === id) setSearching(false);
     }
@@ -147,8 +157,13 @@ export default function ManualSearchSheet({
         </button>
       </form>
 
-      {error ? <p className="sheet-error">{error}</p> : null}
-      {searchError ? <p className="sheet-error">{searchError}</p> : null}
+      {error ? <ErrorNotice message={error} /> : null}
+      {searchError ? (
+        <ErrorNotice
+          message={searchError.text}
+          onRetry={searchError.retry ? () => void run(query) : undefined}
+        />
+      ) : null}
       {fdcDown ? (
         <p className="subsheet-hint">
           Food database unreachable — showing your foods only.

@@ -76,6 +76,8 @@ export default function Settings() {
   const [form, setForm] = useState<SettingsT | null>(null);
   const [targets, setTargets] = useState<TargetText>(targetText({}));
   const [error, setError] = useState<string | null>(null);
+  // the empty targets of a half-filled set, outlined until the next edit
+  const [targetsInvalid, setTargetsInvalid] = useState(false);
   const [busy, setBusy] = useState(false);
   // "Saved." as a toast that clears itself, not a line that stays forever
   const [status, flashStatus] = useFlash(2500);
@@ -147,6 +149,8 @@ export default function Settings() {
     const filled = TARGET_FIELDS.filter((f) => parsed[f.key] != null).length;
     if (filled !== 0 && filled !== TARGET_FIELDS.length) {
       setError("Fill in all four targets, or clear all four.");
+      setTargetsInvalid(true);
+      flashStatus(null);
       return;
     }
     setBusy(true);
@@ -204,8 +208,6 @@ export default function Settings() {
             Retry
           </button>
         </div>
-      ) : error ? (
-        <p className="sheet-error">{error}</p>
       ) : null}
 
       <AccountCard />
@@ -243,8 +245,12 @@ export default function Settings() {
                     <input
                       inputMode="decimal"
                       value={targets[f.key]}
-                      onChange={(e) =>
-                        setTargets((t) => ({ ...t, [f.key]: e.target.value }))
+                      onChange={(e) => {
+                        setTargets((t) => ({ ...t, [f.key]: e.target.value }));
+                        setTargetsInvalid(false);
+                      }}
+                      aria-invalid={
+                        targetsInvalid && !(Number.parseFloat(targets[f.key]) > 0)
                       }
                       placeholder="—"
                       aria-label={`${f.label} target (${f.unit})`}
@@ -378,13 +384,27 @@ export default function Settings() {
             </p>
           </section>
 
+          {/* by the button that was tapped, not under the title far above */}
+          {error ? (
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
+          ) : null}
           <button
             type="button"
             className="commit-btn"
             disabled={busy}
+            aria-busy={busy}
             onClick={save}
           >
-            {busy ? "Saving…" : "Save settings"}
+            {busy ? (
+              <>
+                <span className="spinner on-accent" />
+                Saving…
+              </>
+            ) : (
+              "Save settings"
+            )}
           </button>
           {status ? (
             <div className="toast" role="status">

@@ -86,7 +86,8 @@ export default function OuraCard() {
   const [status, setStatus] = useState<OuraStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<Note | null>(null);
-  const [busy, setBusy] = useState(false);
+  // which request is in flight, so Sync now says "Syncing…" only for its own
+  const [busy, setBusy] = useState<"sync" | "connect" | null>(null);
   // read from storage after mount (the server render has no storage)
   const [placeholder, setPlaceholder] = useState<string | null>(null);
 
@@ -135,7 +136,7 @@ export default function OuraCard() {
     // Back from Oura's consent screen via the back/forward cache: the page is
     // restored as it was left, mid-"Opening Oura…".
     const onShow = (e: PageTransitionEvent) => {
-      if (e.persisted) setBusy(false);
+      if (e.persisted) setBusy(null);
     };
     window.addEventListener("pageshow", onShow);
     return () => {
@@ -145,18 +146,18 @@ export default function OuraCard() {
   }, []);
 
   const connect = async () => {
-    setBusy(true);
+    setBusy("connect");
     setError(null);
     try {
       await connectOura(); // navigates away on success
     } catch (e) {
       setError(detail(e, "Couldn't start the Oura connection."));
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const syncNow = async () => {
-    setBusy(true);
+    setBusy("sync");
     setError(null);
     setNote(null);
     try {
@@ -173,7 +174,7 @@ export default function OuraCard() {
     } catch {
       /* keep what is shown */
     }
-    setBusy(false);
+    setBusy(null);
   };
 
   if (!status?.available && !error) {
@@ -215,10 +216,18 @@ export default function OuraCard() {
               <button
                 type="button"
                 className="m3-link-btn"
-                disabled={busy}
+                disabled={busy !== null}
+                aria-busy={busy === "sync"}
                 onClick={syncNow}
               >
-                {busy ? "Working…" : "Sync now"}
+                {busy === "sync" ? (
+                  <>
+                    <span className="spinner" />
+                    Syncing…
+                  </>
+                ) : (
+                  "Sync now"
+                )}
               </button>
             </div>
             {status.days.length ? (
@@ -239,7 +248,7 @@ export default function OuraCard() {
               <button
                 type="button"
                 className="m3-link-btn"
-                disabled={busy}
+                disabled={busy !== null}
                 onClick={connect}
               >
                 Reconnect
@@ -254,10 +263,10 @@ export default function OuraCard() {
             <button
               type="button"
               className="m3-link-btn"
-              disabled={busy}
+              disabled={busy !== null}
               onClick={connect}
             >
-              {busy ? "Opening Oura…" : "Connect Oura"}
+              {busy === "connect" ? "Opening Oura…" : "Connect Oura"}
             </button>
           </div>
         ) : null}

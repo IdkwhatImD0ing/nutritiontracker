@@ -35,7 +35,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [name, setName] = useState(meal?.name ?? "");
   const [phrases, setPhrases] = useState(meal?.trigger_phrases.join(", ") ?? "");
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
-  const [busy, setBusy] = useState(false);
+  // which request is in flight: only Save / Create shows a spinner for its own
+  const [busy, setBusy] = useState<"save" | "toggle" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // create mode only: the food search that fills the item list. Servings are
@@ -68,15 +69,15 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
       }),
     );
 
-  const run = async (patch: MealPatch) => {
+  const run = async (patch: MealPatch, kind: "save" | "toggle") => {
     if (!meal) return;
-    setBusy(true);
+    setBusy(kind);
     setError(null);
     try {
       onSaved(await patchMeal(meal.id, patch));
     } catch {
       setError("Couldn't save — try again.");
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -144,10 +145,10 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
       })),
     };
     if (meal) {
-      run(patch);
+      run(patch, "save");
       return;
     }
-    setBusy(true);
+    setBusy("save");
     setError(null);
     try {
       onSaved(
@@ -163,7 +164,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           ? "You already have a saved meal with that name."
           : "Couldn't save — try again.",
       );
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -312,10 +313,20 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
         <button
           type="button"
           className="commit-btn"
-          disabled={busy || !valid}
+          disabled={busy !== null || !valid}
+          aria-busy={busy === "save"}
           onClick={save}
         >
-          {meal ? "Save" : "Create meal"}
+          {busy === "save" ? (
+            <>
+              <span className="spinner on-accent" />
+              Saving…
+            </>
+          ) : meal ? (
+            "Save"
+          ) : (
+            "Create meal"
+          )}
         </button>
 
         {meal ? (
@@ -324,8 +335,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               <button
                 type="button"
                 className="m3-link-btn danger"
-                disabled={busy}
-                onClick={() => run({ is_active: false })}
+                disabled={busy !== null}
+                onClick={() => run({ is_active: false }, "toggle")}
               >
                 Deactivate
               </button>
@@ -333,8 +344,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               <button
                 type="button"
                 className="m3-link-btn"
-                disabled={busy}
-                onClick={() => run({ is_active: true })}
+                disabled={busy !== null}
+                onClick={() => run({ is_active: true }, "toggle")}
               >
                 Reactivate
               </button>
