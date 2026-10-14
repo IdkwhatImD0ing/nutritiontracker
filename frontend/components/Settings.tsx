@@ -17,6 +17,7 @@ import AccountCard from "./AccountCard";
 import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
 import Skeleton from "./Skeleton";
+import { useFlash } from "./useFlash";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -76,7 +77,8 @@ export default function Settings() {
   const [targets, setTargets] = useState<TargetText>(targetText({}));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  // "Saved." as a toast that clears itself, not a line that stays forever
+  const [status, flashStatus] = useFlash(2500);
   const [wizard, setWizard] = useState(false);
 
   const load = (s: SettingsT) => {
@@ -92,7 +94,21 @@ export default function Settings() {
     setError(null);
     getSettings()
       .then((s) => {
-        if (!cancelled) load(s);
+        if (cancelled) return;
+        load(s);
+        // Today's "Set them ›" (no targets yet) opens the wizard straight
+        // away; the param goes, so a reload or Back doesn't reopen it.
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("setup") === "targets") {
+          params.delete("setup");
+          const qs = params.toString();
+          window.history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${qs ? `?${qs}` : ""}`,
+          );
+          setWizard(true);
+        }
       })
       .catch(() => {
         if (!cancelled) setError("Couldn't load your settings.");
@@ -135,7 +151,7 @@ export default function Settings() {
     }
     setBusy(true);
     setError(null);
-    setStatus(null);
+    flashStatus(null);
     try {
       load(
         await putSettings({
@@ -145,7 +161,7 @@ export default function Settings() {
           profile_notes: form.profile_notes,
         }),
       );
-      setStatus("Saved.");
+      flashStatus("Saved.");
     } catch {
       setError("Couldn't save — try again.");
     } finally {
@@ -160,7 +176,7 @@ export default function Settings() {
         onDone={(s) => {
           load(s);
           setWizard(false);
-          setStatus("Targets saved.");
+          flashStatus("Targets saved.");
         }}
         onSkip={() => setWizard(false)}
       />
@@ -169,6 +185,7 @@ export default function Settings() {
 
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const body = form ? describeBody(form.body) : null;
+  const noTargets = form != null && targetsEmpty(form);
 
   return (
     <main className="shell settings">
@@ -207,6 +224,18 @@ export default function Settings() {
           <section className="m3-section" aria-label="Daily targets">
             <h2>Daily targets</h2>
             <div className="m3-card">
+              {noTargets ? (
+                <div className="notice warn">
+                  <span>No daily targets yet. Today&rsquo;s rings need them.</span>
+                  <button
+                    type="button"
+                    className="notice-btn"
+                    onClick={() => setWizard(true)}
+                  >
+                    Set up
+                  </button>
+                </div>
+              ) : null}
               <div className="m3-grid-4">
                 {TARGET_FIELDS.map((f) => (
                   <label className="m3-field" key={f.key}>
@@ -224,16 +253,21 @@ export default function Settings() {
                   </label>
                 ))}
               </div>
-              <div className="m3-actions">
-                <button
-                  type="button"
-                  className="m3-link-btn"
-                  onClick={() => setWizard(true)}
-                >
-                  {targetsEmpty(form) ? "Run the goal wizard" : "Re-run the goal wizard"}
-                </button>
-                {body ? <span className="m3-note">{body}</span> : null}
-              </div>
+              {/* with no targets, the notice above is the way in */}
+              {noTargets && !body ? null : (
+                <div className="m3-actions">
+                  {noTargets ? null : (
+                    <button
+                      type="button"
+                      className="m3-link-btn"
+                      onClick={() => setWizard(true)}
+                    >
+                      Re-run the goal wizard
+                    </button>
+                  )}
+                  {body ? <span className="m3-note">{body}</span> : null}
+                </div>
+              )}
             </div>
           </section>
 
@@ -352,7 +386,11 @@ export default function Settings() {
           >
             {busy ? "Saving…" : "Save settings"}
           </button>
-          {status ? <p className="m3-status">{status}</p> : null}
+          {status ? (
+            <div className="toast" role="status">
+              <span>{status}</span>
+            </div>
+          ) : null}
         </>
       )}
 

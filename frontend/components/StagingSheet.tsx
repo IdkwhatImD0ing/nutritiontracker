@@ -107,6 +107,8 @@ export default function StagingSheet({
   const [portionFor, setPortionFor] = useState<number | null>(null);
   const [manualFor, setManualFor] = useState<number | null>(null);
   const [manualBusy, setManualBusy] = useState(false);
+  // a failed pick shows in the open search sub-sheet, not the footer it covers
+  const [manualError, setManualError] = useState<string | null>(null);
   const [editFor, setEditFor] = useState<number | null>(null); // BACKLOG 23
   const [addText, setAddText] = useState("");
 
@@ -382,8 +384,12 @@ export default function StagingSheet({
       });
       mergeItem(updated);
     } catch (e) {
-      // a demo past its re-resolution cap: the server's sentence, verbatim
-      setError(quotaRefusal(e)?.detail ?? "Couldn't update that item.");
+      // a demo past its re-resolution cap: the server's sentence, verbatim;
+      // otherwise name the row, since the footer is rows away from it
+      setError(
+        quotaRefusal(e)?.detail ??
+          `Couldn't switch “${item.food?.name ?? item.phrase}”, try again.`,
+      );
     } finally {
       setRowBusy(item.item_index, false);
     }
@@ -527,6 +533,7 @@ export default function StagingSheet({
     if (manualFor == null) return;
     setManualBusy(true);
     setError(null);
+    setManualError(null);
     try {
       const updated = await selectFood({
         log_id: log.log_id,
@@ -535,8 +542,11 @@ export default function StagingSheet({
       });
       mergeItem(updated);
       setManualFor(null);
-    } catch {
-      setError("Couldn't select that food.");
+    } catch (e) {
+      const phrase = items.find((i) => i.item_index === manualFor)?.phrase;
+      setManualError(
+        quotaRefusal(e)?.detail ?? `Couldn't use that food for “${phrase}”.`,
+      );
     } finally {
       setManualBusy(false);
     }
@@ -755,8 +765,12 @@ export default function StagingSheet({
         <ManualSearchSheet
           phrase={manualItem.phrase}
           busy={manualBusy}
+          error={manualError}
           onSelect={manualSelect}
-          onClose={() => setManualFor(null)}
+          onClose={() => {
+            setManualFor(null);
+            setManualError(null);
+          }}
         />
       ) : null}
 

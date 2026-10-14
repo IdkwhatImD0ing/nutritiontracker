@@ -217,10 +217,12 @@ const TOOL_ERRORS: Record<string, string> = {
 /** A tool line in words: what the agent is doing, then what came back. The
  *  raw call and result stay one tap away under it (the point of the window
  *  is seeing the work). A run that ended before the tool answered leaves the
- *  line settled as interrupted, never spinning. */
+ *  line settled as interrupted, never spinning. `state` colours the line: a
+ *  step that errored (a weigh-in that didn't save) must not read as done. */
 function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   doing: string;
   result: string | null;
+  state: "ok" | "failed" | "interrupted";
 } {
   const a = m.args;
   const out =
@@ -380,17 +382,24 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       doing = m.done ? "Checked something" : "Checking something…";
       ok = "Done";
   }
-  if (!m.done) return { doing, result: null };
-  if (err === "interrupted") return { doing, result: "Interrupted — the run ended before this finished" };
-  if (raised) return { doing, result: "Didn't go through" };
-  if (err) return { doing, result: TOOL_ERRORS[err] ?? "Didn't go through" };
-  return { doing, result: ok };
+  if (!m.done) return { doing, result: null, state: "ok" };
+  if (err === "interrupted")
+    return { doing, result: "Interrupted — the run ended before this finished", state: "interrupted" };
+  if (raised) return { doing, result: "Didn't go through", state: "failed" };
+  // already_called is a benign skip: the first call did the work
+  if (err)
+    return {
+      doing,
+      result: TOOL_ERRORS[err] ?? "Didn't go through",
+      state: err === "already_called" ? "ok" : "failed",
+    };
+  return { doing, result: ok, state: "ok" };
 }
 
 function ToolLine({ m }: { m: Extract<ChatMessage, { kind: "tool" }> }) {
-  const { doing, result } = describeTool(m);
+  const { doing, result, state } = describeTool(m);
   return (
-    <div className={`tool-line${m.done ? "" : " running"}`}>
+    <div className={`tool-line${m.done ? "" : " running"}${state === "ok" ? "" : ` ${state}`}`}>
       <div className="tool-head">
         {m.done ? null : <span className="spinner" aria-hidden="true" />}
         <span className="tool-text">{doing}</span>

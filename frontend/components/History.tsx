@@ -14,6 +14,7 @@ import {
 } from "./HistoryApi";
 import ErrorNotice from "./ErrorNotice";
 import HistoryView from "./HistoryView";
+import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
 
 const KINDS: { kind: RangeKind; label: string; title: string }[] = [
   { kind: "3d", label: "3D", title: "3 days" },
@@ -39,13 +40,22 @@ function spanLabel(range: HistoryRange): string {
  *  The tab bar mounts from app/history/layout.tsx. */
 export default function History({ initialKind = "3d" }: { initialKind?: RangeKind }) {
   const router = useRouter();
-  const [today] = useState(() => isoDate(new Date()));
+  const [today, setToday] = useState(() => isoDate(new Date()));
   const [kind, setKind] = useState<RangeKind>(initialKind);
   const [range, setRange] = useState<HistoryRange | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // `attempt` re-runs the read: the failure notice carries a Retry.
   const [attempt, setAttempt] = useState(0);
+
+  // Installed, there is no reload and no pull-to-refresh (useOnForeground):
+  // a resume on a new local date moves every range to end on the new today,
+  // so the card labelled Today is never yesterday's; a long absence re-reads.
+  useOnForeground((away) => {
+    const d = isoDate(new Date());
+    if (d !== today) setToday(d);
+    else if (away >= RESUME_STALE_MS) setAttempt((n) => n + 1);
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -78,12 +88,13 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
     <main className="shell history">
       <header className="brand">
         <h1>History</h1>
-        {streak != null ? (
+        {/* no chip at 0: "no streak" on day one only labels the user */}
+        {streak != null && streak > 0 ? (
           <span
-            className={`streak-chip${streak > 0 ? " live" : ""}`}
+            className="streak-chip live"
             title="Consecutive days with at least one entry"
           >
-            {streak === 0 ? "no streak" : `${streak}-day streak`}
+            {streak}-day streak
           </span>
         ) : null}
       </header>

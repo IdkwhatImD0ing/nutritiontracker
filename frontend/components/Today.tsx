@@ -34,7 +34,7 @@ import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import SplitSheet from "./SplitSheet";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
-import { useOnForeground } from "./useOnForeground";
+import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
 import { TARGETS_EVENT } from "./WizardGate";
@@ -45,12 +45,6 @@ const UNDO_MS = 6_000;
  *  Holds a QUEUE, one entry per committed log: two logs committed inside the
  *  same ~90s tier-3 window each need their own poll. */
 const PENDING_KEY = "usual.pending.v1";
-
-/** How long Today may sit in the background before a return to the foreground
- *  re-reads the server. Short enough that a meal logged on another device is
- *  there when you look, long enough that flicking to the camera roll and back
- *  costs nothing. A local-date rollover re-reads regardless of this. */
-const RESUME_STALE_MS = 60_000;
 
 type PendingState = { logId: string; items: StagedItem[] };
 
@@ -1171,6 +1165,10 @@ export default function Today() {
       {meals ? (
         <DiaryList
           meals={meals}
+          // logging is only the tab bar's + (a button here dispatching the
+          // agent lane would start the mic from an empty-state tap). Not
+          // "below": from 900px the + sits in the left rail.
+          emptyText="Nothing logged yet. Log a meal with the + button."
           onPatched={(entry, t) => {
             setTotals(t);
             setMeals((cur) => {

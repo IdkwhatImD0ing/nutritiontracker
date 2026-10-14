@@ -29,6 +29,8 @@ type Props = {
   entry: DiaryEntry;
   expanded: boolean;
   busy: boolean;
+  /** this row's failed save or delete, shown over its actions */
+  error?: string | null;
   onToggle: () => void;
   /** portion edit → PATCH /api/entries/:id {qty, serving_id?} (parent owns
    *  the request); `serving_id` is sent only when the serving itself moved.
@@ -52,6 +54,7 @@ export default function DiaryEntryRow({
   entry,
   expanded,
   busy,
+  error,
   onToggle,
   onSave,
   onDelete,
@@ -305,6 +308,11 @@ export default function DiaryEntryRow({
                 +
               </button>
             </div>
+            {error ? (
+              <p className="sheet-error diary-error" role="alert">
+                {error}
+              </p>
+            ) : null}
             <div className="diary-actions">
               <button
                 type="button"

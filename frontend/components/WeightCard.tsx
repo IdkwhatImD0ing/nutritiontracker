@@ -47,7 +47,8 @@ type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
 /** §6.4 weight tracking: the latest weigh-in, the change since the one
  *  before it, and a 30-day sparkline. Reads GET /api/weights; `refreshKey`
  *  re-reads it (Today bumps it when an agent log recorded a weigh-in). A
- *  read that fails renders nothing — never a stale or invented number. */
+ *  read that fails shows no number — never a stale or invented one — only
+ *  that it couldn't load, in the card's own slot. */
 export default function WeightCard({ refreshKey }: { refreshKey: number }) {
   // undefined = the first read is in flight, null = it failed
   const [data, setData] = useState<Data | null | undefined>(undefined);
@@ -85,7 +86,18 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
       </section>
     );
   }
-  if (!data) return null;
+  // The card, not nothing: its reserved slot collapsing would jump the diary,
+  // and an absent card reads as "never logged" rather than "missing".
+  if (!data) {
+    return (
+      <section className="weight-card" aria-label="Weight">
+        <div className="weight-main">
+          <span className="label">Weight</span>
+          <p className="weight-empty">Couldn&rsquo;t load your weight.</p>
+        </div>
+      </section>
+    );
+  }
   const latest = data.latest;
   if (!latest) {
     return (

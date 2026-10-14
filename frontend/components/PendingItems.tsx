@@ -5,9 +5,13 @@ import {
   commitItem,
   getLog,
   kickTier3,
+  quotaRefusal,
+  selectFood,
   type DayTotals,
+  type FoodSearchResult,
   type StagedItem,
 } from "@/lib/api";
+import ManualSearchSheet from "./ManualSearchSheet";
 import { readEstimate } from "./PhotoApi";
 
 const POLL_FIRST_MS = 250; // reopen feels immediate (BACKLOG 31 retry-on-open)
@@ -42,6 +46,10 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
   const [failed, setFailed] = useState<StagedItem[]>(
     items.filter((i) => i.status !== "searching" && i.status !== "resolved"),
   );
+  // the failed row being found by hand in the search sub-sheet (findFood)
+  const [finding, setFinding] = useState<StagedItem | null>(null);
+  const [findBusy, setFindBusy] = useState(false);
+  const [findError, setFindError] = useState<string | null>(null);
   const waitingRef = useRef(waiting);
   waitingRef.current = waiting;
   const committingRef = useRef<Set<number>>(new Set());
@@ -120,10 +128,11 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
               server.status === "needs_input"
             ) {
               // Post-commit questions have no answering UI here — surface the
-              // miss honestly instead of spinning.
-              fail(server);
+              // miss honestly instead of spinning. A failed row keeps the
+              // sheet's meal too: Find it commits it with that.
+              fail({ ...server, meal: w.meal });
             } else if (timedOut) {
-              fail(server);
+              fail({ ...server, meal: w.meal });
             } else if (server.stale && !rekickedRef.current.has(w.item_index)) {
               // §3.4 watchdog: re-kick a stale row once…
               rekickedRef.current.add(w.item_index);
@@ -136,7 +145,7 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
                 .catch(() => {});
             } else if (server.stale) {
               // …then it's a miss (the server flips it to not_found too).
-              fail(server);
+              fail({ ...server, meal: w.meal });
             }
           }
         } catch {
@@ -155,6 +164,32 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logId]);
 
+  // A failed row is fixed where it stands, not by a new log: the pick
+  // resolves this same row (select and answer accept an uncommitted row on a
+  // committed log) and commit-item appends it, the late-straggler path. It
+  // keeps its meal and back-dated day, and a demo account's one log a day is
+  // not spent the way the + sheet's Search lane would spend it.
+  const findFood = async (hit: FoodSearchResult) => {
+    if (!finding) return;
+    const f = finding;
+    setFindBusy(true);
+    setFindError(null);
+    try {
+      const item = await selectFood({ log_id: logId, item_index: f.item_index, hit });
+      if (item.status !== "resolved") {
+        setFindError("Couldn't use that food, try another.");
+        return;
+      }
+      onTotals(await commitItem(logId, { ...item, meal: f.meal }));
+      setFailed((prev) => prev.filter((x) => x.item_index !== f.item_index));
+      setFinding(null);
+    } catch (e) {
+      setFindError(quotaRefusal(e)?.detail ?? "Couldn't add that food, try again.");
+    } finally {
+      setFindBusy(false);
+    }
+  };
+
   const idle = waiting.length === 0 && failed.length === 0;
   useEffect(() => {
     if (idle) onDone();
@@ -167,12 +202,26 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
       {waiting.length > 0 ? (
         <div className="pending-pill" role="status">
           <span className="spinner" />
-          {waiting.length} pending item{waiting.length > 1 ? "s" : ""}…
+          {waiting.length === 1 ? (
+            <>Adding &ldquo;{waiting[0].phrase}&rdquo;…</>
+          ) : (
+            `${waiting.length} pending items…`
+          )}
         </div>
       ) : null}
       {failed.map((f) => (
         <div key={f.item_index} className="pending-pill failed" role="status">
-          <span>&ldquo;{f.phrase}&rdquo; couldn&rsquo;t be added — needs attention</span>
+          <span>Couldn&rsquo;t add &ldquo;{f.phrase}&rdquo;</span>
+          <button
+            type="button"
+            className="pending-find"
+            onClick={() => {
+              setFindError(null);
+              setFinding(f);
+            }}
+          >
+            Find it
+          </button>
           <button
             type="button"
             aria-label="Dismiss"
@@ -186,6 +235,15 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
           </button>
         </div>
       ))}
+      {finding ? (
+        <ManualSearchSheet
+          phrase={finding.phrase}
+          busy={findBusy}
+          error={findError}
+          onSelect={findFood}
+          onClose={() => setFinding(null)}
+        />
+      ) : null}
     </div>
   );
 }

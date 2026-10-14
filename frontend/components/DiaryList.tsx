@@ -12,6 +12,7 @@ import {
 import DiaryEntryRow from "./DiaryEntryRow";
 import { createMeal, type SavedMeal } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
+import { useFlash } from "./useFlash";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -142,12 +143,16 @@ export default function DiaryList({
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // a failed edit, kept with its row so it shows where the user is looking
+  const [error, setError] = useState<{ id: string; text: string } | null>(null);
   const [saveGroup, setSaveGroup] = useState<{
     meal: string;
     entries: DiaryEntry[];
   } | null>(null);
-  const [savedMeal, setSavedMeal] = useState<string | null>(null);
+  // A toast, not a line under the last meal: saving Breakfast put that line
+  // off screen. Rendered here, so Today and the History day both get it;
+  // under-sheets, like Today's commit note, so a sheet opened next covers it.
+  const [savedMeal, flashSavedMeal] = useFlash(4000);
 
   const groups = MEAL_ORDER.map((meal) => ({
     meal,
@@ -175,10 +180,12 @@ export default function DiaryList({
       // A refused portion says why (a serving with partial macros is a 422
       // naming it, §4 invariant) — show the server's sentence, not a generic
       // one, the way every other lane does.
-      setError(
-        (e instanceof ApiError && e.status === 422 && e.detail) ||
+      setError({
+        id,
+        text:
+          (e instanceof ApiError && e.status === 422 && e.detail) ||
           "Couldn't save that change — try again.",
-      );
+      });
       return false;
     } finally {
       setBusy(null);
@@ -187,7 +194,6 @@ export default function DiaryList({
 
   return (
     <section className="diary" aria-label="Diary">
-      {error ? <p className="capture-error">{error}</p> : null}
       {groups.map((g) => (
         <div className="diary-meal" key={g.meal}>
           <div className="diary-meal-head">
@@ -209,7 +215,12 @@ export default function DiaryList({
               entry={e}
               expanded={expanded === e.id}
               busy={busy === e.id}
-              onToggle={() => setExpanded((cur) => (cur === e.id ? null : e.id))}
+              error={error?.id === e.id ? error.text : null}
+              onToggle={() => {
+                // an error belongs to the open row; any toggle closes that row
+                setError(null);
+                setExpanded((cur) => (cur === e.id ? null : e.id));
+              }}
               onSave={(patch) =>
                 run(e.id, async () => {
                   const res = await patchEntry(e.id, patch);
@@ -238,14 +249,21 @@ export default function DiaryList({
           ))}
         </div>
       ))}
-      {savedMeal ? <p className="m3-status">{savedMeal}</p> : null}
+      {savedMeal ? (
+        <div className="toast under-sheets" role="status">
+          <span>{savedMeal}</span>
+          <button type="button" onClick={() => flashSavedMeal(null)}>
+            OK
+          </button>
+        </div>
+      ) : null}
       {saveGroup ? (
         <SaveMealSheet
           meal={saveGroup.meal}
           entries={saveGroup.entries}
           onSaved={(m) => {
             setSaveGroup(null);
-            setSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
+            flashSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
           }}
           onClose={() => setSaveGroup(null)}
         />

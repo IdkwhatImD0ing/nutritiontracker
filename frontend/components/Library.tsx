@@ -15,6 +15,7 @@ import {
 import LibraryAliasSheet from "./LibraryAliasSheet";
 import LibraryMealSheet from "./LibraryMealSheet";
 import Skeleton from "./Skeleton";
+import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
 
 type FoodGroup = {
   food_id: string;
@@ -117,6 +118,11 @@ export default function Library() {
     setMeals(null);
     setAttempt((n) => n + 1);
   };
+  // Back after a while (installed, nothing else re-reads): the same reads,
+  // over the lists already shown, so nothing flashes back to loading.
+  useOnForeground((away) => {
+    if (away >= RESUME_STALE_MS) setAttempt((n) => n + 1);
+  });
 
   const groups = useMemo(() => groupByFood(aliases ?? []), [aliases]);
   const activeMeals = (meals ?? []).filter((m) => m.is_active);
@@ -255,8 +261,7 @@ export default function Library() {
           <Skeleton rows={2} height={64} />
         ) : groups.length === 0 ? (
           <p className="m3-empty">
-            Nothing learned yet. Every meal you log teaches the app a phrase →
-            food mapping; they show up here with use counts.
+            Foods you log show up here, with the words you use for them.
           </p>
         ) : null}
         {groups.map((g) => (

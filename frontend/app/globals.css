@@ -2172,6 +2172,13 @@ a {
 .pending-pill.failed {
   color: var(--amber);
   justify-content: space-between;
+  /* a long phrase wraps to two lines: a card, not a lozenge */
+  border-radius: var(--radius-sm);
+}
+
+.pending-pill.failed > span {
+  flex: 1;
+  min-width: 0;
 }
 
 .pending-pill.failed button {
@@ -2180,6 +2187,14 @@ a {
   color: var(--faint);
   cursor: pointer;
   padding: 2px 6px;
+}
+
+/* the way out of the miss: search for the food, on the same log */
+.pending-pill.failed .pending-find {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: inherit;
+  font-weight: 600;
 }
 
 /* the demo strip under the Today header. It arrives when /api/me answers,
@@ -2889,6 +2904,19 @@ a {
 
 .tool-line .tool-result {
   color: var(--muted);
+}
+
+/* a step that errored reads as one; an interrupted one as unfinished */
+.tool-line.failed {
+  border-left-color: var(--red);
+}
+
+.tool-line.failed .tool-result {
+  color: var(--red);
+}
+
+.tool-line.interrupted .tool-result {
+  color: var(--amber);
 }
 
 /* The raw call is a .disclosure (the shared row, foot of this file). Its hit

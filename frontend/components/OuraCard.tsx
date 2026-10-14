@@ -28,15 +28,22 @@ import Skeleton from "./Skeleton";
  *  nothing. */
 const SEEN_KEY = "tally.oura.card.v1";
 
-const RETURN_NOTES = new Map<string, string>([
-  ["connected", "Oura connected."],
+/** A note's kind picks its look: only `ok` is the green status line; a
+ *  cancel, a failure or a partial grant is a notice, never success green. */
+type Note = { text: string; kind: "ok" | "warn" | "error" };
+
+const RETURN_NOTES = new Map<string, Note>([
+  ["connected", { text: "Oura connected.", kind: "ok" }],
   [
     "missing_scope",
-    "Oura connected, but without every permission Tally asks for. Reconnect and allow them all.",
+    {
+      text: "Oura connected, but without every permission Tally asks for. Reconnect and allow them all.",
+      kind: "warn",
+    },
   ],
-  ["denied", "Oura connection cancelled."],
-  ["error", "Oura connection failed. Try again."],
-  ["not_set_up", "Oura isn't set up on this database yet (migration 005)."],
+  ["denied", { text: "Oura connection cancelled.", kind: "warn" }],
+  ["error", { text: "Oura connection failed. Try again.", kind: "error" }],
+  ["not_set_up", { text: "Oura isn't available on this server yet.", kind: "error" }],
 ]);
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -78,7 +85,7 @@ function amount(n: number | null, unit: string): string {
 export default function OuraCard() {
   const [status, setStatus] = useState<OuraStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<Note | null>(null);
   const [busy, setBusy] = useState(false);
   // read from storage after mount (the server render has no storage)
   const [placeholder, setPlaceholder] = useState<string | null>(null);
@@ -154,7 +161,8 @@ export default function OuraCard() {
     setNote(null);
     try {
       const r = await syncOura(true);
-      setNote(missingNote(r.missing));
+      const missing = missingNote(r.missing);
+      setNote(missing ? { text: missing, kind: "warn" } : null);
     } catch (e) {
       setError(detail(e, "Sync failed. Try again."));
     }
@@ -183,8 +191,18 @@ export default function OuraCard() {
     <section className="m3-section" aria-label="Oura">
       <h2>Oura</h2>
       <div className="m3-card">
-        {note ? <p className="m3-status">{note}</p> : null}
-        {hint ? <p className="m3-status">{hint}</p> : null}
+        {/* a div, as ErrorNotice's: a <p> would bring its UA margins */}
+        {note?.kind === "ok" ? <p className="m3-status">{note.text}</p> : null}
+        {note && note.kind !== "ok" ? (
+          <div className={`notice ${note.kind}`}>
+            <span>{note.text}</span>
+          </div>
+        ) : null}
+        {hint ? (
+          <div className="notice warn">
+            <span>{hint}</span>
+          </div>
+        ) : null}
         {error ? <p className="sheet-error">{error}</p> : null}
         {status?.connected ? (
           <>

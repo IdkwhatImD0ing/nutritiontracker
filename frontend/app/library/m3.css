@@ -322,7 +322,9 @@ body:has(.tabbar) .shell {
   margin: 0;
   padding: 14px 16px;
   line-height: 1.5;
-  border: 1px dashed var(--line-strong);
+  /* solid and filled like a card: a dashed box reads as a drop zone */
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: var(--radius);
   text-align: center;
 }
@@ -1127,7 +1129,7 @@ body:has(.tabbar) .shell {
   }
 
   /* Settings: cards in pairs (equal height per row), the free-text notes
-     across both columns, Save and its status last */
+     across both columns, Save last */
   .shell.settings {
     max-width: 1200px;
     display: grid;
@@ -1141,8 +1143,7 @@ body:has(.tabbar) .shell {
   .shell.settings > .sheet-error,
   .shell.settings > .notice,
   .shell.settings > .m3-wide,
-  .shell.settings > .commit-btn,
-  .shell.settings > .m3-status {
+  .shell.settings > .commit-btn {
     grid-column: 1 / -1;
   }
 
@@ -1155,11 +1156,6 @@ body:has(.tabbar) .shell {
     width: auto;
     justify-self: start;
     padding: 14px 36px;
-  }
-
-  .shell.settings > .m3-status {
-    order: 3;
-    text-align: left;
   }
 }
 
