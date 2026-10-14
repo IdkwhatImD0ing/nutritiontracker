@@ -791,7 +791,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 11px 14px;
+  padding: 6px 8px 6px 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -802,7 +802,7 @@
   background: var(--surface-3);
 }
 
-.land-term-bar span {
+.land-term-bar > span {
   margin-left: 8px;
   font-family: var(--font-mono);
   font-size: 0.68rem;
@@ -811,8 +811,50 @@
   color: var(--faint);
 }
 
-/* One command per line, unwrapped, so it copies as a single command; the
-   panel scrolls sideways instead of the page. */
+/* 320px phones: the two Copy buttons need the label's room */
+@media (max-width: 359px) {
+  .land-term-bar > span {
+    display: none;
+  }
+}
+
+/* One Copy per command (components/docs/CopyButton). docs.css isn't loaded
+   here, so its .docs-copy pill is restated for this bar. */
+.land-term-copy {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.land-term-copy .docs-copy {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .land-term-copy .docs-copy:hover {
+    color: var(--text);
+    border-color: var(--spruce-soft);
+  }
+}
+
+.land-term-copy .docs-copy.done {
+  color: var(--spruce-soft);
+  border-color: var(--accent-line);
+}
+
+/* One command per line. Under 720px a line soft-wraps inside the panel (a
+   CSS wrap adds no newline, so a copied command is still one line); wider,
+   the panel scrolls sideways instead of the page. The owner chose the phone
+   wrap and the Copy buttons on 2026-10-13. */
 .land-code {
   margin: 0;
   padding: 16px 18px 18px;
@@ -824,6 +866,13 @@
   color: var(--text);
   scrollbar-width: thin;
   scrollbar-color: var(--surface-3) transparent;
+}
+
+@media (max-width: 719px) {
+  .land-code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 }
 
 .land-code:focus-visible {

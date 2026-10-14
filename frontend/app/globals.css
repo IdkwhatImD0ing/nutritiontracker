@@ -2369,6 +2369,28 @@ a {
   font-weight: 500;
 }
 
+/* ---------- short landscape ----------
+   A phone on its side (~390px tall). iOS home-screen apps rotate whatever
+   the manifest's portrait lock says, and the sticky header plus the tab bar
+   left ~200px of content. A cheap guard, not a landscape design (owner's
+   choice, 2026-10-13): the header scrolls away with the page (relative, so
+   its ::after hairline stays put), and sheets take the full height. The
+   tab bar's half is in m3.css. From 900px the rail and modals apply. */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 899px) {
+  .brand {
+    position: relative;
+  }
+
+  .sheet {
+    height: var(--vvh, 100dvh);
+    border-radius: 0;
+  }
+
+  .subsheet {
+    max-height: min(94dvh, calc(var(--vvh, 100dvh) - 8px));
+  }
+}
+
 /* ---------- desktop ----------
    Nothing above this line changes under 900px: the phone layout is the
    design. From 900px the same screens get a wider canvas, not a second
