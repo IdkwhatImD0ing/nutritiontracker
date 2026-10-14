@@ -30,6 +30,7 @@ ACTIVITY_MULTIPLIERS: dict[str, float] = {
 SEXES = ("male", "female")
 
 KCAL_PER_KG = 7700.0
+LB_PER_KG = 2.2046226  # routes/weights.py's constant, for the notes
 MAX_WEEKLY_RATE_KG = 1.0
 KCAL_FLOOR: dict[str, float] = {"male": 1500.0, "female": 1200.0}
 
@@ -76,7 +77,10 @@ def kcal_target(
     notes: list[str] = []
     rate = abs(weekly_rate_kg or 0.0)
     if rate > MAX_WEEKLY_RATE_KG:
-        notes.append(f"weekly rate clamped from {rate:g} to {MAX_WEEKLY_RATE_KG:g} kg/week")
+        notes.append(
+            f"Your weekly rate was capped at {MAX_WEEKLY_RATE_KG:g} kg "
+            f"({MAX_WEEKLY_RATE_KG * LB_PER_KG:.1f} lb), the safe maximum."
+        )
         rate = MAX_WEEKLY_RATE_KG
     if goal_weight_kg is None or goal_weight_kg == weight_kg or rate == 0.0:
         direction = 0.0
@@ -86,7 +90,7 @@ def kcal_target(
     raw = tdee_kcal + delta
     floor = KCAL_FLOOR[sex]
     if raw < floor:
-        notes.append(f"kcal raised to the {floor:g} safe floor (computed {raw:.0f})")
+        notes.append(f"Calories were raised to {floor:,.0f}, the safe minimum for you.")
         raw = floor
     return KcalTarget(tdee=tdee_kcal, daily_delta_kcal=delta, kcal=round_half_up(raw), notes=notes)
 
@@ -111,13 +115,18 @@ def macro_split(
     f_per_kg = FAT_G_PER_KG_FLOOR if fat_g_per_kg is None else fat_g_per_kg
     notes: list[str] = []
     if f_per_kg < FAT_G_PER_KG_FLOOR:
-        notes.append(f"fat raised to the {FAT_G_PER_KG_FLOOR:g} g/kg floor")
+        notes.append(
+            f"Fat was raised to the minimum of {FAT_G_PER_KG_FLOOR:g} g per kg of bodyweight."
+        )
         f_per_kg = FAT_G_PER_KG_FLOOR
     protein_g = round_half_up(p_per_kg * weight_kg)
     fat_g = round_half_up(f_per_kg * weight_kg)
     remainder = kcal - protein_g * KCAL_PER_G["protein"] - fat_g * KCAL_PER_G["fat"]
     if remainder < 0:
-        notes.append("protein + fat already exceed the kcal target; carbs set to 0")
+        notes.append(
+            "Protein and fat already use all your calories, so carbs are 0 g. "
+            "Lower protein or pick a slower rate."
+        )
         remainder = 0.0
     carb_g = round_half_up(remainder / KCAL_PER_G["carb"])
     return MacroSplit(

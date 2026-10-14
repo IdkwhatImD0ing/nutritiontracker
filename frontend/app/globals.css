@@ -1926,14 +1926,20 @@ a {
   opacity: 0.7;
 }
 
+/* a row that opens the search sheet, not a second empty field */
 .edit-manual-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
   text-align: left;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 12px 14px;
   font-size: 0.9rem;
-  color: var(--sage);
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -2298,6 +2304,17 @@ a {
   color: var(--accent);
   text-decoration: none;
   font-weight: 600;
+}
+
+/* sign-up's terms line: quieter than the sign-in link under it */
+.auth-legal {
+  font-size: 0.78rem;
+}
+
+.auth-legal a {
+  color: inherit;
+  font-weight: 500;
+  text-decoration: underline;
 }
 
 /* the "send a new code" button on the verify step: a link, not a second CTA */

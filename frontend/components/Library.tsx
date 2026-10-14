@@ -23,7 +23,7 @@ type FoodGroup = {
   aliases: AliasRow[];
 };
 
-/** §7.4 Library: his foods = aliases grouped by food, most-used first. */
+/** §7.4 Library: his phrases (aliases) grouped by food, most-used first. */
 function groupByFood(rows: AliasRow[]): FoodGroup[] {
   const byFood = new Map<string, FoodGroup>();
   for (const a of rows) {
@@ -150,7 +150,7 @@ export default function Library() {
 
   return (
     <main className="shell library">
-      {/* no count here: Your foods counts its phrases, and a second number
+      {/* no count here: Your phrases counts its phrases, and a second number
           counting something else beside it read as a mismatch */}
       <header className="brand">
         <h1>Library</h1>
@@ -247,9 +247,11 @@ export default function Library() {
         </button>
       </section>
 
-      <section className="m3-section lib-foods" aria-label="Your foods">
+      {/* phrases, not every food (Bill, 2026-10-13): a barcode, search or
+          photo log learns no alias (§3.5), so it never appears here */}
+      <section className="m3-section lib-foods" aria-label="Your phrases">
         <h2>
-          Your foods
+          Your phrases
           <span className="count num">
             {aliases ? `${aliases.length} phrase${aliases.length === 1 ? "" : "s"}` : ""}
           </span>

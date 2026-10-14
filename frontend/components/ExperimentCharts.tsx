@@ -147,7 +147,7 @@ export default function ExperimentCharts({ data }: { data: MetricsResponse }) {
       <section className="exp-section">
         <h2 className="exp-h2">Duplicate-suspect food pairs · {dupes.length}</h2>
         {dupes.length === 0 ? (
-          <p className="hhint">None — the §4 one-row-per-food invariant holds.</p>
+          <p className="hhint">None — every food is stored once.</p>
         ) : (
           <ul className="exp-dupes">
             {dupes.slice(0, DUPES_SHOWN).map((d) => (

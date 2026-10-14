@@ -46,9 +46,9 @@ export default function Experiment() {
         <span className="date">last {RANGE.replace("w", " weeks")}</span>
       </header>
       <p className="exp-intro">
-        Does the app get faster and stickier as it learns? §9: latency, alias
-        hit rate, and adherence against the Cronometer baseline — weekly,
-        over committed logs.
+        Does Tally get faster and more used as it learns? Logging speed, how
+        often a phrase is recognised without a lookup, and days logged per week
+        against the Cronometer baseline — weekly, over logged meals.
       </p>
 
       {state === "loading" ? (

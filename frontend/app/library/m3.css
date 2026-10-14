@@ -371,6 +371,11 @@ body:has(.tabbar) .shell {
   color: var(--sage);
 }
 
+/* a number to look at again: the wizard's clamps, macros off the calorie target */
+.m3-note.warn {
+  color: var(--amber);
+}
+
 .m3-status {
   font-size: 0.84rem;
   font-weight: 600;
@@ -1090,7 +1095,7 @@ body:has(.tabbar) .shell {
 }
 
 @media (min-width: 1140px) {
-  /* Library: the search across the top, saved meals beside your foods */
+  /* Library: the search across the top, saved meals beside your phrases */
   .shell.library {
     max-width: 1200px;
     display: grid;

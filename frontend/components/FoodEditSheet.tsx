@@ -89,12 +89,13 @@ export default function FoodEditSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Edit food">
-        <SheetHeader title={<>&ldquo;{item.phrase}&rdquo;</>} onClose={onClose} />
+      <div className="subsheet" role="dialog" aria-label="Change food">
+        <SheetHeader title="Change food" onClose={onClose} />
+        <p className="subsheet-hint">You said &ldquo;{item.phrase}&rdquo;</p>
 
         {aliases?.length ? (
           <div>
-            <div className="edit-label">Your foods for this</div>
+            <div className="edit-label">Foods you&rsquo;ve used for this</div>
             <div className="chips">
               {aliases.map((a) => (
                 <button
@@ -118,25 +119,33 @@ export default function FoodEditSheet({
           </div>
         ) : null}
 
-        <form
-          className="capture"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const trimmed = text.trim();
-            if (trimmed && !busy) onRephrase(trimmed);
-          }}
-        >
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Describe it differently"
-            aria-label="Re-resolve food"
-            autoComplete="off"
-          />
-          <button type="submit" disabled={busy || !text.trim()} aria-label="Resolve">
-            →
-          </button>
-        </form>
+        {/* the prefill is the point: edit what was said and look it up again */}
+        <div>
+          <div className="edit-label">Describe it differently</div>
+          <form
+            className="capture"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const trimmed = text.trim();
+              if (trimmed && !busy) onRephrase(trimmed);
+            }}
+          >
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Describe it differently"
+              aria-label="Describe it differently"
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              disabled={busy || !text.trim()}
+              aria-label="Look it up"
+            >
+              →
+            </button>
+          </form>
+        </div>
 
         <button
           type="button"
@@ -144,7 +153,8 @@ export default function FoodEditSheet({
           disabled={busy}
           onClick={onManualSearch}
         >
-          Search the food database…
+          Search all foods
+          <span className="chev" aria-hidden="true" />
         </button>
       </div>
     </>
