@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { StagedServing } from "@/lib/api";
+import type { Meal, StagedServing } from "@/lib/api";
 import type { DiaryEntry } from "./DiaryApi";
 import { getFood } from "./LibraryApi";
 import "@/app/photo.css"; // .badge.estimate
@@ -11,6 +11,7 @@ const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 const fmt2 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
+const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
 const UNITS = new Set(["g", "mg", "mcg", "ug", "iu", "kcal"]);
 
@@ -32,9 +33,15 @@ type Props = {
   onToggle: () => void;
   /** portion edit → PATCH /api/entries/:id {qty, serving_id?} (parent owns
    *  the request); `serving_id` is sent only when the serving itself moved.
-   *  Resolves true when the PATCH landed — the draft is kept on a refusal so
-   *  the server's reason ("pick another serving") still has a draft to act on */
-  onSave: (patch: { qty: number; serving_id?: string }) => Promise<boolean>;
+   *  A meal chip sends `{meal}` alone, at once — the clock filed it wrong,
+   *  there is no draft to weigh. Resolves true when the PATCH landed — the
+   *  draft is kept on a refusal so the server's reason ("pick another
+   *  serving") still has a draft to act on */
+  onSave: (patch: {
+    qty?: number;
+    serving_id?: string;
+    meal?: Meal;
+  }) => Promise<boolean>;
   onDelete: () => void;
 };
 
@@ -218,6 +225,28 @@ export default function DiaryEntryRow({
                 {entry.source}
               </span>
             ) : null}
+          </div>
+
+          {/* the same 4-option picker as the staged row's; a tap moves the
+              entry to that meal's group (logs.meal_inferred keeps the
+              clock's guess) */}
+          <div className="detail-meal">
+            <span className="k">Meal</span>
+            <div className="chips">
+              {MEALS.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`chip${entry.meal === m ? " active" : ""}`}
+                  disabled={busy}
+                  onClick={() => {
+                    if (m !== entry.meal) void onSave({ meal: m });
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="diary-edit">

@@ -47,11 +47,13 @@ def _split_base(stored: dict) -> tuple[dict, dict]:
 
 
 class EntryPatch(BaseModel):
-    """Any subset: qty scales; serving_id re-derives; food_id corrects + learns."""
+    """Any subset: qty scales; serving_id re-derives; food_id corrects + learns;
+    meal refiles the entry under another meal and leaves the portion alone."""
 
     qty: float | None = None
     serving_id: str | None = None
     food_id: str | None = None
+    meal: Meal | None = None
 
 
 class EntryPatchResponse(BaseModel):
@@ -61,7 +63,8 @@ class EntryPatchResponse(BaseModel):
 
 @router.patch("/api/entries/{entry_id}", response_model=EntryPatchResponse)
 async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
-    if body.qty is None and body.serving_id is None and body.food_id is None:
+    portion = not (body.qty is None and body.serving_id is None and body.food_id is None)
+    if not portion and body.meal is None:
         raise HTTPException(422, "nothing to change")
     if body.qty is not None and body.qty <= 0:
         raise HTTPException(422, "qty must be positive")
@@ -73,6 +76,9 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
         if entry is None:
             raise HTTPException(404, "entry not found")
 
+        # The clock's guess stays in logs.meal_inferred (instrumentation);
+        # only the entry moves.
+        meal = body.meal or Meal(entry["meal"])
         old_qty = float(entry["qty"])
         qty = float(body.qty) if body.qty is not None else old_qty
         base: dict = {}  # BACKLOG 28 sidecar; empty on serving/food changes
@@ -110,6 +116,12 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
                 if isinstance(serving.get("grams"), (int, float))
                 else None
             )
+        elif not portion:
+            # meal-only: the stored snapshot is rewritten as it was, sidecar
+            # and all — nothing scales, nothing rounds
+            food_id, serving_id, food = old_food_id, entry["serving_id"], None
+            macros, base = _split_base(entry["macros"])
+            grams = float(entry["grams"]) if entry["grams"] is not None else None
         else:
             # qty-only: scale the stored snapshot proportionally — never the cache
             if old_qty == 0:
@@ -193,12 +205,16 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
 
         await conn.execute(
             "UPDATE entries SET food_id=%s, serving_id=%s, qty=%s, grams=%s, "
-            "macros=%s, alias_id=%s WHERE id = %s",
-            (food_id, serving_id, qty, grams, Json({**macros, **base}), alias_id, entry_id),
+            "macros=%s, alias_id=%s, meal=%s WHERE id = %s",
+            (
+                food_id, serving_id, qty, grams, Json({**macros, **base}), alias_id,
+                meal.value, entry_id,
+            ),
         )
-        if res is not None:
+        if res is not None and portion:
             # keep finals honest (§9 edit-rate, §7.3 mode-of-last-10 inputs);
-            # was_edited only ever ratchets true — was_disambiguated untouched
+            # was_edited only ever ratchets true — was_disambiguated untouched.
+            # A meal move is no food/serving/qty delta, so it is not an edit.
             await conn.execute(
                 "UPDATE item_resolutions SET final_food_id=%s, final_serving_id=%s, "
                 "final_qty=%s, alias_id=%s, was_edited=TRUE WHERE id = %s",
@@ -216,7 +232,7 @@ async def patch_entry(entry_id: UUID, body: EntryPatch) -> EntryPatchResponse:
     return EntryPatchResponse(
         entry=DiaryEntry(
             id=entry_id,
-            meal=Meal(entry["meal"]),
+            meal=meal,
             food=FoodRef(id=food_id, name=food["display_name"], brand=food["brand"]),
             serving=ServingRef(
                 id=serving_id,
