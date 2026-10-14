@@ -261,7 +261,7 @@ export default function BarcodeScanner({
             value={manual}
             onChange={(e) => setManual(e.target.value)}
             inputMode="numeric"
-            placeholder="Or type the number under the bars"
+            placeholder="Or type the number"
             aria-label="Barcode number"
             autoComplete="off"
           />

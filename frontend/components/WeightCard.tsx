@@ -29,16 +29,19 @@ function daysBetween(a: string, b: string): number {
   return Math.round((parseISO(b).getTime() - parseISO(a).getTime()) / 86_400_000);
 }
 
-/** "today", "yesterday", else "Tue, Sep 2". */
+/** "today", "yesterday", else "Tue, Sep 2" — with no-break spaces, so a
+ *  wrapping line never strands the day number ("Sep / 14"). */
 function when(day: string, today: string): string {
   const ago = daysBetween(day, today);
   if (ago === 0) return "today";
   if (ago === 1) return "yesterday";
-  return parseISO(day).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  return parseISO(day)
+    .toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    })
+    .replace(/ /g, "\u00a0");
 }
 
 type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
@@ -95,7 +98,7 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
     prev && delta != null
       ? delta === 0
         ? `same as ${when(prev.day, today)}`
-        : `${delta > 0 ? "up" : "down"} ${Math.abs(delta).toFixed(1)} ${unit} since ${when(prev.day, today)}`
+        : `${delta > 0 ? "up" : "down"} ${Math.abs(delta).toFixed(1)}\u00a0${unit} since ${when(prev.day, today)}`
       : null;
 
   // sparkline: x by day within the 30-day window, y by the window's range

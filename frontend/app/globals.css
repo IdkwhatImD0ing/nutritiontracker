@@ -621,6 +621,19 @@ a {
   display: block;
 }
 
+/* 320px phones: 84 + 116 + 84 needs 300px and the card has 246, so the
+   third ring was sliced off. The viewBox scales strokes and text along. */
+@media (max-width: 359px) {
+  .donut svg {
+    width: 66px;
+    height: 66px;
+  }
+  .donut.loud svg {
+    width: 92px;
+    height: 92px;
+  }
+}
+
 .donut .center-num {
   font-weight: 800;
   fill: var(--text);
@@ -738,6 +751,7 @@ a {
   font-size: 0.78rem;
   color: var(--muted);
   margin-top: 5px;
+  text-wrap: pretty;
 }
 
 .weight-empty {
@@ -860,6 +874,21 @@ a {
 .chat-foot .capture .photo-btn {
   width: 44px;
   height: 44px;
+}
+
+/* 320px phones: the field was down to ~86px of text and cut 'Tell the
+   agent…' mid-word. Tighter edges and gaps give it ~118px. */
+@media (max-width: 359px) {
+  .sheet-foot.chat-foot {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .chat-foot .capture {
+    gap: 6px;
+  }
+  .chat-foot .capture input {
+    padding: 0 10px;
+  }
 }
 
 .capture .mic-btn.rec {
@@ -1581,8 +1610,11 @@ a {
   gap: 5px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  /* A pill whose text can wrap takes a fixed radius of half its one-line
+     height, not 999px: a capsule on one line, a rounded rectangle on two. */
+  border-radius: 13px;
   padding: 4px 9px;
+  text-align: left;
   font-size: 0.78rem;
   color: var(--sage);
   cursor: pointer;
@@ -1720,7 +1752,7 @@ a {
   letter-spacing: 0.08em;
 }
 
-.detail-meal .chips {
+.detail-meal .meal-picker {
   margin-top: 6px;
 }
 

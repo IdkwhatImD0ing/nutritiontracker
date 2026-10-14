@@ -104,14 +104,18 @@ function SaveMealSheet({
           are now — no search, no AI.
         </p>
 
+        {/* Library's item layout: the portion on its own line under the
+            name, so a long serving never squeezes into '1 mug / (12 fl / oz)' */}
         <div className="m3-card">
           {entries.map((e) => (
-            <div className="m3-row" key={e.id}>
-              <span className="k">{e.food.name}</span>
-              <span className="num">
-                {e.qty !== 1 ? `${fmtQ.format(e.qty)} × ` : ""}
-                {e.serving.description}
-              </span>
+            <div className="m3-item" key={e.id}>
+              <div className="info">
+                <div className="name">{e.food.name}</div>
+                <div className="sub num">
+                  {e.qty !== 1 ? `${fmtQ.format(e.qty)} × ` : ""}
+                  {e.serving.description}
+                </div>
+              </div>
             </div>
           ))}
         </div>

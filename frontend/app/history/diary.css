@@ -66,6 +66,29 @@
   color: var(--muted);
 }
 
+/* The trailing pill and subtotal never wrap: a 4-digit meal at 320px read
+   'Save as / meal' and '1,177 / kcal'. */
+.diary-meal-head .m3-link-btn,
+.diary-meal-kcal {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 320px phones: tighter tracking and a smaller pill, so 'BREAKFAST', the
+   pill and '1,177 kcal' fit the ~250px head on one line (only just). */
+@media (max-width: 359px) {
+  .diary-meal-head {
+    gap: 6px;
+  }
+  .diary-meal-name {
+    letter-spacing: 0.08em;
+  }
+  .diary-meal-head .m3-link-btn {
+    padding: 4px 8px;
+    font-size: 0.72rem;
+  }
+}
+
 .diary-row.web .row-name {
   color: #a8d0ee; /* §3.4a: web-transcribed rows are visually distinct */
 }

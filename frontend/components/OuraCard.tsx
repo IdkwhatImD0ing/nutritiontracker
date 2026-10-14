@@ -64,7 +64,7 @@ function ago(iso: string): string {
 }
 
 function amount(n: number | null, unit: string): string {
-  return n == null ? `— ${unit}` : `${n.toLocaleString()} ${unit}`;
+  return n == null ? `—\u00a0${unit}` : `${n.toLocaleString()}\u00a0${unit}`;
 }
 
 export default function OuraCard() {
@@ -169,7 +169,7 @@ export default function OuraCard() {
             </div>
             {status.days.length ? (
               status.days.map((d) => (
-                <div className="m3-row" key={d.day}>
+                <div className="m3-row oura-day" key={d.day}>
                   <span className="k">{dayLabel(d.day)}</span>
                   <span>
                     {amount(d.total_calories, "kcal burned")} ·{" "}

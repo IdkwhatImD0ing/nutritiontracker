@@ -321,9 +321,9 @@ export default function FoodDetail({ id }: { id: string }) {
                 {s.serving_id === food.default_serving_id ? " · default" : ""}
               </span>
               <span>
-                {s.grams != null ? `${fmt.format(s.grams)} g` : ""}
+                {s.grams != null ? `${fmt.format(s.grams)}\u00a0g` : ""}
                 {typeof s.macros?.kcal === "number"
-                  ? `${s.grams != null ? " · " : ""}${fmt.format(s.macros.kcal)} kcal`
+                  ? `${s.grams != null ? " · " : ""}${fmt.format(s.macros.kcal)}\u00a0kcal`
                   : ""}
               </span>
             </div>

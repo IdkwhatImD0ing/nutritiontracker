@@ -250,18 +250,20 @@ body:has(.tabbar) .shell {
 
 .m3-card-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 
+/* The name wraps, as a diary row's does (owner, 2026-09-06): the tail an
+   ellipsis cut is the part that tells two similar foods apart. The stat
+   pill stays top-right (flex-start above). */
 .m3-card-title {
   font-weight: 600;
   font-size: 0.98rem;
+  line-height: 1.25;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   letter-spacing: -0.01em;
 }
 
@@ -391,6 +393,16 @@ body:has(.tabbar) .shell {
   color: var(--muted);
 }
 
+/* Oura's day rows: the date never splits ('Sat, Oct / 10') and the figures
+   wrap flush right. Scoped: other .m3-row labels are food names that wrap. */
+.oura-day .k {
+  white-space: nowrap;
+}
+
+.oura-day > :last-child {
+  text-align: right;
+}
+
 .m3-actions {
   display: flex;
   justify-content: space-between;
@@ -466,8 +478,16 @@ body:has(.tabbar) .shell {
 
 .m3-grid-4 {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+/* 320px phones: four ~57px cells ran 'CALORIES' into 'PROTEIN' and clipped
+   '2400'; two by two gives each box ~120px. */
+@media (max-width: 359px) {
+  .m3-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .m3-grid-4 .m3-field input {
@@ -562,17 +582,25 @@ body:has(.tabbar) .shell {
   border-bottom: none;
 }
 
+/* items listed in a card (Save as meal): the rows' own padding and
+   hairlines space them, as in a diary meal card, not the card's gap */
+.m3-card:has(> .m3-item) {
+  gap: 0;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
 .m3-item .info {
   flex: 1;
   min-width: 0;
 }
 
+/* wraps like .m3-card-title, never an ellipsis */
 .m3-item .name {
   font-size: 0.92rem;
   font-weight: 550;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .m3-item .sub {
@@ -604,6 +632,22 @@ body:has(.tabbar) .shell {
   font-family: var(--font-display);
   font-size: 0.95rem;
   font-weight: 800;
+}
+
+/* 320px phones: the stepper and ✕ left the name and serving select ~132px,
+   so the select read '1 container ('. They take a line of their own,
+   right-aligned under the full-width name. */
+@media (max-width: 359px) {
+  .m3-item {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .m3-item .info {
+    flex: 1 0 100%;
+  }
+  .m3-item-qty {
+    margin-left: auto;
+  }
 }
 
 /* ---------- goal wizard (§7.4 first run) ---------- */
