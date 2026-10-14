@@ -17,7 +17,9 @@ import {
   type Meal,
   type StagedItem,
 } from "@/lib/api";
+import { foodName, MEAL_LABEL } from "@/lib/labels";
 import FoodEditSheet from "./FoodEditSheet";
+import { ArrowUp } from "./icons";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { readEstimate } from "./PhotoApi";
 import PortionSheet, { type PortionChoice } from "./PortionSheet";
@@ -48,6 +50,23 @@ function scaleMacros(
   return out as MacrosT;
 }
 
+/** The portion sheet's list for a staged row: the payload's servings, else
+ *  (older staged payloads without a serving list) the chosen serving alone,
+ *  so the qty stepper still works. */
+function portionChoices(item: StagedItem): PortionChoice[] {
+  const fromPayload = (item.servings ?? [])
+    .map((s) => ({
+      id: s.serving_id,
+      description: s.description,
+      macros: s.macros,
+    }))
+    .filter((s) => s.id);
+  if (fromPayload.length) return fromPayload;
+  return item.serving
+    ? [{ id: item.serving.id, description: item.serving.description }]
+    : [];
+}
+
 /** Everything needed to restore the sheet unchanged after an undone discard
  *  (BACKLOG 11) — local edits included. */
 export type StagingSnapshot = {
@@ -64,8 +83,8 @@ type Props = {
   restore?: StagingSnapshot | null;
   /** item_index values this log had removed before this mount. GET
    *  /api/logs/:id does not return removed rows, so a sheet reopened from a
-   *  chat card cannot see the hole its own remove left — and "+ add item"
-   *  allocates from what it can see. */
+   *  chat card cannot see the hole its own remove left — and "Add another
+   *  food" allocates from what it can see. */
   removedIndexes?: number[];
   /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
   onRendered?: () => void;
@@ -413,8 +432,8 @@ export default function StagingSheet({
     removeStagedItem(log.log_id, itemIndex).catch(() => {});
   };
 
-  // §7.1 "+ add item": goes through POST /api/resolve with the log context so
-  // added items get resolution telemetry like everything else.
+  // §7.1 "Add another food": goes through POST /api/resolve with the log
+  // context so added items get resolution telemetry like everything else.
   const addItem = () => {
     const phrase = addText.trim();
     if (!phrase) return;
@@ -629,7 +648,7 @@ export default function StagingSheet({
       aria-expanded={mealPickerOpen}
       onClick={() => setMealPickerOpen((o) => !o)}
     >
-      {meal}
+      {MEAL_LABEL[meal]}
     </button>
   );
   const discardBtn = (
@@ -644,7 +663,7 @@ export default function StagingSheet({
           className={m === meal ? "active" : undefined}
           onClick={() => pickMeal(m)}
         >
-          {m}
+          {MEAL_LABEL[m]}
         </button>
       ))}
     </div>
@@ -706,12 +725,12 @@ export default function StagingSheet({
             <input
               value={addText}
               onChange={(e) => setAddText(e.target.value)}
-              placeholder="+ add item"
-              aria-label="Add item"
+              placeholder="Add another food"
+              aria-label="Add another food"
               autoComplete="off"
             />
             <button type="submit" disabled={!addText.trim()} aria-label="Add">
-              ↑
+              <ArrowUp strokeWidth={2.4} />
             </button>
           </form>
         </div>
@@ -743,7 +762,13 @@ export default function StagingSheet({
 
       {portionItem ? (
         <PortionSheet
-          item={portionItem}
+          title={foodName(portionItem.food?.name ?? portionItem.phrase)}
+          servings={portionChoices(portionItem)}
+          initialServingId={portionItem.serving?.id ?? null}
+          initialQty={portionItem.qty ?? 1}
+          // the row's display kcal previews a serving the payload has no
+          // macros for (same serving only)
+          initialKcal={portionItem.qty ? portionItem.macros?.kcal : null}
           onApply={(serving, qty) =>
             applyPortion(portionItem.item_index, serving, qty)
           }

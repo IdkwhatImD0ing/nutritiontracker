@@ -487,7 +487,6 @@ body:has(.tabbar) .shell {
   align-items: center;
   font-size: 0.88rem;
   color: var(--muted);
-  text-transform: capitalize;
 }
 
 .m3-window > span,
@@ -544,9 +543,11 @@ body:has(.tabbar) .shell {
     color 150ms;
 }
 
+/* the quiet selected state (globals.css .quiet-selected): a pick, not an
+   action, so a tint rather than the accent fill */
 .m3-seg button.active {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--spruce-deep);
+  color: var(--accent);
 }
 
 /* saved-meal item row: name + compact qty stepper + remove */
@@ -599,11 +600,21 @@ body:has(.tabbar) .shell {
 }
 
 .m3-item-qty .q {
-  min-width: 36px;
+  width: 44px;
+  min-width: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 6px 0;
   text-align: center;
   font-family: var(--font-display);
-  font-size: 0.95rem;
+  font-size: 1rem; /* under 16px iOS zooms the page on focus */
   font-weight: 800;
+  outline: none;
+}
+
+.m3-item-qty .q:focus {
+  border-color: var(--accent-line);
 }
 
 /* ---------- goal wizard (§7.4 first run) ---------- */
@@ -891,8 +902,8 @@ body:has(.tabbar) .shell {
 }
 
 .account-badge.owner {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--spruce-deep);
+  color: var(--accent);
 }
 
 .account-badge.demo {

@@ -16,6 +16,7 @@ import {
   type LogResponse,
   type StagedItem,
 } from "@/lib/api";
+import { mealLabel } from "@/lib/labels";
 import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
 import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
@@ -1069,7 +1070,7 @@ export default function Today() {
               month: "short",
               day: "numeric",
             })}`
-          : `Logged ${kcal} kcal${meal ? ` to ${meal[0].toUpperCase()}${meal.slice(1)}` : ""}`;
+          : `Logged ${kcal} kcal${meal ? ` to ${mealLabel(meal)}` : ""}`;
     if (committedTimer.current) clearTimeout(committedTimer.current);
     setCommittedNote({ text, day: other });
     committedTimer.current = setTimeout(() => {

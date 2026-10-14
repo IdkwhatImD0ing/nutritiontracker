@@ -7,6 +7,7 @@ import {
   searchFoods,
   type FoodSearchResult,
 } from "@/lib/api";
+import { foodName } from "@/lib/labels";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 
 type Props = {
@@ -103,8 +104,9 @@ export default function ManualSearchSheet({
   // unrelated foods.
   const showRecent = !query.trim() || (results == null && !searching);
 
-  // Cached foods (food_id set) carry the adapters' lowercase display names;
-  // .food-name capitalizes those. A raw FDC description is shown as-is.
+  // Cached foods (food_id set) carry the adapters' lowercase display names and
+  // a raw FDC description can be ALL CAPS; foodName() gives both one casing,
+  // the text itself unchanged.
   const hit = (r: FoodSearchResult, i: number) => (
     <button
       key={`${r.source}:${r.source_id}:${i}`}
@@ -112,9 +114,7 @@ export default function ManualSearchSheet({
       disabled={busy}
       onClick={() => onSelect(r)}
     >
-      <span className={`result-name${r.food_id ? " food-name" : ""}`}>
-        {r.label}
-      </span>
+      <span className="result-name">{foodName(r.label)}</span>
       <span className="result-sub">
         {r.brand ? `${r.brand} · ` : ""}
         {r.food_id ? "my foods" : (r.data_type ?? r.source)}

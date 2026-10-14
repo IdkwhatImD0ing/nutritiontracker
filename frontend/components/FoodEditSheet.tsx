@@ -6,6 +6,7 @@ import {
   type AliasRow,
   type StagedItem,
 } from "@/lib/api";
+import { foodName } from "@/lib/labels";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -107,7 +108,7 @@ export default function FoodEditSheet({
                   onClick={() => onPickAlias(a)}
                 >
                   {a.pinned ? <span className="usual-dot" /> : null}
-                  {a.food_name}
+                  {foodName(a.food_name)}
                   {a.brand ? ` — ${a.brand}` : ""}
                   {typeof a.use_count === "number" ? (
                     <span className="alias-count num"> {a.use_count}×</span>

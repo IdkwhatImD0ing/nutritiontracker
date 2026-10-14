@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { StagedServing } from "@/lib/api";
+import { foodName } from "@/lib/labels";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
 
@@ -93,7 +94,7 @@ export default function LibraryAliasSheet({
       <div className="subsheet" role="dialog" aria-label="Edit phrase">
         <SheetHeader title={`“${alias.alias_norm}”`} onClose={onClose} />
         <p className="subsheet-hint">
-          → {alias.food_name}
+          → {foodName(alias.food_name)}
           {alias.brand ? ` — ${alias.brand}` : ""} · used{" "}
           <span className="num">{alias.use_count}×</span>
         </p>

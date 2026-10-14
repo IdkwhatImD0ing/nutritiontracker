@@ -49,9 +49,11 @@
     color 160ms;
 }
 
+/* the quiet selected state (globals.css .quiet-selected): the range is a
+   pick, and the data under it is the loud thing on this page */
 .segmented button.active {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--spruce-deep);
+  color: var(--accent);
 }
 
 .range-label {

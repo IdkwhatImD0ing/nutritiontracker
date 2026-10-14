@@ -7,6 +7,7 @@ import {
   type FoodSearchResult,
   type StagedServing,
 } from "@/lib/api";
+import { foodName } from "@/lib/labels";
 import {
   cacheFood,
   createMeal,
@@ -16,6 +17,7 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
+import { ArrowRight } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -26,6 +28,34 @@ type Props = {
 };
 
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+/** An item's qty as a field you can type into, between the ±0.5 steppers:
+ *  the typed text while it is being typed, the item's qty otherwise. */
+function QtyInput({
+  qty,
+  label,
+  onQty,
+}: {
+  qty: number;
+  label: string;
+  onQty: (qty: number) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      className="q"
+      inputMode="decimal"
+      aria-label={label}
+      value={text ?? fmtQ.format(qty)}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = Number(e.target.value);
+        if (Number.isFinite(n) && n > 0) onQty(n);
+      }}
+      onBlur={() => setText(null)}
+    />
+  );
+}
 
 /** §8.4 saved meals: build a new one (search → add foods) or edit an existing
  *  one — name, trigger phrases, the fixed item list (qty / remove),
@@ -206,7 +236,9 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           {items.map((it, i) => (
             <div className="m3-item" key={`${it.food_id}:${it.serving_id}:${i}`}>
               <div className="info">
-                <div className="name">{it.food_name ?? it.food_id}</div>
+                <div className="name">
+                  {it.food_name ? foodName(it.food_name) : it.food_id}
+                </div>
                 {servingsByFood[it.food_id] ? (
                   <div className="m3-field">
                     <select
@@ -236,7 +268,11 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 >
                   −
                 </button>
-                <span className="q">{fmtQ.format(it.qty)}</span>
+                <QtyInput
+                  qty={it.qty}
+                  label={`Quantity of ${it.food_name ?? "item"}`}
+                  onQty={(q) => setQty(i, q)}
+                />
                 <button
                   type="button"
                   aria-label="More"
@@ -280,7 +316,11 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 disabled={searching || adding || !query.trim()}
                 aria-label="Search"
               >
-                {searching ? <span className="spinner" /> : "→"}
+                {searching ? (
+                  <span className="spinner" />
+                ) : (
+                  <ArrowRight strokeWidth={2.4} />
+                )}
               </button>
             </form>
             {results ? (
@@ -292,7 +332,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                     disabled={adding}
                     onClick={() => addHit(r)}
                   >
-                    <span className="result-name">{r.label}</span>
+                    <span className="result-name">{foodName(r.label)}</span>
                     <span className="result-sub">
                       {r.brand ? `${r.brand} · ` : ""}
                       {r.food_id ? "my foods" : (r.data_type ?? r.source)}

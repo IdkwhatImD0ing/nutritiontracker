@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { mealLabel } from "@/lib/labels";
 import {
   getSettings,
   putSettings,
@@ -235,23 +236,23 @@ export default function Settings() {
             <div className="m3-card">
               {WINDOW_MEALS.map((m) => (
                 <div className="m3-window" key={m}>
-                  <span>{m}</span>
+                  <span>{mealLabel(m)}</span>
                   <input
                     type="time"
                     value={form.meal_windows[m].start}
                     onChange={(e) => setWindow(m, "start", e.target.value)}
-                    aria-label={`${m} start`}
+                    aria-label={`${mealLabel(m)} start`}
                   />
                   <input
                     type="time"
                     value={form.meal_windows[m].end}
                     onChange={(e) => setWindow(m, "end", e.target.value)}
-                    aria-label={`${m} end`}
+                    aria-label={`${mealLabel(m)} end`}
                   />
                 </div>
               ))}
               <div className="m3-window">
-                <span>otherwise</span>
+                <span>Any other time</span>
                 <select
                   value={form.meal_windows.default}
                   onChange={(e) =>
@@ -264,11 +265,11 @@ export default function Settings() {
                         : f,
                     )
                   }
-                  aria-label="Meal outside every window"
+                  aria-label="Meal at any other time"
                 >
                   {MEALS.map((meal) => (
                     <option key={meal} value={meal}>
-                      {meal}
+                      {mealLabel(meal)}
                     </option>
                   ))}
                 </select>

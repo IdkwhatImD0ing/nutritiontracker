@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
+import { foodName } from "@/lib/labels";
 import {
   cacheFood,
   getAliases,
@@ -205,9 +206,7 @@ export default function Library() {
                 disabled={opening}
                 onClick={() => openHit(r)}
               >
-                <span className={`result-name${r.food_id ? " food-name" : ""}`}>
-                  {r.label}
-                </span>
+                <span className="result-name">{foodName(r.label)}</span>
                 <span className="result-sub">
                   {r.brand ? `${r.brand} · ` : ""}
                   {r.food_id ? "my foods" : (r.data_type ?? r.source)}
@@ -268,7 +267,7 @@ export default function Library() {
         {groups.map((g) => (
           <div className="m3-card" key={g.food_id}>
             <div className="m3-card-head">
-              <div className="m3-card-title food-name">
+              <div className="m3-card-title">
                 {/* prefetch off: this list is unbounded, and /library/food/[id]
                     is a dynamic auth-gated route, so the default viewport
                     prefetch would burn a middleware invocation per learned food
@@ -278,7 +277,7 @@ export default function Library() {
                   href={`/library/food/${encodeURIComponent(g.food_id)}`}
                   prefetch={false}
                 >
-                  {g.food_name}
+                  {foodName(g.food_name)}
                 </Link>
               </div>
               <span className="m3-card-stat num">{g.total}×</span>

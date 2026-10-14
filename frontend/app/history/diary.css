@@ -1,5 +1,6 @@
 /* Diary list (Today + History day view) — X5b. Reuses globals.css's .row /
-   .row-detail / .stepper vocabulary; only the diary-specific bits live here. */
+   .row-detail / .portion-btn vocabulary; only the diary-specific bits live
+   here. */
 
 .diary {
   display: flex;
@@ -39,7 +40,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--accent);
+  color: var(--muted); /* a section label; the accent is rationed (§7.4) */
 }
 
 .diary-meal-head .m3-link-btn {
@@ -79,30 +80,6 @@
   gap: 8px;
 }
 
-.diary-edit > .k {
-  font-size: 0.66rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.diary-stepper button {
-  width: 44px;
-  padding: 6px 0;
-  font-size: 1.1rem;
-}
-
-.diary-stepper input {
-  font-size: 1.05rem;
-  padding: 6px 0;
-}
-
-.diary-stepper button:disabled,
-.diary-stepper input:disabled {
-  color: var(--faint);
-  cursor: default;
-}
-
 .diary-actions {
   display: flex;
   gap: 8px;
@@ -125,12 +102,6 @@
   cursor: default;
 }
 
-.diary-actions .diary-save:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-
 .diary-actions .diary-delete {
   margin-left: auto;
 }
@@ -143,42 +114,4 @@
   background: var(--red);
   border-color: var(--red);
   color: #fff;
-}
-
-/* The row's serving picker (§3.5 post-commit portion edit). The opener sits
-   on its own line above the qty stepper; .diary-edit is a stretch column, so
-   it has to say it does not want the full width. */
-.diary-change-serving {
-  align-self: flex-start;
-  font-size: 0.76rem;
-  text-align: left;
-}
-
-/* A branded food can carry a dozen servings; cap the list so the qty stepper
-   and the actions stay on screen under it. */
-.diary-servings {
-  max-height: 168px;
-  overflow-y: auto;
-}
-
-.diary-servings button {
-  padding: 8px 12px;
-  font-size: 0.8rem;
-}
-
-/* A serving the §4 guard would refuse: offered, so the list is the food's
-   real one, but visibly not pickable. */
-.diary-servings button:disabled {
-  cursor: default;
-  opacity: 0.45;
-  border-style: dashed;
-}
-
-/* Picker status ("Loading servings…", "only the one serving"). Not .k — that
-   is the uppercase tracked micro-label for "Qty · 1 cup", and a sentence set
-   in it shouts. */
-.diary-note {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
 }

@@ -673,7 +673,7 @@ Every row supports, concretely:
 - **Portion:** tap the portion → bottom sheet with a qty stepper and the food's serving list (`foods.servings`). Fixing a wrong portion is ≤3 taps (open, adjust, done). This is friction #3's escape hatch, so it gets the most polished micro-interaction in the app.
 - **Meal:** one **log-level meal chip in the staging header** propagates to all rows (fixing a 4-item breakfast misinferred as lunch is 2 taps: chip → picker option, not 4 rows × cycling); per-item chips override for genuinely mixed logs. Chips open a 4-option picker, never blind-cycle.
 - **Remove:** swipe/✕ on any row — writes `item_resolutions.status='removed'` (telemetry keeps the staging error visible), never writes an alias, never reaches entries.
-- **Add:** a "+ add item" field at the bottom → `/api/resolve` with the log context, so added items get resolution telemetry like everything else.
+- **Add:** an "Add another food" field at the bottom → `/api/resolve` with the log context, so added items get resolution telemetry like everything else.
 - **Cooked/raw toggle** (`state_question`): one tap, answer persists to the alias, never asked again for that phrase.
 - **Question chip** (`needs_input`): options resolve locally when they carry ids (§3.4).
 

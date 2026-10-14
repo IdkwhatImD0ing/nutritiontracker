@@ -240,7 +240,6 @@ a.m3-link-btn,
   .keys-btn,
   .account-signout,
   .diary-actions button,
-  .diary-stepper button,
   .web-cite a {
     position: relative;
   }
@@ -265,7 +264,6 @@ a.m3-link-btn,
   .keys-btn::before,
   .account-signout::before,
   .diary-actions button::before,
-  .diary-stepper button::before,
   .scan-torch::before /* already absolute: its own containing block */ {
     content: "";
     position: absolute;
@@ -319,17 +317,6 @@ a.m3-link-btn,
      would add a few px of scroll to a sheet that fits */
   .subsheet > .m3-actions .m3-link-btn {
     --hit-top: -13px;
-  }
-
-  /* the serving list opens 8px under it, so this one grows up into the
-     edit block's top padding instead; its retry twin sits under it */
-  .diary-change-serving {
-    --hit-top: -15px;
-    --hit-h: calc(100% + 19px);
-  }
-
-  .diary-change-serving + .diary-change-serving {
-    --hit-top: -4px;
   }
 }
 
@@ -1247,7 +1234,6 @@ a {
   font-size: 0.8rem;
   font-weight: 650;
   cursor: pointer;
-  text-transform: capitalize;
 }
 
 .meal-picker {
@@ -1266,13 +1252,6 @@ a {
   font-weight: 550;
   color: var(--muted);
   cursor: pointer;
-  text-transform: capitalize;
-}
-
-.meal-picker button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
 }
 
 .sheet-body {
@@ -1539,15 +1518,9 @@ a {
   vertical-align: 1px;
 }
 
+/* its colours are the quiet selected state's (.quiet-selected, at the end) */
 .chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
   font-weight: 600;
-}
-
-.chip.active .usual-dot {
-  background: var(--on-accent);
 }
 
 /* §3.3 rule 3 "search instead" affordance (BACKLOG 32) */
@@ -1632,14 +1605,6 @@ a {
   text-decoration-style: dotted;
   text-decoration-color: var(--faint);
   text-underline-offset: 3px;
-}
-
-/* A cached food's display name is stored lowercase (the adapters' trigram
-   target — "fairlife 2% reduced fat ultra-filtered milk"); it reads as a
-   title wherever it is shown (owner feedback, 2026-09-06). Applied to names
-   only, never to a raw provider description or a UI label. */
-.food-name {
-  text-transform: capitalize;
 }
 
 /* expanded stats */
@@ -1753,6 +1718,12 @@ a {
   border-color: var(--accent-line);
 }
 
+/* docked, the field sits on the tray's --surface-2: a step down to the
+   sheet's own surface keeps it from vanishing into the tray */
+.split-sheet > .stage-pane .add-item input {
+  background: var(--surface);
+}
+
 .add-item button {
   width: 44px;
   height: 44px;
@@ -1771,6 +1742,18 @@ a {
 .add-item button:disabled {
   color: var(--faint);
   cursor: default;
+}
+
+/* with text to send it lights up like every other composer's send */
+.add-item button:not(:disabled) {
+  background: var(--accent-fill);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.add-item button svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* ---------- sub-sheets over the staging sheet (portion, manual search) ---- */
@@ -1833,7 +1816,7 @@ a {
 .subsheet-title {
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: 1.2rem;
+  font-size: 1.15rem; /* .sheet-title's: one title size for every sheet */
   letter-spacing: -0.02em;
   line-height: 1.2;
 }
@@ -1907,6 +1890,14 @@ a {
   background: var(--accent-soft);
 }
 
+/* A serving the §4 guard would refuse (a diary row's partial macros):
+   offered, so the list is the food's real one, but visibly not pickable. */
+.serving-list button:disabled {
+  cursor: default;
+  opacity: 0.45;
+  border-style: dashed;
+}
+
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
 
 .edit-label {
@@ -1921,11 +1912,6 @@ a {
 .alias-count {
   color: var(--faint);
   margin-left: 4px;
-}
-
-.chip.active .alias-count {
-  color: var(--on-accent);
-  opacity: 0.7;
 }
 
 .edit-manual-btn {
@@ -2522,13 +2508,15 @@ a {
 }
 
 /* the lane's one header: a grabber, a title, and — only while nothing is
-   staged — the ✕. Staged, the tray carries the ✕ that means anything. */
+   staged — the ✕. Staged, the tray carries the ✕ that means anything, and
+   the title steps back to a slim label; with nothing staged it is a sheet
+   title like any other. */
 .split-head {
   padding: 8px 18px 10px;
   border-bottom: none;
 }
 
-.split-head .sheet-title {
+.split-sheet[data-staged] .split-head .sheet-title {
   color: var(--muted);
   font-size: 0.9rem;
 }
@@ -2676,6 +2664,23 @@ a {
   outline: none;
 }
 
+/* 26px to the eye, 44 to a finger (the touch baseline's hit area): a tap
+   cycles the stops, so a near miss must not land in the chat. The z-index
+   keeps the chat pane, later in the page, from painting over the lower half
+   of the grown area. */
+@media (pointer: coarse) {
+  .split-divider {
+    position: relative;
+    z-index: 1;
+  }
+
+  .split-divider::before {
+    content: "";
+    position: absolute;
+    inset: -9px 0;
+  }
+}
+
 /* The two end stops are about chrome, not proportion: `peek` is the tray's
    lip alone, `full` is the composer. Pixels, not a fraction — so the settled
    state says which pane's body goes, and the fraction only drives the drag. */
@@ -2727,41 +2732,6 @@ a {
   padding-bottom: 12px;
 }
 
-.split-divider {
-  flex: none;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-  cursor: row-resize;
-  touch-action: none; /* the drag is the divider's, never the scroller's */
-}
-
-.split-grip {
-  width: 44px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line-strong);
-  transition: background 140ms var(--ease);
-}
-
-.split-divider:focus-visible .split-grip {
-  background: var(--accent);
-}
-
-@media (hover: hover) {
-  .split-divider:hover .split-grip {
-    background: var(--accent);
-  }
-}
-
-.split-divider:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
 .chat-body {
   display: flex;
   flex-direction: column;
@@ -2806,6 +2776,13 @@ a {
   padding: 4px;
   max-width: 62%;
   line-height: 0;
+}
+
+/* nor does the accent fill frame the picture; without one ("📷 Photo") the
+   bubble keeps it, or its text would sit dark on the dark ground */
+.bubble.user.photo-bubble:has(> img) {
+  padding: 0;
+  background: none;
 }
 
 .bubble.user.photo-bubble img {
@@ -2916,7 +2893,7 @@ a {
   justify-content: space-between;
   gap: 12px;
   background: var(--surface-2);
-  border: 1px solid var(--accent-line);
+  border: 1px solid var(--line);
   border-radius: 16px;
   padding: 12px 14px;
 }
@@ -2934,13 +2911,16 @@ a {
   font-weight: 500;
 }
 
+/* Review is the quiet way into the tray: the Log pill is the one accent
+   action in the Agent sheet (§7.4 — the accent is rationed) */
 .result-card button {
   flex-shrink: 0;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: var(--on-accent);
+  background: var(--surface-3);
+  color: var(--text);
   border: none;
   border-radius: 999px;
   padding: 8px 16px;
+  font-size: 0.88rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -3166,7 +3146,9 @@ a {
    takes the accent as a tint and a line, never the fill (the accent is
    rationed, §7.4). A control whose own rule is more specific than one class
    (`.meal-picker button.active`) joins this rule's selector list instead. */
-.quiet-selected {
+.quiet-selected,
+.chip.active,
+.meal-picker button.active {
   background: var(--spruce-deep);
   border-color: var(--accent-line);
   color: var(--accent);
