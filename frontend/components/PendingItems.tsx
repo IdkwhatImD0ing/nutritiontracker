@@ -162,16 +162,18 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
 
   if (idle) return null;
 
+  // The wrap is the live region, not each pill: a count change or a pill
+  // turning into "needs attention" is announced, not just the first mount.
   return (
-    <div className="pending-wrap">
+    <div className="pending-wrap" role="status">
       {waiting.length > 0 ? (
-        <div className="pending-pill" role="status">
+        <div className="pending-pill">
           <span className="spinner" />
           {waiting.length} pending item{waiting.length > 1 ? "s" : ""}…
         </div>
       ) : null}
       {failed.map((f) => (
-        <div key={f.item_index} className="pending-pill failed" role="status">
+        <div key={f.item_index} className="pending-pill failed">
           <span>&ldquo;{f.phrase}&rdquo; couldn&rsquo;t be added — needs attention</span>
           <button
             type="button"

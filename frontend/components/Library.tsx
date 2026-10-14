@@ -190,7 +190,11 @@ export default function Library() {
             {searching ? <span className="spinner" /> : "→"}
           </button>
         </form>
-        {searchError ? <p className="sheet-error">{searchError}</p> : null}
+        {searchError ? (
+          <p className="sheet-error" role="alert">
+            {searchError}
+          </p>
+        ) : null}
         {fdcDown ? (
           <p className="subsheet-hint">
             Food database unreachable — showing your foods only.
@@ -261,8 +265,10 @@ export default function Library() {
           <p className="m3-empty">Loading…</p>
         ) : groups.length === 0 ? (
           <p className="m3-empty">
-            Nothing learned yet. Every meal you log teaches the app a phrase →
-            food mapping; they show up here with use counts.
+            Nothing learned yet. Every meal you log teaches the app a phrase{" "}
+            <span aria-hidden="true">→</span>
+            <span className="sr-only">to</span> food mapping; they show up here
+            with use counts.
           </p>
         ) : null}
         {groups.map((g) => (

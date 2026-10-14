@@ -179,9 +179,11 @@ textarea::placeholder {
 /* Controls are chrome, not text: a long press raises no selection loupe or
    link callout, and a quick second tap doesn't zoom. Only links that act as
    controls are listed; a link in running text (a citation, the docs) stays
-   selectable. */
+   selectable. A diary or staged .row-main is a tap target that holds
+   controls, so it is listed by class rather than given a role. */
 button,
 [role="button"],
+.row-main,
 summary,
 .tabbar a,
 .nav-back,
@@ -201,7 +203,7 @@ a.m3-link-btn,
    of their own (a scale, a fill step) keep it, and zero specificity lets a
    control's own opacity win. */
 :where(
-  :is(button, [role="button"], a, summary):active:not(
+  :is(button, [role="button"], .row-main, a, summary):active:not(
       :disabled,
       .fab,
       .commit-btn,
@@ -356,6 +358,14 @@ textarea:focus-visible {
   outline: none;
 }
 
+/* A status line stays mounted so its text is announced as it arrives (a
+   region inserted together with its text is often skipped). Empty, it takes
+   no room and no flex gap, and stays in the accessibility tree — never
+   display: none. */
+[role="status"]:empty {
+  position: absolute;
+}
+
 a {
   color: var(--mint);
 }
@@ -371,6 +381,20 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* except what says "still working": a spinner frozen mid-arc looks hung.
+     A turn in place and an opacity pulse are what iOS itself keeps under
+     Reduce Motion; the halo's scale and the tracker's sweep stay stopped.
+     A class with !important outranks `*` with !important. */
+  .spinner {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .rec-dot {
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
   }
 }
 
@@ -734,7 +758,7 @@ a {
   letter-spacing: 0.12em;
   font-weight: 600;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin: 0 0 4px; /* an h2 */
 }
 
 .weight-main {
@@ -1195,7 +1219,7 @@ a {
 }
 
 .sheet-title {
-  margin: 0; /* an h2 where it names a dialog (SplitSheet) */
+  margin: 0; /* an h2: every sheet's title is a heading */
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1.15rem;
@@ -1402,6 +1426,20 @@ a {
   display: flex;
   align-items: baseline;
   gap: 3px;
+}
+
+/* the row's expander for keyboard and VoiceOver: a button drawn as the
+   figure it always was. Longhands, not `font: inherit`, which would also
+   undo .num's tabular figures on the same element. */
+button.row-kcal {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
 .row-kcal .n {
@@ -1849,6 +1887,7 @@ a {
 }
 
 .subsheet-title {
+  margin: 0; /* an h2: every sheet's title is a heading */
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1.2rem;
@@ -2128,6 +2167,13 @@ a {
 }
 
 /* ---------- undo toast (BACKLOG 11) + pending badge (BACKLOG 12) ---------- */
+
+/* Today's one live region for its toasts (Today.tsx). Out of flow, so it
+   adds no .shell gap; no z-index, so no stacking context: each fixed toast
+   keeps its own place and layer. */
+.toast-host {
+  position: absolute;
+}
 
 .toast {
   position: fixed;

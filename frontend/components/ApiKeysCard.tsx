@@ -275,7 +275,7 @@ export default function ApiKeysCard() {
             New key
           </button>
           <Link href="/docs/api-keys" className="m3-link-btn">
-            How to use keys →
+            How to use keys <span aria-hidden="true">→</span>
           </Link>
         </div>
 

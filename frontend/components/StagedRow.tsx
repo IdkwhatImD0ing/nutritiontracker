@@ -97,11 +97,13 @@ export default function StagedRow({
     <div
       className={`row${searching ? " searching" : ""}${notFound ? " not-found" : ""}${estimated ? " estimated" : ""}`}
     >
+      {/* The row is a tap target, not a button: it holds the name, portion
+          and remove buttons, which a role=button would flatten into one long
+          name. The kcal figure is its button for keyboard and VoiceOver; a
+          click there bubbles to this one handler. */}
       <div
         className="row-main"
         onClick={notFound ? onManualSearch : onToggle}
-        role="button"
-        aria-expanded={notFound ? undefined : expanded}
       >
         <div className="row-info">
           <div className="row-name">
@@ -143,7 +145,7 @@ export default function StagedRow({
               <button
                 type="button"
                 className={`portion-btn${verify ? " verify" : ""}`}
-                aria-label={`Change portion for ${name}`}
+                aria-label={`Portion for ${name}: ${portion}${verify ? ", please verify" : ""}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onPortion();
@@ -161,14 +163,27 @@ export default function StagedRow({
             )}
           </div>
         </div>
-        <div className="row-kcal num">
+        <button
+          type="button"
+          className="row-kcal num"
+          aria-expanded={notFound ? undefined : expanded}
+          aria-label={
+            notFound
+              ? `Search for ${name}`
+              : searching
+                ? `${name}, searching, details`
+                : macros == null
+                  ? `${name}, no calories yet, details`
+                  : `${name}, ${estimated ? "about " : ""}${fmt.format(macros.kcal)} kcal, details`
+          }
+        >
           <span className="n">
             {macros != null
               ? `${estimated ? "~" : ""}${fmt.format(macros.kcal)}`
               : "—"}
           </span>
           <span className="u">kcal</span>
-        </div>
+        </button>
         <button
           type="button"
           className="row-remove"
@@ -319,6 +334,7 @@ export default function StagedRow({
                   key={m}
                   type="button"
                   className={`chip${item.meal === m ? " active" : ""}`}
+                  aria-pressed={item.meal === m}
                   onClick={() => onMeal(m)}
                 >
                   {m}

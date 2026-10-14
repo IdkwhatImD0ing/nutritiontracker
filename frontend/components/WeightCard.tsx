@@ -75,7 +75,7 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
     return (
       <section className="weight-card" aria-label="Weight">
         <div className="weight-main">
-          <span className="label">Weight</span>
+          <h2 className="label">Weight</h2>
           <p className="weight-empty">No weigh-ins yet — tell the agent your weight.</p>
         </div>
       </section>
@@ -112,7 +112,7 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
   return (
     <section className="weight-card" aria-label="Weight">
       <div className="weight-main">
-        <span className="label">Weight</span>
+        <h2 className="label">Weight</h2>
         <div className="weight-num num">
           <strong>{value.toFixed(1)}</strong>
           <span className="unit">{unit}</span>

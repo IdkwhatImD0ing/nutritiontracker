@@ -147,9 +147,18 @@ export default function OuraCard() {
     <section className="m3-section" aria-label="Oura">
       <h2>Oura</h2>
       <div className="m3-card">
-        {note ? <p className="m3-status">{note}</p> : null}
-        {hint ? <p className="m3-status">{hint}</p> : null}
-        {error ? <p className="sheet-error">{error}</p> : null}
+        {/* kept mounted, so a note is announced as it appears */}
+        <p className="m3-status" role="status">
+          {note}
+        </p>
+        <p className="m3-status" role="status">
+          {hint}
+        </p>
+        {error ? (
+          <p className="sheet-error" role="alert">
+            {error}
+          </p>
+        ) : null}
         {status?.connected ? (
           <>
             <div className="m3-row">

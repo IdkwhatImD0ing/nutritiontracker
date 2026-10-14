@@ -291,7 +291,9 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
 
         {phase === "error" ? (
           <>
-            <p className="sheet-error">{error}</p>
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
             <div className="photo-actions">
               <button
                 type="button"

@@ -128,12 +128,10 @@ export default function DiaryEntryRow({
 
   return (
     <div className={`row diary-row${entry.web_source ? " web" : ""}`}>
-      <div
-        className="row-main"
-        onClick={onToggle}
-        role="button"
-        aria-expanded={expanded}
-      >
+      {/* a tap target, not a button: it holds the name link, which a
+          role=button would swallow. The kcal figure is the expander's button
+          for keyboard and VoiceOver; its click bubbles to this handler. */}
+      <div className="row-main" onClick={onToggle}>
         <div className="row-info">
           <div className="row-name">
             {/* §7.4: food detail is a drill-in from any diary row. The row's
@@ -162,10 +160,15 @@ export default function DiaryEntryRow({
             {portion}
           </div>
         </div>
-        <div className="row-kcal num">
+        <button
+          type="button"
+          className="row-kcal num"
+          aria-expanded={expanded}
+          aria-label={`${entry.food.name}, ${fmt.format(m.kcal)} kcal, details`}
+        >
           <span className="n">{fmt.format(m.kcal)}</span>
           <span className="u">kcal</span>
-        </div>
+        </button>
       </div>
 
       {/* §3.4a: visible, clickable citation — collapsed or expanded. */}
@@ -244,6 +247,7 @@ export default function DiaryEntryRow({
                         className={
                           sv.serving_id === chosenId ? "active" : undefined
                         }
+                        aria-pressed={sv.serving_id === chosenId}
                         disabled={busy || !ok}
                         title={
                           ok
@@ -282,7 +286,7 @@ export default function DiaryEntryRow({
             <div className="stepper diary-stepper">
               <button
                 type="button"
-                aria-label="Less"
+                aria-label="Decrease quantity"
                 disabled={busy || !draftValid}
                 onClick={() => step(-1)}
               >
@@ -298,7 +302,7 @@ export default function DiaryEntryRow({
               />
               <button
                 type="button"
-                aria-label="More"
+                aria-label="Increase quantity"
                 disabled={busy || !draftValid}
                 onClick={() => step(1)}
               >

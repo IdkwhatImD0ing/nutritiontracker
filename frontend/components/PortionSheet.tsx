@@ -92,7 +92,7 @@ export default function PortionSheet({ item, onApply, onClose }: Props) {
         />
 
         <div className="stepper num">
-          <button type="button" aria-label="Less" onClick={() => step(-0.5)}>
+          <button type="button" aria-label="Decrease quantity" onClick={() => step(-0.5)}>
             −
           </button>
           <input
@@ -101,7 +101,7 @@ export default function PortionSheet({ item, onApply, onClose }: Props) {
             inputMode="decimal"
             aria-label="Quantity"
           />
-          <button type="button" aria-label="More" onClick={() => step(0.5)}>
+          <button type="button" aria-label="Increase quantity" onClick={() => step(0.5)}>
             +
           </button>
         </div>
@@ -112,6 +112,7 @@ export default function PortionSheet({ item, onApply, onClose }: Props) {
               key={s.id}
               type="button"
               className={s.id === (chosen?.id ?? "") ? "active" : undefined}
+              aria-pressed={s.id === (chosen?.id ?? "")}
               onClick={() => setServingId(s.id)}
             >
               {s.description}

@@ -316,7 +316,11 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           </div>
         ) : null}
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        {error ? (
+          <p className="sheet-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <button
           type="button"

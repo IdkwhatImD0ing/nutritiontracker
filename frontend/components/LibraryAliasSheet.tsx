@@ -102,7 +102,8 @@ export default function LibraryAliasSheet({
       >
         <SheetHeader title={`“${alias.alias_norm}”`} onClose={onClose} />
         <p className="subsheet-hint">
-          → {alias.food_name}
+          <span aria-hidden="true">→</span>
+          <span className="sr-only">Maps to</span> {alias.food_name}
           {alias.brand ? ` — ${alias.brand}` : ""} · used{" "}
           <span className="num">{alias.use_count}×</span>
         </p>
@@ -130,7 +131,7 @@ export default function LibraryAliasSheet({
           <div className="edit-label">Default portion</div>
           {hasDefault ? (
             <div className="stepper num" style={{ marginBottom: 8 }}>
-              <button type="button" aria-label="Less" onClick={() => step(-0.5)}>
+              <button type="button" aria-label="Decrease quantity" onClick={() => step(-0.5)}>
                 −
               </button>
               <input
@@ -139,7 +140,7 @@ export default function LibraryAliasSheet({
                 inputMode="decimal"
                 aria-label="Default quantity"
               />
-              <button type="button" aria-label="More" onClick={() => step(0.5)}>
+              <button type="button" aria-label="Increase quantity" onClick={() => step(0.5)}>
                 +
               </button>
             </div>
@@ -148,6 +149,7 @@ export default function LibraryAliasSheet({
             <button
               type="button"
               className={!hasDefault ? "active" : undefined}
+              aria-pressed={!hasDefault}
               onClick={() => setServingId("")}
             >
               No default — use my recent portions
@@ -157,6 +159,7 @@ export default function LibraryAliasSheet({
                 key={s.serving_id}
                 type="button"
                 className={s.serving_id === servingId ? "active" : undefined}
+                aria-pressed={s.serving_id === servingId}
                 onClick={() => setServingId(s.serving_id)}
               >
                 {s.description}
@@ -169,7 +172,11 @@ export default function LibraryAliasSheet({
           </div>
         </div>
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        {error ? (
+          <p className="sheet-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <button
           type="button"
@@ -183,7 +190,10 @@ export default function LibraryAliasSheet({
         <div className="m3-actions">
           {confirm ? (
             <>
-              <span className="m3-note">Forget this phrase → food mapping?</span>
+              <span className="m3-note">
+                Forget this phrase <span aria-hidden="true">→</span>
+                <span className="sr-only">to</span> food mapping?
+              </span>
               <button
                 type="button"
                 className="m3-link-btn danger"

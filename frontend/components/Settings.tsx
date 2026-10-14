@@ -187,7 +187,9 @@ export default function Settings() {
           </button>
         </div>
       ) : error ? (
-        <p className="sheet-error">{error}</p>
+        <p className="sheet-error" role="alert">
+          {error}
+        </p>
       ) : null}
 
       <AccountCard />
@@ -345,7 +347,10 @@ export default function Settings() {
           >
             {busy ? "Saving…" : "Save settings"}
           </button>
-          {status ? <p className="m3-status">{status}</p> : null}
+          {/* kept mounted, so "Saved." is announced as it appears */}
+          <p className="m3-status" role="status">
+            {status}
+          </p>
 
           <ApiKeysCard />
 
@@ -354,7 +359,7 @@ export default function Settings() {
               <div className="m3-row">
                 <span className="k">Is it learning?</span>
                 <Link href="/experiment" className="m3-link-btn">
-                  Experiment charts →
+                  Experiment charts <span aria-hidden="true">→</span>
                 </Link>
               </div>
               <p className="m3-note">

@@ -242,7 +242,9 @@ export default function BarcodeScanner({
 
         {notice ? (
           <>
-            <p className="sheet-error">{notice}</p>
+            <p className="sheet-error" role="alert">
+              {notice}
+            </p>
             {onSearchInstead ? (
               <div className="chips">
                 <button

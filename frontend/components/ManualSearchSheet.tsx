@@ -146,8 +146,16 @@ export default function ManualSearchSheet({
         </button>
       </form>
 
-      {error ? <p className="sheet-error">{error}</p> : null}
-      {searchError ? <p className="sheet-error">{searchError}</p> : null}
+      {error ? (
+        <p className="sheet-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {searchError ? (
+        <p className="sheet-error" role="alert">
+          {searchError}
+        </p>
+      ) : null}
       {fdcDown ? (
         <p className="subsheet-hint">
           Food database unreachable — showing your foods only.
@@ -192,7 +200,7 @@ export default function ManualSearchSheet({
         >
           <div className="sheet-head">
             <div className="sheet-head-row">
-              <span className="sheet-title">Search</span>
+              <h2 className="sheet-title">Search</h2>
               <SheetClose onClick={onClose} />
             </div>
           </div>

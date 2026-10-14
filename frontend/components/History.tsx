@@ -105,7 +105,11 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         <p className="range-label">{spanLabel(range)}</p>
       ) : null}
 
-      {error ? <p className="hist-error">{error}</p> : null}
+      {error ? (
+        <p className="hist-error" role="alert">
+          {error}
+        </p>
+      ) : null}
       {loading && !range ? (
         <p className="hhint">
           <span className="spinner" />

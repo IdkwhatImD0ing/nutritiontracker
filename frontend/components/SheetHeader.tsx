@@ -57,9 +57,9 @@ export default function SheetHeader({
     <div className="subsheet-head" {...drag}>
       <div className="grabber" />
       <div className="sheet-head-row">
-        <div className="subsheet-title" id={titleId}>
+        <h2 className="subsheet-title" id={titleId}>
           {title}
-        </div>
+        </h2>
         {closeButton ? (
           <SheetClose onClick={onClose} disabled={!canClose} />
         ) : null}

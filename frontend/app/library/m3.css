@@ -214,7 +214,9 @@ body:has(.tabbar) .shell {
   gap: 10px;
 }
 
-.m3-section h2 {
+/* the section's own head only: a sheet inside a section (the API-key sheet)
+   titles itself with an h2 too */
+.m3-section > h2 {
   margin: 0;
   padding: 0 2px;
   font-size: 0.7rem;

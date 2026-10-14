@@ -65,7 +65,9 @@ export default function Experiment() {
         </div>
       ) : null}
       {state === "error" ? (
-        <p className="hist-error">Couldn&rsquo;t load the metrics.</p>
+        <p className="hist-error" role="alert">
+          Couldn&rsquo;t load the metrics.
+        </p>
       ) : null}
       {state === "ok" && data ? (
         data.weeks.length === 0 ? (

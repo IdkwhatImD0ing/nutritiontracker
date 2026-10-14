@@ -18,6 +18,14 @@ const fmt3 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
 
 const CORE = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
 
+/** a missing figure: a dash to the eye, words to a screen reader */
+const none = (
+  <>
+    <span aria-hidden="true">—</span>
+    <span className="sr-only">not available</span>
+  </>
+);
+
 /** The nutrients the adapters know how to read (sources/fdc.py's id map).
  *  Listed in full so an absent one renders "not measured" — never zero. */
 const NUTRIENTS: [string, string][] = [
@@ -207,7 +215,7 @@ export default function FoodDetail({ id }: { id: string }) {
         <div className="fd-kcal num">
           <span>
             <span className="n">
-              {typeof macros.kcal === "number" ? fmt.format(macros.kcal) : "—"}
+              {typeof macros.kcal === "number" ? fmt.format(macros.kcal) : none}
             </span>
             <span className="u">kcal</span>
           </span>
@@ -216,19 +224,19 @@ export default function FoodDetail({ id }: { id: string }) {
         <div className="macro-grid num" style={{ marginBottom: 0 }}>
           <div className="macro-cell protein">
             <div className="v">
-              {typeof macros.protein_g === "number" ? `${fmt1.format(macros.protein_g)}g` : "—"}
+              {typeof macros.protein_g === "number" ? `${fmt1.format(macros.protein_g)}g` : none}
             </div>
             <div className="k">Protein</div>
           </div>
           <div className="macro-cell">
             <div className="v">
-              {typeof macros.carb_g === "number" ? `${fmt1.format(macros.carb_g)}g` : "—"}
+              {typeof macros.carb_g === "number" ? `${fmt1.format(macros.carb_g)}g` : none}
             </div>
             <div className="k">Carbs</div>
           </div>
           <div className="macro-cell">
             <div className="v">
-              {typeof macros.fat_g === "number" ? `${fmt1.format(macros.fat_g)}g` : "—"}
+              {typeof macros.fat_g === "number" ? `${fmt1.format(macros.fat_g)}g` : none}
             </div>
             <div className="k">Fat</div>
           </div>
@@ -240,6 +248,7 @@ export default function FoodDetail({ id }: { id: string }) {
                 key={s.serving_id}
                 type="button"
                 className={`chip${s.serving_id === chosen?.serving_id ? " active" : ""}`}
+                aria-pressed={s.serving_id === chosen?.serving_id}
                 onClick={() => setServingId(s.serving_id)}
               >
                 {s.description}

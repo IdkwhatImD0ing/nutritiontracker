@@ -265,12 +265,13 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               you burn in a day. Every target you get is editable.
             </p>
 
-            <div className="m3-seg" role="radiogroup" aria-label="Units">
+            <div className="m3-seg" role="group" aria-label="Units">
               {(["imperial", "metric"] as Units[]).map((u) => (
                 <button
                   key={u}
                   type="button"
                   className={units === u ? "active" : undefined}
+                  aria-pressed={units === u}
                   onClick={() => switchUnits(u)}
                 >
                   {u === "imperial" ? "lb · ft" : "kg · cm"}
@@ -278,12 +279,13 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               ))}
             </div>
 
-            <div className="m3-seg" role="radiogroup" aria-label="Sex">
+            <div className="m3-seg" role="group" aria-label="Sex">
               {(["male", "female"] as Sex[]).map((s) => (
                 <button
                   key={s}
                   type="button"
                   className={sex === s ? "active" : undefined}
+                  aria-pressed={sex === s}
                   onClick={() => setSex(s)}
                 >
                   {s === "male" ? "Male" : "Female"}
@@ -334,7 +336,7 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
                   />
                 </label>
                 <label className="m3-field">
-                  (in)
+                  Height (in)
                   <input
                     inputMode="numeric"
                     value={inches}
@@ -425,7 +427,11 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               </p>
             ) : null}
 
-            {error ? <p className="sheet-error">{error}</p> : null}
+            {error ? (
+              <p className="sheet-error" role="alert">
+                {error}
+              </p>
+            ) : null}
 
             <div className="wizard-foot">
               <button
@@ -510,7 +516,11 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               </p>
             ) : null}
 
-            {error ? <p className="sheet-error">{error}</p> : null}
+            {error ? (
+              <p className="sheet-error" role="alert">
+                {error}
+              </p>
+            ) : null}
 
             <div className="wizard-foot">
               <button

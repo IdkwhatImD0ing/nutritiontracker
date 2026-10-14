@@ -125,7 +125,11 @@ function SaveMealSheet({
           ))}
         </div>
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        {error ? (
+          <p className="sheet-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
         <button
           type="button"
@@ -196,14 +200,19 @@ export default function DiaryList({
 
   return (
     <section className="diary" aria-label="Diary">
-      {error ? <p className="capture-error">{error}</p> : null}
+      {error ? (
+        <p className="capture-error" role="alert">
+          {error}
+        </p>
+      ) : null}
       {groups.map((g) => (
         <div className="diary-meal" key={g.meal}>
           <div className="diary-meal-head">
-            <span className="diary-meal-name">{g.meal}</span>
+            <h2 className="diary-meal-name">{g.meal}</h2>
             <button
               type="button"
               className="m3-link-btn"
+              aria-label={`Save as meal: ${g.meal}`}
               onClick={() => setSaveGroup(g)}
             >
               Save as meal
@@ -247,7 +256,10 @@ export default function DiaryList({
           ))}
         </div>
       ))}
-      {savedMeal ? <p className="m3-status">{savedMeal}</p> : null}
+      {/* kept mounted, so the confirmation is announced as it appears */}
+      <p className="m3-status" role="status">
+        {savedMeal}
+      </p>
       {saveGroup ? (
         <SaveMealSheet
           meal={saveGroup.meal}
