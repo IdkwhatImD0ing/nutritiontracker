@@ -305,8 +305,18 @@ def _when_and_meal(
     return when, spoken_meal or when.meal or meal
 
 
+# §7.2 diary corrections to the clock (2026-10-13): every clock miss in the
+# owner's history was the day's first food just after lunch closed, filed as
+# dinner — and the items scanned a minute after it followed it there.
+_SAME_SITTING = timedelta(minutes=45)
+_LATE_LUNCH_END = "17:00"
+
+
 async def infer_meal(captured_at: datetime, tz: str | None) -> Meal:
-    """§7.2: configurable clock windows from settings; no model involved."""
+    """§7.2: configurable clock windows from settings, corrected by today's
+    diary — food within 45 minutes of the last entry joins that entry's meal,
+    and a dinner-window capture before 17:00 with no lunch or dinner yet
+    today is a late lunch. No model involved."""
     row = await db.fetchone("SELECT value FROM settings WHERE key = 'meal_windows'")
     windows = row["value"] if row else _DEFAULT_WINDOWS
     tzname = tz
@@ -318,11 +328,36 @@ async def infer_meal(captured_at: datetime, tz: str | None) -> Meal:
     except Exception:
         local = captured_at.astimezone(timezone.utc)
     hhmm = local.strftime("%H:%M")
+    clock = Meal(windows.get("default", "snack"))
     for meal_name in ("breakfast", "lunch", "dinner"):
         w = windows.get(meal_name)
         if w and w["start"] <= hhmm < w["end"]:
-            return Meal(meal_name)
-    return Meal(windows.get("default", "snack"))
+            clock = Meal(meal_name)
+            break
+
+    # Diary time (logged_at), not capture time: a back-dated breakfast spoken
+    # at 12:38 sits at 08:00 and must not pull a 12:46 lunch into breakfast.
+    diary = await db.fetchone(
+        """
+        SELECT
+          (SELECT meal FROM entries
+            WHERE logged_at > %(sitting)s AND logged_at <= %(at)s
+            ORDER BY logged_at DESC LIMIT 1) AS sitting_meal,
+          EXISTS (SELECT 1 FROM entries
+            WHERE logged_at >= %(day)s AND logged_at < %(at)s
+              AND meal IN ('lunch', 'dinner')) AS had_main_meal
+        """,
+        {
+            "at": captured_at,
+            "sitting": captured_at - _SAME_SITTING,
+            "day": local.replace(hour=0, minute=0, second=0, microsecond=0),
+        },
+    )
+    if diary["sitting_meal"]:
+        return Meal(diary["sitting_meal"])
+    if clock is Meal.dinner and hhmm < _LATE_LUNCH_END and not diary["had_main_meal"]:
+        return Meal.lunch
+    return clock
 
 
 # ---------------------------------------------------------------------------
