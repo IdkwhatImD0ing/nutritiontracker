@@ -88,6 +88,7 @@ export default function ExperimentCharts({ data }: { data: MetricsResponse }) {
           target={data.baseline_days_per_week}
           targetLabel="Cronometer"
           color="var(--spruce-soft)"
+          overColor={null}
           unit="days"
           showValues={weeks.length <= 14}
           labelEvery={Math.max(1, Math.ceil(weeks.length / 6))}
@@ -99,7 +100,9 @@ export default function ExperimentCharts({ data }: { data: MetricsResponse }) {
         <div className="chart-small-grid">
           <ChartSmall title="Edit rate" values={aligned(weeks, sec, (p) => p.edit_rate)} format={pct} goal="down" />
           <ChartSmall
-            title="Disambiguation"
+            // a soft hyphen: at 320px the one word breaks before the arrow
+            // (engines may not auto-hyphenate a capitalized word)
+            title={"Disambig\u00ADuation"}
             values={aligned(weeks, sec, (p) => p.disambiguation_rate)}
             format={pct}
             goal="down"

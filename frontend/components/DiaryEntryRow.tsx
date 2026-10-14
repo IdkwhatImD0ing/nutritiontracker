@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { StagedServing } from "@/lib/api";
+import { nutrientParts, portionText, statesGrams, withUnit } from "@/lib/format";
 import type { DiaryEntry } from "./DiaryApi";
 import { getFood } from "./LibraryApi";
 import "@/app/photo.css"; // .badge.estimate
@@ -12,18 +13,6 @@ const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 const fmt2 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
 const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
-const UNITS = new Set(["g", "mg", "mcg", "ug", "iu", "kcal"]);
-
-/** Same key→label rule as StagedRow: "vitamin_c_mg" → "Vitamin C (mg)". */
-function humanizeKey(key: string): string {
-  const parts = key.split("_");
-  const last = parts[parts.length - 1]?.toLowerCase();
-  const unit = last && UNITS.has(last) ? parts.pop() : null;
-  const name = parts
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(" ");
-  return unit ? `${name} (${unit})` : name;
-}
 
 type Props = {
   entry: DiaryEntry;
@@ -98,9 +87,8 @@ export default function DiaryEntryRow({
     ([k, v]) =>
       !CORE_KEYS.has(k) && !k.startsWith("base_") && typeof v === "number",
   );
-  const portion = `${entry.qty !== 1 ? `${fmt2.format(entry.qty)} × ` : ""}${
-    entry.serving.description
-  }`;
+  // "0.5 × 1 cup · 74 g": the grams eaten, not the per-serving "(148 g)"
+  const portion = portionText(entry.qty, entry.serving.description, entry.grams);
 
   const draft = qtyText ?? fmt2.format(entry.qty);
   const draftNum = Number(draft);
@@ -201,18 +189,25 @@ export default function DiaryEntryRow({
           </div>
           {microEntries.length ? (
             <div className="micro-list num">
-              {microEntries.map(([k, v]) => (
-                <div className="micro-line" key={k}>
-                  <span className="k">{humanizeKey(k)}</span>
-                  <span>{fmt1.format(v as number)}</span>
-                </div>
-              ))}
+              {microEntries.map(([k, v]) => {
+                const { name, unit } = nutrientParts(k);
+                return (
+                  <div className="micro-line" key={k}>
+                    <span className="k">{name}</span>
+                    <span>{withUnit(v as number, unit)}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 
           <div className="detail-serving">
             Portion: {portion}
-            {entry.grams != null ? ` · ${fmt.format(entry.grams)} g` : ""}
+            {/* portionText names the grams for any other qty; one serving
+                whose description doesn't state them still gets them here */}
+            {entry.qty === 1 && entry.grams != null && !statesGrams(entry.serving.description)
+              ? ` · ${withUnit(fmt.format(entry.grams), "g")}`
+              : ""}
             {entry.source ? (
               <span className={`badge${entry.source === "web" ? " web" : ""}`}>
                 {entry.source}

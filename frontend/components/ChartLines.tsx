@@ -27,7 +27,7 @@ type Props = {
 };
 
 const W = 360;
-const PAD = { l: 40, r: 10, t: 12, b: 20 };
+const PAD = { l: 46, r: 10, t: 12, b: 20 };
 const fmt0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 /** Hand-rolled SVG multi-series line chart (§9 weekly series). Null points
@@ -139,16 +139,17 @@ export default function ChartLines({
       <div className="chart-legend">
         {series.map((s) => (
           <span key={s.name} className="chart-legend-item">
+            {/* a dashed swatch draws its dashes in currentColor */}
             <span
               className={`chart-legend-swatch${s.dashed ? " dashed" : ""}`}
-              style={{ background: s.color }}
+              style={s.dashed ? { color: s.color } : { background: s.color }}
             />
             {s.name}
           </span>
         ))}
         {baseline && baseline.value > 0 ? (
           <span className="chart-legend-item">
-            <span className="chart-legend-swatch dashed" style={{ background: "var(--amber)" }} />
+            <span className="chart-legend-swatch dashed" style={{ color: "var(--amber)" }} />
             {baseline.label}
           </span>
         ) : null}

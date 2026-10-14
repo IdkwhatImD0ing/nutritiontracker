@@ -45,9 +45,13 @@ export default function ChartSmall({
   return (
     <div className="chart-small">
       <div className="chart-small-title">
-        {title}
+        <span className="chart-small-name">{title}</span>
         {goal ? (
-          <span className="chart-small-goal" aria-label={`should go ${goal}`}>
+          <span
+            className="chart-small-goal"
+            aria-label={`should go ${goal}`}
+            title={`should go ${goal}`}
+          >
             {goal === "down" ? "↓" : "↑"}
           </span>
         ) : null}
@@ -55,7 +59,16 @@ export default function ChartSmall({
       <div className="chart-small-value num">
         {latest == null ? "—" : format(latest)}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="chart-small-svg" aria-hidden="true">
+      {/* stretched to the tile ("none"), so the line spans it rather than
+          sitting in the middle as a stub; non-scaling strokes keep the line
+          and the end dot (a zero-length round-capped path, which unlike a
+          circle stays round when stretched) their drawn width */}
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        className="chart-small-svg"
+        aria-hidden="true"
+      >
         <path
           d={d.trim()}
           fill="none"
@@ -63,9 +76,16 @@ export default function ChartSmall({
           strokeWidth={1.6}
           strokeLinejoin="round"
           strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
         {latest != null ? (
-          <circle cx={x(latestIdx)} cy={y(latest)} r={2.2} fill={color} />
+          <path
+            d={`M${x(latestIdx).toFixed(1)},${y(latest).toFixed(1)}h0`}
+            stroke={color}
+            strokeWidth={4.4}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
         ) : null}
       </svg>
     </div>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ApiError, type DayTotals, type Meal } from "@/lib/api";
+import { portionText } from "@/lib/format";
 import "@/app/history/diary.css";
 import {
   deleteEntry,
@@ -14,7 +15,6 @@ import { createMeal, type SavedMeal } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const MEAL_ORDER: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 
 type Props = {
@@ -109,8 +109,7 @@ function SaveMealSheet({
             <div className="m3-row" key={e.id}>
               <span className="k">{e.food.name}</span>
               <span className="num">
-                {e.qty !== 1 ? `${fmtQ.format(e.qty)} × ` : ""}
-                {e.serving.description}
+                {portionText(e.qty, e.serving.description, e.grams)}
               </span>
             </div>
           ))}

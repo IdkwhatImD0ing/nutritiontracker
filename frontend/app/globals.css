@@ -626,6 +626,12 @@ a {
   fill: var(--text);
 }
 
+/* past a carbs or fat target, in the kcal row's overshoot amber (.left.over);
+   protein over its floor keeps the plain figure */
+.donut.over.warn .center-num {
+  fill: var(--amber);
+}
+
 .donut .center-sub {
   fill: var(--muted);
   font-size: 9px;

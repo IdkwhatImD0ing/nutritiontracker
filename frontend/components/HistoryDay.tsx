@@ -6,7 +6,7 @@ import "@/app/history/history.css";
 import BackBar from "./BackBar";
 import type { DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
-import { longDate, parseISO } from "./HistoryApi";
+import { isoDate, longDate, parseISO } from "./HistoryApi";
 import Tracker from "./Tracker";
 
 /** §7.4: tap any History day → its diary, entries editable per §5. The tab
@@ -57,7 +57,10 @@ export default function HistoryDay({ date }: { date: string }) {
           </button>
         </div>
       ) : (
-        <Tracker totals={totals} />
+        // before today, the tracker says under/over, not "left"; the first
+        // render is the loading state either way, so the server's zone
+        // can't make it disagree with the browser's
+        <Tracker totals={totals} past={date < isoDate(new Date())} />
       )}
 
       {meals && !error ? (

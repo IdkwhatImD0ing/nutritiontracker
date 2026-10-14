@@ -289,6 +289,25 @@ def _hit_is_loggable(hit: dict) -> bool:
     return _CORE_KEYS <= _core_macros_in_hit(hit)
 
 
+def _hit_nutrient(hit: dict, *ids: int) -> float | None:
+    """The value of the first of ``ids`` a /foods/search hit carries, read
+    the way _core_macros_in_hit reads a row: per 100 g, or per 100 ml for a
+    Branded beverage (_per_100ml). kcal asks for (1008, *_ATWATER_IDS), the
+    fallback order _nutrients_from_detail takes. None when absent — never 0.
+    """
+    found: dict[int, float] = {}
+    for row in hit.get("foodNutrients") or []:
+        value = row.get("value")
+        if value is None:
+            value = row.get("amount")
+        nid = row.get("nutrientId")
+        if nid is None:
+            nid = (row.get("nutrient") or {}).get("id")
+        if value is not None and nid in ids:
+            found.setdefault(nid, round(float(value), 2))
+    return next((found[i] for i in ids if i in found), None)
+
+
 def _has_core_macros(macros: dict) -> bool:
     """All four, numeric — mirrors resolver.commit._missing_core_macros.
 
@@ -421,6 +440,14 @@ def _generic_servings(payload: dict, per_100g: dict[str, float]) -> tuple[list[d
     return servings, "100g"
 
 
+def _per_100ml(record: dict) -> bool:
+    """A Branded record's foodNutrients are per 100 ml when it is served by
+    volume (a beverage), else per 100 g — a /food/{id} payload or a search
+    hit alike."""
+    unit = _SERVING_UNITS.get((record.get("servingSizeUnit") or "").strip().upper())
+    return unit in ("ml", "fl oz")
+
+
 def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[dict], str]:
     """Label serving (as labeled) + per-100 serving, both normalized (§3.4)."""
     size = payload.get("servingSize")
@@ -438,7 +465,7 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
     if ml is not None and not 0.5 <= ml <= 2500:
         ml = None
 
-    basis_ml = unit in ("ml", "fl oz")  # foodNutrients per 100 ml for beverages
+    basis_ml = _per_100ml(payload)
     quantity = grams if grams is not None else ml
     macros: dict[str, float] = {}
     if quantity is not None and per_100:
@@ -488,7 +515,8 @@ def _branded_servings(payload: dict, per_100: dict[str, float]) -> tuple[list[di
 
 
 async def search_generic(query: str) -> list[dict]:
-    """Whole-food search over SR Legacy + Foundation, condensed for the agent."""
+    """Whole-food search over SR Legacy + Foundation, condensed for the agent
+    and the Search lane, which shows each row's kcal and protein per 100 g."""
     r = await _get("/foods/search", query=query,
                    dataType="SR Legacy,Foundation", pageSize=25)
     r.raise_for_status()
@@ -506,6 +534,7 @@ async def search_generic(query: str) -> list[dict]:
             "description": f.get("description", ""),
             "data_type": f.get("dataType", ""),
             "protein_per_100g": protein,
+            "kcal_per_100g": _hit_nutrient(f, 1008, *_ATWATER_IDS),
         })
     return hits
 
@@ -555,7 +584,10 @@ async def search_branded(query: str) -> list[dict]:
 
     Hits missing a core macro are dropped (_hit_is_loggable, BACKLOG 184) —
     they cannot commit, and a complete record for the same product is usually
-    right there in the same page."""
+    right there in the same page.
+
+    kcal and protein come per 100 g, or per 100 ml where ``per_100ml`` (a
+    beverage): what the Search lane shows to tell near-identical rows apart."""
     r = await _get("/foods/search", query=query, dataType="Branded", pageSize=25)
     r.raise_for_status()
     hits = [{
@@ -567,6 +599,9 @@ async def search_branded(query: str) -> list[dict]:
         "data_source": f.get("dataSource"),
         "published_date": f.get("publishedDate"),
         "gtin_upc": f.get("gtinUpc"),
+        "kcal_per_100g": _hit_nutrient(f, 1008, *_ATWATER_IDS),
+        "protein_per_100g": _hit_nutrient(f, 1003),
+        "per_100ml": _per_100ml(f),
     } for f in r.json().get("foods", []) if _hit_is_loggable(f)]
     query_tokens = set(_QUERY_TOKEN_RE.findall(query.lower()))
     hits.sort(key=lambda h: -_brand_overlap(query_tokens, h))

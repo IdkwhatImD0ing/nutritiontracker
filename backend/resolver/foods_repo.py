@@ -112,8 +112,19 @@ async def persist_food(food: dict) -> str:
 # (§3.5), so the alias-built food index never sees them.
 RECENT_FOODS_CAP = 200
 
-_RECENT_FOODS_SQL = """
-SELECT f.id::text AS id, f.source, f.source_id, f.display_name, f.brand
+# The figures a Search row shows (routes/foods.FoodHit), for any foods alias
+# `t`: kcal and protein per 100 — per 100 ml when the food carries a "100ml"
+# serving (a beverage; the adapters' basis, and the food detail's). NULL when
+# the source gave no per-100 figures (a web food is per serving only).
+PER_100_SQL = (
+    "({t}.per_100g->>'kcal')::float8 AS kcal_per_100g, "
+    "({t}.per_100g->>'protein_g')::float8 AS protein_per_100g, "
+    "{t}.servings @> '[{{\"serving_id\": \"100ml\"}}]'::jsonb AS per_100ml"
+)
+
+_RECENT_FOODS_SQL = f"""
+SELECT f.id::text AS id, f.source, f.source_id, f.display_name, f.brand,
+       {PER_100_SQL.format(t="f")}
 FROM (
   SELECT food_id, max(created_at) AS last_at, max(logged_at) AS last_logged
   FROM entries GROUP BY food_id
@@ -126,8 +137,8 @@ LIMIT %s
 
 
 async def recent_foods(limit: int = RECENT_FOODS_CAP) -> list[dict]:
-    """(id, source, source_id, display_name, brand) per food, newest commit
-    first, at most RECENT_FOODS_CAP rows."""
+    """(id, source, source_id, display_name, brand, and PER_100_SQL's three)
+    per food, newest commit first, at most RECENT_FOODS_CAP rows."""
     return await db.fetchall(_RECENT_FOODS_SQL, (max(1, min(int(limit), RECENT_FOODS_CAP)),))
 
 

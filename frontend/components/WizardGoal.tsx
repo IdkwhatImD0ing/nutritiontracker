@@ -448,7 +448,8 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
 
             <div className="wizard-hero num">
               <div className="big">
-                {edit.kcal || "—"}
+                {/* "2,854" like every other figure; the field below keeps what was typed */}
+                {edited.kcal != null && Number.isFinite(edited.kcal) ? fmt.format(edited.kcal) : "—"}
                 <small>kcal / day</small>
               </div>
               <div className="sub">

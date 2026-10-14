@@ -6,6 +6,7 @@ import {
   type AliasRow,
   type StagedItem,
 } from "@/lib/api";
+import { fmt0 } from "@/lib/format";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -110,7 +111,7 @@ export default function FoodEditSheet({
                   {a.food_name}
                   {a.brand ? ` — ${a.brand}` : ""}
                   {typeof a.use_count === "number" ? (
-                    <span className="alias-count num"> {a.use_count}×</span>
+                    <span className="alias-count num"> {fmt0.format(a.use_count)}×</span>
                   ) : null}
                 </button>
               ))}

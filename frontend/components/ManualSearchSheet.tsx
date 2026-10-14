@@ -7,6 +7,7 @@ import {
   searchFoods,
   type FoodSearchResult,
 } from "@/lib/api";
+import { fmt0, withUnit } from "@/lib/format";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 
 type Props = {
@@ -24,8 +25,22 @@ type Props = {
   onClose: () => void;
 };
 
+/** " · 120 kcal · 10 g protein / 100 g" (per 100 ml for a drink): what tells
+ *  look-alike rows apart. Calories are a row's headline (§7.1), so protein
+ *  shows only beside them; "" when the source gave no per-100 figures. */
+function per100(r: FoodSearchResult): string {
+  if (r.kcal_per_100g == null) return "";
+  const protein =
+    r.protein_per_100g == null
+      ? ""
+      : ` · ${withUnit(fmt0.format(r.protein_per_100g), "g")} protein`;
+  const basis = withUnit("100", r.per_100ml ? "ml" : "g");
+  return ` · ${withUnit(fmt0.format(r.kcal_per_100g), "kcal")}${protein} / ${basis}`;
+}
+
 /** BACKLOG 3 / §3.4: `not_found` flips the row to a manual search box — a
- *  plain search UI over GET /api/foods/search, deliberately boring. The same
+ *  plain search UI over GET /api/foods/search, each row naming its calories
+ *  and protein per 100 g (owner ruling, 2026-10-13). The same
  *  component is the + sheet's Search lane (owner ruling, 2026-09-02) — full
  *  screen since 2026-09-06, with the foods you have logged before listed
  *  under the bar until a search runs (GET /api/foods/recent, newest first,
@@ -118,6 +133,7 @@ export default function ManualSearchSheet({
       <span className="result-sub">
         {r.brand ? `${r.brand} · ` : ""}
         {r.food_id ? "my foods" : (r.data_type ?? r.source)}
+        {per100(r)}
       </span>
     </button>
   );
