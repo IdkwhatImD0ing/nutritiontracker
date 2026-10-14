@@ -292,9 +292,24 @@ body:has(.tabbar) .shell {
   letter-spacing: -0.01em;
 }
 
-.m3-card-title a {
+/* A food card's drill-in: the head and the brand line are one link, grown
+   over the card's top and side padding (.m3-card's, mirrored) so the whole
+   upper card takes the tap. The phrase chips under it stay buttons of their
+   own. */
+.m3-card-link {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 44px;
+  margin: -14px calc(-1 * var(--card-pad-x)) 0;
+  padding: 14px var(--card-pad-x) 0;
+  border-radius: var(--radius) var(--radius) 0 0;
   color: inherit;
   text-decoration: none;
+}
+
+.m3-card-link .m3-card-stat {
+  margin-left: auto; /* the count and the chevron sit together on the right */
 }
 
 .m3-card-sub {
@@ -324,9 +339,7 @@ body:has(.tabbar) .shell {
   gap: 4px;
   width: 100%;
   box-shadow: var(--shadow-card);
-  transition:
-    border-color 120ms,
-    transform 120ms var(--ease);
+  transition: border-color 120ms;
 }
 
 @media (hover: hover) {
@@ -335,8 +348,9 @@ body:has(.tabbar) .shell {
   }
 }
 
+/* pressed like History's day cards: a surface step a finger can see */
 .m3-card-btn:active {
-  transform: scale(0.99);
+  background: var(--surface-2);
 }
 
 .m3-card-btn.inactive {
@@ -416,6 +430,86 @@ body:has(.tabbar) .shell {
   text-align: center;
 }
 
+/* Settings' one Save (targets, meal windows, time zone, notes), shown only
+   while one of them differs from what was last read or saved. It floats
+   where the toast does — above the tab bar and its raised + — so it is in
+   reach from any section; the "Saved." toast takes its place after. */
+.m3-savebar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100px + env(safe-area-inset-bottom));
+  z-index: 36; /* over the tab bar, under any sheet */
+  max-width: 448px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 6px 16px;
+  background: var(--toast-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  box-shadow: var(--shadow-float);
+  animation: rise 240ms var(--ease);
+}
+
+.m3-savebar-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.m3-savebar-note.error {
+  color: var(--red);
+}
+
+.m3-savebar button {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.m3-savebar .m3-savebar-discard {
+  background: none;
+  color: var(--muted);
+}
+
+.m3-savebar .m3-savebar-save {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.m3-savebar button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* narrow phone: "Unsaved changes" keeps one line */
+@media (max-width: 359px) {
+  .m3-savebar button {
+    padding: 0 12px;
+  }
+}
+
+/* the page's end scrolls clear of the bar */
+body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
+  padding-bottom: calc(172px + env(safe-area-inset-bottom));
+}
+
+/* A toast that lands while the bar is up ("Targets saved." from the
+   wizard, other edits still unsaved) stacks above the bar (58px tall)
+   rather than covering it. */
+.shell.settings:has(> .m3-savebar) > .toast {
+  bottom: calc(168px + env(safe-area-inset-bottom));
+}
+
 .m3-row {
   display: flex;
   justify-content: space-between;
@@ -482,13 +576,6 @@ body:has(.tabbar) .shell {
   min-width: 0;
 }
 
-/* a unit in a label keeps its case: "(lb)", not "(LB)". The label's words
-   and its unit share one span, or the column flex puts each on its own line */
-.m3-field .unit {
-  text-transform: none;
-  letter-spacing: 0;
-}
-
 .m3-field input,
 .m3-field select,
 .m3-field textarea,
@@ -525,10 +612,18 @@ body:has(.tabbar) .shell {
   font-size: 1.05rem;
 }
 
+/* Every textarea here grows with its text (useAutoGrow) rather than
+   scrolling inside the page; the profile notes start at 120px. */
 .m3-field textarea {
   min-height: 120px;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
   line-height: 1.45;
+}
+
+/* a saved meal's trigger phrases: two lines, not the notes field's 120px */
+.m3-field textarea.m3-phrases {
+  min-height: 0;
 }
 
 .m3-field select option,
@@ -560,6 +655,51 @@ body:has(.tabbar) .shell {
   padding-left: 8px;
   padding-right: 8px;
   text-align: center;
+}
+
+/* A number field with its unit inside the box ("180 lb"), so the unit is
+   read with the number and the caps label stays one word. The unit lets
+   taps through to the field; it is aria-hidden, and the label or the
+   field's aria-label carries it. */
+.m3-unit-wrap {
+  position: relative;
+  display: block;
+}
+
+.m3-unit-wrap input {
+  padding-right: 40px;
+}
+
+.m3-unit {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* Four across, a box is under 60px wide on a 320px phone: no room for
+   "2400" and "kcal" side by side, so the unit sits under the number, still
+   in the box. The value stays raw while it is edited (no "2,400"). */
+.m3-grid-4 .m3-unit-wrap input {
+  padding-right: 8px;
+  padding-bottom: 22px;
+}
+
+.m3-grid-4 .m3-unit {
+  top: auto;
+  bottom: 9px;
+  left: 0;
+  right: 0;
+  transform: none;
+  text-align: center;
+  font-size: 0.7rem;
 }
 
 /* meal window row (§7.2 clock windows): the name on its own line, start and
@@ -845,7 +985,8 @@ body:has(.tabbar) .shell {
   gap: 10px;
 }
 
-.wizard-ghost {
+.wizard-ghost,
+.m3-ghost-btn {
   background: none;
   border: 1px solid var(--line-strong);
   border-radius: 16px;
@@ -857,9 +998,16 @@ body:has(.tabbar) .shell {
 }
 
 @media (hover: hover) {
-  .wizard-ghost:hover {
+  .wizard-ghost:hover,
+  .m3-ghost-btn:hover {
     color: var(--text);
   }
+}
+
+/* the wizard's sits in a short footer; this one carries a sentence that can
+   wrap at phone width (Settings › Time zone) */
+.m3-ghost-btn {
+  padding: 8px 16px;
 }
 
 /* ---------- food detail (§7.1 "everything the database returned") ---------- */
@@ -1239,6 +1387,20 @@ body:has(.tabbar) .shell {
     left: calc(50% + var(--rail-w) / 2);
   }
 
+  /* Settings' save bar: where the toast is, beside the rail */
+  body:has(.tabbar) .m3-savebar {
+    left: calc(var(--rail-w) + 16px);
+    bottom: 32px;
+  }
+
+  body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
+    padding-bottom: 112px;
+  }
+
+  body:has(.tabbar) .shell.settings:has(> .m3-savebar) > .toast {
+    bottom: 100px;
+  }
+
   /* the + sheet: four lanes as a 2 × 2 of tiles */
   .subsheet.add-sheet {
     display: grid;
@@ -1300,7 +1462,7 @@ body:has(.tabbar) .shell {
   }
 
   /* Settings: cards in pairs (equal height per row), the free-text notes
-     across both columns, Save and its status last */
+     across both columns (Save floats in its bar, .m3-savebar) */
   .shell.settings {
     max-width: 1200px;
     display: grid;
@@ -1314,26 +1476,12 @@ body:has(.tabbar) .shell {
   .shell.settings > .sheet-error,
   .shell.settings > .notice,
   .shell.settings > .m3-empty,
-  .shell.settings > .m3-wide,
-  .shell.settings > .commit-btn,
-  .shell.settings > .m3-status {
+  .shell.settings > .m3-wide {
     grid-column: 1 / -1;
   }
 
   .shell.settings > .m3-section > .m3-card {
     flex: 1;
-  }
-
-  .shell.settings > .commit-btn {
-    order: 2;
-    width: auto;
-    justify-self: start;
-    padding: 14px 36px;
-  }
-
-  .shell.settings > .m3-status {
-    order: 3;
-    text-align: left;
   }
 }
 

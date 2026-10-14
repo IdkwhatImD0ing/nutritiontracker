@@ -18,6 +18,7 @@ import {
   type StagedItem,
 } from "@/lib/api";
 import { foodName, MEAL_LABEL } from "@/lib/labels";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
 import FoodEditSheet from "./FoodEditSheet";
 import { ArrowUp } from "./icons";
 import ManualSearchSheet from "./ManualSearchSheet";
@@ -33,6 +34,7 @@ const POLL_FIRST_MS = 1_000;
 const POLL_NEXT_MS = 2_000;
 const POLL_STOP_MS = 90_000; // hard stop (§5: 1s → 2s backoff, ~90s)
 const STALE_MS = 60_000; // §3.4: searching past 60s is stale → re-kick once
+const REMOVE_UNDO_MS = 4_000; // §7.1: how long a removed row offers Undo
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const CORE = ["kcal", "protein_g", "carb_g", "fat_g"] as const;
@@ -59,6 +61,7 @@ function portionChoices(item: StagedItem): PortionChoice[] {
       id: s.serving_id,
       description: s.description,
       macros: s.macros,
+      grams: s.grams,
     }))
     .filter((s) => s.id);
   if (fromPayload.length) return fromPayload;
@@ -118,6 +121,16 @@ export default function StagingSheet({
   const [mealPickerOpen, setMealPickerOpen] = useState(false);
   const [removed, setRemoved] = useState<ReadonlySet<number>>(
     new Set(restore?.removed ?? []),
+  );
+  // §7.1 (owner, 2026-10-13): a removed row is undoable. For REMOVE_UNDO_MS
+  // it is a "Removed … · Undo" line, already out of the total and the
+  // commit, and only when that window closes does it join `removed` and the
+  // server hear of it — the server never brings a removed row back (§3.5),
+  // so the DELETE cannot go out before the Undo has had its chance. The
+  // timers are the source of truth; `undoable` is them, for rendering.
+  const [undoable, setUndoable] = useState<ReadonlySet<number>>(new Set());
+  const undoTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(
+    new Map(),
   );
   const [expanded, setExpanded] = useState<number | null>(null);
   const [busyRows, setBusyRows] = useState<ReadonlySet<number>>(new Set());
@@ -424,13 +437,69 @@ export default function StagingSheet({
     );
   };
 
-  const remove = (itemIndex: number) => {
+  const dropUndoable = (itemIndex: number) =>
+    setUndoable((prev) => {
+      const next = new Set(prev);
+      next.delete(itemIndex);
+      return next;
+    });
+
+  // The Undo window closed: the row is gone for good.
+  const finishRemove = (itemIndex: number) => {
+    undoTimersRef.current.delete(itemIndex);
+    dropUndoable(itemIndex);
     setRemoved((prev) => new Set(prev).add(itemIndex));
     // §7.1: removal writes item_resolutions.status='removed' server-side so
     // the decompose error stays visible in telemetry. Commit-time absence is
     // the backstop, so a failure here (route not deployed yet) is swallowed.
     removeStagedItem(log.log_id, itemIndex).catch(() => {});
   };
+
+  const remove = (itemIndex: number) => {
+    setUndoable((prev) => new Set(prev).add(itemIndex));
+    undoTimersRef.current.set(
+      itemIndex,
+      setTimeout(() => finishRemove(itemIndex), REMOVE_UNDO_MS),
+    );
+  };
+
+  // Undo hands focus back to the restored row's ✕, the control the Undo took
+  // it from, rather than dropping it on the page. The rows are the sheet
+  // body's first children, in `visible` order.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const refocusRef = useRef<number | null>(null);
+  const undoRemove = (itemIndex: number) => {
+    clearTimeout(undoTimersRef.current.get(itemIndex));
+    undoTimersRef.current.delete(itemIndex);
+    dropUndoable(itemIndex);
+    refocusRef.current = itemIndex;
+  };
+  useEffect(() => {
+    const idx = refocusRef.current;
+    if (idx == null) return;
+    refocusRef.current = null;
+    const pos = items
+      .filter((i) => !removed.has(i.item_index))
+      .findIndex((i) => i.item_index === idx);
+    bodyRef.current?.children[pos]
+      ?.querySelector<HTMLButtonElement>(".row-remove")
+      ?.focus();
+  }, [undoable, items, removed]);
+
+  // The sheet going away (Log, the ✕, a photo card's close) closes every
+  // open Undo window at once: those rows are removed, so the server hears it
+  // now. The snapshot the close hands over already counts them as removed.
+  useEffect(() => {
+    const timers = undoTimersRef.current;
+    const logId = log.log_id;
+    return () => {
+      for (const [itemIndex, timer] of timers) {
+        clearTimeout(timer);
+        removeStagedItem(logId, itemIndex).catch(() => {});
+      }
+      timers.clear();
+    };
+  }, [log.log_id]);
 
   // §7.1 "Add another food": goes through POST /api/resolve with the log
   // context so added items get resolution telemetry like everything else.
@@ -564,7 +633,9 @@ export default function StagingSheet({
   const snapshot = (): StagingSnapshot => ({
     items: itemsRef.current,
     meal: mealRef.current,
-    removed: [...removedRef.current],
+    // a row still inside its Undo window counts: closing the sheet removes
+    // it for good (the unmount effect above)
+    removed: [...removedRef.current, ...undoTimersRef.current.keys()],
     logMealOverride: mealOverridesRef.current.log,
     itemMealOverrides: { ...mealOverridesRef.current.items },
   });
@@ -574,13 +645,15 @@ export default function StagingSheet({
   const drag = useDragDismiss(close);
 
   const visible = items.filter((i) => !removed.has(i.item_index));
-  const totalKcal = visible.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
+  // what Log counts and sends: a row inside its Undo window is already out
+  const kept = visible.filter((i) => !undoable.has(i.item_index));
+  const totalKcal = kept.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
   // 2026-09-09: an estimated row no longer blocks the button — the commit is
   // the confirmation. What still cannot commit is a NUMBERLESS estimate row
   // (no database match, so no macros): the server's core-macros guard refuses
   // that one item and lets the rest through, so this is a heads-up rather
   // than a gate — the row itself already offers "search instead".
-  const numberless = visible.filter(
+  const numberless = kept.filter(
     (i) => i.status === "resolved" && readEstimate(i).estimated !== "none" && i.macros == null,
   ).length;
   const searchFirst =
@@ -593,9 +666,10 @@ export default function StagingSheet({
     setError(null);
     try {
       // Every non-removed row goes in the payload whatever its status —
-      // commit treats absent rows as removed and keeps `searching` rows
-      // uncommitted for the §3.5 commit-item late path.
-      const payload = visible;
+      // commit treats absent rows as removed (a row inside its Undo window
+      // among them) and keeps `searching` rows uncommitted for the §3.5
+      // commit-item late path.
+      const payload = kept;
       const totals = await commitLog(log.log_id, payload);
       // §3.5: a 200 with per-item errors is a PARTIAL commit — the server
       // flipped those rows to needs_input and kept them uncommitted. Hand
@@ -689,27 +763,50 @@ export default function StagingSheet({
           </div>
         )}
 
-        <div className="sheet-body">
-          {visible.map((item) => (
-            <StagedRow
-              key={item.item_index}
-              item={item}
-              expanded={expanded === item.item_index}
-              busy={busyRows.has(item.item_index)}
-              onToggle={() =>
-                setExpanded((cur) =>
-                  cur === item.item_index ? null : item.item_index,
-                )
-              }
-              onRemove={() => remove(item.item_index)}
-              onPick={(opt) => pick(item, opt)}
-              onPortion={() => setPortionFor(item.item_index)}
-              onManualSearch={() => setManualFor(item.item_index)}
-              onMeal={(m) => pickItemMeal(item.item_index, m)}
-              onEditFood={() => setEditFor(item.item_index)}
-            />
-          ))}
-          {visible.length === 0 ? (
+        <div className="sheet-body" ref={bodyRef}>
+          {visible.map((item) =>
+            undoable.has(item.item_index) ? (
+              <div className="row row-removed" key={item.item_index}>
+                <span className="row-removed-text">
+                  Removed{" "}
+                  <span className="food-name">
+                    {foodName(item.food?.name ?? item.phrase)}
+                  </span>
+                </span>
+                {/* focus lands here from the ✕ it replaced; disabled while
+                    a commit that already left the row out is in flight */}
+                <button
+                  type="button"
+                  className="row-undo"
+                  aria-label={`Undo removing ${foodName(item.food?.name ?? item.phrase)}`}
+                  autoFocus
+                  disabled={committing}
+                  onClick={() => undoRemove(item.item_index)}
+                >
+                  Undo
+                </button>
+              </div>
+            ) : (
+              <StagedRow
+                key={item.item_index}
+                item={item}
+                expanded={expanded === item.item_index}
+                busy={busyRows.has(item.item_index)}
+                onToggle={() =>
+                  setExpanded((cur) =>
+                    cur === item.item_index ? null : item.item_index,
+                  )
+                }
+                onRemove={() => remove(item.item_index)}
+                onPick={(opt) => pick(item, opt)}
+                onPortion={() => setPortionFor(item.item_index)}
+                onManualSearch={() => setManualFor(item.item_index)}
+                onMeal={(m) => pickItemMeal(item.item_index, m)}
+                onEditFood={() => setEditFor(item.item_index)}
+              />
+            ),
+          )}
+          {kept.length === 0 ? (
             <p className="zero-hint" style={{ marginTop: 24 }}>
               Nothing left to log.
             </p>
@@ -728,6 +825,8 @@ export default function StagingSheet({
               placeholder="Add another food"
               aria-label="Add another food"
               autoComplete="off"
+              {...FOOD_FIELD_PROPS}
+              enterKeyHint="go"
             />
             <button type="submit" disabled={!addText.trim()} aria-label="Add">
               <ArrowUp strokeWidth={2.4} />
@@ -747,7 +846,7 @@ export default function StagingSheet({
             <button
               type="button"
               className={docked ? "commit-pill" : "commit-btn"}
-              disabled={committing || visible.length === 0}
+              disabled={committing || kept.length === 0}
               onClick={commit}
             >
               {committing ? (

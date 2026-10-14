@@ -122,6 +122,7 @@ function ThreeDays({
                   ? `${d.entries} ${d.entries === 1 ? "entry" : "entries"}`
                   : "Nothing logged"}
               </span>
+              <span className="chev" aria-hidden="true" />
             </div>
             <div className="hcard-kcal num">
               <strong>{fmt.format(d.kcal)}</strong>
@@ -150,6 +151,8 @@ function ThreeDays({
             </div>
             {mealChips.length ? (
               <div className="hcard-meals num">
+                {/* spelled out: a B/L/D/S key explained only in a hover
+                    title said nothing on a phone */}
                 {mealChips.map((c) => (
                   <span key={c.meal}>
                     <span className="k">{mealLabel(c.meal)}</span> {fmt.format(c.kcal)}

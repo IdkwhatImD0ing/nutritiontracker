@@ -35,10 +35,11 @@ type Props = {
 
 /** One committed diary row (§7.1 row display rule applied to the diary):
  *  the headline number is calories; tapping expands to protein/carbs/fat,
- *  then every micro the snapshot carries; web-sourced rows show the
- *  citation as a visible, clickable link (§3.4a); photo-portion rows carry
- *  an "estimate" badge (M4); the portion pill opens the same portion sheet a
- *  staged row does (§7.1) and the row is deletable (§5 `/api/entries/:id`).
+ *  then every micro the snapshot carries, and a "Food details" row (§7.4's
+ *  drill-in); web-sourced rows show the citation as a visible, clickable
+ *  link (§3.4a); photo-portion rows carry an "estimate" badge (M4); the
+ *  portion pill opens the same portion sheet a staged row does (§7.1) and
+ *  the row is deletable (§5 `/api/entries/:id`).
  *  The serving list costs a GET /api/foods/:id whose FoodDetail carries the
  *  whole provider payload, so it is fetched on the pill's tap and not on the
  *  expand: expanding a row is how the micros are read, and most rows are
@@ -76,6 +77,12 @@ export default function DiaryEntryRow({
     };
   }, [portionOpen, foodId, servings, servingsFailed]);
 
+  // A collapsed row drops a delete confirm: it must not sit there armed
+  // behind a closed row.
+  useEffect(() => {
+    if (!expanded) setConfirmDelete(false);
+  }, [expanded]);
+
   const name = foodName(entry.food.name);
   const m = entry.macros;
   // BACKLOG 28: the macros jsonb carries a `base_*` sidecar on qty-edited
@@ -93,6 +100,10 @@ export default function DiaryEntryRow({
   const own: PortionChoice = {
     id: entry.serving.id,
     description: entry.serving.description,
+    // one serving's weight, off the entry (its grams are the serving's × qty),
+    // so the sheet can convert the qty when another serving is picked
+    grams:
+      entry.grams != null && entry.qty > 0 ? entry.grams / entry.qty : null,
   };
   const choices: PortionChoice[] | null = servingsFailed
     ? [own]
@@ -102,6 +113,7 @@ export default function DiaryEntryRow({
           id: sv.serving_id,
           description: sv.description,
           macros: sv.macros,
+          grams: sv.grams,
         })),
       ];
   // The §4 snapshot invariant: the server refuses a serving whose macros are
@@ -137,29 +149,28 @@ export default function DiaryEntryRow({
   };
 
   return (
-    <div className={`row diary-row${entry.web_source ? " web" : ""}`}>
+    <div className="row diary-row" data-entry-id={entry.id}>
+      {/* One target (owner, 2026-10-13): a tap anywhere on the row expands
+          it, and the chevron says so. The name used to be a link into food
+          detail inside this toggle, and a long name covered most of the
+          row, so a tap meant to expand drilled in instead; the drill-in is
+          now the expanded panel's "Food details" row. The keys give the
+          keyboard the same way in, since the name link no longer does. */}
       <div
         className="row-main"
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault(); // Space would scroll the page
+          onToggle();
+        }}
         role="button"
+        tabIndex={0}
         aria-expanded={expanded}
       >
         <div className="row-info">
           <div className="row-name">
-            {/* §7.4: food detail is a drill-in from any diary row. The row's
-                own tap still toggles the expander. prefetch off: this renders
-                once per diary row, and /library/food/[id] is a dynamic
-                auth-gated route, so the default viewport prefetch costs a
-                middleware invocation per row on screen for a page the user
-                only reaches by deliberately tapping the name. */}
-            <Link
-              className="name-btn"
-              href={`/library/food/${encodeURIComponent(entry.food.id)}`}
-              prefetch={false}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {name}
-            </Link>
+            <span className="food-name">{name}</span>
             {entry.web_source ? <span className="badge web">web</span> : null}
             {/* M4: the portion was read off a photo (and confirmed before
                 commit) — flagged the way the staged row was. */}
@@ -176,6 +187,7 @@ export default function DiaryEntryRow({
           <span className="n">{fmt.format(m.kcal)}</span>
           <span className="u">kcal</span>
         </div>
+        <span className="chev" aria-hidden="true" />
       </div>
 
       {/* §3.4a: visible, clickable citation — collapsed or expanded. */}
@@ -247,8 +259,26 @@ export default function DiaryEntryRow({
             ) : null}
           </div>
 
+          {/* §7.4: food detail is a drill-in from any diary row — from here,
+              one row down, so the row's own tap only ever expands it.
+              prefetch off: /library/food/[id] is a dynamic auth-gated route,
+              so a prefetch costs a middleware invocation for a page the user
+              only reaches by deliberately tapping this. */}
+          <Link
+            className="diary-food-link"
+            href={`/library/food/${encodeURIComponent(entry.food.id)}`}
+            prefetch={false}
+          >
+            Food details
+            <span className="chev" aria-hidden="true" />
+          </Link>
+
           <div className="diary-edit">
-            <div className="diary-actions">
+            {/* While a delete is being confirmed the two choices share the
+                row equally, one line each even at 320 (diary.css). */}
+            <div
+              className={`diary-actions${confirmDelete ? " confirming" : ""}`}
+            >
               {confirmDelete ? (
                 <>
                   {/* the app's one wording for an irreversible delete
@@ -259,6 +289,7 @@ export default function DiaryEntryRow({
                     disabled={busy}
                     onClick={onDelete}
                   >
+                    {busy ? <span className="spinner" /> : null}
                     Yes, delete
                   </button>
                   <button

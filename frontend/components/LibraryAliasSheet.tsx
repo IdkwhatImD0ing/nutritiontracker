@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import { fmt0, withUnit } from "@/lib/format";
 import { foodName } from "@/lib/labels";
@@ -37,6 +37,7 @@ export default function LibraryAliasSheet({
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const deleteBtn = useRef<HTMLButtonElement>(null);
+  const pinLabel = useId();
 
   // The food's serving list comes from the detail route (foods.servings).
   useEffect(() => {
@@ -103,20 +104,22 @@ export default function LibraryAliasSheet({
         </p>
 
         <div>
-          <div className="edit-label">Pin</div>
-          <div className="chips">
+          {/* the pin is a setting, so a switch: a chip named for its own
+              state read as a status tag, not a control. The label names it
+              and takes the tap too. */}
+          <label className="m3-row">
+            <span id={pinLabel}>Always use this food and portion</span>
             <button
               type="button"
-              className={`chip${pinned ? " active" : ""}`}
-              aria-pressed={pinned}
+              role="switch"
+              aria-checked={pinned}
+              aria-labelledby={pinLabel}
+              className="switch"
               onClick={() => setPinned(!pinned)}
-            >
-              {pinned ? <span className="usual-dot" /> : null}
-              {pinned ? "Pinned" : "Not pinned"}
-            </button>
-          </div>
+            />
+          </label>
           <p className="m3-note" style={{ marginTop: 6 }}>
-            Pinned: this phrase always pre-selects this food and portion,
+            When on, this phrase always pre-selects this food and portion,
             whatever you logged most recently.
           </p>
         </div>

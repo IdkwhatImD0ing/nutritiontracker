@@ -3,7 +3,7 @@
 import type { Meal, StagedItem } from "@/lib/api";
 import { nutrientParts, portionText, withUnit } from "@/lib/format";
 import { foodName, MEAL_LABEL } from "@/lib/labels";
-import { Close } from "./icons";
+import { Close, Pencil } from "./icons";
 import { readEstimate } from "./PhotoApi";
 import "@/app/photo.css";
 
@@ -120,6 +120,9 @@ export default function StagedRow({
                 }}
               >
                 {name}
+                {/* the edit cue; the word joiner keeps it on the last line */}
+                {"\u2060"}
+                <Pencil className="name-edit" />
               </button>
             ) : (
               name
@@ -259,6 +262,8 @@ export default function StagedRow({
       {item.status === "resolved" &&
       (item.alternates?.length || searchInstead) ? (
         <div className="chips">
+          {/* says what the chips are: other matches, one tap to switch */}
+          <span className="state-q neutral">Or:</span>
           {(item.alternates ?? []).map((alt) => (
             <button
               key={alt.label}

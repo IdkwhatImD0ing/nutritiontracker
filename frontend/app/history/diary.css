@@ -90,8 +90,24 @@
   }
 }
 
-.diary-row.web .row-name {
-  color: var(--web); /* §3.4a: web-transcribed rows are visually distinct */
+/* §7.4's drill-in from a diary row: a list row in the expanded panel, so a
+   tap on the row itself only ever expands it (owner, 2026-10-13). It sits
+   between two hairlines; the edit block's own top line is the lower one. */
+.diary-food-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.diary-food-link + .diary-edit {
+  margin-top: 0;
 }
 
 .diary-edit {
@@ -117,10 +133,17 @@
   padding: 0 16px;
   font-size: 0.86rem;
   font-weight: 600;
+  white-space: nowrap; /* a two-line pill beside a one-line one, at 320 */
   cursor: pointer;
   border: 1px solid var(--line);
   background: var(--surface-3);
   color: var(--text);
+}
+
+/* the delete confirm: "Really delete" and "Keep", equal halves */
+.diary-actions.confirming button {
+  flex: 1;
+  margin-left: 0;
 }
 
 .diary-actions button:disabled {

@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import { fmt0 } from "@/lib/format";
 import { foodName } from "@/lib/labels";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
 import { ArrowRight } from "./icons";
 import SheetHeader from "./SheetHeader";
 
@@ -148,6 +149,8 @@ export default function FoodEditSheet({
               placeholder="Describe it differently"
               aria-label="Describe it differently"
               autoComplete="off"
+              {...FOOD_FIELD_PROPS}
+              enterKeyHint="go"
             />
             <button
               type="submit"

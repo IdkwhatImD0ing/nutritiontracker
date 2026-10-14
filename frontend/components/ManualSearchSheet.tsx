@@ -10,7 +10,8 @@ import {
 import { fmt0, withUnit } from "@/lib/format";
 import { foodName } from "@/lib/labels";
 import { hitSub } from "@/lib/sources";
-import { ArrowRight } from "./icons";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
+import { ArrowRight, Close } from "./icons";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 
 type Props = {
@@ -63,6 +64,7 @@ export default function ManualSearchSheet({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const seq = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const run = async (q: string) => {
     const trimmed = q.trim();
@@ -83,6 +85,17 @@ export default function ManualSearchSheet({
     } finally {
       if (seq.current === id) setSearching(false);
     }
+  };
+
+  // The field emptied — by its ✕ or by hand: the search is over, so an answer
+  // still in flight and the last one's notices go with it, and "Previously
+  // added" comes back.
+  const reset = () => {
+    seq.current++;
+    setResults(null);
+    setSearching(false);
+    setSearchError(null);
+    setFdcDown(false);
   };
 
   // Pre-run the search with the row's phrase — one fewer tap.
@@ -148,14 +161,38 @@ export default function ManualSearchSheet({
           void run(query);
         }}
       >
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search foods"
-          aria-label="Search foods"
-          autoComplete="off"
-          autoFocus={!phrase}
-        />
+        <div className="capture-field">
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (!e.target.value.trim()) reset();
+            }}
+            placeholder="Search foods"
+            aria-label="Search foods"
+            autoComplete="off"
+            autoFocus={!phrase}
+            {...FOOD_FIELD_PROPS}
+            enterKeyHint="search"
+          />
+          {query ? (
+            <button
+              type="button"
+              className="field-clear"
+              aria-label="Clear search"
+              // keep the field focused, so the keyboard doesn't drop and rise
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setQuery("");
+                reset();
+                inputRef.current?.focus();
+              }}
+            >
+              <Close />
+            </button>
+          ) : null}
+        </div>
         <button type="submit" disabled={searching || !query.trim()} aria-label="Search">
           {searching ? (
             <span className="spinner" />

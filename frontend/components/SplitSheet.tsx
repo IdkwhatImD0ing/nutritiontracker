@@ -57,9 +57,17 @@ type Props = {
    *  has its own × (it puts the rows away and leaves the conversation up);
    *  this one closes the lane. */
   onDismiss: () => void;
+  /** each change grows the staged list one stop (peek → half → full): a
+   *  chat card's Review on the log that is already here still opens it */
+  expandSignal?: number;
 };
 
-export default function SplitSheet({ stage, chat, onDismiss }: Props) {
+export default function SplitSheet({
+  stage,
+  chat,
+  onDismiss,
+  expandSignal,
+}: Props) {
   const [split, setSplit] = useState<number>(STOPS.half);
   const [dragging, setDragging] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -78,6 +86,19 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
     const h = shellRef.current?.clientHeight ?? 0;
     setSplit(h > 0 && h < SHORT_SHEET_PX ? STOPS.peek : STOPS.half);
   }, [staged]);
+
+  // Review on the log already staged: one stop more room for the list. Only
+  // a change asks — the value it mounts with is a Review from an earlier
+  // opening of the lane.
+  const seenSignal = useRef(expandSignal);
+  useEffect(() => {
+    if (expandSignal === seenSignal.current) return;
+    seenSignal.current = expandSignal;
+    setSplit((f) => {
+      const at = ORDER.indexOf(nearest(f));
+      return STOPS[ORDER[Math.min(ORDER.length - 1, at + 1)]];
+    });
+  }, [expandSignal]);
 
   // A pull on the header closes the lane like its ✕ — and, like that ✕, not
   // while rows are staged: that would be a discard, which is the tray's ✕'s.

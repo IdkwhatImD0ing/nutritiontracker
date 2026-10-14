@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   searchFoods,
@@ -18,8 +18,11 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
 import { ArrowRight, Close } from "./icons";
+import { qtyInput, rescaleQty, stepQty } from "./portion";
 import SheetHeader from "./SheetHeader";
+import { useAutoGrow } from "./useAutoGrow";
 
 type Props = {
   /** null → §8.4 create path 3, "build one in Library" (POST /api/meals) */
@@ -27,8 +30,6 @@ type Props = {
   onSaved: (m: SavedMeal) => void;
   onClose: () => void;
 };
-
-const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
 /** The qty an item takes: a quarter at least, to 2 places. */
 const normQty = (qty: number) => Math.max(0.25, Math.round(qty * 100) / 100);
@@ -53,7 +54,9 @@ function QtyInput({
       className="q"
       inputMode="decimal"
       aria-label={label}
-      value={draft && draft.qty === qty ? draft.text : fmtQ.format(qty)}
+      // qtyInput, not a grouped format: Number("1,200") is NaN, and a gram
+      // serving's qty (rescaled or stepped by 10) easily reaches 1,000
+      value={draft && draft.qty === qty ? draft.text : qtyInput(qty)}
       onChange={(e) => {
         const n = Number(e.target.value);
         const ok = Number.isFinite(n) && n > 0;
@@ -75,9 +78,12 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const phrasesRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(phrasesRef, phrases);
 
-  // create mode only: the food search that fills the item list. Servings are
-  // kept per food so the picked portion can be changed without another fetch.
+  // The food search that adds to the item list — in an edit too (§8.4: "change
+  // the item list in Library"). Servings are kept per food so the picked
+  // portion can be changed without another fetch.
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -85,6 +91,27 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [servingsByFood, setServingsByFood] = useState<
     Record<string, StagedServing[]>
   >({});
+
+  // Editing: each stored item's servings, so it gets the picker an added one
+  // has. A food that fails to load keeps its serving as plain text.
+  useEffect(() => {
+    if (!meal) return;
+    let cancelled = false;
+    const ids = [...new Set(meal.items.map((it) => it.food_id))];
+    Promise.allSettled(ids.map((id) => getFood(id))).then((res) => {
+      if (cancelled) return;
+      const found: Record<string, StagedServing[]> = {};
+      res.forEach((r, i) => {
+        if (r.status === "fulfilled" && r.value.servings?.length) {
+          found[ids[i]] = r.value.servings;
+        }
+      });
+      setServingsByFood((m) => ({ ...found, ...m }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [meal]);
 
   const setQty = (i: number, qty: number) =>
     setItems((prev) =>
@@ -95,6 +122,13 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const removeItem = (i: number) =>
     setItems((prev) => prev.filter((_, j) => j !== i));
 
+  /** one serving's weight for an item, when its servings were fetched */
+  const gramsOf = (food_id: string, serving_id: string) =>
+    (servingsByFood[food_id] ?? []).find((x) => x.serving_id === serving_id)
+      ?.grams;
+
+  // Another serving counts the same food: the qty is converted with it when
+  // both weights are known ("0.5 × 1 cup" becomes 74 g, not 0.5 g).
   const setServing = (i: number, serving_id: string) =>
     setItems((prev) =>
       prev.map((it, j) => {
@@ -102,7 +136,15 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
         const s = (servingsByFood[it.food_id] ?? []).find(
           (x) => x.serving_id === serving_id,
         );
-        return { ...it, serving_id, serving_description: s?.description ?? serving_id };
+        const qty =
+          rescaleQty(it.qty, gramsOf(it.food_id, it.serving_id), s?.grams) ??
+          it.qty;
+        return {
+          ...it,
+          serving_id,
+          qty,
+          serving_description: s?.description ?? serving_id,
+        };
       }),
     );
 
@@ -172,7 +214,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
     const patch: MealPatch = {
       name: name.trim(),
       trigger_phrases: phrases
-        .split(",")
+        .split(/[,\n]/)
         .map((s) => s.trim())
         .filter(Boolean),
       items: items.map(({ food_id, serving_id, qty }) => ({
@@ -221,22 +263,30 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
+            placeholder={meal ? undefined : "e.g. Protein snack"}
             autoComplete="off"
           />
         </label>
 
         <label className="m3-field">
           Phrases
-          <input
+          {/* a long list wraps and grows instead of scrolling sideways in
+              one line (useAutoGrow). The example is for a new meal only: in
+              an edit it read as this meal's own phrases. */}
+          <textarea
+            ref={phrasesRef}
+            className="m3-phrases"
+            rows={2}
             value={phrases}
             onChange={(e) => setPhrases(e.target.value)}
-            placeholder="usual breakfast, my breakfast"
+            placeholder={meal ? undefined : "e.g. usual breakfast, my breakfast"}
             autoComplete="off"
           />
         </label>
         <p className="m3-note">
-          Comma-separated. Saying any of these adds the items below exactly as
-          saved, without looking anything up.
+          Separate phrases with commas or new lines; leave empty to use the
+          name. Saying any of these adds the items below exactly as saved,
+          without looking anything up.
         </p>
 
         <div>
@@ -247,7 +297,10 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 <div className="name">
                   {it.food_name ? foodName(it.food_name) : it.food_id}
                 </div>
-                {servingsByFood[it.food_id] ? (
+                {/* a stored serving the food no longer lists stays text */}
+                {servingsByFood[it.food_id]?.some(
+                  (s) => s.serving_id === it.serving_id,
+                ) ? (
                   <div className="m3-field">
                     <select
                       value={it.serving_id}
@@ -272,7 +325,12 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 <button
                   type="button"
                   aria-label="Less"
-                  onClick={() => setQty(i, it.qty - 0.5)}
+                  onClick={() =>
+                    setQty(
+                      i,
+                      stepQty(it.qty, -1, gramsOf(it.food_id, it.serving_id), 0.5),
+                    )
+                  }
                 >
                   −
                 </button>
@@ -284,7 +342,12 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 <button
                   type="button"
                   aria-label="More"
-                  onClick={() => setQty(i, it.qty + 0.5)}
+                  onClick={() =>
+                    setQty(
+                      i,
+                      stepQty(it.qty, 1, gramsOf(it.food_id, it.serving_id), 0.5),
+                    )
+                  }
                 >
                   +
                 </button>
@@ -302,55 +365,55 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           {items.length === 0 ? (
             <p className="subsheet-hint">
               {meal
-                ? "No items — a meal needs at least one. Re-save a log as this meal to rebuild it."
+                ? "No items — add a food below."
                 : "No items yet — search below and tap a result to add one."}
             </p>
           ) : null}
         </div>
 
-        {!meal ? (
-          <div>
-            <div className="edit-label">Add a food</div>
-            <form className="add-item" onSubmit={runSearch}>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search foods"
-                aria-label="Search foods"
-                autoComplete="off"
-              />
-              <button
-                type="submit"
-                disabled={searching || adding || !query.trim()}
-                aria-label="Search"
-              >
-                {searching ? (
-                  <span className="spinner" />
-                ) : (
-                  <ArrowRight strokeWidth={2.4} />
-                )}
-              </button>
-            </form>
-            {results ? (
-              <div className="search-results">
-                {results.map((r, i) => (
-                  <button
-                    key={`${r.source}:${r.source_id}:${i}`}
-                    type="button"
-                    disabled={adding}
-                    onClick={() => addHit(r)}
-                  >
-                    <span className="result-name">{foodName(r.label)}</span>
-                    <span className="result-sub">{hitSub(r)}</span>
-                  </button>
-                ))}
-                {results.length === 0 && !searching ? (
-                  <p className="subsheet-hint">No matches — try fewer words.</p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        <div>
+          <div className="edit-label">Add a food</div>
+          <form className="add-item" onSubmit={runSearch}>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search foods"
+              aria-label="Search foods"
+              autoComplete="off"
+              {...FOOD_FIELD_PROPS}
+              enterKeyHint="search"
+            />
+            <button
+              type="submit"
+              disabled={searching || adding || !query.trim()}
+              aria-label="Search"
+            >
+              {searching ? (
+                <span className="spinner" />
+              ) : (
+                <ArrowRight strokeWidth={2.4} />
+              )}
+            </button>
+          </form>
+          {results ? (
+            <div className="search-results">
+              {results.map((r, i) => (
+                <button
+                  key={`${r.source}:${r.source_id}:${i}`}
+                  type="button"
+                  disabled={adding}
+                  onClick={() => addHit(r)}
+                >
+                  <span className="result-name">{foodName(r.label)}</span>
+                  <span className="result-sub">{hitSub(r)}</span>
+                </button>
+              ))}
+              {results.length === 0 && !searching ? (
+                <p className="subsheet-hint">No matches — try fewer words.</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
 
         {error ? <p className="sheet-error">{error}</p> : null}
 

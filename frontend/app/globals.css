@@ -176,13 +176,24 @@ button,
 summary,
 .tabbar a,
 .nav-back,
-a.name-btn,
+.diary-food-link,
 a.m3-link-btn,
-.m3-card-title a {
+.m3-card-link {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+}
+
+/* Headings and big figures are display, not prose: a long press on them
+   raises no loupe or Copy bubble. Not the whole .shell — older iOS can then
+   refuse typing in a field, and chat replies and citations stay copyable. */
+.brand h1,
+.tracker,
+.weight-card,
+.diary-meal-head {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Pressed. The tap highlight is off (body), so a control answers a touch
@@ -237,7 +248,12 @@ a.m3-link-btn,
   .keys-btn,
   .account-signout,
   .diary-actions button,
-  .web-cite a {
+  .row-undo,
+  .auth-alt a,
+  .auth-forgot,
+  .auth-card button.auth-linkish,
+  .web-cite a,
+  .weight-log {
     position: relative;
   }
 
@@ -259,6 +275,12 @@ a.m3-link-btn,
   .keys-btn::before,
   .account-signout::before,
   .diary-actions button::before,
+  .row-undo::before,
+  .auth-alt a::before,
+  .auth-forgot::before,
+  .auth-card button.auth-linkish::before,
+  .weight-log::before,
+  .web-cite a::before /* clipped to the line's padding (.web-cite) */,
   .scan-torch::before /* already absolute: its own containing block */ {
     content: "";
     position: absolute;
@@ -771,6 +793,21 @@ a {
   margin: 0;
 }
 
+/* the empty card's way in: the Agent lane, the one place a weigh-in is
+   logged (§6.4) */
+.weight-log {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .weight-spark {
   width: 96px;
   height: 34px;
@@ -808,6 +845,35 @@ a {
 .capture input:focus {
   border-color: var(--accent-line);
   background: var(--surface-3);
+}
+
+/* a search field with its ✕ inside the box (Library, Find a food): empties
+   the query and the results with it */
+.capture-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.capture-field input {
+  padding-right: 46px;
+}
+
+.capture .field-clear {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 44px;
+  height: 44px;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.capture .field-clear svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* the send: a round accent button (form submit) */
@@ -1300,6 +1366,26 @@ a {
   cursor: pointer;
 }
 
+/* It opens the meal picker, and says so: .chev's two-border chevron in the
+   chip's colour, down while closed and up while the picker is open. (Its
+   ::before is the touch area.) */
+.meal-chip::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  vertical-align: middle;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 150ms var(--ease);
+}
+
+.meal-chip[aria-expanded="true"]::after {
+  transform: translateY(1px) rotate(-135deg);
+}
+
 .meal-picker {
   margin-top: 12px;
 }
@@ -1494,6 +1580,42 @@ a.commit-btn {
   }
 }
 
+/* A removed row inside its Undo window (§7.1): one quiet line where the row
+   was, until the window closes or Undo brings the row back. */
+.row.row-removed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.row-removed-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-undo {
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.row-undo:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 .row.searching .row-name {
   color: var(--muted);
 }
@@ -1521,19 +1643,32 @@ a.commit-btn {
   color: var(--web);
 }
 
+/* The padding stands in for the old 4px top margin, and the -8px bottom
+   margin cancels the rest, so the line sits where it did. It is there for
+   the link's hit area, which overflow (the ellipsis) clips to this box: 4px
+   up, never into the row above, and 8px down. */
 .web-cite {
   font-size: 0.78rem;
   color: var(--muted);
-  margin: 4px 0 0;
+  margin: 0 0 -8px;
+  padding: 4px 0 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Visible and clickable is the requirement, hyperlink blue isn't: a quiet
+   sage link like the portion pill, and ↗ says it leaves the app. The second
+   `content` keeps the arrow out of the link's spoken name where supported. */
 .web-cite a {
-  color: var(--web);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  color: var(--sage);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.web-cite a::after {
+  content: " \2197";
+  content: " \2197" / "";
 }
 
 .spinner {
@@ -1629,6 +1764,11 @@ a.commit-btn {
   align-self: center;
 }
 
+/* "Or:" before a row's other matches: a label, not a question waiting */
+.state-q.neutral {
+  color: var(--muted);
+}
+
 /* The portion is a tap target (§7.1 portion sheet) — and has to look like
    one. As an underlined 0.8rem label it read as a stated fact, not a
    control: a scanned or searched food defaults to qty 1, which renders as a
@@ -1682,7 +1822,9 @@ a.commit-btn {
   text-underline-offset: 3px;
 }
 
-/* tappable food name → §7.1 edit sheet (BACKLOG 23) */
+/* tappable food name → §7.1 edit sheet (BACKLOG 23). Its cue is a small
+   trailing pencil (owner, 2026-10-13): the dotted underline it replaces read
+   as a web link, under every name in the list. */
 
 .name-btn {
   background: none;
@@ -1692,10 +1834,14 @@ a.commit-btn {
   color: inherit;
   text-align: left; /* a wrapped name's lines start flush, not centred (button UA default) */
   cursor: pointer;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: var(--faint);
-  text-underline-offset: 3px;
+}
+
+.name-btn .name-edit {
+  width: 0.8em;
+  height: 0.8em;
+  margin-left: 0.35em;
+  vertical-align: -0.05em;
+  color: var(--faint);
 }
 
 /* expanded stats */
@@ -1961,6 +2107,14 @@ a.commit-btn {
   border-color: var(--accent-line);
 }
 
+/* what the portion sheet's number counts: "× 1 slice (32 g) = 64 g" */
+.portion-caption {
+  margin: -6px 0 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 /* One grouped list, like the diary's: the choices share a surface split by
    hairlines, and the pick carries a trailing check rather than a fill.
    :first-/:last-of-type round the buttons only, so a hint line in the list
@@ -1975,6 +2129,7 @@ a.commit-btn {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  min-height: 44px; /* a finger-sized pick, the diary row's portion sheet too */
   text-align: left;
   background: var(--surface-2);
   border: none;
@@ -2016,6 +2171,51 @@ a.commit-btn {
 .serving-list button:disabled {
   cursor: default;
   opacity: 0.45;
+}
+
+/* an on/off setting (role="switch", aria-checked): a 51 × 31 track that
+   turns accent when on, the knob sliding across. Drawn at 31px tall, it
+   takes taps over 44. The phrase sheet's pin is the first. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 51px;
+  height: 31px;
+  padding: 0;
+  border: none;
+  border-radius: 16px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  cursor: pointer;
+  transition: background 160ms var(--ease);
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 160ms var(--ease);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.switch[aria-checked="true"]::after {
+  transform: translateX(20px);
 }
 
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
@@ -2064,6 +2264,11 @@ a.commit-btn {
   display: flex;
   flex-direction: column;
   min-height: 60px;
+}
+
+/* the 60px holds room for a list landing — a lone "No matches" needs none */
+.search-results:has(> .subsheet-hint:only-child) {
+  min-height: 0;
 }
 
 .search-results button {
@@ -2465,6 +2670,24 @@ a.commit-btn {
 
 .auth-card input:focus {
   border-color: var(--accent-line);
+}
+
+/* the emailed code: six digits, read and checked at a glance */
+.auth-card input.auth-otp {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+
+/* under the sign-in password; on touch the hit area is 44px (above), in
+   the card's gaps, clear of the field and the button */
+.auth-forgot {
+  align-self: flex-end;
+  color: var(--mint);
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-decoration: none;
 }
 
 .auth-card button[type="submit"] {
@@ -2960,7 +3183,8 @@ a.commit-btn {
   flex: 0 0 auto;
 }
 
-.split-sheet[data-snap="full"] > .chat-pane > .chat-body {
+.split-sheet[data-snap="full"] > .chat-pane > .chat-body,
+.split-sheet[data-snap="full"] .chat-jump {
   display: none;
 }
 
@@ -3211,6 +3435,30 @@ a.commit-btn {
 .chat-foot .capture-error,
 .chat-foot .capture-notice {
   margin-top: 8px;
+}
+
+/* scrolled up off the newest line: the way back down, floating over the
+   conversation just above the composer, whatever the composer holds */
+.chat-foot {
+  position: relative;
+}
+
+.chat-jump {
+  position: absolute;
+  right: 14px;
+  bottom: calc(100% + 10px);
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 1.25rem;
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  animation: fade 160ms ease-out;
 }
 
 .chat-rec {

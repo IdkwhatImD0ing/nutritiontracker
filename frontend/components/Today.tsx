@@ -96,6 +96,9 @@ export default function Today() {
     log: LogResponse;
     restore: StagingSnapshot | null;
   } | null>(null);
+  // Bumped by a chat card's Review on the log already in the tray: the
+  // split sheet grows the tray a stop on each change (expandSignal).
+  const [reviewTick, setReviewTick] = useState(0);
   // §3.5 stragglers, one entry per committed log. A single slot meant the
   // second of two commits inside the tier-3 window overwrote the first, and
   // remounting <PendingItems> under the new key cancelled the first log's
@@ -159,8 +162,19 @@ export default function Today() {
   const quickRef = useRef<{ id: string; foodId: string } | null>(null);
   // §8.4: "save this as my usual breakfast" said after logging resolves to
   // zero items — the server saved (or explained) it, so confirm that instead
-  // of opening an empty staging sheet.
-  const [savedNote, setSavedNote] = useState<string | null>(null);
+  // of opening an empty staging sheet. `auto`: the "Saved as" confirmation
+  // clears itself (UNDO_MS, below); a failure or the server's own note waits
+  // for its OK.
+  const [savedNote, setSavedNote] = useState<{
+    text: string;
+    auto: boolean;
+  } | null>(null);
+  // the clock restarts with each new note and stops with the page
+  useEffect(() => {
+    if (!savedNote?.auto) return;
+    const timer = setTimeout(() => setSavedNote(null), UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [savedNote]);
   // §6.4 the Agent chat (2026-09-06): the conversation lives here, not in
   // the sheet, so the staging sheet stacked over the chat leaves it intact;
   // the POST /api/agent stream appends to it as events land. Every opening
@@ -581,13 +595,16 @@ export default function Today() {
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
       setSavedNote(
         log.saved_meal
-          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} item${log.saved_meal.item_count === 1 ? "" : "s"}`
-          : (log.note as string),
+          ? {
+              text: `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} item${log.saved_meal.item_count === 1 ? "" : "s"}`,
+              auto: true,
+            }
+          : { text: log.note as string, auto: false },
       );
       return;
     }
     if (log.items.length === 0) {
-      setSavedNote("Nothing was logged — try again.");
+      setSavedNote({ text: "Nothing was logged — try again.", auto: false });
       return;
     }
     setSavedNote(null);
@@ -1196,7 +1213,7 @@ export default function Today() {
         <Tracker totals={totals} />
       )}
 
-      <WeightCard refreshKey={weightsKey} />
+      <WeightCard refreshKey={weightsKey} onLog={() => pickLane("agent")} />
 
       {pending.map((p) => (
         <PendingItems
@@ -1247,6 +1264,7 @@ export default function Today() {
       {lane === "agent" ? (
         <SplitSheet
           stage={stageEl}
+          expandSignal={reviewTick}
           // Escape reaches every window listener: while a sub-sheet is stacked
           // above the split it is theirs, and while rows are staged the staged
           // list's own × is what acts (SplitSheet hides this one then).
@@ -1278,7 +1296,12 @@ export default function Today() {
                   undoDiscard();
                   return;
                 }
-                if (staging?.log.log_id === log.log_id) return; // already up
+                // Already up: Review still visibly opens it — the tray
+                // grows a stop, so a tap at peek is never a no-op.
+                if (staging?.log.log_id === log.log_id) {
+                  setReviewTick((n) => n + 1);
+                  return;
+                }
                 setSavedNote(null);
                 setStaging({ log, restore: null });
               }}
@@ -1325,10 +1348,12 @@ export default function Today() {
 
       {savedNote ? (
         <div className="toast" role="status">
-          <span>{savedNote}</span>
-          <button type="button" onClick={() => setSavedNote(null)}>
-            OK
-          </button>
+          <span>{savedNote.text}</span>
+          {savedNote.auto ? null : (
+            <button type="button" onClick={() => setSavedNote(null)}>
+              OK
+            </button>
+          )}
         </div>
       ) : null}
 

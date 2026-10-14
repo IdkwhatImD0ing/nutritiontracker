@@ -134,10 +134,11 @@
   font-size: 0.9rem;
 }
 
+/* 44px tall to the finger; the 64px bar absorbs it */
 .land-nav-links a:not(.land-pill) {
   color: var(--muted);
   text-decoration: none;
-  padding: 8px 10px;
+  padding: 12px 10px;
   border-radius: 999px;
   transition:
     color 150ms,
@@ -154,7 +155,7 @@
 .land-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 36px;
+  min-height: 44px;
   margin-left: 6px;
   padding: 0 16px;
   border-radius: 999px;
@@ -175,7 +176,7 @@
 /* 320px phones: the three links only just fit at 360 */
 @media (max-width: 359px) {
   .land-nav-links a:not(.land-pill) {
-    padding: 8px 6px;
+    padding: 12px 6px;
   }
   .land-pill {
     margin-left: 2px;
@@ -1097,14 +1098,20 @@
   padding-bottom: calc(32px + env(safe-area-inset-bottom));
 }
 
+/* Each link is 44px tall to the finger: the padding is the hit area, so a
+   wrapped row needs no gap of its own, and the -12px margin keeps the row
+   where it was in the footer. */
 .land-foot-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 22px;
+  gap: 0 22px;
+  margin: -12px 0;
   font-size: 0.88rem;
 }
 
 .land-foot-links a {
+  display: inline-block;
+  padding: 12px 0;
   color: var(--muted);
   text-decoration: none;
 }
