@@ -27,10 +27,13 @@ if sys.platform == "win32":  # psycopg async needs the selector loop on Windows
 import httpx  # noqa: E402
 import psycopg  # noqa: E402
 import pytest  # noqa: E402
+from psycopg.types.json import Json  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 from test_tenancy import TEST_USER_ID, _become, _scalar, isolated_db  # noqa: E402
 
 import db  # noqa: E402
+from routes import diary as diary_route  # noqa: E402
+from routes import history as history_route  # noqa: E402
 from routes import me as me_route  # noqa: E402
 from routes import oura as oura_route  # noqa: E402
 from services import oura  # noqa: E402
@@ -762,6 +765,100 @@ def test_status_and_sync_before_and_after_connecting(monkeypatch):
                 today, today - timedelta(days=2), today - timedelta(days=oura_route.STATUS_DAYS - 1)
             ]
             assert (s.days[1].total_calories, s.days[1].steps) == (2502, 7002)
+
+    _run(scenario())
+
+
+def test_the_days_targets_grow_by_ouras_activity_burn_while_connected():
+    async def scenario():
+        async with isolated_db() as conn:
+            day = date(2026, 9, 19)
+
+            async def set_targets(kcal):
+                value = {"kcal": kcal, "protein_g": 204, "carb_g": 78, "fat_g": 82} if kcal else {}
+                await conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('targets', %s) "
+                    "ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
+                    (Json(value),),
+                )
+
+            await set_targets(1865)
+            await conn.execute(
+                "INSERT INTO oura_days (day, total_calories, active_calories, raw) "
+                "VALUES (%s, 3830, 1187, '{}'::jsonb)",
+                (day,),
+            )
+            t = await diary_route.compute_day_totals(day)
+            assert (t.targets.kcal, t.exercise_kcal) == (1865, 0)  # synced once, now disconnected
+
+            await oura.save_tokens(_tokens(1))
+            t = await diary_route.compute_day_totals(day)
+            assert t.exercise_kcal == 1187
+            # the extra kcal is carbs (1187 / 4 = 296.75 → 297 g); protein and fat stay put
+            assert (t.targets.kcal, t.targets.carb_g) == (3052, 78 + 297)
+            assert (t.targets.protein_g, t.targets.fat_g) == (204, 82)
+
+            # a day Oura has nothing for, and a day it has no activity number for
+            t = await diary_route.compute_day_totals(day + timedelta(days=1))
+            assert (t.targets.kcal, t.exercise_kcal) == (1865, 0)
+            await conn.execute("UPDATE oura_days SET active_calories = NULL")
+            t = await diary_route.compute_day_totals(day)
+            assert (t.targets.kcal, t.exercise_kcal) == (1865, 0)
+
+            # no goals set: no target to raise, so none appears
+            await conn.execute("UPDATE oura_days SET active_calories = 1187")
+            await set_targets(None)
+            t = await diary_route.compute_day_totals(day)
+            assert (t.targets.kcal, t.targets.carb_g, t.exercise_kcal) == (0, 0, 0)
+
+            # before 005 the diary still loads, with the plain target. Patched
+            # by hand, as in the test below: isolated_db swaps db.fetchall itself.
+            await set_targets(1865)
+            real = db.fetchall
+
+            async def fetchall(sql, params=()):
+                if "oura_" in sql:
+                    raise psycopg.errors.UndefinedTable('relation "oura_days" does not exist')
+                return await real(sql, params)
+
+            db.fetchall = fetchall
+            try:
+                t = await diary_route.compute_day_totals(day)
+            finally:
+                db.fetchall = real
+            assert (t.targets.kcal, t.exercise_kcal) == (1865, 0)
+
+            # another account sees none of the owner's Oura data
+            await _become(conn, "oura-demo", is_owner=False)
+            await set_targets(1865)
+            t = await diary_route.compute_day_totals(day)
+            assert (t.targets.kcal, t.exercise_kcal) == (1865, 0)
+
+    _run(scenario())
+
+
+def test_history_gives_each_day_its_own_target_with_ouras_burn():
+    async def scenario():
+        async with isolated_db() as conn:
+            await conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('targets', %s) "
+                "ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
+                (Json({"kcal": 1865, "protein_g": 204, "carb_g": 78, "fat_g": 82}),),
+            )
+            await oura.save_tokens(_tokens(1))
+            today = await oura_route._today()
+            yesterday = today - timedelta(days=1)
+            await conn.execute(
+                "INSERT INTO oura_days (day, active_calories, raw) VALUES (%s, 1187, '{}'::jsonb)",
+                (yesterday,),
+            )
+            for rng in ("3d", "w", "m"):
+                h = await history_route.get_history(rng=rng)
+                assert h.targets.kcal == 1865  # the range's target line stays the plain one
+                by_day = {d.date: d.targets for d in h.days}
+                assert (by_day[yesterday].kcal, by_day[yesterday].carb_g) == (3052, 78 + 297)
+                assert (by_day[today].kcal, by_day[today].carb_g) == (1865, 78)
+            assert (await history_route.get_history(rng="y")).days == []
 
     _run(scenario())
 

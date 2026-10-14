@@ -97,6 +97,9 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
 
   const kcalFrac = kcalTarget > 0 ? kcal / kcalTarget : 0;
   const kcalLeft = kcalTarget - kcal;
+  // Oura's activity burn, already inside the kcal and carb targets — said out
+  // loud so a target that moved during the day is never a mystery.
+  const exercise = totals?.exercise_kcal ?? 0;
 
   return (
     <section className="tracker" aria-label="Daily tracker">
@@ -126,6 +129,11 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
             style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
           />
         </div>
+        {exercise > 0 ? (
+          <p className="zero-hint" style={{ marginTop: 8 }}>
+            Includes {fmt.format(exercise)} kcal of activity from Oura
+          </p>
+        ) : null}
       </div>
 
       <div className="donuts">

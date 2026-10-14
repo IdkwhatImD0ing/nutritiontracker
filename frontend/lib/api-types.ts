@@ -1139,6 +1139,11 @@ export interface components {
             fat_g: number;
             targets: components["schemas"]["MacroTargets"];
             /**
+             * Exercise Kcal
+             * @default 0
+             */
+            exercise_kcal: number;
+            /**
              * Errors
              * @default []
              */
@@ -1172,6 +1177,7 @@ export interface components {
             meals?: {
                 [key: string]: components["schemas"]["MacroSums"];
             } | null;
+            targets?: components["schemas"]["MacroTargets"] | null;
         };
         /**
          * DayTotals
@@ -1187,6 +1193,11 @@ export interface components {
             /** Fat G */
             fat_g: number;
             targets: components["schemas"]["MacroTargets"];
+            /**
+             * Exercise Kcal
+             * @default 0
+             */
+            exercise_kcal: number;
         };
         /** DemoQuota */
         DemoQuota: {
