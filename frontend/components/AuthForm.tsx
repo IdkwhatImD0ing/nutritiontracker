@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { verifyEmailAction, type AuthFormState } from "@/app/auth/actions";
+import { ChevronLeft } from "./icons";
 
 type Props = {
   title: string;
@@ -27,7 +29,7 @@ export default function AuthForm({
 
   return (
     <main className="auth-wrap">
-      <div className="top-bar auth-top" />
+      <AuthTop />
       <form className="auth-card" action={formAction}>
         <h1>{title}</h1>
         {intro ? <p className="subsheet-hint auth-intro">{intro}</p> : null}
@@ -56,10 +58,25 @@ export default function AuthForm({
           {pending ? "…" : submitLabel}
         </button>
         <p className="auth-alt">
-          {alt.text} <a href={alt.href}>{alt.label}</a>
+          {/* the other auth page: a different route, so the form mounts fresh */}
+          {alt.text} <Link href={alt.href}>{alt.label}</Link>
         </p>
       </form>
     </main>
+  );
+}
+
+/** The way out of the auth pages, which the installed app (no browser back)
+ *  otherwise lacks. Not BackBar: its names are the signed-in tabs, and "/"
+ *  is the landing page here, not Today. */
+function AuthTop() {
+  return (
+    <div className="top-bar auth-top">
+      <Link href="/" className="nav-back" aria-label="Back to the Tally start page">
+        <ChevronLeft />
+        Back
+      </Link>
+    </div>
   );
 }
 
@@ -79,7 +96,7 @@ function VerifyEmail({ verify }: { verify: Verify }) {
 
   return (
     <main className="auth-wrap">
-      <div className="top-bar auth-top" />
+      <AuthTop />
       <form className="auth-card" action={formAction}>
         <h1>Verify your email</h1>
         <p className="subsheet-hint auth-intro">
@@ -122,6 +139,8 @@ function VerifyEmail({ verify }: { verify: Verify }) {
           </button>
         ) : null}
         <p className="auth-alt">
+          {/* a full load, not next/link: from /auth/sign-in a soft navigation
+              to the same URL would keep this verify step on screen */}
           <a href="/auth/sign-in">Back to sign in</a>
         </p>
       </form>

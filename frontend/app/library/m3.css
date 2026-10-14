@@ -355,6 +355,11 @@ body:has(.tabbar) .shell {
   color: var(--red);
 }
 
+/* offered, not pushed (Oura's Reconnect while nothing is missing) */
+.m3-link-btn.quiet {
+  color: var(--muted);
+}
+
 .m3-link-btn:disabled {
   color: var(--faint);
   cursor: default;
@@ -634,6 +639,21 @@ body:has(.tabbar) .shell {
 .wizard-top {
   margin: calc(-22px - env(safe-area-inset-top)) -18px -18px;
   padding-inline: 18px;
+}
+
+/* a re-run's way out (Settings), left of the progress bar on every step:
+   a text button the full 44px tall, its label flush with the gutter */
+.wizard-cancel {
+  flex: none;
+  min-height: 44px;
+  margin-left: -10px;
+  padding: 0 10px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .wizard-steps {
@@ -947,6 +967,55 @@ body:has(.tabbar) .shell {
   cursor: default;
 }
 
+/* ---------- Oura card (Settings § Oura, OuraCard.tsx) ---------- */
+
+/* the week behind the latest day, as one quiet row in the .k colour. The
+   summary keeps its 44px for the finger and gives back the card's 8px gaps,
+   so it sits on the day rows' rhythm. */
+.oura-week > summary {
+  margin-block: -8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.oura-days {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.oura-reconnect {
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+
+/* ---------- About (Settings) ----------
+   Rows that open another page, in place of "→" text links: full-width 44px
+   lines with a trailing .chev and hairlines between. The notes under the
+   card are the group's footer. */
+
+.m3-card.m3-links {
+  padding-block: 0;
+  gap: 0;
+}
+
+.m3-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.m3-nav-row + .m3-nav-row {
+  border-top: 1px solid var(--line);
+}
+
 /* ---------- desktop: the tab bar stands up as a navigation rail ----------
    Same markup, same destinations. From 900px the bar that hugged the bottom
    of a phone runs down the left edge — wordmark, then a "Log food" button
@@ -1174,11 +1243,12 @@ body:has(.tabbar) .shell {
 }
 
 /* ---------- API keys (Settings § API keys, ApiKeysCard.tsx) ----------
-   A list, not a table: a phone-width card cannot hold seven columns, so each
-   key is a block (label and status, the redacted key, four facts, Revoke)
-   that becomes one line per key once the section spans both desktop
-   columns. Revoked and expired keys stay listed, dimmed. The reveal banner
-   holds the only copy of a new key the browser ever gets. */
+   A list, not a table: each key is one line (label, access, last used, a
+   status only when it is not active) that opens in place onto the redacted
+   key, four facts and Revoke (Bill, 2026-10-13: the block per key it
+   replaces filled a screen with two keys). On the desktop the open facts sit
+   in one line. Revoked and expired keys stay listed, dimmed. The reveal
+   banner holds the only copy of a new key the browser ever gets. */
 
 .keys-btn {
   min-height: 40px;
@@ -1216,11 +1286,8 @@ body:has(.tabbar) .shell {
 
 .keys-reveal-title {
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--accent);
 }
 
@@ -1266,15 +1333,7 @@ body:has(.tabbar) .shell {
 }
 
 .keys-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 0;
   border-top: 1px solid var(--line);
-}
-
-.keys-row:last-child {
-  padding-bottom: 0;
 }
 
 .keys-row.revoked,
@@ -1282,20 +1341,44 @@ body:has(.tabbar) .shell {
   opacity: 0.55;
 }
 
+/* the whole line opens the key; a long label wraps rather than hides */
 .keys-row-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.keys-gist {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
 .keys-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 0.95rem;
   font-weight: 600;
+  color: var(--text);
+}
+
+.keys-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+
+.keys-row:last-child .keys-detail {
+  padding-bottom: 0;
 }
 
 .keys-status {
@@ -1386,28 +1469,15 @@ body:has(.tabbar) .shell {
 }
 
 @media (min-width: 1140px) {
-  /* one line per key: who it is | four facts | its action */
-  .keys-row {
+  /* an open key in one line: the key | four facts | its action */
+  .keys-detail {
     display: grid;
     grid-template-columns: minmax(0, 4fr) minmax(0, 7fr) minmax(0, 3fr);
     column-gap: 24px;
-    row-gap: 4px;
     align-items: center;
   }
 
-  .keys-row-head,
-  .keys-redacted {
-    grid-column: 1;
-  }
-
   .keys-meta {
-    grid-column: 2;
-    grid-row: 1 / span 2;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .keys-row-actions {
-    grid-column: 3;
-    grid-row: 1 / span 2;
   }
 }

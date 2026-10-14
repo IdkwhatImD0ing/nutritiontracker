@@ -195,7 +195,7 @@ export default function Library() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search the food database"
+            placeholder="Look up a food"
             aria-label="Search foods"
             autoComplete="off"
           />

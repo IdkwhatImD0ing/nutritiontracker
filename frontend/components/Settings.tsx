@@ -68,10 +68,12 @@ function describeBody(b: Body): string | null {
 }
 
 /** §7.4 Settings: targets, meal windows, timezone, profile_notes (the
- *  agent-visible free text, §6.1), the experiment link, the on-device-state
- *  note. One Save writes everything (PUT). The Cronometer baseline left this
- *  page on 2026-09-06 (owner feedback); the setting itself stays, read by the
- *  adherence chart, and PUT never touches a key it is not sent. */
+ *  agent-visible free text, §6.1), then an About group: rows to the
+ *  experiment charts, the API-key docs and the legal pages over the
+ *  on-device-state note and the data credits. One Save writes everything
+ *  (PUT). The Cronometer baseline left this page on 2026-09-06 (owner
+ *  feedback); the setting itself stays, read by the adherence chart, and PUT
+ *  never touches a key it is not sent. */
 export default function Settings() {
   // A return to the tab paints the settings last read (readCache: the
   // server's copy, never an unsaved edit) while the read below refreshes them.
@@ -177,7 +179,7 @@ export default function Settings() {
           setWizard(false);
           setStatus("Targets saved.");
         }}
-        onSkip={() => setWizard(false)}
+        onCancel={() => setWizard(false)}
       />
     );
   }
@@ -365,21 +367,41 @@ export default function Settings() {
 
           <ApiKeysCard />
 
-          <section className="m3-section" aria-label="More">
-            <div className="m3-card">
-              <div className="m3-row">
-                <span className="k">Is it learning?</span>
-                <Link href="/experiment" className="m3-link-btn">
-                  Experiment charts →
-                </Link>
-              </div>
-              <p className="m3-note">
-                Deleting the home-screen icon clears the app&rsquo;s on-device
-                state (your sign-in, any late items still sending). Your diary
-                lives on the server and is untouched.
-              </p>
-              <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
+          <section className="m3-section" aria-label="About">
+            <h2>About</h2>
+            {/* The docs and the legal pages are the public website: opened
+                over the app (iOS's Safari sheet with Done, a new tab
+                elsewhere) rather than in its window, whose only way back
+                from them is the logo. */}
+            <div className="m3-card m3-links">
+              <Link href="/experiment" className="m3-nav-row">
+                Experiment charts
+                <span className="chev" aria-hidden="true" />
+              </Link>
+              <a
+                href="/docs/api-keys"
+                target="_blank"
+                rel="noopener"
+                className="m3-nav-row"
+              >
+                How to use API keys
+                <span className="chev" aria-hidden="true" />
+              </a>
+              <a href="/privacy" target="_blank" rel="noopener" className="m3-nav-row">
+                Privacy
+                <span className="chev" aria-hidden="true" />
+              </a>
+              <a href="/terms" target="_blank" rel="noopener" className="m3-nav-row">
+                Terms
+                <span className="chev" aria-hidden="true" />
+              </a>
             </div>
+            <p className="m3-note">
+              Deleting the home-screen icon clears the app&rsquo;s on-device
+              state (your sign-in, any late items still sending). Your diary
+              lives on the server and is untouched.
+            </p>
+            <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
           </section>
         </>
       )}

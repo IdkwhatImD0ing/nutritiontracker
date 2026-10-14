@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import {
   computeGoals,
@@ -25,7 +25,11 @@ type Props = {
   /** settings.body from a previous run — pre-fills every field */
   initial?: Body | null;
   onDone: (s: Settings) => void;
+  /** first run only: "Skip for now" on step 1 */
   onSkip?: () => void;
+  /** a re-run from Settings: Cancel in the top bar on every step (and
+   *  Escape) leaves without saving, in place of Skip */
+  onCancel?: () => void;
 };
 
 type Units = "metric" | "imperial";
@@ -90,7 +94,7 @@ function nearestRate(kg: number | undefined): number {
 /** §7.4 first-run goal wizard (Cronometer-style): body → goal → computed
  *  kcal + macro targets, every number shown and editable before saving to
  *  settings. Re-runnable from Settings any time. */
-export default function WizardGoal({ initial, onDone, onSkip }: Props) {
+export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props) {
   const init = initial ?? {};
   const [step, setStep] = useState(0);
   const [units, setUnits] = useState<Units>(init.units ?? "imperial");
@@ -239,10 +243,24 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
       : null;
   const wUnit = units === "metric" ? "kg" : "lb";
 
+  useEffect(() => {
+    if (!onCancel) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
   return (
     <div className="wizard" role="dialog" aria-label="Goal wizard">
       <div className="wizard-inner">
         <div className="top-bar wizard-top">
+          {onCancel ? (
+            <button type="button" className="wizard-cancel" onClick={onCancel}>
+              Cancel
+            </button>
+          ) : null}
           <div className="wizard-steps" aria-hidden="true">
             {[0, 1, 2].map((i) => (
               <span key={i} className={i <= step ? "done" : undefined} />
@@ -361,7 +379,7 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               >
                 Next
               </button>
-              {onSkip ? (
+              {onSkip && !onCancel ? (
                 <button type="button" className="wizard-ghost" onClick={onSkip}>
                   Skip for now
                 </button>

@@ -323,6 +323,60 @@
   color: var(--faint);
 }
 
+/* ---------- installed: display-mode standalone ----------
+   The installed app's signed-out screen (a cold launch, or where Sign out
+   lands) is this page trimmed to an app's front door (Bill, 2026-10-13):
+   the pitch and the preview, the two ways in pinned at the foot, and the
+   Privacy and Terms line. The website's parts (Docs, GitHub, the claims,
+   lanes, developer and open-source sections) stay with the browser. */
+@media (display-mode: standalone) {
+  .land-nav-links,
+  .land-hero .land-textlink,
+  .land-claims,
+  .land-lanes,
+  .land-dev,
+  .land-open,
+  .land-foot .land-mark,
+  .land-foot-links .land-web,
+  .land-foot-credit {
+    display: none;
+  }
+
+  /* the footer clears the pinned bar (its 52px buttons and 12px edges;
+     the footer already carries the bottom inset) */
+  .land {
+    padding-bottom: 76px;
+  }
+
+  .land-hero .land-cta {
+    position: fixed;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    flex-wrap: nowrap;
+    justify-content: center;
+    margin: 0;
+    padding: 12px max(var(--land-gutter), env(safe-area-inset-right))
+      calc(12px + env(safe-area-inset-bottom)) max(var(--land-gutter), env(safe-area-inset-left));
+    background: color-mix(in srgb, var(--bg) 84%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+    border-top: 1px solid var(--line);
+  }
+
+  /* two equal halves, so Sign in weighs what Try a demo does */
+  .land-hero .land-cta .land-btn {
+    flex: 1;
+    max-width: 260px;
+    padding: 0 16px;
+  }
+
+  .land-foot-in {
+    justify-content: center;
+  }
+}
+
 /* ---------- preview: the staging sheet, framed ---------- */
 
 .land-preview {

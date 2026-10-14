@@ -506,6 +506,12 @@ a {
   backdrop-filter: blur(16px) saturate(140%);
 }
 
+/* a back control in the bar (the auth pages): centred in the row, its
+   chevron still pulled into the gutter */
+.top-bar .nav-back {
+  margin: 0 0 0 -12px;
+}
+
 /* Quiet one-line states, shared by History and Experiment (which never
    loads history.css). */
 .hist-error {
@@ -2015,6 +2021,26 @@ a.commit-btn {
 .search-results .result-sub {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+/* Library's search opens a result's food detail, where the +'s Search
+   stages a log: its rows carry a trailing drill-in chevron (drawn as .chev
+   is) so the two read differently */
+.lib-search .search-results button {
+  position: relative;
+  padding-right: 36px;
+}
+
+.lib-search .search-results button::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 4px);
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(-45deg);
 }
 
 /* the "Previously added" heading over the recent-foods list */
