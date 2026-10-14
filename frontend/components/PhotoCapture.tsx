@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import "@/app/photo.css";
+import SheetHeader from "./SheetHeader";
 
 /** Vision needs nothing sharper than this; a 12 MP phone JPEG is ~4 MB and
  *  the route caps uploads at 12 MB, so downscale client-side, always. */
@@ -196,18 +197,7 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
     <>
       <div className="subsheet-backdrop" onClick={close} />
       <div className="subsheet" role="dialog" aria-label="Log a photo">
-        <div className="sheet-head-row">
-          <span className="subsheet-title">Log a photo</span>
-          <button
-            type="button"
-            className="sheet-close"
-            aria-label="Close"
-            disabled={locked}
-            onClick={close}
-          >
-            ✕
-          </button>
-        </div>
+        <SheetHeader title="Log a photo" onClose={close} canClose={!locked} />
 
         <input
           ref={cameraRef}

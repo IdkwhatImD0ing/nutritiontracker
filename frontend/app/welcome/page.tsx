@@ -36,7 +36,7 @@ const LANES = [
   },
   {
     name: "Photo",
-    body: "Vision names what is on the plate and estimates the amounts. Every estimate is flagged so you can check it before you commit.",
+    body: "Vision names what is on the plate and estimates the amounts. Every estimate is flagged so you can check it before you log it.",
     Icon: () => (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
@@ -86,7 +86,7 @@ const STEPS = [
   },
   {
     k: "You tap once",
-    body: "Nothing is saved until you commit. Fix a portion or swap a food first if you need to.",
+    body: "Nothing is saved until you tap Log. Fix a portion or swap a food first if you need to.",
   },
 ];
 
@@ -95,7 +95,7 @@ const CLAIMS = [
     title: "It gets faster every week",
     body: (
       <>
-        Every commit teaches it the phrases you use, the foods they mean and the portions you
+        Every meal you log teaches it the phrases you use, the foods they mean and the portions you
         take. A meal you have logged before resolves from your own history with{" "}
         <strong>no AI call at all</strong> — one database round-trip. Only a food you have never
         logged touches the network, once.
@@ -110,7 +110,7 @@ const CLAIMS = [
         a food cannot be found, the app says so instead of guessing. For a dish with no label
         anywhere, like a deli platter or a photo of your plate, the amounts are estimated. Every
         estimated row is flagged in the list and in your diary, so you can check it before you
-        commit or fix it after.
+        log it or fix it after.
       </>
     ),
   },
@@ -140,7 +140,7 @@ function Preview() {
     <div className="land-frame">
       <div className="land-sheet">
         <div className="land-sheet-head">
-          <span className="land-sheet-title">Staged</span>
+          <span className="land-sheet-title">Review</span>
           <span className="land-meal">breakfast</span>
         </div>
         <div className="land-said">

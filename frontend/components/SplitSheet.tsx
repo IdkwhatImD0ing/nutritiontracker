@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { SheetClose } from "./SheetHeader";
+import { useDragDismiss } from "./useDragDismiss";
 
 /** The Agent lane's one sheet (§7.1, Bill 2026-09-09: "I just wanna chat with
  *  the stage window open"). Before this, Review opened the staging sheet as a
@@ -43,8 +45,9 @@ type Props = {
   stage: ReactNode | null;
   /** the conversation, rendered `docked` — always present */
   chat: ReactNode;
-  /** the lane's × and its backdrop. The staged list has its own × (it puts
-   *  the rows away and leaves the conversation up); this one closes the lane. */
+  /** the lane's ×, its backdrop and a pull on its header. The staged list
+   *  has its own × (it puts the rows away and leaves the conversation up);
+   *  this one closes the lane. */
   onDismiss: () => void;
 };
 
@@ -63,6 +66,11 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
   useEffect(() => {
     if (staged) setSplit(STOPS.half);
   }, [staged]);
+
+  // A pull on the header closes the lane like its ✕ — and, like that ✕, not
+  // while rows are staged: that would be a discard, which is the tray's ✕'s.
+  // The divider's drag is its own; it sits outside this header.
+  const drag = useDragDismiss(onDismiss, !staged);
 
   const end = () => {
     if (!from.current) return;
@@ -84,7 +92,7 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
         // repaints one declaration rather than re-rendering a stylesheet
         style={{ "--stage-split": `${split * 100}%` } as React.CSSProperties}
       >
-        <div className="sheet-head split-head">
+        <div className="sheet-head split-head" {...drag}>
           <div className="grabber" />
           <div className="sheet-head-row">
             <span className="sheet-title">Agent</span>
@@ -92,16 +100,7 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
                 acts — it puts the rows away (§5 discard, undoable) and this
                 one comes back. Two ×es, one of them inert, would be worse
                 than one. */}
-            {staged ? null : (
-              <button
-                type="button"
-                className="sheet-close"
-                aria-label="Close"
-                onClick={onDismiss}
-              >
-                ✕
-              </button>
-            )}
+            {staged ? null : <SheetClose onClick={onDismiss} />}
           </div>
         </div>
 
@@ -111,7 +110,7 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
           <div
             className="split-divider"
             role="separator"
-            aria-label="Resize the staged list"
+            aria-label="Resize the list"
             aria-orientation="horizontal"
             aria-valuenow={Math.round(split * 100)}
             aria-valuemin={Math.round(STOPS.peek * 100)}

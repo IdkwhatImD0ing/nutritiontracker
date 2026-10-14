@@ -21,7 +21,9 @@ import FoodEditSheet from "./FoodEditSheet";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { readEstimate } from "./PhotoApi";
 import PortionSheet, { type PortionChoice } from "./PortionSheet";
+import { SheetClose } from "./SheetHeader";
 import StagedRow, { type PickOption } from "./StagedRow";
+import { useDragDismiss } from "./useDragDismiss";
 import "@/app/photo.css";
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
@@ -68,8 +70,13 @@ type Props = {
   /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
   onRendered?: () => void;
   /** `pending` = every row the commit did not land: the §3.5 late stragglers
-   *  (still searching), the ones it refused, and the ones that never resolved */
-  onCommitted: (totals: CommitResult, pending: StagedItem[]) => void;
+   *  (still searching), the ones it refused, and the ones that never resolved;
+   *  `landed` = the rest, which Today's confirmation toast sums */
+  onCommitted: (
+    totals: CommitResult,
+    pending: StagedItem[],
+    landed: StagedItem[],
+  ) => void;
   onClose: (snapshot: StagingSnapshot) => void;
   /** Rendered as the upper pane of <SplitSheet> rather than as a sheet of its
    *  own: no backdrop and no rounded shell, so the chat stays visible and
@@ -544,6 +551,8 @@ export default function StagingSheet({
   });
 
   const close = () => onClose(snapshot());
+  // a pull on the head closes exactly as the ✕ does (Today's closeStaging)
+  const drag = useDragDismiss(close);
 
   const visible = items.filter((i) => !removed.has(i.item_index));
   const totalKcal = visible.reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
@@ -591,9 +600,10 @@ export default function StagingSheet({
               ? { ...i, status: "needs_input" as const }
               : i,
           ),
+        payload.filter((i) => i.status === "resolved" && !refused.has(i.item_index)),
       );
     } catch {
-      setError("Commit failed — nothing was saved. Try again.");
+      setError("Couldn't log this — nothing was saved. Try again.");
       setCommitting(false);
     }
   };
@@ -623,14 +633,7 @@ export default function StagingSheet({
     </button>
   );
   const discardBtn = (
-    <button
-      type="button"
-      className="sheet-close"
-      aria-label="Discard these staged items"
-      onClick={close}
-    >
-      ✕
-    </button>
+    <SheetClose label="Discard these items" onClick={close} />
   );
   const mealPicker = mealPickerOpen ? (
     <div className="meal-picker">
@@ -653,13 +656,13 @@ export default function StagingSheet({
       <div
         className={docked ? "split-pane stage-pane" : "sheet"}
         role="dialog"
-        aria-label="Staged items"
+        aria-label="Items to review"
       >
         {docked ? null : (
-          <div className="sheet-head">
+          <div className="sheet-head" {...drag}>
             <div className="grabber" />
             <div className="sheet-head-row">
-              <span className="sheet-title">Staged</span>
+              <span className="sheet-title">Review</span>
               {mealChip}
               {discardBtn}
             </div>
@@ -689,7 +692,7 @@ export default function StagingSheet({
           ))}
           {visible.length === 0 ? (
             <p className="zero-hint" style={{ marginTop: 24 }}>
-              Nothing left to commit.
+              Nothing left to log.
             </p>
           ) : null}
 
@@ -729,9 +732,9 @@ export default function StagingSheet({
               onClick={commit}
             >
               {committing ? (
-                "Committing…"
+                "Logging…"
               ) : (
-                <span className="num">Commit · {fmt.format(totalKcal)} kcal</span>
+                <span className="num">Log · {fmt.format(totalKcal)} kcal</span>
               )}
             </button>
           </div>

@@ -86,6 +86,20 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/* Scroll lock while any sheet is open: overscroll-behavior only stops the
+   rubber band, so a drag on a backdrop or on a sheet's non-scrolling chrome
+   still scrolled the page behind the blur. touch-action goes on the backdrops
+   only; the sheets' own scrolling bodies must keep their gestures. */
+html:has(.sheet-backdrop, .subsheet-backdrop, .agent-backdrop) {
+  overflow: hidden;
+}
+
+.sheet-backdrop,
+.subsheet-backdrop,
+.agent-backdrop {
+  touch-action: none;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -117,10 +131,179 @@ textarea {
   color: inherit;
 }
 
-button {
+/* iOS zooms the page into any focused field under 16px. This floors fields
+   with no size of their own; a class rule outranks it, so keep those ≥ 1rem. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* Controls are chrome, not text: a long press raises no selection loupe or
+   link callout, and a quick second tap doesn't zoom. Only links that act as
+   controls are listed; a link in running text (a citation, the docs) stays
+   selectable. */
+button,
+[role="button"],
+summary,
+.tabbar a,
+.nav-back,
+a.name-btn,
+a.m3-link-btn,
+.m3-card-title a {
+  -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+}
+
+/* Pressed. The tap highlight is off (body), so a control answers a touch
+   itself: a quick dim, iOS's own pressed look, on the control under the
+   finger only — a pressed pill doesn't dim the row it sits in. Opacity, not
+   motion, so reduced motion has nothing to take away. Controls with a press
+   of their own (a scale, a fill step) keep it, and zero specificity lets a
+   control's own opacity win. */
+:where(
+  :is(button, [role="button"], a, summary):active:not(
+      :disabled,
+      .fab,
+      .commit-btn,
+      .commit-pill,
+      .send-btn,
+      .capture button,
+      .voice-big,
+      .stepper button,
+      .add-row,
+      .m3-card-btn,
+      .hcard,
+      .tabbar a
+    ):not(:has(:is(button, [role="button"], a, summary):active))
+) {
+  opacity: 0.6;
+}
+
+/* Hit areas, for a finger only. Chips, pills, ✕s and text buttons are drawn
+   at 14–42px; each takes taps over at least 44 × 44 without changing its
+   look: a transparent ::before grown around it (::after is the portion
+   pill's chevron). A box later in the page paints over an earlier one, so an
+   area grown up into the control above would take that control's taps —
+   --hit-top caps the growth upward where something tappable sits close
+   above, and --hit-h where something sits close below; the rest of the
+   44px goes the other way. */
+@media (pointer: coarse) {
+  .chip,
+  .portion-btn,
+  button.name-btn,
+  .meal-chip,
+  .meal-picker button,
+  .row-remove,
+  .sheet-close,
+  .toast button,
+  .notice-btn,
+  .pending-pill.failed button,
+  .result-card button,
+  .rec-type,
+  .voice-alt,
+  .m3-link-btn,
+  .m3-item-qty button,
+  .m3-seg button,
+  .segmented button,
+  .keys-btn,
+  .account-signout,
+  .diary-actions button,
+  .diary-stepper button,
+  .web-cite a {
+    position: relative;
+  }
+
+  .chip::before,
+  .portion-btn::before,
+  button.name-btn::before,
+  .meal-chip::before,
+  .meal-picker button::before,
+  .row-remove::before,
+  .sheet-close::before,
+  .toast button::before,
+  .notice-btn::before,
+  .pending-pill.failed button::before,
+  .result-card button::before,
+  .rec-type::before,
+  .voice-alt::before,
+  .m3-link-btn::before,
+  .m3-item-qty button::before,
+  .m3-seg button::before,
+  .segmented button::before,
+  .keys-btn::before,
+  .account-signout::before,
+  .diary-actions button::before,
+  .diary-stepper button::before,
+  .scan-torch::before /* already absolute: its own containing block */ {
+    content: "";
+    position: absolute;
+    top: var(--hit-top, min(0px, calc(50% - 22px)));
+    left: min(0px, calc(50% - 22px));
+    width: max(100%, 44px);
+    height: var(--hit-h, max(100%, 44px));
+  }
+
+  /* wrapped chip rows sit 6px apart: half the gap up (past the 1px
+     border), the rest down — 13px, short of a field 14px below */
+  .chip {
+    --hit-top: -4px;
+  }
+
+  /* the food name sits 3px over the portion pill: the pill grows down, the
+     name up into the row's top padding. The citation link under the pill is
+     positioned (above) so it keeps its own taps. */
+  .portion-btn {
+    --hit-top: -1px;
+  }
+
+  button.name-btn {
+    --hit-top: -12px;
+    --hit-h: calc(100% + 13px);
+  }
+
+  /* docked, the meal picker opens flush on the tray's lip: the lip's
+     controls grow down, the picker's up */
+  .stage-lip .sheet-close,
+  .stage-lip .meal-chip {
+    --hit-top: -5px;
+  }
+
+  .sheet-foot .meal-picker button {
+    --hit-top: -14px;
+    --hit-h: calc(100% + 14px);
+  }
+
+  /* m3 cards stack controls 8px apart (a field, a card, then the link) */
+  .m3-link-btn {
+    --hit-top: -4px;
+  }
+
+  .diary-meal-head .m3-link-btn {
+    --hit-top: initial;
+  }
+
+  /* a sub-sheet's last line (Delete mapping, Deactivate) sits 14px under
+     Save, over only the sheet's 18px bottom padding: grown down from -4px it
+     would add a few px of scroll to a sheet that fits */
+  .subsheet > .m3-actions .m3-link-btn {
+    --hit-top: -13px;
+  }
+
+  /* the serving list opens 8px under it, so this one grows up into the
+     edit block's top padding instead; its retry twin sits under it */
+  .diary-change-serving {
+    --hit-top: -15px;
+    --hit-h: calc(100% + 19px);
+  }
+
+  .diary-change-serving + .diary-change-serving {
+    --hit-top: -4px;
+  }
 }
 
 button:focus-visible,
@@ -231,6 +414,62 @@ a {
   font-weight: 500;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+/* A pushed screen's way back (BackBar): chevron + the parent's name in the
+   link colour, on its own row above the title, iOS's large-title layout;
+   beside a 1.6rem date, "‹ History" left no room at 320px. The hit area is
+   the full 44px but reaches into the header's padding, so the row costs
+   less height than it measures. */
+.brand:has(> .nav-back) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 0;
+}
+
+.nav-back {
+  grid-column: 1 / -1;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -10px 0 -4px -12px;
+  padding: 0 10px 0 4px;
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-decoration: none;
+}
+
+.nav-back svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Quiet one-line states, shared by History and Experiment (which never
+   loads history.css). */
+.hist-error {
+  color: var(--amber);
+  font-size: 0.82rem;
+  margin: 0;
+  text-align: center;
+}
+
+.hhint {
+  font-size: 0.78rem;
+  color: var(--faint);
+  text-align: center;
+  margin: 0;
 }
 
 /* ---------- tracker (the one loud element) ---------- */
@@ -396,6 +635,33 @@ a {
   margin: 0;
 }
 
+/* Not read yet (Tracker with no totals): dashes, bare tracks, and a soft
+   sweep along the bar. On the bar, not the card — the card's own animation
+   is the shell's rise. Parked off the bar so reduced motion (one 0.01ms
+   pass) leaves nothing behind. */
+.tracker.is-loading .figures strong {
+  color: var(--faint);
+}
+
+.tracker.is-loading .donut .center-num {
+  fill: var(--faint);
+}
+
+.tracker.is-loading .kcal-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transform: translateX(-100%);
+  animation: sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
 /* ---------- weight card (agent mode, §6.4): the latest weigh-in + 30 days ---------- */
 
 .weight-card {
@@ -551,9 +817,11 @@ a {
   box-shadow: none;
 }
 
-.capture .mic-btn:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
+@media (hover: hover) {
+  .capture .mic-btn:hover {
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
 }
 
 /* §3.4b: the camera sits beside the mic — the same quiet treatment, because
@@ -679,8 +947,10 @@ a {
   cursor: pointer;
 }
 
-.voice-alt:hover {
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .voice-alt:hover {
+    border-color: var(--line-strong);
+  }
 }
 
 .rec-status {
@@ -785,8 +1055,10 @@ a {
   cursor: pointer;
 }
 
-.notice-btn:hover {
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .notice-btn:hover {
+    border-color: var(--line-strong);
+  }
 }
 
 .notice-btn:disabled {
@@ -812,14 +1084,17 @@ a {
   }
 }
 
+/* Bottom sheets sit on the visible screen, not the layout viewport: --kb and
+   --vvh come from KeyboardInset.tsx, which says why iOS needs them. With no
+   keyboard they are 0 and the full height, and the dvh figures rule. */
 .sheet {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--kb, 0px);
   margin: 0 auto;
   max-width: 480px;
-  height: 92dvh; /* opens tall, per §7.1 */
+  height: min(92dvh, calc(var(--vvh, 100dvh) - 8px)); /* opens tall, per §7.1 */
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-bottom: none;
@@ -840,6 +1115,15 @@ a {
     transform: translateY(0);
     opacity: 1;
   }
+}
+
+/* A sheet's head is its drag handle (useDragDismiss): the finger is the
+   sheet's there, never the browser's to pan with or select under. */
+.sheet-head,
+.subsheet-head {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .sheet-head {
@@ -885,14 +1169,44 @@ a {
   flex-shrink: 0;
 }
 
-.sheet-close:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .sheet-close:hover {
+    color: var(--text);
+    border-color: var(--line-strong);
+  }
 }
 
 .sheet-close:disabled {
   color: var(--faint);
   cursor: default;
+}
+
+.sheet-close svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+/* A head's ✕ (SheetClose): 44px to the finger and the same 34px disc to the
+   eye — the transparent border is hit area — laid out at 34px by the negative
+   margin, so no head grows for it. */
+.sheet-head-row .sheet-close {
+  width: 44px;
+  height: 44px;
+  margin: -5px;
+  border: 5px solid transparent;
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+@media (hover: hover) {
+  .sheet-head-row .sheet-close:hover {
+    border-color: transparent;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
 }
 
 .meal-chip {
@@ -965,8 +1279,10 @@ a {
     filter 150ms;
 }
 
-.commit-btn:hover:not(:disabled) {
-  filter: brightness(1.05);
+@media (hover: hover) {
+  .commit-btn:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
 }
 
 .commit-btn:active:not(:disabled) {
@@ -1068,9 +1384,11 @@ a {
     color 120ms;
 }
 
-.row-remove:hover {
-  color: var(--red);
-  background: rgba(242, 107, 107, 0.12);
+@media (hover: hover) {
+  .row-remove:hover {
+    color: var(--red);
+    background: rgba(242, 107, 107, 0.12);
+  }
 }
 
 .row.searching .row-name {
@@ -1172,9 +1490,11 @@ a {
     background 120ms;
 }
 
-.chip:hover {
-  border-color: var(--line-strong);
-  color: var(--text);
+@media (hover: hover) {
+  .chip:hover {
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
 }
 
 .chip:disabled {
@@ -1249,8 +1569,10 @@ a {
   color: var(--faint);
 }
 
-.portion-btn:hover {
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .portion-btn:hover {
+    border-color: var(--line-strong);
+  }
 }
 
 .portion-btn.verify {
@@ -1392,7 +1714,7 @@ a {
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 0 14px;
-  font-size: 0.92rem;
+  font-size: 1rem;
   outline: none;
 }
 
@@ -1440,10 +1762,10 @@ a {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--kb, 0px);
   margin: 0 auto;
   max-width: 480px;
-  max-height: 78dvh;
+  max-height: min(78dvh, calc(var(--vvh, 100dvh) - 8px));
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--surface);
@@ -1451,7 +1773,7 @@ a {
   border-bottom: none;
   border-radius: 24px 24px 0 0;
   z-index: 70;
-  padding: 14px 18px calc(18px + env(safe-area-inset-bottom));
+  padding: 0 18px calc(18px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1459,16 +1781,26 @@ a {
   animation: sheet-up 280ms var(--ease);
 }
 
-/* every sub-sheet gets a grabber, drawn rather than mounted */
-.subsheet::before {
-  content: "";
-  display: block;
-  width: 36px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line-strong);
-  margin: 0 auto -2px;
+/* Every sub-sheet's top (SheetHeader): a mounted grabber — a pull on it
+   closes the sheet — the title and the ✕, pinned while the body scrolls
+   under it. It carries the sheet's top padding and reaches both side edges,
+   so the whole top strip is the handle. The 6px under the row keeps a
+   scrolled body clear of the title and ✕; the negative margin hands it back
+   at rest. No more than 6px, or it would cover a subtitle tucked under the
+   title (the rule below). */
+.subsheet-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   flex-shrink: 0;
+  margin: 0 -18px -6px;
+  padding: 10px 18px 6px;
+  background: var(--surface);
+}
+
+/* a subtitle straight under the head stays with the title */
+.subsheet-head + .subsheet-hint {
+  margin-top: -8px;
 }
 
 .subsheet-title {
@@ -1606,8 +1938,10 @@ a {
   gap: 2px;
 }
 
-.search-results button:hover {
-  border-color: var(--line-strong);
+@media (hover: hover) {
+  .search-results button:hover {
+    border-color: var(--line-strong);
+  }
 }
 
 .search-results button:disabled {
@@ -1635,11 +1969,26 @@ a {
   margin: 2px 2px 0;
 }
 
+/* Find a food (the sub-sheet a staged row opens): the field stays under the
+   head and only the results scroll, so a long list can't carry the search
+   away. The list takes the sheet's bottom padding, so rows still run to the
+   edge, and 4px round its rows, so a focus ring isn't clipped. */
+.subsheet:has(> .search-results) {
+  padding-bottom: 0;
+}
+
+.subsheet > .search-results {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: -4px -4px 0;
+  padding: 4px 4px calc(18px + env(safe-area-inset-bottom));
+}
+
 /* The + sheet's Search lane (owner ruling, 2026-09-06): the whole screen,
    not a 78dvh sub-sheet — a list you scroll with the keyboard up. Same
    .sheet chrome as staging; the body keeps the sub-sheet's column rhythm. */
 .sheet.search-sheet {
-  height: 100dvh;
+  height: var(--vvh, 100dvh);
   border: none;
   border-radius: 0;
 }
@@ -1738,9 +2087,14 @@ a {
 .toast {
   position: fixed;
   left: 50%;
-  transform: translateX(-50%);
+  /* `translate`, not `transform`: the shared rise keyframes animate transform,
+     which would drop the centring while the toast enters, then snap it left. */
+  translate: -50% 0;
   bottom: calc(100px + env(safe-area-inset-bottom));
   z-index: 80;
+  /* Fixed at left 50%, shrink-to-fit only had half the screen, so a line
+     like "Logged 960 kcal to Lunch" wrapped in the pill. */
+  width: max-content;
   max-width: calc(100% - 32px);
   background: #26262d;
   border: 1px solid var(--line-strong);
@@ -1763,6 +2117,18 @@ a {
   font-weight: 700;
   cursor: pointer;
   padding: 6px 12px;
+}
+
+/* a toast with no action (the commit confirmation) keeps even side padding */
+.toast > span:only-child {
+  padding-right: 8px;
+}
+
+/* The commit confirmation belongs to the page: a sheet opened straight after
+   it (the + sheet) covers it, instead of it sitting on that sheet's rows and
+   eating their taps. Still above the Agent split (35) it is committed from. */
+.toast.under-sheets {
+  z-index: 36;
 }
 
 .pending-wrap {
@@ -1948,6 +2314,12 @@ a {
 }
 
 @media (min-width: 900px) {
+  /* the sheet scroll lock hides a desktop scrollbar; keep its gutter so the
+     page doesn't shift sideways each time a sheet opens */
+  html {
+    scrollbar-gutter: stable;
+  }
+
   .shell {
     max-width: 760px;
     padding: calc(40px + env(safe-area-inset-top)) 40px 64px;
@@ -2008,11 +2380,15 @@ a {
   .subsheet {
     width: min(520px, calc(100vw - 48px));
     max-height: 84dvh;
-    padding: 22px;
+    padding: 0 22px 22px;
   }
 
-  .grabber,
-  .subsheet::before {
+  .subsheet-head {
+    margin: 0 -22px -6px;
+    padding: 22px 22px 6px;
+  }
+
+  .grabber {
     display: none;
   }
 
@@ -2073,7 +2449,6 @@ a {
   .shell.today > .pending-wrap,
   .shell.today > .diary,
   .shell.today > .diary-empty,
-  .shell.day > .hist-error,
   .shell.day > .diary,
   .shell.day > .diary-empty {
     grid-column: 2;
@@ -2258,10 +2633,16 @@ a {
   transition: background 140ms var(--ease), width 140ms var(--ease);
 }
 
-.split-divider:hover .split-grip,
 .split-divider:focus-visible .split-grip {
   background: var(--accent);
   width: 48px;
+}
+
+@media (hover: hover) {
+  .split-divider:hover .split-grip {
+    background: var(--accent);
+    width: 48px;
+  }
 }
 
 .split-divider:focus-visible {
@@ -2339,9 +2720,14 @@ a {
   transition: background 140ms var(--ease);
 }
 
-.split-divider:hover .split-grip,
 .split-divider:focus-visible .split-grip {
   background: var(--accent);
+}
+
+@media (hover: hover) {
+  .split-divider:hover .split-grip {
+    background: var(--accent);
+  }
 }
 
 .split-divider:focus-visible {
@@ -2457,15 +2843,6 @@ a {
   border-width: 2px;
 }
 
-.tool-line .tool-name {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.72rem;
-  color: var(--faint);
-  background: var(--surface-2);
-  border-radius: 6px;
-  padding: 1px 6px;
-}
-
 .tool-line .tool-text {
   color: var(--text);
 }
@@ -2474,14 +2851,44 @@ a {
   color: var(--muted);
 }
 
+/* The disclosure is a quiet row with a chevron, not the UA triangle. Its hit
+   area is the full 44px but reaches into the line's gaps (closed only — open,
+   the raw blocks sit below it), so a tool line costs less than it measures. */
 .tool-line details {
-  font-size: 0.74rem;
+  margin: -10px 0 -14px;
+}
+
+.tool-line details[open] {
+  margin-bottom: 0;
 }
 
 .tool-line summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  list-style: none;
   cursor: pointer;
-  color: var(--faint);
-  user-select: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tool-line summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-line summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 150ms var(--ease);
+}
+
+.tool-line details[open] summary::after {
+  transform: rotate(45deg);
 }
 
 .tool-line pre {
