@@ -14,6 +14,7 @@ import {
 import { Close } from "./icons";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { readEstimate } from "./PhotoApi";
+import SheetPresence from "./useSheetPresence";
 
 const POLL_FIRST_MS = 250; // reopen feels immediate (BACKLOG 31 retry-on-open)
 const POLL_MS = 2_000;
@@ -236,15 +237,17 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
           </button>
         </div>
       ))}
-      {finding ? (
-        <ManualSearchSheet
-          phrase={finding.phrase}
-          busy={findBusy}
-          error={findError}
-          onSelect={findFood}
-          onClose={() => setFinding(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {finding ? (
+          <ManualSearchSheet
+            phrase={finding.phrase}
+            busy={findBusy}
+            error={findError}
+            onSelect={findFood}
+            onClose={() => setFinding(null)}
+          />
+        ) : null}
+      </SheetPresence>
     </div>
   );
 }
