@@ -2447,11 +2447,13 @@ a.commit-btn {
    A phone on its side (~390px tall). iOS home-screen apps rotate whatever
    the manifest's portrait lock says, and the sticky header plus the tab bar
    left ~200px of content. A cheap guard, not a landscape design (owner's
-   choice, 2026-10-13): the header scrolls away with the page (relative, so
-   its ::after hairline stays put), and sheets take the full height. The
+   choice, 2026-10-13): the header — .brand, or the wizard's and auth's
+   .top-bar — scrolls away with the page (relative, so .brand's ::after
+   hairline stays put), and sheets take the full height. The
    tab bar's half is in m3.css. From 900px the rail and modals apply. */
 @media (orientation: landscape) and (max-height: 500px) and (max-width: 899px) {
-  .brand {
+  .brand,
+  .top-bar {
     position: relative;
   }
 
