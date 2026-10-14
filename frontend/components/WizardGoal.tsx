@@ -282,57 +282,95 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               ))}
             </div>
 
+            {/* Each number carries its unit inside the box. A unit, not an
+                example: a grey "180" in an empty field reads as data already
+                filled in. The visible unit is aria-hidden; the label or
+                aria-label says it for a screen reader. */}
             <div className="m3-grid-2">
               <label className="m3-field">
                 Age
-                <input
-                  inputMode="numeric"
-                  value={age}
-                  onChange={(e) => setAge(e.target.value)}
-                  className="num"
-                />
+                <span className="m3-unit-wrap">
+                  <input
+                    inputMode="numeric"
+                    enterKeyHint="next"
+                    value={age}
+                    onChange={(e) => setAge(e.target.value)}
+                    className="num"
+                  />
+                  <span className="m3-unit" aria-hidden="true">
+                    yrs
+                  </span>
+                </span>
               </label>
               <label className="m3-field">
-                Weight ({wUnit})
-                <input
-                  inputMode="decimal"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  className="num"
-                />
+                Weight
+                <span className="m3-unit-wrap">
+                  <input
+                    inputMode="decimal"
+                    enterKeyHint="next"
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    aria-label={`Weight (${wUnit})`}
+                    className="num"
+                  />
+                  <span className="m3-unit" aria-hidden="true">
+                    {wUnit}
+                  </span>
+                </span>
               </label>
             </div>
 
             {units === "metric" ? (
               <label className="m3-field">
-                Height (cm)
-                <input
-                  inputMode="decimal"
-                  value={heightCm}
-                  onChange={(e) => setHeightCm(e.target.value)}
-                  className="num"
-                />
+                Height
+                <span className="m3-unit-wrap">
+                  <input
+                    inputMode="decimal"
+                    enterKeyHint="next"
+                    value={heightCm}
+                    onChange={(e) => setHeightCm(e.target.value)}
+                    aria-label="Height (cm)"
+                    className="num"
+                  />
+                  <span className="m3-unit" aria-hidden="true">
+                    cm
+                  </span>
+                </span>
               </label>
             ) : (
-              <div className="m3-grid-2">
-                <label className="m3-field">
-                  Height (ft)
-                  <input
-                    inputMode="numeric"
-                    value={feet}
-                    onChange={(e) => setFeet(e.target.value)}
-                    className="num"
-                  />
-                </label>
-                <label className="m3-field">
-                  (in)
-                  <input
-                    inputMode="numeric"
-                    value={inches}
-                    onChange={(e) => setInches(e.target.value)}
-                    className="num"
-                  />
-                </label>
+              // one Height caption over its two boxes (the inches box used to
+              // be a field of its own labelled "(in)"); a group, so a screen
+              // reader hears "Height" before "feet" and "inches"
+              <div className="m3-field" role="group" aria-labelledby="wizard-height">
+                <span id="wizard-height">Height</span>
+                <div className="m3-grid-2">
+                  <span className="m3-unit-wrap">
+                    <input
+                      inputMode="numeric"
+                      enterKeyHint="next"
+                      value={feet}
+                      onChange={(e) => setFeet(e.target.value)}
+                      aria-label="Height, feet"
+                      className="num"
+                    />
+                    <span className="m3-unit" aria-hidden="true">
+                      ft
+                    </span>
+                  </span>
+                  <span className="m3-unit-wrap">
+                    <input
+                      inputMode="numeric"
+                      enterKeyHint="next"
+                      value={inches}
+                      onChange={(e) => setInches(e.target.value)}
+                      aria-label="Height, inches"
+                      className="num"
+                    />
+                    <span className="m3-unit" aria-hidden="true">
+                      in
+                    </span>
+                  </span>
+                </div>
               </div>
             )}
 
@@ -377,13 +415,20 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
             </p>
 
             <label className="m3-field">
-              Target weight ({wUnit})
-              <input
-                inputMode="decimal"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                className="num"
-              />
+              Target weight
+              <span className="m3-unit-wrap">
+                <input
+                  inputMode="decimal"
+                  enterKeyHint="done"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  aria-label={`Target weight (${wUnit})`}
+                  className="num"
+                />
+                <span className="m3-unit" aria-hidden="true">
+                  {wUnit}
+                </span>
+              </span>
             </label>
 
             <label className="m3-field">
@@ -467,20 +512,26 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
             <div className="m3-grid-4">
               {(
                 [
-                  ["kcal", "Calories"],
-                  ["protein_g", "Protein"],
-                  ["carb_g", "Carbs"],
-                  ["fat_g", "Fat"],
-                ] as [keyof Targets, string][]
-              ).map(([k, label]) => (
+                  ["kcal", "Calories", "kcal"],
+                  ["protein_g", "Protein", "g"],
+                  ["carb_g", "Carbs", "g"],
+                  ["fat_g", "Fat", "g"],
+                ] as [keyof Targets, string, string][]
+              ).map(([k, label, unit]) => (
                 <label className="m3-field" key={k}>
                   {label}
-                  <input
-                    inputMode="decimal"
-                    value={edit[k]}
-                    onChange={(e) => setEdit((t) => ({ ...t, [k]: e.target.value }))}
-                    className="num"
-                  />
+                  <span className="m3-unit-wrap">
+                    <input
+                      inputMode="decimal"
+                      value={edit[k]}
+                      onChange={(e) => setEdit((t) => ({ ...t, [k]: e.target.value }))}
+                      aria-label={`${label} target (${unit})`}
+                      className="num"
+                    />
+                    <span className="m3-unit" aria-hidden="true">
+                      {unit}
+                    </span>
+                  </span>
                 </label>
               ))}
             </div>

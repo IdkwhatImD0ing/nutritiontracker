@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   getSettings,
   putSettings,
@@ -48,6 +48,48 @@ function timezones(): string[] {
   }
 }
 
+/** "Pacific Time" for America/Los_Angeles; null where the browser has none. */
+function zoneGeneric(zone: string): string | null {
+  try {
+    return (
+      new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longGeneric" })
+        .formatToParts(new Date())
+        .find((p) => p.type === "timeZoneName")?.value ?? null
+    );
+  } catch {
+    return null; // not a zone this browser knows
+  }
+}
+
+/** "Los Angeles — Pacific Time"; a zone inside a sub-region reads city
+ *  first ("Knox, Indiana — Central Time"). A zone with no region ("UTC",
+ *  the server's default) is its own name. The id itself is the value. */
+function zoneLabel(zone: string): string {
+  if (!zone.includes("/")) return zone;
+  const place = zone.split("/").slice(1).reverse().join(", ").replace(/_/g, " ");
+  const generic = zoneGeneric(zone);
+  return generic ? `${place} — ${generic}` : place;
+}
+
+type ZoneOption = { id: string; label: string };
+
+/** Every zone the browser knows, grouped by IANA region (America, Europe…)
+ *  for <optgroup>s and sorted by label within each. Zones without a region
+ *  ("UTC") go under Other. */
+function zoneGroups(): [string, ZoneOption[]][] {
+  const groups = new Map<string, ZoneOption[]>();
+  for (const id of timezones()) {
+    const region = id.includes("/") ? id.slice(0, id.indexOf("/")) : "Other";
+    const list = groups.get(region) ?? [];
+    list.push({ id, label: zoneLabel(id) });
+    groups.set(region, list);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.label.localeCompare(b.label));
+  }
+  return [...groups];
+}
+
 /** "5′11″ · 180 lb · 34 · male" in the units the wizard was run in. */
 function describeBody(b: Body): string | null {
   if (!b.weight_kg || !b.height_cm) return null;
@@ -77,6 +119,11 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [wizard, setWizard] = useState(false);
+  // about 400 labels, each from its own formatter: built once, not per render
+  const zones = useMemo(() => {
+    const groups = zoneGroups();
+    return { groups, ids: new Set(groups.flatMap(([, l]) => l.map((z) => z.id))) };
+  }, []);
 
   const load = (s: SettingsT) => {
     setForm(s);
@@ -167,6 +214,7 @@ export default function Settings() {
   }
 
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const deviceZone = deviceTz ? zoneGeneric(deviceTz) : null;
   const body = form ? describeBody(form.body) : null;
 
   return (
@@ -204,16 +252,21 @@ export default function Settings() {
                 {TARGET_FIELDS.map((f) => (
                   <label className="m3-field" key={f.key}>
                     {f.label}
-                    <input
-                      inputMode="decimal"
-                      value={targets[f.key]}
-                      onChange={(e) =>
-                        setTargets((t) => ({ ...t, [f.key]: e.target.value }))
-                      }
-                      placeholder="—"
-                      aria-label={`${f.label} target (${f.unit})`}
-                      className="num"
-                    />
+                    <span className="m3-unit-wrap">
+                      <input
+                        inputMode="decimal"
+                        value={targets[f.key]}
+                        onChange={(e) =>
+                          setTargets((t) => ({ ...t, [f.key]: e.target.value }))
+                        }
+                        placeholder="—"
+                        aria-label={`${f.label} target (${f.unit})`}
+                        className="num"
+                      />
+                      <span className="m3-unit" aria-hidden="true">
+                        {f.unit}
+                      </span>
+                    </span>
                   </label>
                 ))}
               </div>
@@ -280,38 +333,45 @@ export default function Settings() {
             </div>
           </section>
 
-          <section className="m3-section" aria-label="Timezone">
-            <h2>Timezone</h2>
-            <label className="m3-field">
-              IANA name
-              <input
-                list="usual-tz-list"
+          {/* A picker, not a typed IANA id: a typo was a 422. The stored zone
+              is offered first when this browser's list lacks it ("UTC", an
+              old alias), so the select can still hold it. No "automatic"
+              mode — the server keeps one zone and nothing syncs it. */}
+          <section className="m3-section" aria-label="Time zone">
+            <h2>Time zone</h2>
+            <div className="m3-field">
+              <select
                 value={form.timezone}
                 onChange={(e) =>
                   setForm((f) => (f ? { ...f, timezone: e.target.value } : f))
                 }
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-            <datalist id="usual-tz-list">
-              {timezones().map((z) => (
-                <option value={z} key={z} />
-              ))}
-            </datalist>
+                aria-label="Time zone"
+              >
+                {zones.ids.has(form.timezone) ? null : (
+                  <option value={form.timezone}>{zoneLabel(form.timezone)}</option>
+                )}
+                {zones.groups.map(([region, list]) => (
+                  <optgroup label={region} key={region}>
+                    {list.map((z) => (
+                      <option value={z.id} key={z.id}>
+                        {z.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
             {deviceTz && deviceTz !== form.timezone ? (
-              <p className="m3-note">
-                This device says {deviceTz}.{" "}
-                <button
-                  type="button"
-                  className="m3-link-btn"
-                  onClick={() =>
-                    setForm((f) => (f ? { ...f, timezone: deviceTz } : f))
-                  }
-                >
-                  Use it
-                </button>
-              </p>
+              <button
+                type="button"
+                className="m3-ghost-btn"
+                onClick={() =>
+                  setForm((f) => (f ? { ...f, timezone: deviceTz } : f))
+                }
+              >
+                Use this phone&rsquo;s time zone
+                {deviceZone ? ` (${deviceZone})` : ""}
+              </button>
             ) : null}
           </section>
 

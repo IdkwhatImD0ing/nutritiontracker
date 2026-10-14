@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import type { DiaryEntry } from "./DiaryApi";
 import { getFood } from "./LibraryApi";
+import { qtyInput, rescaleQty, stepQty } from "./portion";
 import "@/app/photo.css"; // .badge.estimate
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -104,7 +105,7 @@ export default function DiaryEntryRow({
     entry.serving.description
   }`;
 
-  const draft = qtyText ?? fmt2.format(entry.qty);
+  const draft = qtyText ?? qtyInput(entry.qty);
   const draftNum = Number(draft);
   const draftValid = Number.isFinite(draftNum) && draftNum > 0;
   // Only list servings when there is something to pick between; an empty list
@@ -114,6 +115,14 @@ export default function DiaryEntryRow({
   const chosenDesc =
     choices?.find((s) => s.serving_id === chosenId)?.description ??
     entry.serving.description;
+  // A serving's weight: off the fetched list, or, for the entry's own
+  // serving, off the entry (its grams are the serving's × qty).
+  const gramsOf = (id: string) =>
+    servings?.find((s) => s.serving_id === id)?.grams ??
+    (id === entry.serving.id && entry.grams != null && entry.qty > 0
+      ? entry.grams / entry.qty
+      : null);
+  const chosenGrams = gramsOf(chosenId);
   // The §4 snapshot invariant: the server refuses a serving whose macros are
   // partial. The same macros it checks are on this payload, so an unpickable
   // serving is shown disabled rather than round-tripped into a 422.
@@ -123,13 +132,23 @@ export default function DiaryEntryRow({
   const dirty =
     draftValid && (Math.abs(draftNum - entry.qty) > 1e-9 || servingMoved);
 
-  const step = (delta: number) => {
-    const next = Math.max(0.25, Math.round((draftNum + delta) * 100) / 100);
-    setQtyText(fmt2.format(next));
+  const step = (dir: 1 | -1) =>
+    setQtyText(qtyInput(stepQty(draftNum, dir, chosenGrams, 1)));
+
+  // Another serving counts the same food: the draft is converted, not kept
+  // ("0.5 × 1 cup" picked as "g" is 74 g, not 0.5 g). The draft, not the
+  // entry's qty, so a number already typed carries over.
+  const pickServing = (sv: StagedServing) => {
+    if (sv.serving_id === chosenId) return;
+    const next = draftValid
+      ? rescaleQty(draftNum, chosenGrams, gramsOf(sv.serving_id))
+      : null;
+    if (next != null) setQtyText(qtyInput(next));
+    setServingId(sv.serving_id);
   };
 
   return (
-    <div className="row diary-row">
+    <div className="row diary-row" data-entry-id={entry.id}>
       {/* One target (owner, 2026-10-13): a tap anywhere on the row expands
           it, and the chevron says so. The name used to be a link into food
           detail inside this toggle, and a long name covered most of the
@@ -266,7 +285,7 @@ export default function DiaryEntryRow({
                             ? undefined
                             : "This serving is missing macros, so it can't be logged."
                         }
-                        onClick={() => setServingId(sv.serving_id)}
+                        onClick={() => pickServing(sv)}
                       >
                         {sv.description}
                         {ok ? "" : " · no macros"}

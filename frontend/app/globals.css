@@ -255,7 +255,8 @@ a.m3-link-btn,
   .row-undo,
   .auth-alt a,
   .auth-card button.auth-linkish,
-  .web-cite a {
+  .web-cite a,
+  .weight-log {
     position: relative;
   }
 
@@ -283,6 +284,7 @@ a.m3-link-btn,
   .row-undo::before,
   .auth-alt a::before,
   .auth-card button.auth-linkish::before,
+  .weight-log::before,
   .web-cite a::before /* clipped to the line's padding (.web-cite) */,
   .scan-torch::before /* already absolute: its own containing block */ {
     content: "";
@@ -762,6 +764,21 @@ a {
   font-size: 0.8rem;
   color: var(--faint);
   margin: 0;
+}
+
+/* the empty card's way in: the Agent lane, the one place a weigh-in is
+   logged (§6.4) */
+.weight-log {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
 }
 
 .weight-spark {
@@ -1268,6 +1285,26 @@ a {
   text-transform: capitalize;
 }
 
+/* It opens the meal picker, and says so: .chev's two-border chevron in the
+   chip's colour, down while closed and up while the picker is open. (Its
+   ::before is the touch area.) */
+.meal-chip::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  vertical-align: middle;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 150ms var(--ease);
+}
+
+.meal-chip[aria-expanded="true"]::after {
+  transform: translateY(1px) rotate(-135deg);
+}
+
 .meal-picker {
   display: flex;
   gap: 6px;
@@ -1635,6 +1672,11 @@ a {
   align-self: center;
 }
 
+/* "Or:" before a row's other matches: a label, not a question waiting */
+.state-q.neutral {
+  color: var(--muted);
+}
+
 /* The portion is a tap target (§7.1 portion sheet) — and has to look like
    one. As an underlined 0.8rem label it read as a stated fact, not a
    control: a scanned or searched food defaults to qty 1, which renders as a
@@ -1957,6 +1999,14 @@ a {
   border-color: var(--accent-line);
 }
 
+/* what the portion sheet's number counts: "× 1 slice (32 g) = 64 g" */
+.portion-caption {
+  margin: -6px 0 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .serving-list {
   display: flex;
   flex-direction: column;
@@ -1978,6 +2028,17 @@ a {
   border-color: var(--accent-line);
   color: var(--text);
   background: var(--accent-soft);
+}
+
+/* ticked as well as tinted; the alt text keeps the glyph out of a screen
+   reader where supported (the first line is the fallback) */
+.serving-list button.active::after {
+  content: "✓";
+  content: "✓" / "";
+  float: right;
+  margin-left: 10px;
+  color: var(--accent);
+  font-weight: 700;
 }
 
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   searchFoods,
@@ -16,7 +16,9 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
+import { rescaleQty, stepQty } from "./portion";
 import SheetHeader from "./SheetHeader";
+import { useAutoGrow } from "./useAutoGrow";
 
 type Props = {
   /** null → §8.4 create path 3, "build one in Library" (POST /api/meals) */
@@ -37,6 +39,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const phrasesRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(phrasesRef, phrases);
 
   // create mode only: the food search that fills the item list. Servings are
   // kept per food so the picked portion can be changed without another fetch.
@@ -57,6 +61,13 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const removeItem = (i: number) =>
     setItems((prev) => prev.filter((_, j) => j !== i));
 
+  /** one serving's weight for an item, when its servings were fetched */
+  const gramsOf = (food_id: string, serving_id: string) =>
+    (servingsByFood[food_id] ?? []).find((x) => x.serving_id === serving_id)
+      ?.grams;
+
+  // Another serving counts the same food: the qty is converted with it when
+  // both weights are known ("0.5 × 1 cup" becomes 74 g, not 0.5 g).
   const setServing = (i: number, serving_id: string) =>
     setItems((prev) =>
       prev.map((it, j) => {
@@ -64,7 +75,15 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
         const s = (servingsByFood[it.food_id] ?? []).find(
           (x) => x.serving_id === serving_id,
         );
-        return { ...it, serving_id, serving_description: s?.description ?? serving_id };
+        const qty =
+          rescaleQty(it.qty, gramsOf(it.food_id, it.serving_id), s?.grams) ??
+          it.qty;
+        return {
+          ...it,
+          serving_id,
+          qty,
+          serving_description: s?.description ?? serving_id,
+        };
       }),
     );
 
@@ -134,7 +153,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
     const patch: MealPatch = {
       name: name.trim(),
       trigger_phrases: phrases
-        .split(",")
+        .split(/[,\n]/)
         .map((s) => s.trim())
         .filter(Boolean),
       items: items.map(({ food_id, serving_id, qty }) => ({
@@ -183,22 +202,30 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
+            placeholder={meal ? undefined : "e.g. Protein snack"}
             autoComplete="off"
           />
         </label>
 
         <label className="m3-field">
           Trigger phrases
-          <input
+          {/* a long list wraps and grows instead of scrolling sideways in
+              one line (useAutoGrow). The example is for a new meal only: in
+              an edit it read as this meal's own phrases. */}
+          <textarea
+            ref={phrasesRef}
+            className="m3-phrases"
+            rows={2}
             value={phrases}
             onChange={(e) => setPhrases(e.target.value)}
-            placeholder="usual breakfast, my breakfast"
+            placeholder={meal ? undefined : "e.g. usual breakfast, my breakfast"}
             autoComplete="off"
           />
         </label>
         <p className="m3-note">
-          Comma-separated. Saying any of these stages the items below exactly as
-          stored — no search, no AI.
+          Separate phrases with commas or new lines; leave empty to use the
+          name. Saying one stages the items below exactly as stored — no
+          search, no AI.
         </p>
 
         <div>
@@ -232,7 +259,12 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 <button
                   type="button"
                   aria-label="Less"
-                  onClick={() => setQty(i, it.qty - 0.5)}
+                  onClick={() =>
+                    setQty(
+                      i,
+                      stepQty(it.qty, -1, gramsOf(it.food_id, it.serving_id), 0.5),
+                    )
+                  }
                 >
                   −
                 </button>
@@ -240,7 +272,12 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 <button
                   type="button"
                   aria-label="More"
-                  onClick={() => setQty(i, it.qty + 0.5)}
+                  onClick={() =>
+                    setQty(
+                      i,
+                      stepQty(it.qty, 1, gramsOf(it.food_id, it.serving_id), 0.5),
+                    )
+                  }
                 >
                   +
                 </button>

@@ -78,6 +78,9 @@ export default function Today() {
     log: LogResponse;
     restore: StagingSnapshot | null;
   } | null>(null);
+  // Bumped by a chat card's Review on the log already in the tray: the
+  // split sheet grows the tray a stop on each change (expandSignal).
+  const [reviewTick, setReviewTick] = useState(0);
   // §3.5 stragglers, one entry per committed log. A single slot meant the
   // second of two commits inside the tier-3 window overwrote the first, and
   // remounting <PendingItems> under the new key cancelled the first log's
@@ -1158,7 +1161,7 @@ export default function Today() {
         <Tracker totals={totals} />
       )}
 
-      <WeightCard refreshKey={weightsKey} />
+      <WeightCard refreshKey={weightsKey} onLog={() => pickLane("agent")} />
 
       {pending.map((p) => (
         <PendingItems
@@ -1209,6 +1212,7 @@ export default function Today() {
       {lane === "agent" ? (
         <SplitSheet
           stage={stageEl}
+          expandSignal={reviewTick}
           // Escape reaches every window listener: while a sub-sheet is stacked
           // above the split it is theirs, and while rows are staged the staged
           // list's own × is what acts (SplitSheet hides this one then).
@@ -1239,7 +1243,12 @@ export default function Today() {
                   undoDiscard();
                   return;
                 }
-                if (staging?.log.log_id === log.log_id) return; // already up
+                // Already up: Review still visibly opens it — the tray
+                // grows a stop, so a tap at peek is never a no-op.
+                if (staging?.log.log_id === log.log_id) {
+                  setReviewTick((n) => n + 1);
+                  return;
+                }
                 setSavedNote(null);
                 setStaging({ log, restore: null });
               }}

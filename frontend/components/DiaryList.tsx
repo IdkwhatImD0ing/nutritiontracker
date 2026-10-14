@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ApiError, type DayTotals, type Meal } from "@/lib/api";
 import "@/app/history/diary.css";
 import {
@@ -12,10 +12,18 @@ import {
 import DiaryEntryRow from "./DiaryEntryRow";
 import { createMeal, type SavedMeal } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
+import { useAutoGrow } from "./useAutoGrow";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const MEAL_ORDER: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
+
+/** Where a diary row's top sits on screen now (undefined: not rendered). */
+function rowTop(root: HTMLElement | null, id: string): number | undefined {
+  return root
+    ?.querySelector(`[data-entry-id="${CSS.escape(id)}"]`)
+    ?.getBoundingClientRect().top;
+}
 
 type Props = {
   meals: DiaryMeals;
@@ -45,6 +53,8 @@ function SaveMealSheet({
   const [phrases, setPhrases] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const phrasesRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(phrasesRef, phrases);
 
   const save = async () => {
     setBusy(true);
@@ -54,7 +64,7 @@ function SaveMealSheet({
         await createMeal({
           name: name.trim(),
           trigger_phrases: phrases
-            .split(",")
+            .split(/[,\n]/)
             .map((s) => s.trim())
             .filter(Boolean),
           items: entries.map((e) => ({
@@ -91,15 +101,21 @@ function SaveMealSheet({
 
         <label className="m3-field">
           Trigger phrases
-          <input
+          {/* a long list wraps and grows instead of scrolling sideways in
+              one line (useAutoGrow) */}
+          <textarea
+            ref={phrasesRef}
+            className="m3-phrases"
+            rows={2}
             value={phrases}
             onChange={(e) => setPhrases(e.target.value)}
-            placeholder="usual breakfast, my breakfast"
+            placeholder={`e.g. usual ${meal}, my ${meal}`}
             autoComplete="off"
           />
         </label>
         <p className="m3-note">
-          Comma-separated; leave empty to use the name. Saying one stages these{" "}
+          Separate phrases with commas or new lines; leave empty to use the
+          name. Saying one stages these{" "}
           {entries.length} item{entries.length === 1 ? "" : "s"} exactly as they
           are now — no search, no AI.
         </p>
@@ -149,6 +165,22 @@ export default function DiaryList({
   } | null>(null);
   const [savedMeal, setSavedMeal] = useState<string | null>(null);
 
+  // The tapped row stays under the finger. One row is open at a time, so
+  // opening one closes the last; when that one sat above, its ~270px editor
+  // collapsing threw the tapped row up the screen. iOS Safari has no CSS
+  // scroll anchoring, so the row's top is read before the toggle and the
+  // window (the scroller on Today and the day view) is moved by however far
+  // it went.
+  const sectionRef = useRef<HTMLElement>(null);
+  const anchor = useRef<{ id: string; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    anchor.current = null;
+    if (!a) return;
+    const top = rowTop(sectionRef.current, a.id);
+    if (top != null && top !== a.top) window.scrollBy(0, top - a.top);
+  }, [expanded]);
+
   const groups = MEAL_ORDER.map((meal) => ({
     meal,
     entries: meals[meal] ?? [],
@@ -186,7 +218,7 @@ export default function DiaryList({
   };
 
   return (
-    <section className="diary" aria-label="Diary">
+    <section className="diary" aria-label="Diary" ref={sectionRef}>
       {error ? <p className="capture-error">{error}</p> : null}
       {groups.map((g) => (
         <div className="diary-meal" key={g.meal}>
@@ -209,7 +241,11 @@ export default function DiaryList({
               entry={e}
               expanded={expanded === e.id}
               busy={busy === e.id}
-              onToggle={() => setExpanded((cur) => (cur === e.id ? null : e.id))}
+              onToggle={() => {
+                const top = rowTop(sectionRef.current, e.id);
+                anchor.current = top != null ? { id: e.id, top } : null;
+                setExpanded((cur) => (cur === e.id ? null : e.id));
+              }}
               onSave={(patch) =>
                 run(e.id, async () => {
                   const res = await patchEntry(e.id, patch);

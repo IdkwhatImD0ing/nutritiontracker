@@ -257,6 +257,8 @@ export default function StagedRow({
       {item.status === "resolved" &&
       (item.alternates?.length || searchInstead) ? (
         <div className="chips">
+          {/* says what the chips are: other matches, one tap to switch */}
+          <span className="state-q neutral">Or:</span>
           {(item.alternates ?? []).map((alt) => (
             <button
               key={alt.label}

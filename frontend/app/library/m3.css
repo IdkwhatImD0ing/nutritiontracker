@@ -467,6 +467,14 @@ body:has(.tabbar) .shell {
   line-height: 1.45;
 }
 
+/* a saved meal's trigger phrases: two lines that grow with the list
+   (useAutoGrow), not the notes field's 120px box */
+.m3-field textarea.m3-phrases {
+  min-height: 0;
+  resize: none;
+  overflow: hidden;
+}
+
 .m3-field select option,
 .m3-window select option {
   background: var(--surface-2);
@@ -488,6 +496,51 @@ body:has(.tabbar) .shell {
   padding-left: 8px;
   padding-right: 8px;
   text-align: center;
+}
+
+/* A number field with its unit inside the box ("180 lb"), so the unit is
+   read with the number and the caps label stays one word. The unit lets
+   taps through to the field; it is aria-hidden, and the label or the
+   field's aria-label carries it. */
+.m3-unit-wrap {
+  position: relative;
+  display: block;
+}
+
+.m3-unit-wrap input {
+  padding-right: 40px;
+}
+
+.m3-unit {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* Four across, a box is under 60px wide on a 320px phone: no room for
+   "2400" and "kcal" side by side, so the unit sits under the number, still
+   in the box. The value stays raw while it is edited (no "2,400"). */
+.m3-grid-4 .m3-unit-wrap input {
+  padding-right: 8px;
+  padding-bottom: 22px;
+}
+
+.m3-grid-4 .m3-unit {
+  top: auto;
+  bottom: 9px;
+  left: 0;
+  right: 0;
+  transform: none;
+  text-align: center;
+  font-size: 0.7rem;
 }
 
 /* meal window row (§7.2 clock windows): the name on its own line, start and
@@ -726,7 +779,8 @@ body:has(.tabbar) .shell {
   gap: 10px;
 }
 
-.wizard-ghost {
+.wizard-ghost,
+.m3-ghost-btn {
   background: none;
   border: 1px solid var(--line-strong);
   border-radius: 16px;
@@ -738,9 +792,16 @@ body:has(.tabbar) .shell {
 }
 
 @media (hover: hover) {
-  .wizard-ghost:hover {
+  .wizard-ghost:hover,
+  .m3-ghost-btn:hover {
     color: var(--text);
   }
+}
+
+/* the wizard's sits in a short footer; this one carries a sentence that can
+   wrap at phone width (Settings › Time zone) */
+.m3-ghost-btn {
+  padding: 8px 16px;
 }
 
 /* ---------- food detail (§7.1 "everything the database returned") ---------- */

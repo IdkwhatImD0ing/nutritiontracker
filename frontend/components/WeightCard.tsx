@@ -46,8 +46,17 @@ type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
 /** §6.4 weight tracking: the latest weigh-in, the change since the one
  *  before it, and a 30-day sparkline. Reads GET /api/weights; `refreshKey`
  *  re-reads it (Today bumps it when an agent log recorded a weigh-in). A
- *  read that fails renders nothing — never a stale or invented number. */
-export default function WeightCard({ refreshKey }: { refreshKey: number }) {
+ *  read that fails renders nothing — never a stale or invented number.
+ *  `onLog` is the empty card's way in: Today opens the Agent lane, the one
+ *  place a weigh-in is logged. The card with data stays static — there is no
+ *  history screen to open, and a tap that starts the mic would be a trap. */
+export default function WeightCard({
+  refreshKey,
+  onLog,
+}: {
+  refreshKey: number;
+  onLog?: () => void;
+}) {
   const [data, setData] = useState<Data | null>(null);
   // Derived per render, not frozen in state: an installed PWA lives across
   // midnight, and a `useState` initialiser would have gone on calling
@@ -76,8 +85,13 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
       <section className="weight-card" aria-label="Weight">
         <div className="weight-main">
           <span className="label">Weight</span>
-          <p className="weight-empty">No weigh-ins yet — tell the agent your weight.</p>
+          <p className="weight-empty">No weigh-ins yet.</p>
         </div>
+        {onLog ? (
+          <button type="button" className="weight-log" onClick={onLog}>
+            Log a weigh-in
+          </button>
+        ) : null}
       </section>
     );
   }
