@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { fmtDate } from "@/lib/format";
 import {
   connectOura,
   getOuraStatus,
@@ -28,7 +29,7 @@ const RETURN_NOTES = new Map<string, string>([
   ],
   ["denied", "Oura connection cancelled."],
   ["error", "Oura connection failed. Try again."],
-  ["not_set_up", "Oura isn't set up on this database yet (migration 005)."],
+  ["not_set_up", "Oura isn't available on this server yet."],
 ]);
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -60,7 +61,7 @@ function ago(iso: string): string {
   if (min < 1) return "just now";
   if (min < 60) return `${min} min ago`;
   if (min < 48 * 60) return `${Math.round(min / 60)} h ago`;
-  return new Date(iso).toLocaleDateString();
+  return fmtDate(iso);
 }
 
 function amount(n: number | null, unit: string): string {

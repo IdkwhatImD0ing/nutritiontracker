@@ -1210,6 +1210,7 @@ export default function Today() {
               error={captureError}
               openWith={openWith}
               locate={me?.is_owner === true}
+              raw={me?.is_owner === true}
               onSubmit={submit}
               onSubmitAudio={submitAudio}
               onSubmitPhoto={submitPhoto}

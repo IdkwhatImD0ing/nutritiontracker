@@ -280,10 +280,10 @@ export default function Settings() {
             </div>
           </section>
 
-          <section className="m3-section" aria-label="Timezone">
-            <h2>Timezone</h2>
+          <section className="m3-section" aria-label="Time zone">
+            <h2>Time zone</h2>
             <label className="m3-field">
-              IANA name
+              Region/City
               <input
                 list="usual-tz-list"
                 value={form.timezone}

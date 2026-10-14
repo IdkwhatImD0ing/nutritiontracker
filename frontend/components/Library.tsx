@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
+import { hitSub } from "@/lib/sources";
 import {
   cacheFood,
   getAliases,
@@ -68,7 +69,7 @@ function MealCard({
       <span className="m3-card-sub">
         {meal.trigger_phrases.length
           ? meal.trigger_phrases.map((p) => `“${p}”`).join(" · ")
-          : "no trigger phrases"}
+          : "No phrases yet"}
       </span>
     </button>
   );
@@ -149,11 +150,10 @@ export default function Library() {
 
   return (
     <main className="shell library">
+      {/* no count here: Your foods counts its phrases, and a second number
+          counting something else beside it read as a mismatch */}
       <header className="brand">
         <h1>Library</h1>
-        <span className="date">
-          {aliases ? `${groups.length} food${groups.length === 1 ? "" : "s"}` : ""}
-        </span>
       </header>
 
       {loadError ? (
@@ -208,10 +208,7 @@ export default function Library() {
                 <span className={`result-name${r.food_id ? " food-name" : ""}`}>
                   {r.label}
                 </span>
-                <span className="result-sub">
-                  {r.brand ? `${r.brand} · ` : ""}
-                  {r.food_id ? "my foods" : (r.data_type ?? r.source)}
-                </span>
+                <span className="result-sub">{hitSub(r)}</span>
               </button>
             ))}
             {results.length === 0 && !searching && !searchError ? (
@@ -261,8 +258,14 @@ export default function Library() {
           <p className="m3-empty">Loading…</p>
         ) : groups.length === 0 ? (
           <p className="m3-empty">
-            Nothing learned yet. Every meal you log teaches the app a phrase →
-            food mapping; they show up here with use counts.
+            Nothing here yet. Foods you log by voice or by typing show up here
+            with the words you used for them.
+          </p>
+        ) : null}
+        {aliases?.some((a) => a.pinned) ? (
+          <p className="m3-note">
+            <span className="usual-dot" />
+            Pinned: always logs that food and portion
           </p>
         ) : null}
         {groups.map((g) => (

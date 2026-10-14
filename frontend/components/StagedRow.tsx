@@ -121,13 +121,9 @@ export default function StagedRow({
             ) : (
               name
             )}
-            {searching ? (
-              <span className="badge searching">searching</span>
-            ) : null}
-            {notFound ? <span className="badge not-found">not found</span> : null}
-            {item.status === "needs_input" ? (
-              <span className="badge needs-input">needs input</span>
-            ) : null}
+            {/* no status badges: the spinner and the sub-line say searching
+                and not found, and the question under the row says it needs
+                an answer */}
             {item.web_source ? (
               <span className="badge web">web</span>
             ) : null}
@@ -153,12 +149,12 @@ export default function StagedRow({
                 {verify ? " · verify" : ""}
               </button>
             ) : searching ? (
-              "resolving…"
+              "Looking it up…"
             ) : notFound ? (
-              <span className="manual-hint">tap to search manually</span>
-            ) : (
+              <span className="manual-hint">Not found — tap to search</span>
+            ) : item.phrase !== name ? (
               item.phrase
-            )}
+            ) : null}
           </div>
         </div>
         <div className="row-kcal num">

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { fmtDate } from "@/lib/format";
+import { sourceName } from "@/lib/sources";
 import BackBar from "./BackBar";
 import {
   getFood,
@@ -10,6 +12,7 @@ import {
   type NutrientRow,
 } from "./LibraryApi";
 import LibraryAliasSheet from "./LibraryAliasSheet";
+import { useMe } from "./MeApi";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
@@ -19,7 +22,8 @@ const fmt3 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
 const CORE = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
 
 /** The nutrients the adapters know how to read (sources/fdc.py's id map).
- *  Listed in full so an absent one renders "not measured" — never zero. */
+ *  The ones the serving has are listed; the rest are named on one "not
+ *  measured" line under them — an absent one is never zero. */
 const NUTRIENTS: [string, string][] = [
   ["fiber_g", "Fiber"],
   ["sugar_g", "Sugar"],
@@ -59,10 +63,8 @@ function humanize(key: string): string {
 }
 
 function sourceBadge(source: string): { cls: string; label: string } {
-  if (source === "fdc") return { cls: "fdc", label: "USDA FDC" };
-  if (source === "off") return { cls: "off", label: "Open Food Facts" };
-  if (source === "web") return { cls: "web", label: "web" };
-  return { cls: "state", label: source };
+  const cls = source === "fdc" || source === "off" || source === "web" ? source : "state";
+  return { cls, label: sourceName(source) };
 }
 
 /** The citation link (§3.4a for web foods; the record page for databases). */
@@ -129,6 +131,7 @@ export default function FoodDetail({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [servingId, setServingId] = useState("");
   const [aliasSheet, setAliasSheet] = useState<AliasRow | null>(null);
+  const me = useMe();
 
   useEffect(() => {
     let cancelled = false;
@@ -175,6 +178,10 @@ export default function FoodDetail({ id }: { id: string }) {
   const citations = (food.provenance?.citations ?? []).filter(
     (c) => c.url && c.url !== food.source_url,
   );
+  const measured = NUTRIENTS.filter(([k]) => typeof macros[k] === "number");
+  const missing = NUTRIENTS.filter(([k]) => typeof macros[k] !== "number").map(
+    ([, label]) => label.charAt(0).toLowerCase() + label.slice(1),
+  );
   const extras = Object.entries(macros).filter(
     ([k, v]) => !CORE.has(k) && !KNOWN.has(k) && typeof v === "number",
   );
@@ -194,12 +201,11 @@ export default function FoodDetail({ id }: { id: string }) {
         <div className="fd-meta">
           {food.brand ? <span>{food.brand}</span> : null}
           <span className={`badge ${badge.cls}`}>{badge.label}</span>
-          {dataType ? <span>{dataType}</span> : null}
           {food.state ? <span className="badge state">{food.state}</span> : null}
-          {published ? <span>published {published}</span> : null}
         </div>
+        {/* the provider's full description: what tells one record from the next */}
         {food.name && food.name !== food.display_name ? (
-          <p className="m3-note">Provider name: {food.name}</p>
+          <p className="m3-note">{food.name}</p>
         ) : null}
       </header>
 
@@ -254,22 +260,23 @@ export default function FoodDetail({ id }: { id: string }) {
           Nutrients
           <span className="count">per {chosen?.description ?? "serving"}</span>
         </h2>
-        <div className="m3-card nutrient-list num">
-          {NUTRIENTS.map(([k, label]) => (
-            <NutrientLine key={k} k={k} label={label} v={macros[k]} />
-          ))}
-          {extras.map(([k, v]) => (
-            <NutrientLine key={k} k={k} label={humanize(k)} v={v} />
-          ))}
-        </div>
-        <p className="m3-note">
-          “Not measured” means the source record has no value for it — never
-          zero.
-        </p>
+        {measured.length || extras.length ? (
+          <div className="m3-card nutrient-list num">
+            {measured.map(([k, label]) => (
+              <NutrientLine key={k} k={k} label={label} v={macros[k]} />
+            ))}
+            {extras.map(([k, v]) => (
+              <NutrientLine key={k} k={k} label={humanize(k)} v={v} />
+            ))}
+          </div>
+        ) : null}
+        {missing.length ? (
+          <p className="m3-note">Not measured by the source: {missing.join(", ")}.</p>
+        ) : null}
         {/* §7.1: the grid above is the readable view; this is literally every
             row the source returned, names and units untouched. */}
         {nutrients.length ? (
-          <details className="fd-raw">
+          <details className="fd-raw disclosure">
             <summary>
               All {nutrients.length} nutrients as the source reported them
             </summary>
@@ -293,7 +300,9 @@ export default function FoodDetail({ id }: { id: string }) {
         ) : null}
       </section>
 
-      {food.per_100g ? (
+      {/* the FDC adapter adds a "100 g" serving, which is this table as a
+          chip above — so it shows only for a record without one */}
+      {food.per_100g && !servings.some((s) => s.grams === 100) ? (
         <section className="m3-section" aria-label="Per 100 g">
           <h2>Per 100 g</h2>
           <div className="m3-card nutrient-list num">
@@ -369,29 +378,14 @@ export default function FoodDetail({ id }: { id: string }) {
           <div className="m3-row">
             <span className="k">Database</span>
             <span>
-              {badge.label}
+              {sourceName(food.source, true)}
               {dataType ? ` · ${dataType}` : ""}
-              {food.food_type ? ` · ${food.food_type}` : ""}
-            </span>
-          </div>
-          <div className="m3-row">
-            <span className="k">Record id</span>
-            <span className="num" style={{ wordBreak: "break-all", textAlign: "right" }}>
-              {food.source_id}
             </span>
           </div>
           {published ? (
             <div className="m3-row">
               <span className="k">Published</span>
-              <span className="num">{published}</span>
-            </div>
-          ) : null}
-          {food.refreshed_at ? (
-            <div className="m3-row">
-              <span className="k">Cached</span>
-              <span className="num">
-                {new Date(food.refreshed_at).toLocaleDateString()}
-              </span>
+              <span className="num">{fmtDate(published)}</span>
             </div>
           ) : null}
           {link ? (
@@ -411,9 +405,10 @@ export default function FoodDetail({ id }: { id: string }) {
             </p>
           ))}
         </div>
-        {/* no record from the source, no disclosure: it would open onto "null" */}
-        {Object.keys(payload).length ? (
-          <details className="fd-raw">
+        {/* the owner's only (Bill, 2026-10-13, as the agent's raw calls); no
+            record from the source, no disclosure: it would open onto "null" */}
+        {me?.is_owner && Object.keys(payload).length ? (
+          <details className="fd-raw disclosure">
             <summary>Raw record from the source</summary>
             <pre>{JSON.stringify(payload, null, 2)}</pre>
           </details>

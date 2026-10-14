@@ -7,6 +7,7 @@ import {
   searchFoods,
   type FoodSearchResult,
 } from "@/lib/api";
+import { hitSub } from "@/lib/sources";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 
 type Props = {
@@ -115,10 +116,7 @@ export default function ManualSearchSheet({
       <span className={`result-name${r.food_id ? " food-name" : ""}`}>
         {r.label}
       </span>
-      <span className="result-sub">
-        {r.brand ? `${r.brand} · ` : ""}
-        {r.food_id ? "my foods" : (r.data_type ?? r.source)}
-      </span>
+      <span className="result-sub">{hitSub(r)}</span>
     </button>
   );
 

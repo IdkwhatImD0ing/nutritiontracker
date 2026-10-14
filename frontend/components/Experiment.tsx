@@ -59,9 +59,7 @@ export default function Experiment() {
       ) : null}
       {state === "unwired" ? (
         <div className="exp-notice">
-          <strong>No metrics route yet.</strong> This page reads{" "}
-          <code>GET /api/metrics?range={RANGE}</code> (§5); the series render
-          as soon as it lands.
+          Charts aren&rsquo;t available on this server yet.
         </div>
       ) : null}
       {state === "error" ? (

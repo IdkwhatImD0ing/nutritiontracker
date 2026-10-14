@@ -7,6 +7,7 @@ import {
   type FoodSearchResult,
   type StagedServing,
 } from "@/lib/api";
+import { hitSub } from "@/lib/sources";
 import {
   cacheFood,
   createMeal,
@@ -188,7 +189,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
         </label>
 
         <label className="m3-field">
-          Trigger phrases
+          Phrases
           <input
             value={phrases}
             onChange={(e) => setPhrases(e.target.value)}
@@ -197,8 +198,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           />
         </label>
         <p className="m3-note">
-          Comma-separated. Saying any of these stages the items below exactly as
-          stored — no search, no AI.
+          Comma-separated. Saying any of these adds the items below exactly as
+          saved, without looking anything up.
         </p>
 
         <div>
@@ -293,10 +294,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                     onClick={() => addHit(r)}
                   >
                     <span className="result-name">{r.label}</span>
-                    <span className="result-sub">
-                      {r.brand ? `${r.brand} · ` : ""}
-                      {r.food_id ? "my foods" : (r.data_type ?? r.source)}
-                    </span>
+                    <span className="result-sub">{hitSub(r)}</span>
                   </button>
                 ))}
                 {results.length === 0 && !searching ? (

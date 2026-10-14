@@ -314,7 +314,7 @@ a.m3-link-btn,
     --hit-top: initial;
   }
 
-  /* a sub-sheet's last line (Delete mapping, Deactivate) sits 14px under
+  /* a sub-sheet's last line (Forget phrase, Deactivate) sits 14px under
      Save, over only the sheet's 18px bottom padding: grown down from -4px it
      would add a few px of scroll to a sheet that fits */
   .subsheet > .m3-actions .m3-link-btn {
@@ -1355,13 +1355,25 @@ a {
 
 /* The name wraps (owner feedback, 2026-09-06 — a scanned carton's full label
    used to vanish under the kcal figure behind an ellipsis); overflow-wrap
-   keeps one unbroken token from pushing the kcal column out. */
+   keeps one unbroken token from pushing the kcal column out. A flex row,
+   so a badge that wraps starts flush with the name rather than indented. */
 .row-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 4px;
   font-size: 0.98rem;
   font-weight: 600;
   line-height: 1.25;
   overflow-wrap: anywhere;
   letter-spacing: -0.01em;
+}
+
+/* the row's column-gap spaces these now */
+.row-name .badge,
+.row-name .spinner {
+  margin: 0;
 }
 
 .row-sub {
@@ -1436,21 +1448,6 @@ a {
   padding: 3px 6px;
   margin-left: 6px;
   vertical-align: 2px;
-}
-
-.badge.searching {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.badge.not-found {
-  background: var(--surface-3);
-  color: var(--faint);
-}
-
-.badge.needs-input {
-  background: rgba(232, 196, 104, 0.16);
-  color: var(--amber);
 }
 
 /* §3.4a web-transcribed food: distinct badge + the citation as a visible,
@@ -1529,7 +1526,8 @@ a {
   cursor: default;
 }
 
-.chip .usual-dot {
+.chip .usual-dot,
+.m3-note .usual-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
@@ -2844,7 +2842,8 @@ a {
   color: var(--red);
 }
 
-/* a tool call: what the agent is doing, in words, the raw call one tap away */
+/* a tool call: what the agent is doing, in words, the raw call one tap away
+   for the owner */
 .tool-line {
   align-self: flex-start;
   max-width: 92%;

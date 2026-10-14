@@ -78,6 +78,9 @@ type Props = {
   onReview: (log: LogCreateResponse) => void;
   /** a camera shot carries where the phone was (PhotoCapture's `locate`) */
   locate?: boolean;
+  /** the raw call and result under each tool line — the owner's only
+   *  (Bill, 2026-10-13); everyone else reads the sentence and its result */
+  raw?: boolean;
   /** Rendered as the lower pane of <SplitSheet> rather than as a sheet of its
    *  own: no backdrop and no rounded shell — the split owns both — so the
    *  staged list stays on screen while the conversation continues under it
@@ -184,8 +187,9 @@ function host(url: string): string {
 }
 
 /** A tool's refusal in words, by its error code (backend agent.py and the
- *  deps in routes/logs.py and photo.py). The code itself stays in the raw
- *  result under the line; one not listed reads as the plain failure. */
+ *  deps in routes/logs.py and photo.py). The code itself stays in the
+ *  owner's raw result under the line; one not listed reads as the plain
+ *  failure. */
 const TOOL_ERRORS: Record<string, string> = {
   already_called: "Skipped — already done this turn",
   food_in_flight: "Too early — the food was still being looked up",
@@ -214,10 +218,11 @@ const TOOL_ERRORS: Record<string, string> = {
   repeated_item: "The same item was changed twice",
 };
 
-/** A tool line in words: what the agent is doing, then what came back. The
- *  raw call and result stay one tap away under it (the point of the window
- *  is seeing the work). A run that ended before the tool answered leaves the
- *  line settled as interrupted, never spinning. */
+/** A tool line in words: what the agent is doing, then what came back (the
+ *  point of the window is seeing the work). For the owner the raw call and
+ *  result stay one tap away under it (Bill, 2026-10-13: owner only). A run
+ *  that ended before the tool answered leaves the line settled as
+ *  interrupted, never spinning. */
 function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   doing: string;
   result: string | null;
@@ -234,10 +239,10 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   switch (m.name) {
     case "web_search": {
       const sources = out && Array.isArray(out.sources) ? (out.sources as string[]) : [];
-      // one host once, the first few — the full list is in the details
+      // one host once, the first few — the full list is in the raw result
       const hosts = [...new Set(sources.map(host))];
-      const shown = hosts.slice(0, 5).join(", ");
-      const more = hosts.length > 5 ? ` +${hosts.length - 5} more` : "";
+      const shown = hosts.slice(0, 3).join(", ");
+      const more = hosts.length > 3 ? ` +${hosts.length - 3} more` : "";
       // live: the line is up before the query is known (the completed item brings it)
       doing = a.query ? `Searching the web: “${str(a.query)}”` : "Searching the web…";
       ok = hosts.length ? `Read ${shown}${more}` : "Done";
@@ -303,7 +308,10 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       // §6.4 (2026-09-11): the agent names each food itself — items, not text
       const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
       const rows = out && Array.isArray(out.items) ? (out.items as Record<string, unknown>[]) : null;
-      doing = `Looking up ${items.map((it) => `“${str(it.phrase)}”`).join(", ") || "food"}`;
+      // the first few, like look_up — a long list would fill the screen
+      doing =
+        `Looking up ${items.slice(0, 4).map((it) => `“${str(it.phrase)}”`).join(", ") || "food"}` +
+        (items.length > 4 ? ` +${items.length - 4} more` : "");
       // what the lookups found, never "staged" for a food that was not
       const found = rows ? rows.filter((r) => r.status === "resolved").length : 0;
       const pending = rows ? rows.filter((r) => r.status === "searching").length : 0;
@@ -376,7 +384,7 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
     }
     default:
       // a tool this file has no words for yet: never its identifier on the
-      // line (the raw call under it names it)
+      // line (the owner's raw call under it names it)
       doing = m.done ? "Checked something" : "Checking something…";
       ok = "Done";
   }
@@ -387,7 +395,13 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   return { doing, result: ok };
 }
 
-function ToolLine({ m }: { m: Extract<ChatMessage, { kind: "tool" }> }) {
+function ToolLine({
+  m,
+  raw,
+}: {
+  m: Extract<ChatMessage, { kind: "tool" }>;
+  raw: boolean;
+}) {
   const { doing, result } = describeTool(m);
   return (
     <div className={`tool-line${m.done ? "" : " running"}`}>
@@ -396,13 +410,15 @@ function ToolLine({ m }: { m: Extract<ChatMessage, { kind: "tool" }> }) {
         <span className="tool-text">{doing}</span>
       </div>
       {result ? <div className="tool-result">{result}</div> : null}
-      <details className="disclosure">
-        <summary>Raw call and result</summary>
-        <pre>{JSON.stringify(m.args, null, 1)}</pre>
-        {m.done && m.output !== undefined ? (
-          <pre>{JSON.stringify(m.output, null, 1)}</pre>
-        ) : null}
-      </details>
+      {raw ? (
+        <details className="disclosure">
+          <summary>Raw call and result</summary>
+          <pre>{JSON.stringify(m.args, null, 1)}</pre>
+          {m.done && m.output !== undefined ? (
+            <pre>{JSON.stringify(m.output, null, 1)}</pre>
+          ) : null}
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -470,6 +486,7 @@ export default function AgentChat({
   onClose,
   docked = false,
   locate = false,
+  raw = false,
 }: Props) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -644,7 +661,7 @@ export default function AgentChat({
                   </div>
                 );
               case "tool":
-                return <ToolLine key={m.id} m={m} />;
+                return <ToolLine key={m.id} m={m} raw={raw} />;
               case "agent":
                 return (
                   <div key={m.id} className="bubble-wrap">

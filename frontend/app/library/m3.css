@@ -907,11 +907,6 @@ body:has(.tabbar) .shell {
   margin: 0;
 }
 
-.account-note code {
-  font-size: 0.78rem;
-  color: var(--sage);
-}
-
 .account-signout {
   align-self: flex-start;
   min-height: 42px;
