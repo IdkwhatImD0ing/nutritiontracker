@@ -27,7 +27,7 @@ from pydantic import BaseModel
 import db
 from auth import require_user
 from models import MacroTargets
-from routes.diary import load_targets, tz_name
+from routes.diary import load_targets, oura_active_kcal, tz_name, with_exercise
 
 router = APIRouter(dependencies=[Depends(require_user)])
 
@@ -50,6 +50,9 @@ class DayStat(MacroSums):
     logged: bool
     fiber_g: float | None = None  # None = no entry carried fiber (not measured)
     meals: dict[str, MacroSums] | None = None  # 3d only: per-meal subtotals
+    # this day's own targets: the range's, plus Oura's activity burn that day
+    # while Oura is connected (routes/diary.py with_exercise)
+    targets: MacroTargets | None = None
 
 
 class WeekStat(BaseModel):
@@ -150,6 +153,7 @@ async def get_history(rng: Range = Query("w", alias="range")) -> HistoryResponse
             date=d, entries=0, logged=False, kcal=0, protein_g=0, carb_g=0, fat_g=0
         )
 
+    targets = await load_targets()
     days: list[DayStat] = []
     weeks: list[WeekStat] = []
     if rng == "y":
@@ -178,6 +182,9 @@ async def get_history(rng: Range = Query("w", alias="range")) -> HistoryResponse
             )
     else:
         days = [day_or_zero(start + timedelta(days=i)) for i in range(_DAYS[rng])]
+        burn = await oura_active_kcal(start, today) if targets.kcal > 0 else {}
+        for d in days:
+            d.targets = with_exercise(targets, burn.get(d.date, 0))
 
     brow = await db.fetchone(
         "SELECT value FROM settings WHERE key = 'cronometer_baseline_days_per_week'"
@@ -188,7 +195,7 @@ async def get_history(rng: Range = Query("w", alias="range")) -> HistoryResponse
         timezone=tz,
         start=start,
         end=today,
-        targets=await load_targets(),
+        targets=targets,
         streak=await _streak(tz, today),
         baseline_days_per_week=baseline,
         days=days,

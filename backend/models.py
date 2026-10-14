@@ -226,3 +226,6 @@ class DayTotals(BaseModel):
     carb_g: float
     fat_g: float
     targets: MacroTargets
+    # Oura's activity burn for the day, already inside targets (kcal, and its
+    # carbs in carb_g) while Oura is connected; 0 otherwise (routes/diary.py).
+    exercise_kcal: int = 0

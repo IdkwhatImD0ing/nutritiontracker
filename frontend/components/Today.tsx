@@ -441,9 +441,15 @@ export default function Today() {
   // sync trigger, once Oura is connected (/api/me says so — no request that
   // can only answer 409). The server skips it when the last sync, or failed
   // attempt, is under half an hour old; a failure changes nothing here —
-  // Settings shows the state.
+  // Settings shows the state. A sync that stored days re-reads the diary: the
+  // day's calorie target includes Oura's activity burn (routes/diary.py).
   const syncOuraFor = (m: Me | null) => {
-    if (m?.is_owner && m.oura_connected) syncOura().catch(() => {});
+    if (m?.is_owner && m.oura_connected)
+      syncOura()
+        .then((r) => {
+          if (r.days > 0) reloadDiary();
+        })
+        .catch(() => {});
   };
 
   // Installed, Tally is resumed far more often than it is loaded: iOS keeps a

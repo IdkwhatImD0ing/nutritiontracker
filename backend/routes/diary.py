@@ -20,6 +20,7 @@ from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import psycopg
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -120,6 +121,35 @@ async def load_targets() -> MacroTargets:
     )
 
 
+async def oura_active_kcal(start: date_type, end: date_type) -> dict[date_type, int]:
+    """Oura's activity burn per day, start..end inclusive (migration 005), while
+    Oura is connected — what each day's targets grow by. A day with no Oura row
+    or no activity number is absent; empty with no connection (Oura is owner
+    only, so always for a demo) or before 005."""
+    try:
+        rows = await db.fetchall(
+            "SELECT day, active_calories FROM oura_days "
+            "WHERE day BETWEEN %s AND %s AND active_calories IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM oura_tokens)",
+            (start, end),
+        )
+    except psycopg.errors.UndefinedTable:
+        return {}
+    return {r["day"]: r["active_calories"] for r in rows}
+
+
+def with_exercise(targets: MacroTargets, exercise: int) -> MacroTargets:
+    """A day's targets once Oura's activity burn is in (Bill, 2026-10-13): kcal
+    grows by the burn and carbs by its grams (4 kcal/g) — protein and fat stay
+    put, as the goal wizard makes carbs the remainder (services/goals.py). No
+    goals set yet: there is no target to raise."""
+    if targets.kcal <= 0 or not exercise:
+        return targets
+    return targets.model_copy(
+        update={"kcal": targets.kcal + exercise, "carb_g": targets.carb_g + round(exercise / 4)}
+    )
+
+
 async def compute_day_totals(day: date_type) -> DayTotals:
     start, end = await day_bounds(day)
     row = await db.fetchone(
@@ -132,12 +162,15 @@ async def compute_day_totals(day: date_type) -> DayTotals:
         """,
         (start, end),
     )
+    base = await load_targets()
+    exercise = (await oura_active_kcal(day, day)).get(day, 0) if base.kcal > 0 else 0
     return DayTotals(
         kcal=float(row["kcal"]),
         protein_g=float(row["protein_g"]),
         carb_g=float(row["carb_g"]),
         fat_g=float(row["fat_g"]),
-        targets=await load_targets(),
+        targets=with_exercise(base, exercise),
+        exercise_kcal=exercise,
     )
 
 
