@@ -43,7 +43,8 @@
   color: var(--faint);
   text-decoration: none;
   /* sentence case, like the rail and a native tab bar: spaced caps ran
-     LIBRARY into SETTINGS at 320 */
+     LIBRARY into SETTINGS at 320. In px, not rem: like iOS's own tab labels,
+     these don't follow Text Size (layout.tsx), and the bar has no room to. */
   font-size: 11px;
   font-weight: 500;
   border-radius: 14px;
