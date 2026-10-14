@@ -16,12 +16,15 @@ type DonutProps = {
   /** an overage reads amber (carbs, fat). Protein's target is a floor, so
    *  going past it is the goal met, not a warning. */
   warnOver?: boolean;
+  /** a closed day: nothing is left to eat, so the center is what was eaten */
+  past?: boolean;
 };
 
 /** Remaining-vs-target ring (§7.4): ring fills with consumed/target, the
  *  center number is what's left — or, past the target, how far over
- *  ("+16g over") on a full ring. */
-function Donut({ label, consumed, target, color, size, loud, loading, warnOver }: DonutProps) {
+ *  ("+16g over") on a full ring. On a past day it is what was eaten, over
+ *  "of 180g". */
+function Donut({ label, consumed, target, color, size, loud, loading, warnOver, past }: DonutProps) {
   const stroke = loud ? 10 : 7;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
@@ -30,8 +33,14 @@ function Donut({ label, consumed, target, color, size, loud, loading, warnOver }
   const remaining = hasTarget ? Math.max(target - consumed, 0) : 0;
   // rounded like the figure, so 0.3 g past reads "0g left", not "+0g over"
   const over = hasTarget && Math.round(consumed - target) > 0;
-  const centerNum = !hasTarget ? consumed : over ? consumed - target : remaining;
-  const centerSub = !hasTarget ? "logged" : over ? "over" : "left";
+  const centerNum = !hasTarget || past ? consumed : over ? consumed - target : remaining;
+  const centerSub = !hasTarget
+    ? "logged"
+    : past
+      ? `of ${fmt.format(target)}g`
+      : over
+        ? "over"
+        : "left";
 
   return (
     <div className={`donut${loud ? " loud" : ""}${over ? " over" : ""}${over && warnOver ? " warn" : ""}`}>
@@ -65,7 +74,7 @@ function Donut({ label, consumed, target, color, size, loud, loading, warnOver }
           dominantBaseline="middle"
           fontSize={loud ? 22 : 16}
         >
-          {loading ? "—" : `${over ? "+" : ""}${fmt.format(centerNum)}g`}
+          {loading ? "—" : `${over && !past ? "+" : ""}${fmt.format(centerNum)}g`}
         </text>
         {loading ? null : (
           <text
@@ -89,7 +98,15 @@ function Donut({ label, consumed, target, color, size, loud, loading, warnOver }
   );
 }
 
-export default function Tracker({ totals }: { totals: DayTotals | null }) {
+/** `past`: a History day before today — "under"/"over" its target rather
+ *  than "left", which only means something while the day is open. */
+export default function Tracker({
+  totals,
+  past = false,
+}: {
+  totals: DayTotals | null;
+  past?: boolean;
+}) {
   // null = the day hasn't been read yet. Same footprint, dashes and empty
   // tracks: a 0 or "No targets set yet" would be a claim about a day we
   // haven't seen (it read as a real empty day on every cold open).
@@ -133,7 +150,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           {kcalTarget > 0 ? (
             <span className={`left num${kcalLeft < 0 ? " over" : ""}`}>
               <strong>{fmt.format(Math.abs(kcalLeft))}</strong>
-              {kcalLeft < 0 ? "over" : "left"}
+              {kcalLeft < 0 ? "over" : past ? "under" : "left"}
             </span>
           ) : null}
         </div>
@@ -154,6 +171,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           size={84}
           loading={loading}
           warnOver
+          past={past}
         />
         <Donut
           label="Protein"
@@ -163,6 +181,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           size={116}
           loud
           loading={loading}
+          past={past}
         />
         <Donut
           label="Fat"
@@ -172,6 +191,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
           size={84}
           loading={loading}
           warnOver
+          past={past}
         />
       </div>
 

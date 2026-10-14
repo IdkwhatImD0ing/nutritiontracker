@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, type KeyboardEvent, type PointerEvent } from "react";
 import "@/app/history/charts.css";
 
 export type Bar = {
@@ -33,15 +34,20 @@ type Props = {
   /** fixed top of the y axis (e.g. 7 for days/week); default = nice max */
   yMax?: number;
   onTap?: (key: string) => void;
+  /** scrub-to-select (M, Y: bars too thin to tap): a press or drag picks a
+   *  bar, an HTML readout above the plot shows its hint, and `onTap` moves
+   *  to the readout's Open button — the bars themselves never navigate */
+  select?: boolean;
   format?: (v: number) => string;
 };
 
 const W = 360;
-const PAD = { l: 36, r: 10, t: 14, b: 20 };
+const PAD = { l: 44, r: 10, t: 16, b: 22 };
 const fmt0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-/** Chart text size in viewBox units (charts.css .chart-xlabel and friends);
- *  fitLabels estimates label widths from it. */
-export const CHART_TEXT_PX = 10;
+/** Chart text size in viewBox units (charts.css .chart-xlabel and friends):
+ *  the 360-unit viewBox draws at ~0.86-0.90 on a phone, so 12.5 renders at
+ *  ~11px. fitLabels estimates label widths from it. */
+export const CHART_TEXT_PX = 12.5;
 
 /** The x labels that fit, as indices into `labels` ("" = none). Walks from
  *  the newest (right) end and keeps a label only when it ends at least 4
@@ -79,7 +85,8 @@ export function niceMax(v: number): number {
 
 /** Hand-rolled SVG bar chart (§7.4 week/month views, §9 adherence): daily
  *  bars against a dashed target line; tokens only, so it reads on any
- *  theme. Bars are tap targets when `onTap` is given (→ that day's diary). */
+ *  theme. Bars are tap targets when `onTap` is given (→ that day's diary),
+ *  unless `select` routes the tap through the readout instead. */
 export default function ChartBars({
   title,
   bars,
@@ -93,8 +100,10 @@ export default function ChartBars({
   labelEvery,
   yMax: yMaxProp,
   onTap,
+  select = false,
   format = (v) => fmt0.format(v),
 }: Props) {
+  const [selKey, setSelKey] = useState<string | null>(null);
   const H = height;
   const plotW = W - PAD.l - PAD.r;
   const plotH = H - PAD.t - PAD.b;
@@ -116,15 +125,62 @@ export default function ChartBars({
   const mid = yMax >= 10 ? yMax / 2 : Math.round(yMax / 2);
   // rounding can collapse the midline onto 0 or the top (yMax 1 → mid 1)
   const ticks = [...new Set([0, mid, yMax])];
+  const hintOf = (b: Bar) =>
+    b.hint ?? `${b.label}: ${b.value == null ? "—" : format(b.value)}${unit ? ` ${unit}` : ""}`;
+
+  // select mode: the picked bar by key (so a new range keeps nothing stale),
+  // else today's, else the newest
+  const picked = bars.findIndex((b) => b.key === selKey);
+  const today = bars.findIndex((b) => b.active);
+  const selIdx = !select ? -1 : picked >= 0 ? picked : today >= 0 ? today : bars.length - 1;
+  const sel = selIdx >= 0 ? bars[selIdx] : undefined;
+  const tap = select ? undefined : onTap;
+  // a press, a drag, or a mouse's hover: the bar under the pointer's x
+  const scrub = (e: PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType !== "mouse" && e.buttons === 0) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const i = Math.floor((((e.clientX - r.left) / r.width) * W - PAD.l) / group);
+    const b = bars[Math.min(Math.max(i, 0), bars.length - 1)];
+    if (b) setSelKey(b.key);
+  };
+  const step = (e: KeyboardEvent<SVGSVGElement>) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const i = Math.min(Math.max(selIdx + (e.key === "ArrowRight" ? 1 : -1), 0), bars.length - 1);
+      if (bars[i]) setSelKey(bars[i].key);
+    } else if (e.key === "Enter" && onTap && sel) {
+      e.preventDefault();
+      onTap(sel.key);
+    }
+  };
 
   return (
     <figure className="chart">
       <figcaption className="chart-title">{title}</figcaption>
+      {sel ? (
+        <div className="chart-readout">
+          <span className="num">{hintOf(sel)}</span>
+          {onTap ? (
+            <button type="button" className="chart-readout-open" onClick={() => onTap(sel.key)}>
+              Open ›
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role={select ? "slider" : "img"}
         aria-label={title}
         className="chart-svg"
+        tabIndex={select ? 0 : undefined}
+        aria-valuemin={select ? 1 : undefined}
+        aria-valuemax={select ? bars.length : undefined}
+        aria-valuenow={sel ? selIdx + 1 : undefined}
+        aria-valuetext={sel ? hintOf(sel) : undefined}
+        style={select ? { touchAction: "pan-y" } : undefined}
+        onPointerDown={select ? scrub : undefined}
+        onPointerMove={select ? scrub : undefined}
+        onKeyDown={select ? step : undefined}
       >
         <g className="chart-grid">
           {ticks.map((t) => (
@@ -144,32 +200,32 @@ export default function ChartBars({
           const top = v == null ? y(0) : y(v);
           const h = Math.max(0, y(0) - top);
           const over = hasTarget && v != null && v > target;
-          const cls = `chart-bar${onTap ? " tap" : ""}${b.muted ? " muted" : ""}${
+          const cls = `chart-bar${tap ? " tap" : ""}${b.muted ? " muted" : ""}${
             b.active ? " active" : ""
-          }`;
+          }${i === selIdx ? " selected" : ""}`;
           return (
             <g
               key={b.key}
               className={cls}
-              onClick={onTap ? () => onTap(b.key) : undefined}
-              role={onTap ? "button" : undefined}
-              tabIndex={onTap ? 0 : undefined}
+              onClick={tap ? () => tap(b.key) : undefined}
+              role={tap ? "button" : undefined}
+              tabIndex={tap ? 0 : undefined}
               onKeyDown={
-                onTap
+                tap
                   ? (e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        onTap(b.key);
+                        tap(b.key);
                       }
                     }
                   : undefined
               }
             >
-              <title>
-                {b.hint ?? `${b.label}: ${v == null ? "—" : format(v)}${unit ? ` ${unit}` : ""}`}
-              </title>
-              {/* full-height hit area so thin bars are still tappable */}
+              <title>{hintOf(b)}</title>
+              {/* full-height hit area so thin bars are still tappable; in
+                  select mode it is the picked bar's column band */}
               <rect
+                className="chart-hit"
                 x={PAD.l + i * group}
                 y={PAD.t}
                 width={group}
@@ -216,15 +272,18 @@ export default function ChartBars({
         <g pointerEvents="none">
           {bars.map((b, i) => {
             const v = b.value;
-            return showValues && v != null && v > 0 ? (
+            if (!showValues) return null;
+            const has = v != null && v > 0;
+            // an unlogged day says so with a faint dash, not a missing value
+            return has || b.muted ? (
               <text
                 key={b.key}
-                className="chart-value"
+                className={`chart-value${has ? "" : " none"}`}
                 x={barX(i) + barW / 2}
-                y={y(v) - 4}
+                y={(has ? y(v) : y(0)) - 4}
                 textAnchor="middle"
               >
-                {format(v)}
+                {has ? format(v) : "—"}
               </text>
             ) : null;
           })}
@@ -232,7 +291,7 @@ export default function ChartBars({
             labelled.has(i) ? (
               <text
                 key={b.key}
-                className="chart-xlabel"
+                className={`chart-xlabel${b.active ? " today" : ""}`}
                 x={barX(i) + barW / 2}
                 y={H - 6}
                 textAnchor="middle"

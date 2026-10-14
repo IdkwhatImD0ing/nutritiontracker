@@ -1,5 +1,7 @@
 "use client";
 
+import { withUnit } from "@/lib/format";
+import { mealLabel } from "@/lib/labels";
 import ChartBars, { type Bar } from "./ChartBars";
 import ChartStrip, { type StripCell } from "./ChartStrip";
 import {
@@ -15,12 +17,6 @@ import {
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const MEAL_ORDER = ["breakfast", "lunch", "dinner", "snack"];
-const MEAL_LETTER: Record<string, string> = {
-  breakfast: "B",
-  lunch: "L",
-  dinner: "D",
-  snack: "S",
-};
 
 type Props = {
   kind: RangeKind;
@@ -155,14 +151,13 @@ function ThreeDays({
             {mealChips.length ? (
               <div className="hcard-meals num">
                 {mealChips.map((c) => (
-                  <span key={c.meal} title={c.meal}>
-                    <span className="k">{MEAL_LETTER[c.meal] ?? c.meal}</span>{" "}
-                    {fmt.format(c.kcal)}
+                  <span key={c.meal}>
+                    <span className="k">{mealLabel(c.meal)}</span> {fmt.format(c.kcal)}
                   </span>
                 ))}
                 {d.fiber_g != null ? (
-                  <span title="fiber">
-                    <span className="k">fiber</span> {fmt.format(d.fiber_g)}g
+                  <span>
+                    <span className="k">Fiber</span> {withUnit(fmt.format(d.fiber_g), "g")}
                   </span>
                 ) : null}
               </div>
@@ -195,9 +190,11 @@ function Daily({
       const date = parseISO(d.date);
       return {
         key: d.date,
+        // today always carries a label (ChartBars marks it there); the
+        // overlap guard keeps the newest, so it survives in M
         label: week
           ? weekdayShort(date)
-          : date.getDate() === 1 || date.getDate() % 5 === 0
+          : d.date === today || date.getDate() === 1 || date.getDate() % 5 === 0
             ? `${monthShort(date)} ${date.getDate()}`
             : "",
         value: pick(d),
@@ -208,6 +205,8 @@ function Daily({
         }`,
       };
     });
+  // W's bars are ~41px wide with printed values: a tap opens the day. M's
+  // are ~9px, so they select and the readout's Open goes to the diary.
   return (
     <div className="hcharts">
       <ChartBars
@@ -219,6 +218,7 @@ function Daily({
         showValues={week}
         labelEvery={1}
         onTap={onDay}
+        select={!week}
       />
       <ChartBars
         title={week ? "Protein · last 7 days" : "Protein · last 30 days"}
@@ -230,9 +230,10 @@ function Daily({
         showValues={week}
         labelEvery={1}
         onTap={onDay}
+        select={!week}
         format={(v) => `${fmt.format(v)}g`}
       />
-      <p className="hhint">Tap a day to open its diary.</p>
+      {week ? <p className="hhint">Tap a day to open its diary.</p> : null}
     </div>
   );
 }
@@ -279,22 +280,26 @@ function Year({ range }: { range: HistoryRange }) {
 
   return (
     <div className="hcharts">
+      {/* select with no onTap: a readout of the week's averages, which
+          touch could not read before */}
       <ChartBars
-        title="Calories · weekly average, last 52 weeks"
+        title="Calories · weekly avg"
         bars={bars((w) => w.avg?.kcal ?? null, "kcal")}
         target={range.targets.kcal}
         color="var(--spruce-soft)"
         unit="kcal"
         labelEvery={1}
+        select
       />
       <ChartBars
-        title="Protein · weekly average"
+        title="Protein · weekly avg"
         bars={bars((w) => w.avg?.protein_g ?? null, "g")}
         target={range.targets.protein_g}
         color="var(--mint)"
         overColor={null}
         unit="g"
         labelEvery={1}
+        select
         format={(v) => `${fmt.format(v)}g`}
       />
       <ChartStrip title="Days logged per week" cells={cells} />

@@ -140,13 +140,21 @@ def test_search_local_cache_hit_first_for_seeded_food():
         marker = f"zz seeded brownie {uuid4().hex[:8]}"
         food_id = None
         try:
-            food_id = await foods_repo.persist_food(_fake_food(marker, brand="TestBrand"))
+            food = _fake_food(marker, brand="TestBrand")
+            # a beverage: its per-100 figures are per 100 ml (the 100ml serving)
+            food["per_100g"] = {"kcal": 56.0, "protein_g": 10.14, "carb_g": 1.0, "fat_g": 0.5}
+            food["servings"].append({
+                "serving_id": "100ml", "description": "100 ml", "grams": None,
+                "macros": dict(food["per_100g"]),
+            })
+            food_id = await foods_repo.persist_food(food)
             resp = await foods_routes.search_foods(q=marker[:17], source="local")
             assert resp.local, "seeded food not found in local cache results"
             top = resp.local[0]
             assert top.food_id == food_id
             assert top.source == "fdc" and top.source_id.startswith("test-")
             assert top.label == marker and top.brand == "TestBrand"
+            assert (top.kcal_per_100g, top.protein_per_100g, top.per_100ml) == (56.0, 10.14, True)
             assert resp.generic == [] and resp.branded == []  # local-only mode
             print(f"\n[search local] '{marker[:17]}' -> {top.label} (sim-first)")
         finally:
@@ -188,6 +196,60 @@ def test_search_full_passthrough_local_first_live():
             await db.close()
 
     _run(scenario())
+
+
+def test_search_hits_carry_kcal_and_protein_per_100(monkeypatch):
+    """A Search row shows kcal and protein per 100 g — per 100 ml for a
+    beverage — read off the search payload itself, no extra request. kcal
+    falls back to the Atwater energy a Foundation hit carries in place of
+    1008. No network: fdc._get is stubbed."""
+
+    class _Resp:
+        def __init__(self, payload):
+            self._p = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._p
+
+    def nutrients(kcal_id: int, kcal: float) -> list[dict]:
+        return [
+            {"nutrientId": kcal_id, "value": kcal},
+            {"nutrientId": 1003, "value": 10.14},
+            {"nutrientId": 1005, "value": 4.66},
+            {"nutrientId": 1004, "value": 0.0},
+        ]
+
+    payloads = {
+        "SR Legacy,Foundation": {"foods": [
+            {"fdcId": 1, "description": "Yogurt, Greek, plain, nonfat",
+             "dataType": "SR Legacy", "foodNutrients": nutrients(1008, 59.0)},
+            {"fdcId": 2, "description": "Chicken, breast, raw",
+             "dataType": "Foundation", "foodNutrients": nutrients(2047, 112.15)},
+        ]},
+        "Branded": {"foods": [
+            {"fdcId": 3, "description": "Core Power Elite", "dataType": "Branded",
+             "servingSizeUnit": "MLT", "foodNutrients": nutrients(1008, 56.0)},
+            {"fdcId": 4, "description": "Oikos Pro", "dataType": "Branded",
+             "servingSizeUnit": "GRM", "foodNutrients": nutrients(1008, 97.0)},
+        ]},
+    }
+
+    async def fake_get(path, **params):
+        return _Resp(payloads[params["dataType"]])
+
+    monkeypatch.setattr(fdc, "_get", fake_get)
+    generic = _run(fdc.search_generic("yogurt"))
+    assert [(h["kcal_per_100g"], h["protein_per_100g"]) for h in generic] == [
+        (59.0, 10.14), (112.15, 10.14),
+    ]
+    branded = _run(fdc.search_branded("core power"))
+    assert [
+        (h["fdc_id"], h["kcal_per_100g"], h["protein_per_100g"], h["per_100ml"])
+        for h in branded
+    ] == [(3, 56.0, 10.14, True), (4, 97.0, 10.14, False)]
 
 
 # ---------------------------------------------------------------------------

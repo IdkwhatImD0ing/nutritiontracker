@@ -23,6 +23,32 @@
   color: var(--muted);
 }
 
+/* select mode (History M and Y): the picked bar's value in HTML, where a
+   finger can read it — an SVG <title> never shows on touch */
+.chart-readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 22px;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+/* 44px tall for a finger, taking no more of the row than its text */
+.chart-readout-open {
+  flex-shrink: 0;
+  min-height: 44px;
+  margin: -11px -8px;
+  padding: 0 8px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .chart-svg {
   width: 100%;
   height: auto;
@@ -32,21 +58,40 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* select mode: the plot is a slider, arrow keys move the pick */
+.chart-svg:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .chart-grid line {
   stroke: var(--line);
   stroke-width: 1;
 }
 
+/* 12.5 viewBox units draw at ~11px on a phone (CHART_TEXT_PX) */
 .chart-axis text,
 .chart-xlabel,
 .chart-value {
   fill: var(--muted);
-  font-size: 10px;
+  font-size: 12.5px;
+}
+
+/* today's bar is marked on its axis label, not with a ring on the bar */
+.chart-xlabel.today {
+  fill: var(--text);
+  font-weight: 700;
 }
 
 .chart-value {
   fill: var(--text);
   font-weight: 600;
+}
+
+/* the dash over an unlogged day */
+.chart-value.none {
+  fill: var(--faint);
 }
 
 .chart-empty {
@@ -70,7 +115,7 @@
 
 .chart-target text {
   fill: var(--amber);
-  font-size: 10px;
+  font-size: 12.5px;
 }
 
 /* a card-coloured outline, so a value or the target label stays readable
@@ -98,6 +143,16 @@
   }
 }
 
+/* select mode's pick: a brighter bar in a faint column band, so an empty
+   day shows which one the readout names */
+.chart-bar.selected rect:not([fill="transparent"]) {
+  filter: brightness(1.25);
+}
+
+.chart-bar.selected .chart-hit {
+  fill: var(--line);
+}
+
 .chart-bar:focus-visible,
 .chart-strip-cell:focus-visible {
   outline: none;
@@ -107,14 +162,11 @@
   opacity: 0.35;
 }
 
-.chart-bar.active rect:not([fill="transparent"]) {
-  stroke: var(--text);
-  stroke-width: 1;
-}
-
+/* an unlogged day: a dashed stub, visibly there but empty */
 .chart-bar-empty {
-  stroke: var(--surface-3);
+  stroke: var(--line-strong);
   stroke-width: 2;
+  stroke-dasharray: 2 2;
 }
 
 .chart-strip-bg {
@@ -146,13 +198,20 @@
   border-radius: 2px;
 }
 
+/* the series colour comes in as `color` (ChartLines) */
 .chart-legend-swatch.dashed {
   background: repeating-linear-gradient(
     90deg,
     currentColor 0 4px,
     transparent 4px 7px
-  ) !important;
-  color: var(--amber);
+  );
+}
+
+/* the adherence strip's key: a cell in small (ChartStrip) */
+.chart-legend-swatch.cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }
 
 /* small multiples (§9 secondaries) */
@@ -183,6 +242,16 @@
   color: var(--muted);
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* a long one-word name ("Disambiguation" at 320px) breaks with a hyphen
+   rather than running into the arrow; the gap keeps them apart */
+.chart-small-name {
+  min-width: 0;
+  -webkit-hyphens: auto;
+  hyphens: auto;
 }
 
 .chart-small-goal {

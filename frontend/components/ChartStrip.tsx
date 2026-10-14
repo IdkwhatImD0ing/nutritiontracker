@@ -22,7 +22,9 @@ type Props = {
 
 const CELL_H = 18;
 const GAP = 2;
-const LABEL_H = 14;
+const LABEL_H = 16;
+/** a cell's fill: a week with any day logged never fades to nothing */
+const cellOpacity = (level: number) => 0.25 + 0.75 * Math.min(level, 1);
 
 /** §7.4 year view: the adherence strip — one cell per week, opacity = share
  *  of days with ≥1 entry. Tap a week → that week in the W view. */
@@ -70,7 +72,7 @@ export default function ChartStrip({ title, cells, onTap }: Props) {
                   height={CELL_H}
                   rx={2}
                   fill="var(--mint)"
-                  opacity={0.25 + 0.75 * Math.min(c.level, 1)}
+                  opacity={cellOpacity(c.level)}
                 />
               ) : null}
               {labelled.has(i) ? (
@@ -82,6 +84,19 @@ export default function ChartStrip({ title, cells, onTap }: Props) {
           );
         })}
       </svg>
+      {/* the opacity scale's key: 1, 4 and 7 days of a week */}
+      <div className="chart-legend">
+        Days logged
+        {[1, 4, 7].map((days) => (
+          <span key={days} className="chart-legend-item">
+            <span
+              className="chart-legend-swatch cell"
+              style={{ background: "var(--mint)", opacity: cellOpacity(days / 7) }}
+            />
+            {days}
+          </span>
+        ))}
+      </div>
     </figure>
   );
 }
