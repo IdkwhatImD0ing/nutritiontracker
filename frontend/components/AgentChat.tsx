@@ -396,7 +396,7 @@ function ToolLine({ m }: { m: Extract<ChatMessage, { kind: "tool" }> }) {
         <span className="tool-text">{doing}</span>
       </div>
       {result ? <div className="tool-result">{result}</div> : null}
-      <details>
+      <details className="disclosure">
         <summary>Raw call and result</summary>
         <pre>{JSON.stringify(m.args, null, 1)}</pre>
         {m.done && m.output !== undefined ? (

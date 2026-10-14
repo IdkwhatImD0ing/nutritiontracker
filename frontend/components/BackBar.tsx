@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { ChevronLeft } from "./icons";
 
 /* The pages behind the one on screen, oldest first, as this document saw
    them. The browser has no answer to "is the entry behind this one ours?":
@@ -78,9 +79,7 @@ export default function BackBar({ parent, label }: { parent: string; label: stri
         router.back();
       }}
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M15 5l-7 7 7 7" />
-      </svg>
+      <ChevronLeft />
       {name ?? "Back"}
     </Link>
   );

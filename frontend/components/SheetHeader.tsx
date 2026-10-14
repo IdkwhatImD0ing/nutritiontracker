@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Close } from "./icons";
 import { useDragDismiss } from "./useDragDismiss";
 
 /** The ✕ every sheet closes with, in every sheet's top-right corner: drawn,
@@ -24,9 +25,7 @@ export function SheetClose({
       disabled={disabled}
       onClick={onClick}
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M6 6l12 12M18 6L6 18" />
-      </svg>
+      <Close />
     </button>
   );
 }

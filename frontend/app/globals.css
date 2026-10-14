@@ -41,6 +41,33 @@
   --red: #f26b6b;
   --green: #74cf9c;
 
+  /* Names for colours the stylesheets paint as literals today. Each value is
+     the literal it stands for, so pointing a rule at its token changes
+     nothing on screen — except the two noted, where the literals differ. */
+  --accent-fill: linear-gradient(180deg, var(--accent), var(--accent-strong)); /* Commit, send, the user bubble */
+  --web: #8fd0e6; /* §3.4a web-sourced: the badge and its citation link */
+  --web-soft: rgba(108, 196, 221, 0.14);
+  --off: #e0b58a; /* Open Food Facts badge (m3.css) */
+  --off-soft: rgba(224, 181, 138, 0.16);
+  --amber-soft: rgba(232, 196, 104, 0.16);
+  --red-soft: rgba(242, 107, 107, 0.12); /* m3.css .keys-status.expired has 0.14 */
+  --green-soft: rgba(116, 207, 156, 0.14);
+  --scrim: rgba(6, 6, 9, 0.6); /* behind a sheet; .sheet-backdrop has 0.62 */
+  --toast-bg: #26262d;
+  --surface-hero: #1d1c22; /* the top of the tracker's gradient */
+  --on-danger: #fff; /* text on a red fill */
+  /* new, not yet used: a field placeholder at 5.2:1 on --surface-2, where
+     --faint's 3.1:1 is under the 4.5:1 text minimum */
+  --placeholder: #969490;
+
+  /* layout and type: one card edge, one form field, one micro label */
+  --card-pad-x: 16px;
+  --field-h: 48px;
+  --field-radius: 14px;
+  --micro-size: 0.7rem; /* 11.2px, the floor for uppercase tracked labels */
+  --micro-track: 0.08em;
+  --micro-weight: 600;
+
   --radius: 20px;
   --radius-sm: 12px;
   --radius-xs: 8px;
@@ -2851,7 +2878,7 @@ a {
   color: var(--muted);
 }
 
-/* The disclosure is a quiet row with a chevron, not the UA triangle. Its hit
+/* The raw call is a .disclosure (the shared row, foot of this file). Its hit
    area is the full 44px but reaches into the line's gaps (closed only — open,
    the raw blocks sit below it), so a tool line costs less than it measures. */
 .tool-line details {
@@ -2863,32 +2890,8 @@ a {
 }
 
 .tool-line summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  list-style: none;
-  cursor: pointer;
   color: var(--muted);
   font-size: 0.78rem;
-}
-
-.tool-line summary::-webkit-details-marker {
-  display: none;
-}
-
-.tool-line summary::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 150ms var(--ease);
-}
-
-.tool-line details[open] summary::after {
-  transform: rotate(45deg);
 }
 
 .tool-line pre {
@@ -3058,4 +3061,113 @@ a {
 
 .agent-options {
   margin: 0 0 4px 6px;
+}
+
+/* ---------- shared primitives ----------
+   Small pieces every screen draws from, so no screen invents its own. Last
+   in the file on purpose: a utility class here outranks a component rule of
+   the same specificity above it. (Per-route CSS loads after this file.) */
+
+/* Narrow phones: `@media (max-width: 359px)` is the one breakpoint for a
+   320px-wide screen, the value landing.css already uses. Put each such rule
+   next to the rule it adjusts, not here; one value means "narrow phone" is
+   the same width everywhere. */
+
+/* Read by a screen reader, never drawn: a label a control's icon already
+   shows, or a live region's words. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A placeholder in the shape of what is loading (Skeleton.tsx): a quiet
+   block with the tracker's sweep across it. The sweep is parked off the
+   block, so reduced motion (one 0.01ms pass) leaves it plain. */
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  transform: translateX(-100%);
+  animation: sweep 1.4s ease-in-out infinite;
+}
+
+/* A disclosure chevron, drawn with two borders so its weight matches the
+   hairlines rather than a font: points right, turns down when the control
+   around it says aria-expanded="true". */
+.chev {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(-45deg);
+  transition: transform 150ms var(--ease);
+}
+
+[aria-expanded="true"] .chev {
+  transform: rotate(45deg);
+}
+
+/* <details class="disclosure">: the summary is a quiet 44px row with a
+   chevron in its text colour, not the UA triangle (PR #39's agent tool
+   line, generalised). The colour and size of the text are the caller's. */
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 150ms var(--ease);
+}
+
+.disclosure[open] > summary::after {
+  transform: rotate(45deg);
+}
+
+/* The one quiet selected state: a pick among options, not an action, so it
+   takes the accent as a tint and a line, never the fill (the accent is
+   rationed, §7.4). A control whose own rule is more specific than one class
+   (`.meal-picker button.active`) joins this rule's selector list instead. */
+.quiet-selected {
+  background: var(--spruce-deep);
+  border-color: var(--accent-line);
+  color: var(--accent);
 }
