@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import "@/app/photo.css";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 /** Vision needs nothing sharper than this; a 12 MP phone JPEG is ~4 MB and
  *  the route caps uploads at 12 MB, so downscale client-side, always. */
@@ -115,6 +116,7 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
  *  a file input cannot be opened from an effect, because the user activation
  *  is long gone by the time the lane has mounted. */
 export default function PhotoCapture({ open, onClose, onPicked, locate = false }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>(open);
   const [phase, setPhase] = useState<Phase>("pick");
   const [error, setError] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -196,7 +198,14 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
   return (
     <>
       <div className="subsheet-backdrop" onClick={close} />
-      <div className="subsheet" role="dialog" aria-label="Log a photo">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Log a photo"
+        tabIndex={-1}
+      >
         <SheetHeader title="Log a photo" onClose={close} canClose={!locked} />
 
         <input

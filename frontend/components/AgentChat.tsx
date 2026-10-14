@@ -597,8 +597,9 @@ export default function AgentChat({
       {docked ? null : <div className="agent-backdrop" onClick={onClose} />}
       <div
         className={docked ? "split-pane chat-pane" : "sheet agent-sheet"}
-        role="dialog"
-        aria-label="Agent"
+        // docked, it is a pane of SplitSheet's dialog, not a second dialog
+        role={docked ? "region" : "dialog"}
+        aria-label={docked ? "Conversation" : "Agent"}
       >
         {docked ? null : (
           <div className="sheet-head">

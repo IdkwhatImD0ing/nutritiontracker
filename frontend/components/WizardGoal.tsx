@@ -19,6 +19,7 @@ import {
   type GoalResult,
   type Sex,
 } from "./WizardMath";
+import { useSheetFocus } from "./useSheetFocus";
 import "@/app/library/m3.css";
 
 type Props = {
@@ -91,6 +92,7 @@ function nearestRate(kg: number | undefined): number {
  *  kcal + macro targets, every number shown and editable before saving to
  *  settings. Re-runnable from Settings any time. */
 export default function WizardGoal({ initial, onDone, onSkip }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const init = initial ?? {};
   const [step, setStep] = useState(0);
   const [units, setUnits] = useState<Units>(init.units ?? "imperial");
@@ -240,7 +242,14 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
   const wUnit = units === "metric" ? "kg" : "lb";
 
   return (
-    <div className="wizard" role="dialog" aria-label="Goal wizard">
+    <div
+      ref={sheetRef}
+      className="wizard"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Goal wizard"
+      tabIndex={-1}
+    >
       <div className="wizard-inner">
         <div className="wizard-steps" aria-hidden="true">
           {[0, 1, 2].map((i) => (

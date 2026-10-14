@@ -8,6 +8,7 @@ import {
   type FoodSearchResult,
 } from "@/lib/api";
 import SheetHeader, { SheetClose } from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -38,6 +39,7 @@ export default function ManualSearchSheet({
   onSelect,
   onClose,
 }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [query, setQuery] = useState(phrase);
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [recent, setRecent] = useState<FoodSearchResult[] | null>(null);
@@ -180,7 +182,14 @@ export default function ManualSearchSheet({
     return (
       <>
         <div className="sheet-backdrop" onClick={onClose} />
-        <div className="sheet search-sheet" role="dialog" aria-label="Search foods">
+        <div
+          ref={sheetRef}
+          className="sheet search-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Search foods"
+          tabIndex={-1}
+        >
           <div className="sheet-head">
             <div className="sheet-head-row">
               <span className="sheet-title">Search</span>
@@ -196,7 +205,14 @@ export default function ManualSearchSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Manual food search">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Manual food search"
+        tabIndex={-1}
+      >
         <SheetHeader title="Find a food" onClose={onClose} />
         {body}
       </div>

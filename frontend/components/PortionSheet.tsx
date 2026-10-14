@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { StagedItem } from "@/lib/api";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 /** A serving option normalized from the staged payload (§7.1 portion sheet). */
 export type PortionChoice = {
@@ -26,6 +27,7 @@ function fmtQty(q: number): string {
  *  portion is ≤3 taps: open (tap portion) → adjust (tap +/− or a serving) →
  *  Done. */
 export default function PortionSheet({ item, onApply, onClose }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const servings = useMemo<PortionChoice[]>(() => {
     const fromPayload = (item.servings ?? [])
       .map((s) => ({
@@ -76,7 +78,14 @@ export default function PortionSheet({ item, onApply, onClose }: Props) {
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Portion">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Portion"
+        tabIndex={-1}
+      >
         <SheetHeader
           title={<span className="food-name">{item.food?.name ?? item.phrase}</span>}
           onClose={onClose}

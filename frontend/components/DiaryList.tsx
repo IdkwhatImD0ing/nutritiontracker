@@ -12,6 +12,7 @@ import {
 import DiaryEntryRow from "./DiaryEntryRow";
 import { createMeal, type SavedMeal } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -41,6 +42,7 @@ function SaveMealSheet({
   onSaved: (m: SavedMeal) => void;
   onClose: () => void;
 }) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [name, setName] = useState(`usual ${meal}`);
   const [phrases, setPhrases] = useState("");
   const [busy, setBusy] = useState(false);
@@ -77,7 +79,14 @@ function SaveMealSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Save as meal">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Save as meal"
+        tabIndex={-1}
+      >
         <SheetHeader title={`Save this ${meal} as a meal`} onClose={onClose} />
 
         <label className="m3-field">

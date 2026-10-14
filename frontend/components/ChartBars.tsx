@@ -84,18 +84,21 @@ export default function ChartBars({
   return (
     <figure className="chart">
       <figcaption className="chart-title">{title}</figcaption>
+      {/* Tappable bars are buttons, and an img's children are presentational —
+          VoiceOver would hear one picture and reach no bar. So a chart you
+          can tap is a group of its bars, and its tick text is hidden. */}
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role={onTap ? "group" : "img"}
         aria-label={title}
         className="chart-svg"
       >
-        <g className="chart-grid">
+        <g className="chart-grid" aria-hidden="true">
           {ticks.map((t) => (
             <line key={t} x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} />
           ))}
         </g>
-        <g className="chart-axis">
+        <g className="chart-axis" aria-hidden="true">
           {ticks.map((t) => (
             <text key={t} x={PAD.l - 6} y={y(t) + 3} textAnchor="end">
               {format(t)}
@@ -111,12 +114,15 @@ export default function ChartBars({
           const cls = `chart-bar${onTap ? " tap" : ""}${b.muted ? " muted" : ""}${
             b.active ? " active" : ""
           }`;
+          const said =
+            b.hint ?? `${b.label}: ${v == null ? "—" : format(v)}${unit ? ` ${unit}` : ""}`;
           return (
             <g
               key={b.key}
               className={cls}
               onClick={onTap ? () => onTap(b.key) : undefined}
               role={onTap ? "button" : undefined}
+              aria-label={onTap ? said : undefined}
               tabIndex={onTap ? 0 : undefined}
               onKeyDown={
                 onTap
@@ -129,9 +135,7 @@ export default function ChartBars({
                   : undefined
               }
             >
-              <title>
-                {b.hint ?? `${b.label}: ${v == null ? "—" : format(v)}${unit ? ` ${unit}` : ""}`}
-              </title>
+              <title>{said}</title>
               {/* full-height hit area so thin bars are still tappable */}
               <rect
                 x={PAD.l + i * group}

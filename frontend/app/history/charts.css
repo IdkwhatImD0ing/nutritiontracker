@@ -74,6 +74,13 @@
   filter: brightness(1.2);
 }
 
+/* the keyboard ring: on the bar's full-height hit slot, since an outline on
+   an svg <g> draws differently in every browser (it is off, below) */
+.chart-bar.tap:focus-visible rect[fill="transparent"] {
+  stroke: var(--accent-line);
+  stroke-width: 2;
+}
+
 @media (hover: hover) {
   .chart-bar.tap:hover rect:not([fill="transparent"]) {
     filter: brightness(1.2);

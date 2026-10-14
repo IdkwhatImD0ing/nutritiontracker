@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { loadDetector } from "./barcodeDetector";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 /** The + sheet (owner ruling, 2026-09-02): the mid-screen capture bar is
  *  gone; every way to log opens from the tab bar's + button. Exactly four
@@ -103,6 +104,7 @@ const ROWS = [
 ] as const;
 
 export default function AddSheet({ open, onClose, onPick }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>(open);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -124,7 +126,14 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet add-sheet" role="dialog" aria-label="Log food">
+      <div
+        ref={sheetRef}
+        className="subsheet add-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Log food"
+        tabIndex={-1}
+      >
         <SheetHeader title="Log food" onClose={onClose} closeButton={false} />
         {ROWS.map(({ lane, label, sub, Icon }) => (
           <button
@@ -145,6 +154,11 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
             </span>
           </button>
         ))}
+        {/* No ✕ on an action sheet, and aria-modal keeps VoiceOver off the
+            backdrop that closes it: this is the way out for a screen reader. */}
+        <button type="button" className="sr-only" onClick={onClose}>
+          Close
+        </button>
       </div>
     </>
   );

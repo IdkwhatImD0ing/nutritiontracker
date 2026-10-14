@@ -17,6 +17,7 @@ import {
   type SavedMealItem,
 } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   /** null → §8.4 create path 3, "build one in Library" (POST /api/meals) */
@@ -32,6 +33,7 @@ const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
  *  deactivate. Delete = deactivate, so old diary rows keep their context;
  *  normalization of trigger phrases happens server-side (§5). */
 export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [name, setName] = useState(meal?.name ?? "");
   const [phrases, setPhrases] = useState(meal?.trigger_phrases.join(", ") ?? "");
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
@@ -172,7 +174,14 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Edit saved meal">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit saved meal"
+        tabIndex={-1}
+      >
         <SheetHeader
           title={!meal ? "New saved meal" : meal.is_active ? "Saved meal" : "Inactive meal"}
           onClose={onClose}

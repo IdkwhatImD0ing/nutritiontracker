@@ -26,10 +26,18 @@ function Donut({ label, consumed, target, color, size, loud, loading }: DonutPro
   const remaining = hasTarget ? Math.max(target - consumed, 0) : 0;
   const centerNum = hasTarget ? remaining : consumed;
   const centerSub = hasTarget ? "left" : "logged";
+  // One spoken line per ring: the svg's figures and the label under it read
+  // as loose fragments ("97, g, left, CARBS"), the number before its macro.
+  const spoken = loading
+    ? `${label}: loading`
+    : hasTarget
+      ? `${label}: ${fmt.format(consumed)} of ${fmt.format(target)} g, ` +
+        `${fmt.format(remaining)} g left`
+      : `${label}: ${fmt.format(consumed)} g logged`;
 
   return (
-    <div className={`donut${loud ? " loud" : ""}`}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <div className={`donut${loud ? " loud" : ""}`} role="img" aria-label={spoken}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -76,6 +84,7 @@ function Donut({ label, consumed, target, color, size, loud, loading }: DonutPro
       <span
         className="macro-label"
         style={{ "--dot": color } as React.CSSProperties}
+        aria-hidden="true"
       >
         {label}
       </span>
@@ -104,6 +113,13 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
 
   const kcalFrac = kcalTarget > 0 ? kcal / kcalTarget : 0;
   const kcalLeft = kcalTarget - kcal;
+  // the calories row and its bar, spoken as one line like each ring
+  const kcalSpoken = loading
+    ? "Calories: loading"
+    : kcalTarget > 0
+      ? `Calories: ${fmt.format(kcal)} of ${fmt.format(kcalTarget)} kcal, ` +
+        `${fmt.format(Math.abs(kcalLeft))} ${kcalLeft < 0 ? "over" : "left"}`
+      : `Calories: ${fmt.format(kcal)} kcal`;
 
   return (
     <section
@@ -111,7 +127,7 @@ export default function Tracker({ totals }: { totals: DayTotals | null }) {
       aria-label="Daily tracker"
       aria-busy={loading || undefined}
     >
-      <div>
+      <div role="img" aria-label={kcalSpoken}>
         <div className="kcal-row">
           <div>
             <span className="label">Calories</span>

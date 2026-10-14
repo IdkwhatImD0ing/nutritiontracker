@@ -24,6 +24,7 @@ import PortionSheet, { type PortionChoice } from "./PortionSheet";
 import { SheetClose } from "./SheetHeader";
 import StagedRow, { type PickOption } from "./StagedRow";
 import { useDragDismiss } from "./useDragDismiss";
+import { useSheetFocus } from "./useSheetFocus";
 import "@/app/photo.css";
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
@@ -94,6 +95,8 @@ export default function StagingSheet({
   onClose,
   docked = false,
 }: Props) {
+  // docked, the split around it is the dialog and takes the focus (SplitSheet)
+  const sheetRef = useSheetFocus<HTMLDivElement>(!docked);
   const [items, setItems] = useState<StagedItem[]>(restore?.items ?? log.items);
   const [meal, setMeal] = useState<Meal>(restore?.meal ?? log.meal);
   const [mealPickerOpen, setMealPickerOpen] = useState(false);
@@ -654,9 +657,12 @@ export default function StagingSheet({
     <>
       {docked ? null : <div className="sheet-backdrop" onClick={close} />}
       <div
+        ref={sheetRef}
         className={docked ? "split-pane stage-pane" : "sheet"}
-        role="dialog"
+        role={docked ? "region" : "dialog"}
+        aria-modal={docked ? undefined : "true"}
         aria-label="Items to review"
+        tabIndex={docked ? undefined : -1}
       >
         {docked ? null : (
           <div className="sheet-head" {...drag}>

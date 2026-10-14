@@ -7,6 +7,7 @@ import {
   type StagedItem,
 } from "@/lib/api";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   item: StagedItem;
@@ -64,6 +65,7 @@ export default function FoodEditSheet({
   onManualSearch,
   onClose,
 }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [text, setText] = useState(item.phrase);
   const [aliases, setAliases] = useState<AliasRow[] | null>(null);
 
@@ -89,7 +91,14 @@ export default function FoodEditSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Edit food">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit food"
+        tabIndex={-1}
+      >
         <SheetHeader title={<>&ldquo;{item.phrase}&rdquo;</>} onClose={onClose} />
 
         {aliases?.length ? (

@@ -16,7 +16,7 @@
   /* ink */
   --text: #f4f1ea;
   --muted: #a3a29f;
-  --faint: #6f6e6c;
+  --faint: #8e8c88; /* 4.7:1 on --surface-2: notes, units and empty lines are text */
 
   /* the accent family. Kept under the old names so every component that
      already says var(--spruce) / var(--mint) follows the theme unchanged. */
@@ -56,8 +56,8 @@
   --toast-bg: #26262d;
   --surface-hero: #1d1c22; /* the top of the tracker's gradient */
   --on-danger: #fff; /* text on a red fill */
-  /* new, not yet used: a field placeholder at 5.2:1 on --surface-2, where
-     --faint's 3.1:1 is under the 4.5:1 text minimum */
+  /* a field placeholder: 5.2:1 on --surface-2, 4.6:1 on a focused field's
+     --surface-3, where --faint drops to 4.1:1 */
   --placeholder: #969490;
 
   /* layout and type: one card edge, one form field, one micro label */
@@ -131,7 +131,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 15px;
+  font-size: 0.9375rem; /* 15px at the default root; follows Text Size (layout.tsx) */
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -156,6 +156,14 @@ select,
 textarea {
   font-family: inherit;
   color: inherit;
+}
+
+/* One placeholder colour for every field; left to the UA, WebKit and
+   Chromium each drew their own grey, under the text minimum. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
 }
 
 /* iOS zooms the page into any focused field under 16px. This floors fields
@@ -340,6 +348,12 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--accent-line);
   outline-offset: 2px;
+}
+
+/* A sheet takes focus itself as it opens (useSheetFocus), so a screen reader
+   starts inside it; the sheet is not a control, so it draws no ring. */
+[role="dialog"]:focus {
+  outline: none;
 }
 
 a {
@@ -617,8 +631,19 @@ a {
   gap: 8px;
 }
 
+/* Sized here, not by the svg's own 84/116: in rem the rings grow with Text
+   Size (layout.tsx), and their text, in viewBox units, grows with them. The
+   cap is what three fit across the card: 100vw - 90px is the row on a phone
+   (shell and card padding, two gaps), split 84:116:84, and 96 / 133 is all
+   the desktop tracker column holds. */
 .donut svg {
   display: block;
+  width: clamp(84px, 5.25rem, min((100vw - 90px) * 84 / 284, 96px));
+  height: auto;
+}
+
+.donut.loud svg {
+  width: clamp(116px, 7.25rem, min((100vw - 90px) * 116 / 284, 133px));
 }
 
 .donut .center-num {
@@ -774,10 +799,6 @@ a {
   transition:
     border-color 150ms,
     background 150ms;
-}
-
-.capture input::placeholder {
-  color: var(--faint);
 }
 
 .capture input:focus {
@@ -1174,6 +1195,7 @@ a {
 }
 
 .sheet-title {
+  margin: 0; /* an h2 where it names a dialog (SplitSheet) */
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1.15rem;
@@ -1743,10 +1765,6 @@ a {
   padding: 0 14px;
   font-size: 1rem;
   outline: none;
-}
-
-.add-item input::placeholder {
-  color: var(--faint);
 }
 
 .add-item input:focus {

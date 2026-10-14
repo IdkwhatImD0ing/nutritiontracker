@@ -113,7 +113,9 @@
   transform: scale(0.99);
 }
 
-.hcard.empty {
+/* an empty day reads dimmed, but its head ('Today Oct 13 · nothing
+   logged') keeps full contrast: it is the line that explains the card */
+.hcard.empty > :not(.hcard-head) {
   opacity: 0.7;
 }
 

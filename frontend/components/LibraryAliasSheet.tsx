@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   alias: AliasRow;
@@ -24,6 +25,7 @@ export default function LibraryAliasSheet({
   onDeleted,
   onClose,
 }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [pinned, setPinned] = useState(alias.pinned);
   const [servingId, setServingId] = useState(alias.default_serving_id ?? "");
   const [qtyText, setQtyText] = useState(
@@ -90,7 +92,14 @@ export default function LibraryAliasSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Edit phrase">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit phrase"
+        tabIndex={-1}
+      >
         <SheetHeader title={`“${alias.alias_norm}”`} onClose={onClose} />
         <p className="subsheet-hint">
           → {alias.food_name}

@@ -106,7 +106,6 @@ function ThreeDays({
             key={d.date}
             className={`hcard${d.logged ? "" : " empty"}`}
             onClick={() => onDay(d.date)}
-            aria-label={`Open diary for ${d.date}`}
           >
             <div className="hcard-head">
               <span className="hcard-day">
@@ -151,7 +150,10 @@ function ThreeDays({
               <div className="hcard-meals num">
                 {mealChips.map((c) => (
                   <span key={c.meal} title={c.meal}>
-                    <span className="k">{MEAL_LETTER[c.meal] ?? c.meal}</span>{" "}
+                    <span className="k" aria-hidden="true">
+                      {MEAL_LETTER[c.meal] ?? c.meal}
+                    </span>
+                    <span className="sr-only">{c.meal}</span>{" "}
                     {fmt.format(c.kcal)}
                   </span>
                 ))}

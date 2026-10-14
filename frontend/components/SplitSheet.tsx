@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { SheetClose } from "./SheetHeader";
 import { useDragDismiss } from "./useDragDismiss";
+import { useSheetFocus } from "./useSheetFocus";
 
 /** The Agent lane's one sheet (§7.1, Bill 2026-09-09: "I just wanna chat with
  *  the stage window open"). Before this, Review opened the staging sheet as a
@@ -33,6 +34,12 @@ import { useDragDismiss } from "./useDragDismiss";
 const STOPS = { peek: 0.2, half: 0.48, full: 0.8 } as const;
 type Stop = keyof typeof STOPS;
 const ORDER: Stop[] = ["peek", "half", "full"];
+/** what the divider says, rather than a bare 20 / 48 / 80 */
+const SAID: Record<Stop, string> = {
+  peek: "List collapsed",
+  half: "List half height",
+  full: "List full height",
+};
 
 function nearest(f: number): Stop {
   return ORDER.reduce((best, s) =>
@@ -54,7 +61,9 @@ type Props = {
 export default function SplitSheet({ stage, chat, onDismiss }: Props) {
   const [split, setSplit] = useState<number>(STOPS.half);
   const [dragging, setDragging] = useState(false);
-  const shellRef = useRef<HTMLDivElement>(null);
+  // the dialog (the panes inside it are regions): focus moves in on open
+  const shellRef = useSheetFocus<HTMLDivElement>();
+  const titleId = useId();
   // Where the drag started. A ref, not state: it changes on every pointermove
   // and nothing renders from it.
   const from = useRef<{ id: number; y: number; at: number } | null>(null);
@@ -87,6 +96,10 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
       <div
         className="sheet split-sheet"
         ref={shellRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         data-snap={dragging ? undefined : nearest(split)}
         // the stage pane's flex-basis mid-drag; a custom property so a drag
         // repaints one declaration rather than re-rendering a stylesheet
@@ -95,7 +108,9 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
         <div className="sheet-head split-head" {...drag}>
           <div className="grabber" />
           <div className="sheet-head-row">
-            <span className="sheet-title">Agent</span>
+            <h2 className="sheet-title" id={titleId}>
+              Agent
+            </h2>
             {/* While rows are staged the staged list's own × is the one that
                 acts — it puts the rows away (§5 discard, undoable) and this
                 one comes back. Two ×es, one of them inert, would be worse
@@ -115,6 +130,7 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
             aria-valuenow={Math.round(split * 100)}
             aria-valuemin={Math.round(STOPS.peek * 100)}
             aria-valuemax={Math.round(STOPS.full * 100)}
+            aria-valuetext={SAID[nearest(split)]}
             tabIndex={0}
             onPointerDown={(e) => {
               from.current = { id: e.pointerId, y: e.clientY, at: split };
