@@ -2,19 +2,15 @@
    landing.css's own .land-nav / .land-mark; this file holds only what is
    specific to long prose. Nothing here is imported by the app shell. */
 
+/* Under the sticky .land-nav, which already pads the top safe area. */
 .legal {
+  width: 100%;
   max-width: 680px;
   margin: 0 auto;
-  padding: env(safe-area-inset-top) 20px calc(48px + env(safe-area-inset-bottom));
+  padding: 32px 20px calc(48px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 40px;
-}
-
-/* .land-mark is a <span> on the landing page; here it is a link. */
-.legal-mark {
-  color: var(--text);
-  text-decoration: none;
 }
 
 .legal-head h1 {

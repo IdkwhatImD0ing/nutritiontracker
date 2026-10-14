@@ -405,9 +405,19 @@ body:has(.tabbar) .shell {
 
 .m3-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+}
+
+/* A text button beside a note never wraps ('Connect / Oura', 'Re-run the
+   goal / wizard'): the note beside it wraps, and in .m3-actions it drops
+   below the button when the two can't share a line. */
+.m3-row > .m3-link-btn,
+.m3-actions .m3-link-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* ---------- forms ---------- */
@@ -1318,16 +1328,17 @@ body:has(.tabbar) .shell {
 
 .keys-row-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 
+/* The whole label, wrapped (up to 80 characters): it is the only way to tell
+   two keys apart before Revoke, and an ellipsis kept ~28. The status badge
+   stays top-right (flex-start above). */
 .keys-label {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 0.95rem;
   font-weight: 600;
 }

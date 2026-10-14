@@ -1531,10 +1531,15 @@ a {
   margin-top: 8px;
 }
 
+/* Alternates and aliases are food names, some FDC-length, so a chip wraps:
+   a fixed radius of half its one-line height (as .portion-btn), left-aligned
+   — a capsule on one line, a rounded rectangle on two, not a centred lozenge. */
 .chip {
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 16px;
+  max-width: 100%;
+  text-align: left;
   padding: 6px 12px;
   font-size: 0.8rem;
   font-weight: 500;
@@ -1955,12 +1960,9 @@ a {
   margin-left: 4px;
 }
 
-.chip.active .alias-count {
-  color: var(--on-accent);
-  opacity: 0.7;
-}
-
 .edit-manual-btn {
+  display: flex;
+  align-items: center;
   text-align: left;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -1969,6 +1971,17 @@ a {
   font-size: 0.9rem;
   color: var(--sage);
   cursor: pointer;
+}
+
+/* a trailing chevron, as on Library's add rows: without one the button read
+   as an empty field under the real one */
+.edit-manual-btn::after {
+  content: "›";
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--faint);
 }
 
 .edit-manual-btn:disabled {
@@ -2006,6 +2019,12 @@ a {
 .search-results button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* the food the row is on now (the edit sheet's "Your foods for this") */
+.search-results button.active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
 }
 
 .search-results .result-name {
@@ -2202,15 +2221,19 @@ a {
   gap: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  /* half the one-line height (~38px), not 999px: a spoken phrase wraps the
+     pill, and the stack keeps one shape — capsules, rounded rectangles */
+  border-radius: 19px;
   padding: 9px 14px;
   font-size: 0.82rem;
   color: var(--muted);
 }
 
+/* the ✕ stays top-right of a wrapped phrase, not mid-edge */
 .pending-pill.failed {
   color: var(--amber);
   justify-content: space-between;
+  align-items: flex-start;
 }
 
 .pending-pill.failed button {
@@ -2634,7 +2657,10 @@ a {
   color: var(--faint);
 }
 
+/* beside the ✕, Commit pushed right: .meal-chip's own margin-left:auto
+   (the header's) left it centred between the two */
 .stage-lip .meal-chip {
+  margin-left: 0;
   margin-right: auto;
 }
 
@@ -3032,8 +3058,22 @@ a {
   margin: 0 0 2px;
 }
 
+/* the clock and caption take the middle; neither it nor 'Type instead'
+   wraps (they read 'Listening — tap to / stop' and 'Type / instead' in a
+   52px capsule at 375px) */
+.chat-rec > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-rec .voice-caption {
+  white-space: nowrap;
+}
+
 .chat-rec .voice-alt {
   margin: 0 0 0 auto;
+  white-space: nowrap;
+  padding: 10px 14px;
 }
 
 /* a picked shot waiting above the composer — it sends with the next line */

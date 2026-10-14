@@ -52,6 +52,9 @@ function MealCard({
   meal: SavedMeal;
   onOpen: () => void;
 }) {
+  // Two phrases and a count: ten of them made a 4-line run-on of quotes. The
+  // full list is the meal sheet's, and a CSS clamp would cut mid-quote.
+  const more = meal.trigger_phrases.length - 2;
   return (
     <button
       type="button"
@@ -67,7 +70,10 @@ function MealCard({
       </div>
       <span className="m3-card-sub">
         {meal.trigger_phrases.length
-          ? meal.trigger_phrases.map((p) => `“${p}”`).join(" · ")
+          ? meal.trigger_phrases
+              .slice(0, 2)
+              .map((p) => `“${p}”`)
+              .join(" · ") + (more > 0 ? ` +${more} more` : "")
           : "no trigger phrases"}
       </span>
     </button>

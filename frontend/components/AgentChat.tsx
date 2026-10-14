@@ -725,7 +725,7 @@ export default function AgentChat({
                 <div className="voice-timer num">{mmss(elapsedMs)}</div>
                 <div className="voice-caption">
                   <span className="rec-dot" />
-                  Listening — tap to stop
+                  Listening…
                 </div>
               </div>
               <button type="button" className="voice-alt" onClick={typeInstead}>
