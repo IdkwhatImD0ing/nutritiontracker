@@ -35,9 +35,11 @@ const STOPS = { peek: 0.2, half: 0.48, full: 0.8 } as const;
 type Stop = keyof typeof STOPS;
 const ORDER: Stop[] = ["peek", "half", "full"];
 
-/** A sheet shorter than this (SE, mini, 320-wide) opens at `peek`: at `half`
- *  its chat was 118–165px, too little to show the reply the rows came with
- *  or the agent's follow-up question (owner, 2026-10-13). */
+/** A sheet shorter than this (an SE; a mini only at Display Zoom, 320 wide)
+ *  opens at `peek`: at `half` its chat was 118–165px, too little to show the
+ *  reply the rows came with or the agent's follow-up question (owner,
+ *  2026-10-13). It is the sheet's own height, so it counts the keyboard:
+ *  rows that arrive while the keyboard is up open at peek on any phone. */
 const SHORT_SHEET_PX = 640;
 
 function nearest(f: number): Stop {
