@@ -86,9 +86,10 @@
   cursor: pointer;
 }
 
+/* the primary fill every other Log / send button wears */
 .photo-actions button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: transparent;
   color: var(--on-accent);
 }
 

@@ -655,7 +655,7 @@ export default function StagingSheet({
     <SheetClose label="Discard these items" onClick={close} />
   );
   const mealPicker = mealPickerOpen ? (
-    <div className="meal-picker">
+    <div className="meal-picker m3-seg">
       {MEALS.map((m) => (
         <button
           key={m}

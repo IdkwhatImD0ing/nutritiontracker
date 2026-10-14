@@ -90,7 +90,7 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         ) : null}
       </header>
 
-      <div className="segmented" role="tablist" aria-label="Range">
+      <div className="m3-seg" role="tablist" aria-label="Range">
         {KINDS.map((k) => (
           <button
             key={k.kind}

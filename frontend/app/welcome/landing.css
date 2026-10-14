@@ -251,6 +251,20 @@
   margin-top: 32px;
 }
 
+/* a phone stacks the buttons at one width, primary first, and the text
+   link becomes a centred row of its own rather than a wrapped orphan */
+@media (max-width: 559px) {
+  .land-hero .land-cta,
+  .land-open .land-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .land-cta .land-textlink {
+    justify-content: center;
+  }
+}
+
 .land-btn {
   display: inline-flex;
   align-items: center;
@@ -293,7 +307,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 0; /* flush left when the CTA row wraps it onto its own line */
+  padding: 8px 0; /* flush with the buttons' edge in a row; centred below 560px */
   color: var(--muted);
   font-weight: 600;
   text-decoration: none;
@@ -359,6 +373,8 @@
   }
 }
 
+/* a picture of the sheet: its pills and button are not controls, so a
+   tap or a long-press finds nothing to poke or select */
 .land-sheet {
   width: 100%;
   max-width: 460px;
@@ -368,6 +384,9 @@
   border-radius: 24px;
   box-shadow: var(--shadow-float);
   overflow: hidden;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .land-sheet-head {

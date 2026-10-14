@@ -17,38 +17,8 @@
   color: var(--text);
 }
 
-/* segmented range control */
-
-.segmented {
-  display: flex;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px;
-  gap: 2px;
-}
-
-.segmented button {
-  flex: 1;
-  background: none;
-  border: none;
-  border-radius: 999px;
-  padding: 9px 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 160ms,
-    color 160ms;
-}
-
-/* the quiet selected state (globals.css .quiet-selected): the range is a
-   pick, and the data under it is the loud thing on this page */
-.segmented button.active {
-  background: var(--spruce-deep);
-  color: var(--accent);
-}
+/* the range control is globals.css's .m3-seg, the app's one segmented
+   control */
 
 .range-label {
   margin: -8px 0 0;
@@ -253,7 +223,7 @@
     grid-column: 1 / -1;
   }
 
-  .shell.history > .segmented {
+  .shell.history > .m3-seg {
     grid-column: 1;
   }
 

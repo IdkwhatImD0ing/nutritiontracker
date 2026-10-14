@@ -153,9 +153,6 @@ export default function Library() {
     <main className="shell library">
       <header className="brand">
         <h1>Library</h1>
-        <span className="date">
-          {aliases ? `${groups.length} food${groups.length === 1 ? "" : "s"}` : ""}
-        </span>
       </header>
 
       {loadError ? (
@@ -228,7 +225,9 @@ export default function Library() {
       <section className="m3-section lib-meals" aria-label="Saved meals">
         <h2>
           Saved meals
-          <span className="count num">{meals ? activeMeals.length : ""}</span>
+          {activeMeals.length > 0 ? (
+            <span className="count num">{activeMeals.length}</span>
+          ) : null}
         </h2>
         {meals == null ? (
           <p className="m3-empty">Loading…</p>
@@ -257,9 +256,11 @@ export default function Library() {
       <section className="m3-section lib-foods" aria-label="Your foods">
         <h2>
           Your foods
-          <span className="count num">
-            {aliases ? `${aliases.length} phrase${aliases.length === 1 ? "" : "s"}` : ""}
-          </span>
+          {aliases?.length ? (
+            <span className="count num">
+              {`${aliases.length} phrase${aliases.length === 1 ? "" : "s"}`}
+            </span>
+          ) : null}
         </h2>
         {aliases == null ? (
           <p className="m3-empty">Loading…</p>
@@ -285,7 +286,10 @@ export default function Library() {
                   {foodName(g.food_name)}
                 </Link>
               </div>
-              <span className="m3-card-stat num">{g.total}×</span>
+              {/* one phrase: its chip already shows this total */}
+              {g.aliases.length > 1 ? (
+                <span className="m3-card-stat num">{g.total}×</span>
+              ) : null}
             </div>
             {g.brand ? <div className="m3-card-sub">{g.brand}</div> : null}
             <div className="chips">

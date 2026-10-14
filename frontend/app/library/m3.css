@@ -1,7 +1,8 @@
 /* Tally — M3 surfaces: tab bar, Library, Settings, goal wizard, food detail.
    Imported by TabBar and WizardGate themselves so the styles ride along
    wherever they mount; globals.css stays the base layer (tokens, .shell,
-   .chip, .stepper, .subsheet, .commit-btn, .badge are reused from there). */
+   .chip, .stepper, .subsheet, .commit-btn, .badge, .m3-seg are reused from
+   there). */
 
 /* ---------- tab bar: Today · History · [+] · Library · Settings (§7.4) ---------- */
 
@@ -83,7 +84,7 @@
   height: 58px;
   margin-top: -24px;
   border-radius: 50%;
-  background: linear-gradient(160deg, var(--spruce-soft), var(--accent) 45%, var(--accent-strong));
+  background: var(--accent-fill); /* the one primary fill (Log, send, auth) */
   border: none;
   outline: 5px solid var(--bg);
   color: var(--on-accent);
@@ -541,35 +542,28 @@ body:has(.tabbar) .shell {
   margin-inline-start: 2px;
 }
 
-.m3-seg {
-  display: flex;
-  gap: 4px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px;
+/* A select drops the platform's chrome too: the fields' box, and a chevron
+   drawn as two gradient triangles so it takes the token colour (a data-URI
+   arrow would hard-code one). */
+.m3-field select,
+.m3-window select {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 44px;
+  padding-right: 34px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    right 17px center,
+    right 12px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
 }
 
-.m3-seg button {
-  flex: 1;
-  background: none;
-  border: none;
-  border-radius: 999px;
-  padding: 9px 0;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 150ms,
-    color 150ms;
-}
-
-/* the quiet selected state (globals.css .quiet-selected): a pick, not an
-   action, so a tint rather than the accent fill */
-.m3-seg button.active {
-  background: var(--spruce-deep);
-  color: var(--accent);
+/* the time inputs' height, in the same card */
+.m3-window select {
+  min-height: 42px;
 }
 
 /* saved-meal item row: name + compact qty stepper + remove */
@@ -945,16 +939,17 @@ body:has(.tabbar) .shell {
   color: var(--sage);
 }
 
+/* the secondary pill (.keys-btn's values) */
 .account-signout {
   align-self: flex-start;
-  min-height: 42px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  padding: 0 18px;
+  padding: 0 16px;
   cursor: pointer;
 }
 

@@ -283,59 +283,64 @@ export default function Settings() {
 
           <section className="m3-section" aria-label="Timezone">
             <h2>Timezone</h2>
-            <label className="m3-field">
-              IANA name
-              <input
-                list="usual-tz-list"
-                value={form.timezone}
-                onChange={(e) =>
-                  setForm((f) => (f ? { ...f, timezone: e.target.value } : f))
-                }
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-            <datalist id="usual-tz-list">
-              {timezones().map((z) => (
-                <option value={z} key={z} />
-              ))}
-            </datalist>
-            {deviceTz && deviceTz !== form.timezone ? (
-              <p className="m3-note">
-                This device says {deviceTz}.{" "}
-                <button
-                  type="button"
-                  className="m3-link-btn"
-                  onClick={() =>
-                    setForm((f) => (f ? { ...f, timezone: deviceTz } : f))
+            <div className="m3-card">
+              <label className="m3-field">
+                <input
+                  list="usual-tz-list"
+                  value={form.timezone}
+                  onChange={(e) =>
+                    setForm((f) => (f ? { ...f, timezone: e.target.value } : f))
                   }
-                >
-                  Use it
-                </button>
-              </p>
-            ) : null}
+                  aria-label="Timezone"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <datalist id="usual-tz-list">
+                {timezones().map((z) => (
+                  <option value={z} key={z} />
+                ))}
+              </datalist>
+              {deviceTz && deviceTz !== form.timezone ? (
+                <p className="m3-note">
+                  This device says {deviceTz}.{" "}
+                  <button
+                    type="button"
+                    className="m3-link-btn"
+                    onClick={() =>
+                      setForm((f) => (f ? { ...f, timezone: deviceTz } : f))
+                    }
+                  >
+                    Use it
+                  </button>
+                </p>
+              ) : null}
+            </div>
           </section>
 
           <section className="m3-section m3-wide" aria-label="Profile notes">
             <h2>Profile notes</h2>
-            <label className="m3-field">
-              What the assistant should always know
-              <textarea
-                value={form.profile_notes}
-                onChange={(e) =>
-                  setForm((f) => (f ? { ...f, profile_notes: e.target.value } : f))
-                }
-                placeholder={
-                  "lactose intolerant; 'fairlife' always means Core Power Elite 42g; I train ~6pm; weekday lunch is the office cafeteria, its menu is at example.com"
-                }
-              />
-            </label>
-            <p className="m3-note">
-              Injected verbatim every time a log is parsed, a food is searched
-              for, or a plate is photographed. Preferences, conventions, what a
-              word means to you — and where you usually eat: a menu named here
-              is one the photo lane can go read.
-            </p>
+            <div className="m3-card">
+              <label className="m3-field">
+                <textarea
+                  value={form.profile_notes}
+                  onChange={(e) =>
+                    setForm((f) => (f ? { ...f, profile_notes: e.target.value } : f))
+                  }
+                  aria-label="Profile notes"
+                  placeholder={
+                    "lactose intolerant; 'fairlife' always means Core Power Elite 42g; I train ~6pm; weekday lunch is the office cafeteria, its menu is at example.com"
+                  }
+                />
+              </label>
+              <p className="m3-note">
+                What the assistant should always know. Injected verbatim every
+                time a log is parsed, a food is searched for, or a plate is
+                photographed. Preferences, conventions, what a word means to
+                you — and where you usually eat: a menu named here is one the
+                photo lane can go read.
+              </p>
+            </div>
           </section>
 
           <button

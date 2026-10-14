@@ -224,7 +224,6 @@ a.m3-link-btn,
   .portion-btn,
   button.name-btn,
   .meal-chip,
-  .meal-picker button,
   .row-remove,
   .sheet-close,
   .toast button,
@@ -236,7 +235,6 @@ a.m3-link-btn,
   .m3-link-btn,
   .m3-item-qty button,
   .m3-seg button,
-  .segmented button,
   .keys-btn,
   .account-signout,
   .diary-actions button,
@@ -248,7 +246,6 @@ a.m3-link-btn,
   .portion-btn::before,
   button.name-btn::before,
   .meal-chip::before,
-  .meal-picker button::before,
   .row-remove::before,
   .sheet-close::before,
   .toast button::before,
@@ -260,7 +257,6 @@ a.m3-link-btn,
   .m3-link-btn::before,
   .m3-item-qty button::before,
   .m3-seg button::before,
-  .segmented button::before,
   .keys-btn::before,
   .account-signout::before,
   .diary-actions button::before,
@@ -296,11 +292,6 @@ a.m3-link-btn,
   .stage-lip .sheet-close,
   .stage-lip .meal-chip {
     --hit-top: -5px;
-  }
-
-  .sheet-foot .meal-picker button {
-    --hit-top: -14px;
-    --hit-h: calc(100% + 14px);
   }
 
   /* m3 cards stack controls 8px apart (a field, a card, then the link) */
@@ -779,7 +770,7 @@ a {
   height: 50px;
   border: none;
   border-radius: 50%;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: 1.15rem;
   font-weight: 700;
@@ -956,15 +947,17 @@ a {
   font-size: 0.85rem;
 }
 
+/* the secondary pill (.keys-btn's values): 40px, a hairline, .86rem/600 */
 .voice-alt {
   margin-top: 6px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.88rem;
-  font-weight: 550;
-  padding: 10px 18px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -1064,15 +1057,17 @@ a {
   border-left-color: var(--amber);
 }
 
+/* the secondary pill (.keys-btn's values), a step up off the notice */
 .notice-btn {
   flex-shrink: 0;
+  min-height: 40px;
   background: var(--surface-3);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  padding: 7px 14px;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -1243,21 +1238,34 @@ a {
 }
 
 .meal-picker {
-  display: flex;
-  gap: 6px;
   margin-top: 12px;
 }
 
-.meal-picker button {
-  flex: 1;
+/* The one segmented control for a single choice among a few: the meal
+   picker above, History's range, the wizard's units and sex, the API key
+   form. Its selected thumb is the quiet selected state (.quiet-selected). */
+.m3-seg {
+  display: flex;
+  gap: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 8px 0;
-  font-size: 0.8rem;
-  font-weight: 550;
+  padding: 4px;
+}
+
+.m3-seg button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  padding: 9px 0;
+  font-size: 0.84rem;
+  font-weight: 600;
   color: var(--muted);
   cursor: pointer;
+  transition:
+    background 150ms,
+    color 150ms;
 }
 
 .sheet-body {
@@ -1276,7 +1284,7 @@ a {
 .commit-btn {
   width: 100%;
   min-height: 54px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border: none;
   border-radius: 16px;
@@ -2221,6 +2229,42 @@ a {
   animation: rise 420ms var(--ease);
 }
 
+/* a phone gets an app screen, not a web-login card floating in black: the
+   fields sit on the ground, high and clear of the keyboard, under the mark;
+   the desktop keeps the card */
+@media (max-width: 899px) {
+  .auth-wrap {
+    align-items: flex-start;
+    padding-top: calc(56px + env(safe-area-inset-top));
+  }
+
+  .auth-card {
+    background: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+}
+
+/* the app icon's mark (TallyMark): landing.css colours it there, and the
+   auth pages don't load landing.css */
+.auth-mark {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+}
+
+.auth-mark rect {
+  fill: var(--accent);
+}
+
+.auth-mark path {
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 .auth-card h1 {
   margin: 0 0 4px;
   font-family: var(--font-display);
@@ -2250,6 +2294,7 @@ a {
   border-radius: 14px;
   padding: 13px 14px;
   font-size: 1rem;
+  color: var(--text); /* not the label's --muted: typed text isn't a placeholder */
   outline: none;
   transition: border-color 150ms;
 }
@@ -2259,7 +2304,7 @@ a {
 }
 
 .auth-card button[type="submit"] {
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border: none;
   border-radius: 14px;
@@ -2606,7 +2651,7 @@ a {
   padding: 0 16px;
   border: none;
   border-radius: 999px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-family: inherit;
   font-size: 0.94rem;
@@ -3159,10 +3204,10 @@ a {
 /* The one quiet selected state: a pick among options, not an action, so it
    takes the accent as a tint and a line, never the fill (the accent is
    rationed, §7.4). A control whose own rule is more specific than one class
-   (`.meal-picker button.active`) joins this rule's selector list instead. */
+   (`.m3-seg button.active`) joins this rule's selector list instead. */
 .quiet-selected,
 .chip.active,
-.meal-picker button.active {
+.m3-seg button.active {
   background: var(--spruce-deep);
   border-color: var(--accent-line);
   color: var(--accent);

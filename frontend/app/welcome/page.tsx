@@ -184,7 +184,7 @@ function Preview() {
             </span>
           </div>
           {/* looks like the app's commit button; deliberately not a <button> */}
-          <div className="land-commit">Log {PREVIEW_ROWS.length} items</div>
+          <div className="land-commit">Log · {PREVIEW_KCAL} kcal</div>
         </div>
       </div>
 
@@ -364,12 +364,12 @@ export default function Welcome() {
             </p>
           </div>
           <div className="land-cta">
-            <a className="land-btn ghost" href={GITHUB_URL}>
-              Read the source
-            </a>
             <Link href="/auth/sign-up" className="land-btn">
               Try a demo
             </Link>
+            <a className="land-btn ghost" href={GITHUB_URL}>
+              Read the source
+            </a>
           </div>
         </section>
       </main>

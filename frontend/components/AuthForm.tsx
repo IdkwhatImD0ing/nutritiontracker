@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { verifyEmailAction, type AuthFormState } from "@/app/auth/actions";
+import TallyMark from "./TallyMark";
 
 type Props = {
   title: string;
@@ -28,6 +29,7 @@ export default function AuthForm({
   return (
     <main className="auth-wrap">
       <form className="auth-card" action={formAction}>
+        <TallyMark className="auth-mark" />
         <h1>{title}</h1>
         {intro ? <p className="subsheet-hint auth-intro">{intro}</p> : null}
         {withName ? (
@@ -79,6 +81,7 @@ function VerifyEmail({ verify }: { verify: Verify }) {
   return (
     <main className="auth-wrap">
       <form className="auth-card" action={formAction}>
+        <TallyMark className="auth-mark" />
         <h1>Verify your email</h1>
         <p className="subsheet-hint auth-intro">
           {sent
