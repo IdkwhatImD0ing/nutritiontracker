@@ -2851,7 +2851,7 @@ a {
 
 .bubble.user {
   align-self: flex-end;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border-bottom-right-radius: 6px;
 }

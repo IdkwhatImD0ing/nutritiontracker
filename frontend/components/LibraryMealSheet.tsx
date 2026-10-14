@@ -29,8 +29,12 @@ type Props = {
 
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
+/** The qty an item takes: a quarter at least, to 2 places. */
+const normQty = (qty: number) => Math.max(0.25, Math.round(qty * 100) / 100);
+
 /** An item's qty as a field you can type into, between the ±0.5 steppers:
- *  the typed text while it is being typed, the item's qty otherwise. */
+ *  the typed text while the item holds the qty it typed, the item's qty
+ *  otherwise — so a step from the ± buttons mid-edit shows, not the text. */
 function QtyInput({
   qty,
   label,
@@ -40,19 +44,22 @@ function QtyInput({
   label: string;
   onQty: (qty: number) => void;
 }) {
-  const [text, setText] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ text: string; qty: number } | null>(
+    null,
+  );
   return (
     <input
       className="q"
       inputMode="decimal"
       aria-label={label}
-      value={text ?? fmtQ.format(qty)}
+      value={draft && draft.qty === qty ? draft.text : fmtQ.format(qty)}
       onChange={(e) => {
-        setText(e.target.value);
         const n = Number(e.target.value);
-        if (Number.isFinite(n) && n > 0) onQty(n);
+        const ok = Number.isFinite(n) && n > 0;
+        setDraft({ text: e.target.value, qty: ok ? normQty(n) : qty });
+        if (ok) onQty(n);
       }}
-      onBlur={() => setText(null)}
+      onBlur={() => setDraft(null)}
     />
   );
 }
@@ -81,7 +88,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const setQty = (i: number, qty: number) =>
     setItems((prev) =>
       prev.map((it, j) =>
-        j === i ? { ...it, qty: Math.max(0.25, Math.round(qty * 100) / 100) } : it,
+        j === i ? { ...it, qty: normQty(qty) } : it,
       ),
     );
   const removeItem = (i: number) =>
