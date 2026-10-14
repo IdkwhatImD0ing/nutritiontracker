@@ -49,7 +49,9 @@ export default function ManualSearchSheet({
   const [recent, setRecent] = useState<FoodSearchResult[] | null>(null);
   const [recentFailed, setRecentFailed] = useState(false);
   const [fdcDown, setFdcDown] = useState(false);
-  const [searching, setSearching] = useState(false);
+  // A row's phrase is searched on mount: searching from the first paint, so
+  // the recent list's skeleton never flashes before the results' one.
+  const [searching, setSearching] = useState(() => phrase.trim() !== "");
   // `retry` is false for a demo 429: a second try meets the same refusal
   const [searchError, setSearchError] = useState<{
     text: string;

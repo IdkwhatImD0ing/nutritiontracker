@@ -104,9 +104,10 @@ export default function AuthForm({
           ) : null}
         </label>
         {/* always there, so the line is held (no jump) and a new error is
-            announced */}
+            announced. A server error is about the last try: not shown while
+            the next one runs. */}
         <p className="auth-error" role="alert">
-          {problem?.text ?? state?.error}
+          {problem?.text ?? (pending ? null : state?.error)}
         </p>
         <button type="submit" disabled={pending} aria-busy={pending}>
           {pending ? (

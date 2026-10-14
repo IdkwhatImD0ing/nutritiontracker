@@ -109,11 +109,18 @@ export default function Library() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    // What this render shows as the read starts. A resume's re-read over
+    // lists already shown keeps them when it fails, as Today's tracker keeps
+    // its numbers; only a list with nothing on screen says it couldn't load.
+    const shown = { aliases: aliases != null, meals: meals != null };
     Promise.allSettled([getAliases(), getMeals()]).then(([a, m]) => {
       if (cancelled) return;
-      setAliases(a.status === "fulfilled" ? a.value : null);
-      setMeals(m.status === "fulfilled" ? m.value : null);
-      setFailed({ aliases: a.status === "rejected", meals: m.status === "rejected" });
+      if (a.status === "fulfilled") setAliases(a.value);
+      if (m.status === "fulfilled") setMeals(m.value);
+      setFailed({
+        aliases: a.status === "rejected" && !shown.aliases,
+        meals: m.status === "rejected" && !shown.meals,
+      });
     });
     return () => {
       cancelled = true;
