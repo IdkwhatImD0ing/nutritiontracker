@@ -1501,7 +1501,6 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   .shell.settings > .brand,
   .shell.settings > .sheet-error,
   .shell.settings > .notice,
-  .shell.settings > .m3-empty,
   .shell.settings > .m3-wide {
     grid-column: 1 / -1;
   }

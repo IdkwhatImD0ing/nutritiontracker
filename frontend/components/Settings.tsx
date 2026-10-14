@@ -145,10 +145,9 @@ export default function Settings() {
   const [wizard, setWizard] = useState(false);
   const me = useMe();
   // The notes box grows with the note instead of scrolling inside the page.
-  // It remounts when the wizard closes: "" while the wizard is up makes the
-  // value change on the way back, so the new box is measured too.
+  // The wizard is an overlay, so the box stays mounted (and measured) under it.
   const notesRef = useRef<HTMLTextAreaElement>(null);
-  useAutoGrow(notesRef, wizard ? "" : (form?.profile_notes ?? ""));
+  useAutoGrow(notesRef, form?.profile_notes ?? "");
   // about 400 labels, each from its own formatter: built once, not per render
   const zones = useMemo(() => {
     const groups = zoneGroups();
