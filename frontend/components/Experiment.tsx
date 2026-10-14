@@ -67,7 +67,7 @@ export default function Experiment() {
       ) : null}
       {state === "ok" && data ? (
         data.weeks.length === 0 ? (
-          <p className="hhint">No committed logs in this range yet.</p>
+          <p className="hhint">No logged meals in this range yet.</p>
         ) : (
           <ExperimentCharts data={data} />
         )

@@ -72,11 +72,13 @@ const FIELD_LABEL: Record<string, string> = {
 /** A 4xx says what is wrong — show that, not "check your connection".
  *  FastAPI puts it in `detail`: a string (ApiError has parsed it), or a 422
  *  list of {loc, msg}. pydantic's msg is in kg/cm whatever units are picked,
- *  so a 422 names the field instead. Anything else (an HTML 404 page) is
- *  null, and the caller's own sentence shows. */
+ *  so a 422 names the field instead. Anything else (an HTML 404 page, or
+ *  FastAPI's own "Not Found" / "Method Not Allowed" for a misroute — these
+ *  routes raise no 404 or 405 of their own) is null, and the caller's own
+ *  sentence shows. */
 function detailOf(e: unknown): string | null {
   if (!(e instanceof ApiError) || e.status < 400 || e.status >= 500) return null;
-  if (e.detail) return e.detail;
+  if (e.detail && e.status !== 404 && e.status !== 405) return e.detail;
   const body = e.message.slice(e.message.indexOf(":") + 1).trim();
   let fields: string[] = [];
   try {
