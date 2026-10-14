@@ -15,6 +15,7 @@ import DiaryEntryRow from "./DiaryEntryRow";
 import { createMeal, type SavedMeal } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
 import { useAutoGrow } from "./useAutoGrow";
+import { useFlash } from "./useFlash";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const MEAL_ORDER: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
@@ -142,9 +143,17 @@ function SaveMealSheet({
           type="button"
           className="commit-btn"
           disabled={busy || !name.trim()}
+          aria-busy={busy}
           onClick={save}
         >
-          {busy ? "Saving…" : "Save meal"}
+          {busy ? (
+            <>
+              <span className="spinner on-accent" />
+              Saving…
+            </>
+          ) : (
+            "Save meal"
+          )}
         </button>
       </div>
     </>
@@ -161,13 +170,21 @@ export default function DiaryList({
   emptyText = "Nothing logged yet.",
 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // which row is waiting, and on what — the spinner goes in the tapped button
+  const [busy, setBusy] = useState<{
+    id: string;
+    kind: "save" | "delete";
+  } | null>(null);
+  // a failed edit, kept with its row so it shows where the user is looking
+  const [error, setError] = useState<{ id: string; text: string } | null>(null);
   const [saveGroup, setSaveGroup] = useState<{
     meal: string;
     entries: DiaryEntry[];
   } | null>(null);
-  const [savedMeal, setSavedMeal] = useState<string | null>(null);
+  // A toast, not a line under the last meal: saving Breakfast put that line
+  // off screen. Rendered here, so Today and the History day both get it;
+  // under-sheets, like Today's commit note, so a sheet opened next covers it.
+  const [savedMeal, flashSavedMeal] = useFlash(4000);
 
   // The tapped row stays under the finger. One row is open at a time, so
   // opening one closes the last; when that one sat above, its expanded panel
@@ -201,12 +218,13 @@ export default function DiaryList({
   }
 
   /** null when `fn` landed, else the sentence for the refusal — the portion
-   *  sheet shows it in place; a delete's goes over the diary. */
+   *  sheet shows a save's in place; a delete's goes on its row. */
   const run = async (
     id: string,
+    kind: "save" | "delete",
     fn: () => Promise<void>,
   ): Promise<string | null> => {
-    setBusy(id);
+    setBusy({ id, kind });
     setError(null);
     try {
       await fn();
@@ -226,7 +244,6 @@ export default function DiaryList({
 
   return (
     <section className="diary" aria-label="Diary" ref={sectionRef}>
-      {error ? <p className="capture-error">{error}</p> : null}
       {groups.map((g) => (
         <div className="diary-meal" key={g.meal}>
           <div className="diary-meal-head">
@@ -247,14 +264,17 @@ export default function DiaryList({
               key={e.id}
               entry={e}
               expanded={expanded === e.id}
-              busy={busy === e.id}
+              busy={busy?.id === e.id ? busy.kind : null}
+              error={error?.id === e.id ? error.text : null}
               onToggle={() => {
+                // an error belongs to the open row; any toggle closes that row
+                setError(null);
                 const top = rowTop(sectionRef.current, e.id);
                 anchor.current = top != null ? { id: e.id, top } : null;
                 setExpanded((cur) => (cur === e.id ? null : e.id));
               }}
               onSave={(patch) =>
-                run(e.id, async () => {
+                run(e.id, "save", async () => {
                   const res = await patchEntry(e.id, patch);
                   // routes/entries.py builds its DiaryEntry without the
                   // source/citation/estimate fields — keep the ones already
@@ -272,23 +292,30 @@ export default function DiaryList({
                 })
               }
               onDelete={() =>
-                void run(e.id, async () => {
+                void run(e.id, "delete", async () => {
                   const totals = await deleteEntry(e.id);
                   onDeleted(e.id, totals);
-                }).then(setError)
+                }).then((text) => setError(text ? { id: e.id, text } : null))
               }
             />
           ))}
         </div>
       ))}
-      {savedMeal ? <p className="m3-status">{savedMeal}</p> : null}
+      {savedMeal ? (
+        <div className="toast under-sheets" role="status">
+          <span>{savedMeal}</span>
+          <button type="button" onClick={() => flashSavedMeal(null)}>
+            OK
+          </button>
+        </div>
+      ) : null}
       {saveGroup ? (
         <SaveMealSheet
           meal={saveGroup.meal}
           entries={saveGroup.entries}
           onSaved={(m) => {
             setSaveGroup(null);
-            setSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
+            flashSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
           }}
           onClose={() => setSaveGroup(null)}
         />

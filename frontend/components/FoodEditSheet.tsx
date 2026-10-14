@@ -69,7 +69,9 @@ export default function FoodEditSheet({
   onClose,
 }: Props) {
   const [text, setText] = useState(item.phrase);
-  const [aliases, setAliases] = useState<AliasRow[] | null>(null);
+  // Seeded from the row, so the section is there at open and the GET only
+  // replaces it — the sheet no longer jumps taller when the list lands.
+  const [aliases, setAliases] = useState<AliasRow[]>(() => aliasesFromItem(item));
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +99,7 @@ export default function FoodEditSheet({
         <SheetHeader title="Change food" onClose={onClose} />
         <p className="subsheet-hint">You said &ldquo;{item.phrase}&rdquo;</p>
 
-        {aliases?.length ? (
+        {aliases.length ? (
           <div>
             <div className="edit-label">Foods you&rsquo;ve used for this</div>
             {/* Rows, not chips: these are whole food names, often FDC-length,

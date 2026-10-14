@@ -11,6 +11,7 @@ import {
   type ApiKeyCreate,
 } from "./ApiKeysApi";
 import SheetHeader from "./SheetHeader";
+import Skeleton from "./Skeleton";
 
 type Access = ApiKeyCreate["scopes"];
 type Expiry = NonNullable<ApiKeyCreate["expires_in_days"]> | null;
@@ -340,7 +341,7 @@ export default function ApiKeysCard() {
               </button>
             </div>
           ) : (
-            <p className="m3-note">Loading…</p>
+            <Skeleton rows={2} height={56} />
           )
         ) : rows.length === 0 ? (
           <p className="m3-note">No keys yet.</p>

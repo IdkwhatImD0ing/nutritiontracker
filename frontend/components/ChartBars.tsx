@@ -39,6 +39,8 @@ type Props = {
    *  to the readout's Open button — the bars themselves never navigate */
   select?: boolean;
   format?: (v: number) => string;
+  /** centred on the plot when no bar is above zero (as ChartLines' own) */
+  emptyText?: string;
 };
 
 const W = 360;
@@ -102,6 +104,7 @@ export default function ChartBars({
   onTap,
   select = false,
   format = (v) => fmt0.format(v),
+  emptyText,
 }: Props) {
   const [selKey, setSelKey] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
@@ -318,6 +321,16 @@ export default function ChartBars({
                 {targetLabel} {format(target)}
               </text>
             </g>
+          ) : null}
+          {emptyText && !values.some((v) => v > 0) ? (
+            <text
+              className="chart-empty"
+              x={PAD.l + plotW / 2}
+              y={PAD.t + plotH / 2}
+              textAnchor="middle"
+            >
+              {emptyText}
+            </text>
           ) : null}
         </g>
       </svg>

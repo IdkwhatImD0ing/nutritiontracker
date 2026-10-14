@@ -76,7 +76,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [name, setName] = useState(meal?.name ?? "");
   const [phrases, setPhrases] = useState(meal?.trigger_phrases.join(", ") ?? "");
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
-  const [busy, setBusy] = useState(false);
+  // which request is in flight: only Save / Create shows a spinner for its own
+  const [busy, setBusy] = useState<"save" | "toggle" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const phrasesRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(phrasesRef, phrases);
@@ -87,7 +88,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [adding, setAdding] = useState(false);
+  // the hit being added (`source:source_id`), marked with a spinner
+  const [adding, setAdding] = useState<string | null>(null);
   const [servingsByFood, setServingsByFood] = useState<
     Record<string, StagedServing[]>
   >({});
@@ -148,15 +150,15 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
       }),
     );
 
-  const run = async (patch: MealPatch) => {
+  const run = async (patch: MealPatch, kind: "save" | "toggle") => {
     if (!meal) return;
-    setBusy(true);
+    setBusy(kind);
     setError(null);
     try {
       onSaved(await patchMeal(meal.id, patch));
     } catch {
       setError("Couldn't save — try again.");
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -180,7 +182,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
    *  and stepper on the row take it from there (§8.5). FDC hits are cached
    *  first so the macro can reference a foods row. */
   const addHit = async (hit: FoodSearchResult) => {
-    setAdding(true);
+    setAdding(`${hit.source}:${hit.source_id}`);
     setError(null);
     try {
       const food = await getFood(await cacheFood(hit));
@@ -206,7 +208,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
     } catch {
       setError("Couldn't add that food.");
     } finally {
-      setAdding(false);
+      setAdding(null);
     }
   };
 
@@ -224,10 +226,10 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
       })),
     };
     if (meal) {
-      run(patch);
+      run(patch, "save");
       return;
     }
-    setBusy(true);
+    setBusy("save");
     setError(null);
     try {
       onSaved(
@@ -243,7 +245,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           ? "You already have a saved meal with that name."
           : "Couldn't save — try again.",
       );
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -385,7 +387,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
             />
             <button
               type="submit"
-              disabled={searching || adding || !query.trim()}
+              disabled={searching || adding != null || !query.trim()}
               aria-label="Search"
             >
               {searching ? (
@@ -401,11 +403,15 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 <button
                   key={`${r.source}:${r.source_id}:${i}`}
                   type="button"
-                  disabled={adding}
+                  disabled={adding != null}
+                  aria-busy={adding === `${r.source}:${r.source_id}` || undefined}
                   onClick={() => addHit(r)}
                 >
                   <span className="result-name">{foodName(r.label)}</span>
                   <span className="result-sub">{hitSub(r)}</span>
+                  {adding === `${r.source}:${r.source_id}` ? (
+                    <span className="spinner" />
+                  ) : null}
                 </button>
               ))}
               {results.length === 0 && !searching ? (
@@ -420,10 +426,20 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
         <button
           type="button"
           className="commit-btn"
-          disabled={busy || !valid}
+          disabled={busy !== null || !valid}
+          aria-busy={busy === "save"}
           onClick={save}
         >
-          {meal ? "Save" : "Save meal"}
+          {busy === "save" ? (
+            <>
+              <span className="spinner on-accent" />
+              Saving…
+            </>
+          ) : meal ? (
+            "Save"
+          ) : (
+            "Save meal"
+          )}
         </button>
 
         {meal ? (
@@ -432,8 +448,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               <button
                 type="button"
                 className="m3-link-btn danger"
-                disabled={busy}
-                onClick={() => run({ is_active: false })}
+                disabled={busy !== null}
+                onClick={() => run({ is_active: false }, "toggle")}
               >
                 Deactivate
               </button>
@@ -441,8 +457,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               <button
                 type="button"
                 className="m3-link-btn"
-                disabled={busy}
-                onClick={() => run({ is_active: true })}
+                disabled={busy !== null}
+                onClick={() => run({ is_active: true }, "toggle")}
               >
                 Reactivate
               </button>

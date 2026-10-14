@@ -10,9 +10,11 @@ import {
 import { fmt0, withUnit } from "@/lib/format";
 import { foodName } from "@/lib/labels";
 import { hitSub } from "@/lib/sources";
+import ErrorNotice from "./ErrorNotice";
 import { FOOD_FIELD_PROPS } from "./fieldProps";
 import { ArrowRight, Close } from "./icons";
 import SheetHeader, { SheetClose } from "./SheetHeader";
+import Skeleton from "./Skeleton";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -22,6 +24,9 @@ type Props = {
   busy: boolean;
   /** the parent's select failure, rendered above the results */
   error?: string | null;
+  /** a pick met the demo quota's 429: every result would meet it again, so
+   *  none takes a tap (searching itself is free) */
+  refused?: boolean;
   /** the + sheet's Search lane: the whole screen (owner ruling, 2026-09-06),
    *  not the sub-sheet a staged row opens over the staging sheet */
   fullScreen?: boolean;
@@ -53,6 +58,7 @@ export default function ManualSearchSheet({
   phrase,
   busy,
   error,
+  refused = false,
   fullScreen = false,
   onSelect,
   onClose,
@@ -60,11 +66,22 @@ export default function ManualSearchSheet({
   const [query, setQuery] = useState(phrase);
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [recent, setRecent] = useState<FoodSearchResult[] | null>(null);
+  const [recentFailed, setRecentFailed] = useState(false);
   const [fdcDown, setFdcDown] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  // A row's phrase is searched on mount: searching from the first paint, so
+  // the recent list's skeleton never flashes before the results' one.
+  const [searching, setSearching] = useState(() => phrase.trim() !== "");
+  // `retry` is false for a demo 429: a second try meets the same refusal
+  const [searchError, setSearchError] = useState<{
+    text: string;
+    retry: boolean;
+  } | null>(null);
   const seq = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // The tapped row (`source:source_id`): it keeps a spinner while the
+  // parent's select runs; the rest stay readable but can't be tapped.
+  const [picked, setPicked] = useState<string | null>(null);
+  const pickedKey = busy ? picked : null;
 
   const run = async (q: string) => {
     const trimmed = q.trim();
@@ -81,7 +98,12 @@ export default function ManualSearchSheet({
       if (seq.current !== id) return;
       setResults([]);
       // a demo 429 says why in its own words — show those, not the generic line
-      setSearchError(quotaRefusal(e)?.detail ?? "Search failed. Try again.");
+      const quota = quotaRefusal(e);
+      setSearchError(
+        quota
+          ? { text: quota.detail, retry: false }
+          : { text: "Search failed.", retry: true },
+      );
     } finally {
       if (seq.current === id) setSearching(false);
     }
@@ -104,8 +126,9 @@ export default function ManualSearchSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The previously logged foods, once per open. A failed read shows nothing
-  // in their place — the list is a convenience, search still works.
+  // The previously logged foods, once per open. A failed read says so in one
+  // quiet line, never the first-run copy — the list is a convenience, search
+  // still works.
   useEffect(() => {
     let cancelled = false;
     recentFoods()
@@ -113,7 +136,7 @@ export default function ManualSearchSheet({
         if (!cancelled) setRecent(r);
       })
       .catch(() => {
-        if (!cancelled) setRecent([]);
+        if (!cancelled) setRecentFailed(true);
       });
     return () => {
       cancelled = true;
@@ -141,14 +164,20 @@ export default function ManualSearchSheet({
     <button
       key={`${r.source}:${r.source_id}:${i}`}
       type="button"
-      disabled={busy}
-      onClick={() => onSelect(r)}
+      className={refused ? "refused" : undefined}
+      disabled={busy || refused}
+      aria-busy={pickedKey === `${r.source}:${r.source_id}` || undefined}
+      onClick={() => {
+        setPicked(`${r.source}:${r.source_id}`);
+        onSelect(r);
+      }}
     >
       <span className="result-name">{foodName(r.label)}</span>
       <span className="result-sub">
         {hitSub(r)}
         {per100(r)}
       </span>
+      {pickedKey === `${r.source}:${r.source_id}` ? <span className="spinner" /> : null}
     </button>
   );
 
@@ -202,8 +231,13 @@ export default function ManualSearchSheet({
         </button>
       </form>
 
-      {error ? <p className="sheet-error">{error}</p> : null}
-      {searchError ? <p className="sheet-error">{searchError}</p> : null}
+      {error ? <ErrorNotice message={error} /> : null}
+      {searchError ? (
+        <ErrorNotice
+          message={searchError.text}
+          onRetry={searchError.retry ? () => void run(query) : undefined}
+        />
+      ) : null}
       {fdcDown ? (
         <p className="subsheet-hint">
           Food database unreachable — showing your foods only.
@@ -221,10 +255,17 @@ export default function ManualSearchSheet({
             <p className="subsheet-hint">
               Foods you log show up here, newest first.
             </p>
-          ) : null}
+          ) : recentFailed ? (
+            <p className="subsheet-hint">
+              Couldn&rsquo;t load your recent foods. Search still works.
+            </p>
+          ) : (
+            <Skeleton rows={5} height={52} />
+          )}
         </div>
       ) : (
         <div className="search-results">
+          {searching && results == null ? <Skeleton rows={4} height={52} /> : null}
           {(results ?? []).map(hit)}
           {results != null && results.length === 0 && !searching && !searchError ? (
             <p className="subsheet-hint">No matches — try fewer words.</p>

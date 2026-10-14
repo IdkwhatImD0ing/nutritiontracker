@@ -163,20 +163,40 @@ export default function StagedRow({
             ) : searching ? (
               "Looking it up…"
             ) : notFound ? (
-              <span className="manual-hint">Not found — tap to search</span>
+              <>
+                {/* the badge is gone (the sub-line says it); the pill is the
+                    way forward, and the row-main tap still works too */}
+                Not found{" "}
+                <button
+                  type="button"
+                  className="portion-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onManualSearch();
+                  }}
+                >
+                  Search foods
+                </button>
+              </>
             ) : (
               said
             )}
           </div>
         </div>
-        <div className="row-kcal num">
-          <span className="n">
-            {macros != null
-              ? `${estimated ? "~" : ""}${fmt.format(macros.kcal)}`
-              : "—"}
-          </span>
-          <span className="u">kcal</span>
-        </div>
+        {/* no numbers yet (or none to have): a quiet dash, not a display-
+            weight slab brighter than the row's own name */}
+        {macros != null ? (
+          <div className="row-kcal num">
+            <span className="n">
+              {`${estimated ? "~" : ""}${fmt.format(macros.kcal)}`}
+            </span>
+            <span className="u">kcal</span>
+          </div>
+        ) : (
+          <div className="row-kcal empty num">
+            <span className="n">–</span>
+          </div>
+        )}
         <button
           type="button"
           className="row-remove"

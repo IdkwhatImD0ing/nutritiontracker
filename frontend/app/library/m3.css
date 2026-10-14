@@ -182,7 +182,7 @@ body:has(.tabbar) .shell {
 }
 
 @media (hover: hover) {
-  .add-row:hover {
+  .add-row:hover:not(:disabled) {
     border-color: var(--line-strong);
     background: var(--surface-3);
   }
@@ -190,6 +190,13 @@ body:has(.tabbar) .shell {
 
 .add-row:active {
   transform: scale(0.985);
+}
+
+/* offline (§8.6): the lanes stay in view, the note above says why */
+.add-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
 }
 
 .add-row-icon {
@@ -363,7 +370,9 @@ body:has(.tabbar) .shell {
   margin: 0;
   padding: 14px 16px;
   line-height: 1.5;
-  border: 1px dashed var(--line-strong);
+  /* solid and filled like a card: a dashed box reads as a drop zone */
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: var(--radius);
   text-align: center;
 }
@@ -491,6 +500,12 @@ body:has(.tabbar) .shell {
   cursor: default;
 }
 
+/* busy is not unavailable: Save keeps its fill while it saves */
+.m3-savebar .m3-savebar-save[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
 /* narrow phone: "Unsaved changes" keeps one line */
 @media (max-width: 359px) {
   .m3-savebar button {
@@ -604,6 +619,12 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
 .m3-window input:focus,
 .m3-window select:focus {
   border-color: var(--accent-line);
+}
+
+/* a field Save refused (Settings' half-filled targets); after :focus, so it
+   stays red while being fixed */
+.m3-field input[aria-invalid="true"] {
+  border-color: var(--red);
 }
 
 .m3-field input.num {
@@ -862,6 +883,10 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   z-index: 90;
   background: var(--bg);
   overflow-y: auto;
+  /* Settings stays mounted beneath it: a short step must not scroll that page */
+  overscroll-behavior: contain;
+  /* the first-run takeover lands over a Today that has already painted */
+  animation: fade 200ms ease-out;
 }
 
 .wizard-inner {
@@ -1408,7 +1433,8 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
     gap: 10px;
   }
 
-  .add-sheet .subsheet-head {
+  .add-sheet .subsheet-head,
+  .add-sheet > .notice {
     grid-column: 1 / -1;
   }
 
@@ -1444,7 +1470,7 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
 
   .shell.library > .brand,
   .shell.library > .sheet-error,
-  .shell.library > .notice,
+  .shell.library > .offline-note,
   .shell.library > .lib-search {
     grid-column: 1 / -1;
   }

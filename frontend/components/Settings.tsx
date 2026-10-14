@@ -22,6 +22,7 @@ import { peek, put } from "./readCache";
 import { useAutoGrow } from "./useAutoGrow";
 import { useFlash } from "./useFlash";
 import { useScrollMemory } from "./useScrollMemory";
+import Skeleton from "./Skeleton";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -137,6 +138,8 @@ export default function Settings() {
   // the cached form (kept) from the form as painted (refreshed)
   const opened = useRef({ form, targets }).current;
   const [error, setError] = useState<string | null>(null);
+  // the empty targets of a half-filled set, outlined until the next edit
+  const [targetsInvalid, setTargetsInvalid] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, flashStatus] = useFlash(3000);
   const [wizard, setWizard] = useState(false);
@@ -184,6 +187,19 @@ export default function Settings() {
         setSaved(s);
         setTargets((t) => (t === opened.targets ? targetText(s.targets) : t));
         put("settings", s);
+        // Today's "Set them ›" (no targets yet) opens the wizard straight
+        // away; the param goes, so a reload or Back doesn't reopen it.
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("setup") === "targets") {
+          params.delete("setup");
+          const qs = params.toString();
+          window.history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${qs ? `?${qs}` : ""}`,
+          );
+          setWizard(true);
+        }
       })
       .catch(() => {
         if (!cancelled) setError("Couldn't load your settings.");
@@ -221,6 +237,7 @@ export default function Settings() {
   const discard = () => {
     if (saved) load(saved);
     setError(null);
+    setTargetsInvalid(false);
   };
 
   const save = async () => {
@@ -235,6 +252,8 @@ export default function Settings() {
     const filled = TARGET_FIELDS.filter((f) => parsed[f.key] != null).length;
     if (filled !== 0 && filled !== TARGET_FIELDS.length) {
       setError("Fill in all four targets, or clear all four.");
+      setTargetsInvalid(true);
+      flashStatus(null);
       return;
     }
     setBusy(true);
@@ -257,31 +276,17 @@ export default function Settings() {
     }
   };
 
-  if (wizard && form) {
-    return (
-      <WizardGoal
-        initial={form.body}
-        onDone={(s) => {
-          // The wizard wrote targets and body only: take just those, so
-          // unsaved meal-window, time zone and notes edits outlive it.
-          setForm((f) => (f ? { ...f, targets: s.targets, body: s.body } : s));
-          setSaved((v) => (v ? { ...v, targets: s.targets, body: s.body } : s));
-          setTargets(targetText(s.targets));
-          put("settings", s);
-          setWizard(false);
-          flashStatus("Targets saved.");
-        }}
-        onCancel={() => setWizard(false)}
-      />
-    );
-  }
-
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const deviceZone = deviceTz ? zoneGeneric(deviceTz) : null;
   const body = form ? describeBody(form.body) : null;
+  const noTargets = form != null && targetsEmpty(form);
 
+  // The wizard is an overlay over the page, not in its place: the page keeps
+  // its scroll and its cards (no refetch) for the return. inert keeps Tab
+  // and the screen reader out of what it covers.
   return (
-    <main className="shell settings">
+    <>
+    <main className="shell settings" inert={wizard && form != null}>
       <header className="brand">
         <h1>Settings</h1>
       </header>
@@ -307,12 +312,30 @@ export default function Settings() {
       <OuraCard />
 
       {!form ? (
-        error ? null : <p className="m3-empty">Loading…</p>
+        // Daily targets and Meal windows, roughly to size
+        error ? null : (
+          <>
+            <Skeleton height={150} />
+            <Skeleton height={220} />
+          </>
+        )
       ) : (
         <>
           <section className="m3-section" aria-label="Daily targets">
             <h2>Daily targets</h2>
             <div className="m3-card">
+              {noTargets ? (
+                <div className="notice warn">
+                  <span>No daily targets yet. Today&rsquo;s rings need them.</span>
+                  <button
+                    type="button"
+                    className="notice-btn"
+                    onClick={() => setWizard(true)}
+                  >
+                    Set up
+                  </button>
+                </div>
+              ) : null}
               <div className="m3-grid-4">
                 {TARGET_FIELDS.map((f) => (
                   <label className="m3-field" key={f.key}>
@@ -323,8 +346,12 @@ export default function Settings() {
                         value={targets[f.key]}
                         onChange={(e) => {
                           setTargets((t) => ({ ...t, [f.key]: e.target.value }));
+                          setTargetsInvalid(false);
                           edited();
                         }}
+                        aria-invalid={
+                          targetsInvalid && !(Number.parseFloat(targets[f.key]) > 0)
+                        }
                         placeholder="—"
                         aria-label={`${f.label} target (${f.unit})`}
                         className="num"
@@ -336,16 +363,21 @@ export default function Settings() {
                   </label>
                 ))}
               </div>
-              <div className="m3-actions">
-                <button
-                  type="button"
-                  className="m3-link-btn"
-                  onClick={() => setWizard(true)}
-                >
-                  {targetsEmpty(form) ? "Run the goal wizard" : "Re-run the goal wizard"}
-                </button>
-                {body ? <span className="m3-note">{body}</span> : null}
-              </div>
+              {/* with no targets, the notice above is the way in */}
+              {noTargets && !body ? null : (
+                <div className="m3-actions">
+                  {noTargets ? null : (
+                    <button
+                      type="button"
+                      className="m3-link-btn"
+                      onClick={() => setWizard(true)}
+                    >
+                      Re-run the goal wizard
+                    </button>
+                  )}
+                  {body ? <span className="m3-note">{body}</span> : null}
+                </div>
+              )}
             </div>
           </section>
 
@@ -482,9 +514,17 @@ export default function Settings() {
                 type="button"
                 className="m3-savebar-save"
                 disabled={busy}
+                aria-busy={busy}
                 onClick={save}
               >
-                {busy ? "Saving…" : "Save"}
+                {busy ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Saving…
+                  </>
+                ) : (
+                  "Save"
+                )}
               </button>
             </div>
           ) : null}
@@ -493,52 +533,70 @@ export default function Settings() {
               <span>{status}</span>
             </div>
           ) : null}
-
-          <ApiKeysCard />
-
-          <section className="m3-section" aria-label="About">
-            <h2>About</h2>
-            {/* The docs and the legal pages are the public website: opened
-                over the app (iOS's Safari sheet with Done, a new tab
-                elsewhere) rather than in its window, whose only way back
-                from them is the logo. */}
-            <div className="m3-card m3-links">
-              {/* owner only (Bill, 2026-10-13, BACKLOG 105): the charts are the
-                  owner's §9 instrument; a demo can still open /experiment by
-                  URL and sees its own series */}
-              {me?.is_owner ? (
-                <Link href="/experiment" className="m3-nav-row">
-                  Experiment charts
-                  <span className="chev" aria-hidden="true" />
-                </Link>
-              ) : null}
-              <a
-                href="/docs/api-keys"
-                target="_blank"
-                rel="noopener"
-                className="m3-nav-row"
-              >
-                How to use API keys
-                <span className="chev" aria-hidden="true" />
-              </a>
-              <a href="/privacy" target="_blank" rel="noopener" className="m3-nav-row">
-                Privacy
-                <span className="chev" aria-hidden="true" />
-              </a>
-              <a href="/terms" target="_blank" rel="noopener" className="m3-nav-row">
-                Terms
-                <span className="chev" aria-hidden="true" />
-              </a>
-            </div>
-            <p className="m3-note">
-              Deleting the home-screen icon clears the app&rsquo;s on-device
-              state (your sign-in, any late items still sending). Your diary
-              lives on the server and is untouched.
-            </p>
-            <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
-          </section>
         </>
       )}
+
+      {/* Neither needs the settings read, so a failed one doesn't hide them. */}
+      <ApiKeysCard />
+
+      <section className="m3-section" aria-label="About">
+        <h2>About</h2>
+        {/* The docs and the legal pages are the public website: opened
+            over the app (iOS's Safari sheet with Done, a new tab
+            elsewhere) rather than in its window, whose only way back
+            from them is the logo. */}
+        <div className="m3-card m3-links">
+          {/* owner only (Bill, 2026-10-13, BACKLOG 105): the charts are the
+              owner's §9 instrument; a demo can still open /experiment by
+              URL and sees its own series */}
+          {me?.is_owner ? (
+            <Link href="/experiment" className="m3-nav-row">
+              Experiment charts
+              <span className="chev" aria-hidden="true" />
+            </Link>
+          ) : null}
+          <a
+            href="/docs/api-keys"
+            target="_blank"
+            rel="noopener"
+            className="m3-nav-row"
+          >
+            How to use API keys
+            <span className="chev" aria-hidden="true" />
+          </a>
+          <a href="/privacy" target="_blank" rel="noopener" className="m3-nav-row">
+            Privacy
+            <span className="chev" aria-hidden="true" />
+          </a>
+          <a href="/terms" target="_blank" rel="noopener" className="m3-nav-row">
+            Terms
+            <span className="chev" aria-hidden="true" />
+          </a>
+        </div>
+        <p className="m3-note">
+          Deleting the home-screen icon clears the app&rsquo;s on-device
+          state (your sign-in, any late items still sending). Your diary
+          lives on the server and is untouched.
+        </p>
+        <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
+      </section>
     </main>
+    {wizard && form ? (
+      <WizardGoal
+        initial={form.body}
+        onDone={(s) => {
+          // The wizard wrote targets and body only: take just those, so
+          // unsaved meal-window, time zone and notes edits outlive it.
+          setForm((f) => (f ? { ...f, targets: s.targets, body: s.body } : s));
+          setSaved((v) => (v ? { ...v, targets: s.targets, body: s.body } : s));
+          setTargets(targetText(s.targets));
+          put("settings", s);
+          setWizard(false);
+          flashStatus("Targets saved.");
+        }}
+        onCancel={() => setWizard(false)}
+      />
+    ) : null}
+    </>
   );
 }

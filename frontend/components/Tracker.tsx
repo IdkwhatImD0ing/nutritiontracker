@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type React from "react";
 import type { DayTotals } from "@/lib/api";
 
@@ -108,7 +109,7 @@ export default function Tracker({
   past?: boolean;
 }) {
   // null = the day hasn't been read yet. Same footprint, dashes and empty
-  // tracks: a 0 or "No targets set yet" would be a claim about a day we
+  // tracks: a 0 or "No targets yet" would be a claim about a day we
   // haven't seen (it read as a real empty day on every cold open).
   const loading = totals === null;
   const kcal = totals?.kcal ?? 0;
@@ -154,12 +155,15 @@ export default function Tracker({
             </span>
           ) : null}
         </div>
-        <div className="kcal-bar" style={{ marginTop: 12 }}>
-          <div
-            className={`fill${kcalFrac > 1 ? " over" : ""}`}
-            style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
-          />
-        </div>
+        {/* no target, no bar: an empty track under 1,270 kcal says nothing */}
+        {loading || kcalTarget > 0 ? (
+          <div className="kcal-bar" style={{ marginTop: 12 }}>
+            <div
+              className={`fill${kcalFrac > 1 ? " over" : ""}`}
+              style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="donuts">
@@ -196,7 +200,12 @@ export default function Tracker({
       </div>
 
       {!loading && !hasAnyTarget ? (
-        <p className="zero-hint">No targets set yet — showing what you log.</p>
+        <p className="zero-hint">
+          No targets yet.{" "}
+          <Link href="/settings?setup=targets" className="m3-link-btn">
+            Set them ›
+          </Link>
+        </p>
       ) : null}
     </section>
   );

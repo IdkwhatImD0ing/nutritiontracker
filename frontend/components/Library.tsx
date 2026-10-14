@@ -7,6 +7,7 @@ import { searchFoods, type FoodSearchResult } from "@/lib/api";
 import { fmt0 } from "@/lib/format";
 import { foodName } from "@/lib/labels";
 import { hitSub } from "@/lib/sources";
+import ErrorNotice from "./ErrorNotice";
 import { FOOD_FIELD_PROPS } from "./fieldProps";
 import { ArrowRight, Close } from "./icons";
 import {
@@ -20,6 +21,9 @@ import LibraryAliasSheet from "./LibraryAliasSheet";
 import LibraryMealSheet from "./LibraryMealSheet";
 import { peek, put } from "./readCache";
 import { useScrollMemory } from "./useScrollMemory";
+import Skeleton from "./Skeleton";
+import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
+import { OFFLINE_NOTE, useOnline } from "./useOnline";
 
 type FoodGroup = {
   food_id: string;
@@ -97,14 +101,21 @@ export default function Library() {
   const [meals, setMeals] = useState<SavedMeal[] | null>(() =>
     peek<SavedMeal[]>("library:meals"),
   );
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // Which read failed. A failed list stays null rather than [], so its
+  // section says it couldn't load instead of "0 foods" and the first-run copy.
+  const [failed, setFailed] = useState({ aliases: false, meals: false });
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [fdcDown, setFdcDown] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [opening, setOpening] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  // the hit being opened (`source:source_id`), marked with a spinner
+  const [opening, setOpening] = useState<string | null>(null);
+  // `retry`: a failed search re-runs; a failed open is tapped again instead
+  const [searchError, setSearchError] = useState<{
+    text: string;
+    retry: boolean;
+  } | null>(null);
   const seq = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -112,25 +123,41 @@ export default function Library() {
   const [mealSheet, setMealSheet] = useState<SavedMeal | null>(null);
   /** the same sheet with no meal = the §8.4 "build one in Library" path */
   const [newMeal, setNewMeal] = useState(false);
+  const online = useOnline();
 
-  // `attempt` re-runs both reads: the failure notice carries a Retry rather
-  // than asking for a page reload.
+  // `attempt` re-runs both reads: each section's failure notice carries a
+  // Retry rather than asking for a page reload.
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    setLoadError(null);
+    // What this render shows as the read starts. A resume's re-read over
+    // lists already shown keeps them when it fails, as Today's tracker keeps
+    // its numbers; only a list with nothing on screen says it couldn't load.
+    const shown = { aliases: aliases != null, meals: meals != null };
     Promise.allSettled([getAliases(), getMeals()]).then(([a, m]) => {
       if (cancelled) return;
-      setAliases(a.status === "fulfilled" ? a.value : []);
-      setMeals(m.status === "fulfilled" ? m.value : []);
-      if (a.status === "rejected" || m.status === "rejected") {
-        setLoadError("Couldn't load part of your library.");
-      }
+      if (a.status === "fulfilled") setAliases(a.value);
+      if (m.status === "fulfilled") setMeals(m.value);
+      setFailed({
+        aliases: a.status === "rejected" && !shown.aliases,
+        meals: m.status === "rejected" && !shown.meals,
+      });
     });
     return () => {
       cancelled = true;
     };
   }, [attempt]);
+  const retry = () => {
+    setFailed({ aliases: false, meals: false });
+    setAliases(null);
+    setMeals(null);
+    setAttempt((n) => n + 1);
+  };
+  // Back after a while (installed, nothing else re-reads): the same reads,
+  // over the lists already shown, so nothing flashes back to loading.
+  useOnForeground((away) => {
+    if (away >= RESUME_STALE_MS) setAttempt((n) => n + 1);
+  });
 
   // Written through, so an alias edit or a saved meal is in the next paint too.
   useEffect(() => {
@@ -164,7 +191,7 @@ export default function Library() {
     } catch {
       if (seq.current !== id) return;
       setResults([]);
-      setSearchError("Search failed. Try again.");
+      setSearchError({ text: "Search failed.", retry: true });
     } finally {
       if (seq.current === id) setSearching(false);
     }
@@ -198,14 +225,14 @@ export default function Library() {
   // Manual search entry → food detail. FDC hits are cached first (the
   // existing /api/foods/select library path) so the detail page has a row.
   const openHit = async (hit: FoodSearchResult) => {
-    setOpening(true);
+    setOpening(`${hit.source}:${hit.source_id}`);
     setSearchError(null);
     try {
       const id = await cacheFood(hit);
       router.push(`/library/food/${encodeURIComponent(id)}`);
     } catch {
-      setSearchError("Couldn't open that food.");
-      setOpening(false);
+      setSearchError({ text: "Couldn't open that food.", retry: false });
+      setOpening(null);
     }
   };
 
@@ -217,22 +244,11 @@ export default function Library() {
         <h1>Library</h1>
       </header>
 
-      {loadError ? (
-        <div className="notice error" role="alert">
-          <span>{loadError}</span>
-          <button
-            type="button"
-            className="notice-btn"
-            onClick={() => {
-              setAliases(null);
-              setMeals(null);
-              setAttempt((n) => n + 1);
-            }}
-          >
-            Retry
-          </button>
+      {online ? null : (
+        <div className="notice warn offline-note" role="status">
+          <span>{OFFLINE_NOTE}</span>
         </div>
-      ) : null}
+      )}
 
       <section className="m3-section lib-search" aria-label="Search foods">
         <form className="capture" onSubmit={runSearch}>
@@ -279,7 +295,12 @@ export default function Library() {
             )}
           </button>
         </form>
-        {searchError ? <p className="sheet-error">{searchError}</p> : null}
+        {searchError ? (
+          <ErrorNotice
+            message={searchError.text}
+            onRetry={searchError.retry ? () => void search(query) : undefined}
+          />
+        ) : null}
         {fdcDown ? (
           <p className="subsheet-hint">
             Food database unreachable — showing your foods only.
@@ -291,11 +312,15 @@ export default function Library() {
               <button
                 key={`${r.source}:${r.source_id}:${i}`}
                 type="button"
-                disabled={opening}
+                disabled={opening != null}
+                aria-busy={opening === `${r.source}:${r.source_id}` || undefined}
                 onClick={() => openHit(r)}
               >
                 <span className="result-name">{foodName(r.label)}</span>
                 <span className="result-sub">{hitSub(r)}</span>
+                {opening === `${r.source}:${r.source_id}` ? (
+                  <span className="spinner" />
+                ) : null}
               </button>
             ))}
             {results.length === 0 && !searching && !searchError ? (
@@ -312,8 +337,10 @@ export default function Library() {
             <span className="count num">{activeMeals.length}</span>
           ) : null}
         </h2>
-        {meals == null ? (
-          <p className="m3-empty">Loading…</p>
+        {failed.meals ? (
+          <ErrorNotice message="Couldn't load your saved meals." onRetry={retry} />
+        ) : meals == null ? (
+          <Skeleton rows={2} height={64} />
         ) : meals.length === 0 ? (
           <p className="m3-empty">
             No saved meals yet. Say “save this as my usual breakfast” after
@@ -347,8 +374,10 @@ export default function Library() {
             </span>
           ) : null}
         </h2>
-        {aliases == null ? (
-          <p className="m3-empty">Loading…</p>
+        {failed.aliases ? (
+          <ErrorNotice message="Couldn't load your phrases." onRetry={retry} />
+        ) : aliases == null ? (
+          <Skeleton rows={2} height={64} />
         ) : groups.length === 0 ? (
           <p className="m3-empty">
             Nothing here yet. Foods you log by voice or by typing show up here

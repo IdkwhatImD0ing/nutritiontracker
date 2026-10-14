@@ -8,13 +8,15 @@
   gap: 14px;
 }
 
+/* a quiet card, not a dashed box: dashed reads as a drop zone */
 .diary-empty {
   font-size: 0.86rem;
   color: var(--faint);
   text-align: center;
   margin: 0;
   padding: 22px 16px;
-  border: 1px dashed var(--line-strong);
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: var(--radius);
 }
 
@@ -119,8 +121,17 @@
   gap: 8px;
 }
 
+/* a failed delete, over the buttons that failed (.sheet-error is
+   centred for sheet footers) */
+.diary-edit > .diary-error {
+  margin: 0;
+  text-align: left;
+}
+
+/* wraps, never overflows: a pair that can't share the line drops one */
 .diary-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }

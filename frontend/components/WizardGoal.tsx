@@ -172,6 +172,25 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
   const bodyValid =
     ageN >= 13 && ageN <= 120 && cm >= 100 && cm <= 250 && kg >= 30 && kg <= 300;
   const goalValid = targetKg >= 30 && targetKg <= 300;
+  // Why Next / Compute stays disabled, once every field has something in it
+  // (a blank field explains itself): the first number out of range, in the
+  // units shown. 67–661 lb and 3 ft 4 in – 8 ft 2 in are the whole numbers
+  // inside 30–300 kg and 100–250 cm.
+  const weightRange = units === "metric" ? "30–300 kg" : "67–661 lb";
+  const bodyFilled =
+    age.trim() !== "" &&
+    weight.trim() !== "" &&
+    (units === "metric" ? heightCm : feet).trim() !== "";
+  const bodyProblem =
+    !bodyFilled || bodyValid
+      ? null
+      : !(ageN >= 13 && ageN <= 120)
+        ? "Age must be 13–120."
+        : !(kg >= 30 && kg <= 300)
+          ? `Weight must be ${weightRange}.`
+          : `Height must be ${units === "metric" ? "100–250 cm" : "3 ft 4 in – 8 ft 2 in"}.`;
+  const goalProblem =
+    target.trim() !== "" && !goalValid ? `Target weight must be ${weightRange}.` : null;
 
   // The server derives the direction from goal weight vs current weight and
   // takes the rate as a magnitude, so only rates that agree with the target
@@ -434,6 +453,8 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
               </select>
             </label>
 
+            {bodyProblem ? <p className="m3-note">{bodyProblem}</p> : null}
+
             <div className="wizard-foot">
               <button
                 type="button"
@@ -506,6 +527,7 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                 {Math.round(weeksToTarget) === 1 ? "" : "s"} at this rate.
               </p>
             ) : null}
+            {goalProblem ? <p className="m3-note">{goalProblem}</p> : null}
 
             {error ? <p className="sheet-error">{error}</p> : null}
 
@@ -514,9 +536,17 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                 type="button"
                 className="commit-btn"
                 disabled={!goalValid || busy}
+                aria-busy={busy}
                 onClick={compute}
               >
-                {busy ? "Computing…" : "See my targets"}
+                {busy ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Computing…
+                  </>
+                ) : (
+                  "See my targets"
+                )}
               </button>
               <button
                 type="button"
@@ -609,9 +639,17 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                 type="button"
                 className="commit-btn"
                 disabled={!editedValid || busy}
+                aria-busy={busy}
                 onClick={save}
               >
-                {busy ? "Saving…" : "Save targets"}
+                {busy ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Saving…
+                  </>
+                ) : (
+                  "Save targets"
+                )}
               </button>
               <button
                 type="button"

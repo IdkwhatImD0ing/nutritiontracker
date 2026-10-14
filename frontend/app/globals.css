@@ -510,15 +510,8 @@ a {
   margin: 0 0 0 -12px;
 }
 
-/* Quiet one-line states, shared by History and Experiment (which never
+/* Quiet one-line hints, shared by History and Experiment (which never
    loads history.css). */
-.hist-error {
-  color: var(--amber);
-  font-size: 0.82rem;
-  margin: 0;
-  text-align: center;
-}
-
 .hhint {
   font-size: 0.78rem;
   color: var(--faint);
@@ -1424,6 +1417,12 @@ a {
   overscroll-behavior: contain;
 }
 
+/* the rows are locked while Log is in flight (StagingSheet) — an edit then
+   would be lost; the lock lifts if the commit fails */
+.sheet-body[inert] {
+  opacity: 0.6;
+}
+
 .sheet-foot {
   padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
@@ -1471,6 +1470,14 @@ a.commit-btn {
   align-items: center;
   justify-content: center;
   text-decoration: none;
+}
+
+/* busy is not unavailable: a button doing what was asked keeps its fill,
+   with a .spinner.on-accent ahead of its "…ing" label */
+.commit-btn[aria-busy="true"] {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  cursor: progress;
 }
 
 .sheet-error {
@@ -1554,6 +1561,15 @@ a.commit-btn {
   letter-spacing: 0.04em;
 }
 
+/* no macros yet (searching) or none to have (not found, a numberless
+   estimate): body font, normal weight, faint */
+.row-kcal.empty .n {
+  font-family: var(--font);
+  font-weight: 400;
+  font-size: 1rem;
+  color: var(--faint);
+}
+
 .row-remove {
   width: 30px;
   height: 30px;
@@ -1620,8 +1636,9 @@ a.commit-btn {
   color: var(--muted);
 }
 
+/* not found needs the user's tap, so it must not read as disabled */
 .row.not-found .row-name {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .badge {
@@ -1681,6 +1698,13 @@ a.commit-btn {
   animation: spin 0.8s linear infinite;
   vertical-align: -1px;
   margin-right: 6px;
+}
+
+/* on an accent fill (a busy Log / Save / Sign in), where the accent arc
+   would vanish */
+.spinner.on-accent {
+  border-color: color-mix(in srgb, var(--on-accent) 25%, transparent);
+  border-top-color: var(--on-accent);
 }
 
 @keyframes spin {
@@ -1815,13 +1839,6 @@ a.commit-btn {
   color: var(--amber);
 }
 
-.manual-hint {
-  color: var(--sage);
-  text-decoration: underline;
-  text-decoration-color: var(--faint);
-  text-underline-offset: 3px;
-}
-
 /* tappable food name → §7.1 edit sheet (BACKLOG 23). Its cue is a small
    trailing pencil (owner, 2026-10-13): the dotted underline it replaces read
    as a web link, under every name in the list. */
@@ -1927,6 +1944,25 @@ a.commit-btn {
 .detail-meal .meal-picker {
   margin-top: 6px;
   background: var(--surface-3);
+}
+
+/* every staged row removed: say so, over the add field */
+.stage-empty {
+  text-align: center;
+  padding: 32px 12px 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.stage-empty p {
+  margin: 0;
+}
+
+.stage-empty .stage-empty-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 
 /* ---------- add-item field (§7.1) ---------- */
@@ -2256,6 +2292,23 @@ a.commit-btn {
   cursor: default;
 }
 
+/* every staged row removed: Discard stands where Log did, at Log's size, so
+   the foot doesn't jump — a full-width band, or the lip's pill */
+.sheet-foot .edit-manual-btn {
+  width: 100%;
+  min-height: 54px;
+  justify-content: center;
+  text-align: center;
+}
+
+.stage-lip .edit-manual-btn {
+  width: auto;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+}
+
 /* manual search results (BACKLOG 3 — deliberately boring): one grouped
    list, like .serving-list — hairlines between hits, the heading and the
    empty line outside the box */
@@ -2296,13 +2349,14 @@ a.commit-btn {
 }
 
 @media (hover: hover) {
-  .search-results button:hover {
+  .search-results button:hover:not(:disabled) {
     background: var(--surface-3);
   }
 }
 
+/* while a pick runs the other rows stay readable but inert; the tapped one
+   is outlined and carries a spinner at its right edge */
 .search-results button:disabled {
-  opacity: 0.5;
   cursor: default;
 }
 
@@ -2310,6 +2364,27 @@ a.commit-btn {
    the quiet selected fill, no border, since the grouped rows share hairlines */
 .search-results button.active {
   background: var(--spruce-deep);
+}
+
+/* after a demo 429 on a pick: every row would meet it again (the notice
+   above says why), so they read as off, not just busy */
+.search-results button.refused {
+  opacity: 0.5;
+}
+
+/* an inset ring, not a border colour: the grouped rows have only a
+   bottom hairline, which alone would not outline the row */
+.search-results button[aria-busy="true"] {
+  position: relative;
+  padding-right: 40px;
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.search-results button > .spinner {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  margin: -6px 0 0;
 }
 
 .search-results .result-name {
@@ -2340,6 +2415,11 @@ a.commit-btn {
   border-right: 1.5px solid var(--faint);
   border-bottom: 1.5px solid var(--faint);
   transform: rotate(-45deg);
+}
+
+/* the hit being opened: its spinner stands where the chevron was */
+.lib-search .search-results button[aria-busy="true"]::after {
+  content: none;
 }
 
 /* the "Previously added" heading over the recent-foods list */
@@ -2415,16 +2495,20 @@ a.commit-btn {
   box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
 }
 
+/* a 44px round icon button over the video; aria-pressed says on or off */
 .scan-torch {
   position: absolute;
   right: 10px;
   bottom: 10px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
   background: rgba(17, 17, 19, 0.75);
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: 50%;
   color: var(--sage);
-  font-size: 0.78rem;
-  padding: 6px 12px;
   cursor: pointer;
 }
 
@@ -2463,6 +2547,26 @@ a.commit-btn {
   font-size: 0.82rem;
   color: var(--muted);
   margin: 0;
+}
+
+/* a code neither database knows: an ordinary outcome, not an error — said
+   plainly, where we looked under it, and search as a full-width way on */
+.scan-miss {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scan-miss-title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.scan-miss .edit-manual-btn {
+  margin-top: 10px;
+  justify-content: center;
+  text-align: center;
 }
 
 /* ---------- undo toast (BACKLOG 11) + pending badge (BACKLOG 12) ---------- */
@@ -2541,6 +2645,11 @@ a.commit-btn {
   align-items: flex-start;
 }
 
+.pending-pill.failed > span {
+  flex: 1;
+  min-width: 0;
+}
+
 .pending-pill.failed button {
   display: inline-flex;
   background: none;
@@ -2550,12 +2659,40 @@ a.commit-btn {
   padding: 2px 6px;
 }
 
-/* the demo strip under the Today header */
+/* the way out of the miss: search for the food, on the same log */
+.pending-pill.failed .pending-find {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: inherit;
+  font-weight: 600;
+}
+
+/* the demo strip under the Today header. It arrives when /api/me answers,
+   after Today has painted, so it grows into place (closing the .shell gap
+   too) rather than shoving the tracker down in one frame. */
 .pending-pill.demo-banner {
   border-radius: var(--radius-sm);
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--text);
+  /* clips the text while it grows; the ✕'s 44px tap area (8px over its
+     28px) still fits inside the 9px padding */
+  overflow: hidden;
+  animation: banner-in 220ms var(--ease);
+}
+
+/* max-height can't animate to `none`, so it ends at a cap above the strip's
+   two-line height */
+@keyframes banner-in {
+  from {
+    max-height: 0;
+    padding-block: 0;
+    opacity: 0;
+    margin-bottom: -18px; /* the .shell gap */
+  }
+  to {
+    max-height: 80px;
+  }
 }
 
 .pending-pill.demo-banner .sheet-close {
@@ -2656,6 +2793,13 @@ a.commit-btn {
   color: var(--muted);
 }
 
+/* a field's hint under its input ("At least 8 characters"), in sentence case */
+.auth-card label .subsheet-hint {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
 .auth-card input {
   height: var(--field-h);
   background: var(--surface-2);
@@ -2690,6 +2834,11 @@ a.commit-btn {
   text-decoration: none;
 }
 
+/* the field the error line is about; after :focus, which it is moved to */
+.auth-card input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
 .auth-card button[type="submit"] {
   background: var(--accent-fill);
   color: var(--on-accent);
@@ -2708,10 +2857,18 @@ a.commit-btn {
   cursor: default;
 }
 
+.auth-card button[type="submit"][aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
 .auth-error {
   color: var(--red);
   font-size: 0.85rem;
   margin: 0;
+  /* rendered empty until there is an error: one line (the body's 1.4
+     line-height) is held, so the centred card doesn't jump when one arrives */
+  min-height: 1.4em;
 }
 
 .auth-alt {
@@ -2744,7 +2901,8 @@ a.commit-btn {
   color: var(--mint);
   padding: 0;
   margin-top: 0;
-  min-height: 0;
+  /* a full finger's height; the text stays a line */
+  min-height: 44px;
   box-shadow: none;
   font-size: 0.82rem;
   font-weight: 500;
@@ -2920,6 +3078,7 @@ a.commit-btn {
 
   .shell.today > .brand,
   .shell.today > .demo-banner,
+  .shell.today > .offline-note,
   .shell.day > .brand {
     grid-column: 1 / -1;
   }
@@ -3102,6 +3261,12 @@ a.commit-btn {
   cursor: default;
 }
 
+.commit-pill[aria-busy="true"] {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  cursor: progress;
+}
+
 /* The tray's edge, not a divider component: no fill and no rules of its own,
    just the sheet's own grabber shape sitting in the gap under the tray. Same
    affordance the sheet itself uses at the top, so it reads as "this edge
@@ -3217,13 +3382,41 @@ a.commit-btn {
   padding: 12px 18px 16px;
 }
 
+/* nothing said yet: a glyph, a title and the sentence, sat just above the
+   composer (and the thumb) rather than mid-sheet */
 .chat-empty {
-  margin: auto 0;
-  padding: 24px 12px;
+  margin: auto 0 0;
+  padding: 24px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   text-align: center;
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+.chat-empty p {
+  margin: 0;
+}
+
+.chat-empty-glyph {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 1.35rem;
+}
+
+.chat-empty .chat-empty-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
 }
 
 .bubble {
@@ -3332,6 +3525,19 @@ a.commit-btn {
 
 .tool-line .tool-result {
   color: var(--muted);
+}
+
+/* a step that errored reads as one; an interrupted one as unfinished */
+.tool-line.failed {
+  border-left-color: var(--red);
+}
+
+.tool-line.failed .tool-result {
+  color: var(--red);
+}
+
+.tool-line.interrupted .tool-result {
+  color: var(--amber);
 }
 
 /* The raw call is a .disclosure (the shared row, foot of this file). Its hit

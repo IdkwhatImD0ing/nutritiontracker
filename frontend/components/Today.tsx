@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   discardLog,
   getDiary,
   patchTimings,
@@ -42,10 +43,12 @@ import { peek, put } from "./readCache";
 import SplitSheet from "./SplitSheet";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
-import { useOnForeground } from "./useOnForeground";
+import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
+import { OFFLINE_NOTE, useOnline } from "./useOnline";
 import { useScrollMemory } from "./useScrollMemory";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
+import { TARGETS_EVENT } from "./WizardGate";
 
 const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
@@ -53,12 +56,6 @@ const UNDO_MS = 6_000;
  *  Holds a QUEUE, one entry per committed log: two logs committed inside the
  *  same ~90s tier-3 window each need their own poll. */
 const PENDING_KEY = "usual.pending.v1";
-
-/** How long Today may sit in the background before a return to the foreground
- *  re-reads the server. Short enough that a meal logged on another device is
- *  there when you look, long enough that flicking to the camera roll and back
- *  costs nothing. A local-date rollover re-reads regardless of this. */
-const RESUME_STALE_MS = 60_000;
 
 type PendingState = { logId: string; items: StagedItem[] };
 
@@ -134,6 +131,13 @@ export default function Today() {
   const removedIndexesRef = useRef<Map<string, number[]>>(new Map());
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  // the digits of a barcode neither database knows — an ordinary miss, shown
+  // apart from captureError's failures
+  const [scanMiss, setScanMiss] = useState<string | null>(null);
+  // A Search pick the demo quota refused: every other result would meet the
+  // same 429, so the rows stop taking taps until the lane is opened again
+  // (Bill, 2026-10-13).
+  const [searchRefused, setSearchRefused] = useState(false);
   // Demo accounts (GET /api/me): the banner's quota, re-read after every
   // log attempt so "next log at …" shows the moment the day's log is spent.
   // Owner → demo null → no banner. A failed read renders nothing: the
@@ -142,6 +146,8 @@ export default function Today() {
   const [me, setMe] = useState<Me | null>(peekMe);
   const demo = me?.demo ?? null;
   const quotaSpent = demo != null && demo.used_today >= demo.limit;
+  // §8.6: no network, no logging — said under the header
+  const online = useOnline();
   // Owner ruling (2026-09-02): the capture bar left the Today screen; every
   // way to log opens from the tab bar's + sheet. `lane` is which lane's sheet
   // is up. The pick arrives from TabBar as a window event (Today mounted) or
@@ -383,6 +389,8 @@ export default function Today() {
 
   const pickLane = (next: AddLane) => {
     setCaptureError(null);
+    setScanMiss(null);
+    setSearchRefused(false);
     // §3.4b (2026-09-08): "Take photo" opens the same chat, with the picker
     // up instead of the mic — so it is the Agent lane, and everything below
     // applies to it. The still-undoable discard is settled by the send
@@ -459,6 +467,19 @@ export default function Today() {
         setDiaryError(true);
       });
   };
+
+  // The goal wizard saved targets; the tracker's come from the diary totals.
+  // Back online (§8.6), a diary read that failed offline is made again.
+  // reloadDiary only touches state setters, so the first render's copy is fine.
+  useEffect(() => {
+    const reload = () => reloadDiary();
+    window.addEventListener(TARGETS_EVENT, reload);
+    window.addEventListener("online", reload);
+    return () => {
+      window.removeEventListener(TARGETS_EVENT, reload);
+      window.removeEventListener("online", reload);
+    };
+  }, []);
 
   // The queue is written through the ref, not through a functional setState:
   // it is persisted in the same breath, and a state updater has to stay pure
@@ -793,6 +814,7 @@ export default function Today() {
           text: quota
             ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
             : "Couldn't log that — check your connection and retry.",
+          retryable: !quota,
         });
       }
       return false;
@@ -954,6 +976,8 @@ export default function Today() {
           text: quota
             ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
             : photoErrorMessage(e),
+          // a refused image (too large, wrong type) fails the same way again
+          retryable: !quota && !(e instanceof ApiError && e.status < 500),
         });
       }
       return false;
@@ -994,7 +1018,11 @@ export default function Today() {
       enterStaging(log);
     } catch (e) {
       t0Ref.current = null;
-      failCapture(e, "Couldn't log that — check your connection and retry.");
+      const quota = failCapture(
+        e,
+        "Couldn't log that — check your connection and retry.",
+      );
+      if (quota && inputMode === "search") setSearchRefused(true);
     } finally {
       setCaptureBusy(false);
     }
@@ -1021,6 +1049,7 @@ export default function Today() {
     sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
+    setScanMiss(null);
     let hit: Awaited<ReturnType<typeof lookupBarcode>>;
     try {
       hit = await lookupBarcode(code);
@@ -1031,12 +1060,10 @@ export default function Today() {
     }
     if (!hit.found) {
       // An honest miss (§13: never fail silently): neither FDC Branded nor
-      // Open Food Facts knows this code. Say where we looked; the scanner
-      // offers search.
+      // Open Food Facts knows this code. The scanner says where we looked —
+      // as a miss, not an error — and offers search.
       setCaptureBusy(false);
-      setCaptureError(
-        `${code.replace(/\D/g, "")} isn't in USDA FoodData Central or Open Food Facts.`,
-      );
+      setScanMiss(code.replace(/\D/g, ""));
       return;
     }
     await quickAdd(hit.food.id, "barcode");
@@ -1193,6 +1220,12 @@ export default function Today() {
         <span className="date">{today}</span>
       </header>
 
+      {online ? null : (
+        <div className="notice warn offline-note" role="status">
+          <span>{OFFLINE_NOTE}</span>
+        </div>
+      )}
+
       {demo ? <DemoBanner demo={demo} /> : null}
 
       {diaryError && meals === null ? (
@@ -1231,6 +1264,10 @@ export default function Today() {
       {meals ? (
         <DiaryList
           meals={meals}
+          // logging is only the tab bar's + (a button here dispatching the
+          // agent lane would start the mic from an empty-state tap). Not
+          // "below": from 900px the + sits in the left rail.
+          emptyText="Nothing logged yet. Log a meal with the + button."
           onPatched={(entry, t) => {
             setTotals(t);
             setMeals((cur) => {
@@ -1319,6 +1356,7 @@ export default function Today() {
           fullScreen
           busy={captureBusy}
           error={captureError}
+          refused={searchRefused}
           onSelect={searchSelect}
           onClose={closeLane}
         />
@@ -1328,6 +1366,7 @@ export default function Today() {
         <BarcodeScanner
           busy={captureBusy}
           notice={captureError}
+          miss={scanMiss}
           onCode={scanCode}
           // a spent quota meets the same 429 in the search lane — don't offer it
           onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}

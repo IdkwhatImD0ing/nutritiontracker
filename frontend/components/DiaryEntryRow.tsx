@@ -19,7 +19,11 @@ const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
 type Props = {
   entry: DiaryEntry;
   expanded: boolean;
-  busy: boolean;
+  /** a save or delete in flight: every control waits, the tapped one spins */
+  busy: "save" | "delete" | null;
+  /** this row's failed delete, shown over its actions (a failed save is
+   *  onSave's answer, shown in the portion sheet) */
+  error?: string | null;
   onToggle: () => void;
   /** portion edit → PATCH /api/entries/:id {qty, serving_id?} (parent owns
    *  the request); `serving_id` is sent only when the serving itself moved.
@@ -48,6 +52,7 @@ export default function DiaryEntryRow({
   entry,
   expanded,
   busy,
+  error,
   onToggle,
   onSave,
   onDelete,
@@ -123,6 +128,8 @@ export default function DiaryEntryRow({
   const unpickable = (sv: PortionChoice) =>
     sv.id !== own.id &&
     ![...CORE_KEYS].every((k) => typeof sv.macros?.[k] === "number");
+
+  const locked = busy !== null;
 
   const openPortion = () => {
     setSaveError(null);
@@ -241,7 +248,7 @@ export default function DiaryEntryRow({
               type="button"
               className="portion-btn"
               aria-label={`Change portion for ${name}`}
-              disabled={busy}
+              disabled={locked}
               onClick={openPortion}
             >
               {portion}
@@ -274,6 +281,13 @@ export default function DiaryEntryRow({
           </Link>
 
           <div className="diary-edit">
+            {/* a failed delete, over the buttons that failed (a failed
+                portion save shows in the portion sheet) */}
+            {error ? (
+              <p className="sheet-error diary-error" role="alert">
+                {error}
+              </p>
+            ) : null}
             {/* While a delete is being confirmed the two choices share the
                 row equally, one line each even at 320 (diary.css). */}
             <div
@@ -286,16 +300,16 @@ export default function DiaryEntryRow({
                   <button
                     type="button"
                     className="diary-delete confirm"
-                    disabled={busy}
+                    disabled={locked}
                     onClick={onDelete}
                   >
-                    {busy ? <span className="spinner" /> : null}
+                    {busy === "delete" ? <span className="spinner" /> : null}
                     Yes, delete
                   </button>
                   <button
                     type="button"
                     className="diary-cancel"
-                    disabled={busy}
+                    disabled={locked}
                     onClick={() => {
                       setConfirmDelete(false);
                       requestAnimationFrame(() => deleteBtn.current?.focus());
@@ -310,7 +324,7 @@ export default function DiaryEntryRow({
                   ref={deleteBtn}
                   type="button"
                   className="diary-delete"
-                  disabled={busy}
+                  disabled={locked}
                   onClick={() => setConfirmDelete(true)}
                 >
                   Delete
@@ -335,7 +349,7 @@ export default function DiaryEntryRow({
               ? "Couldn’t load this food’s other servings — reopen to try again."
               : null)
           }
-          busy={busy}
+          busy={busy === "save"}
           onApply={applyPortion}
           onClose={() => setPortionOpen(false)}
         />

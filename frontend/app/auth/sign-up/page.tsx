@@ -14,6 +14,7 @@ export default function SignUpPage() {
       title="Create a demo account"
       intro="New accounts are demos: one log a day — by voice, photo, barcode, or search — in a diary only you can see."
       submitLabel="Create account"
+      pendingLabel="Creating account…"
       action={signUpAction}
       withName
       legal={

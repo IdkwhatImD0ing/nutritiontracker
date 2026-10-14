@@ -29,6 +29,12 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onPick: (lane: AddLane) => void;
+  /** why no lane can work right now (offline, §8.6): said at the top, and
+   *  the four rows are disabled */
+  blocked?: string | null;
+  /** said at the top, the rows left usable: a spent demo quota (§7.4 —
+   *  searching and barcode lookups are free) */
+  note?: string | null;
 };
 
 const stroke = {
@@ -96,7 +102,7 @@ const ROWS = [
   },
 ] as const;
 
-export default function AddSheet({ open, onClose, onPick }: Props) {
+export default function AddSheet({ open, onClose, onPick, blocked, note }: Props) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -120,11 +126,17 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet add-sheet" role="dialog" aria-label="Log food">
         <SheetHeader title="Log food" onClose={onClose} closeButton={false} />
+        {blocked || note ? (
+          <div className="notice warn">
+            <span>{blocked || note}</span>
+          </div>
+        ) : null}
         {ROWS.map(({ lane, label, sub, Icon }) => (
           <button
             key={lane}
             type="button"
             className="add-row"
+            disabled={!!blocked}
             onClick={() => onPick(lane)}
           >
             <span className="add-row-icon">

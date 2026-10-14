@@ -188,6 +188,12 @@ function Daily({
   onDay: (date: string) => void;
 }) {
   const week = kind === "w";
+  // nothing in the whole range: each chart says so, and the hint has no day
+  // worth tapping. Neutral words — a range can't tell a new account from a
+  // gap in an old one.
+  const empty = range.days.every((d) => !d.logged)
+    ? `Nothing logged in the last ${week ? 7 : 30} days`
+    : undefined;
   const toBar = (pick: (d: HistoryDay) => number, unit: string) =>
     range.days.map<Bar>((d) => {
       const date = parseISO(d.date);
@@ -222,6 +228,7 @@ function Daily({
         labelEvery={1}
         onTap={onDay}
         select={!week}
+        emptyText={empty}
       />
       <ChartBars
         title={week ? "Protein · last 7 days" : "Protein · last 30 days"}
@@ -235,8 +242,9 @@ function Daily({
         onTap={onDay}
         select={!week}
         format={(v) => `${fmt.format(v)}g`}
+        emptyText={empty}
       />
-      {week ? <p className="hhint">Tap a day to open its diary.</p> : null}
+      {week && !empty ? <p className="hhint">Tap a day to open its diary.</p> : null}
     </div>
   );
 }
@@ -280,6 +288,7 @@ function Year({ range }: { range: HistoryRange }) {
   const loggedWeeks = weeks.filter((w) => w.days_logged > 0).length;
   const loggedDays = weeks.reduce((s, w) => s + w.days_logged, 0);
   const baseline = range.baseline_days_per_week;
+  const empty = loggedDays === 0 ? "Nothing logged in the last 52 weeks" : undefined;
 
   return (
     <div className="hcharts">
@@ -293,6 +302,7 @@ function Year({ range }: { range: HistoryRange }) {
         unit="kcal"
         labelEvery={1}
         select
+        emptyText={empty}
       />
       <ChartBars
         title="Protein · weekly avg"
@@ -304,12 +314,15 @@ function Year({ range }: { range: HistoryRange }) {
         labelEvery={1}
         select
         format={(v) => `${fmt.format(v)}g`}
+        emptyText={empty}
       />
       <ChartStrip title="Days logged per week" cells={cells} />
-      <p className="hhint">
-        {loggedDays} days logged across {loggedWeeks} of {weeks.length} weeks
-        {baseline > 0 ? ` · Cronometer baseline ${fmt.format(baseline)}/week` : ""}.
-      </p>
+      {empty ? null : (
+        <p className="hhint">
+          {loggedDays} days logged across {loggedWeeks} of {weeks.length} weeks
+          {baseline > 0 ? ` · Cronometer baseline ${fmt.format(baseline)}/week` : ""}.
+        </p>
+      )}
     </div>
   );
 }

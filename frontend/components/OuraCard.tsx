@@ -9,6 +9,7 @@ import {
   syncOura,
   type OuraStatus,
 } from "./OuraApi";
+import Skeleton from "./Skeleton";
 
 /**
  * Settings' Oura section. Owner only: it renders nothing for a demo account,
@@ -25,15 +26,29 @@ import {
  * quiet.
  */
 
-const RETURN_NOTES = new Map<string, string>([
-  ["connected", "Oura connected."],
+/** What the card was on the last visit ("connected" or "available"), so the
+ *  owner's Settings holds its place while the status loads instead of the
+ *  tall connected card popping in above Daily targets. A demo account's
+ *  status says available: false, which clears it: those keep rendering
+ *  nothing. */
+const SEEN_KEY = "tally.oura.card.v1";
+
+/** A note's kind picks its look: only `ok` is the green status line; a
+ *  cancel, a failure or a partial grant is a notice, never success green. */
+type Note = { text: string; kind: "ok" | "warn" | "error" };
+
+const RETURN_NOTES = new Map<string, Note>([
+  ["connected", { text: "Oura connected.", kind: "ok" }],
   [
     "missing_scope",
-    "Oura connected, but without every permission Tally asks for. Reconnect and allow them all.",
+    {
+      text: "Oura connected, but without every permission Tally asks for. Reconnect and allow them all.",
+      kind: "warn",
+    },
   ],
-  ["denied", "Oura connection cancelled."],
-  ["error", "Oura connection failed. Try again."],
-  ["not_set_up", "Oura isn't available on this server yet."],
+  ["denied", { text: "Oura connection cancelled.", kind: "warn" }],
+  ["error", { text: "Oura connection failed. Try again.", kind: "error" }],
+  ["not_set_up", { text: "Oura isn't available on this server yet.", kind: "error" }],
 ]);
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -86,8 +101,11 @@ function DayRow({ d }: { d: OuraStatus["days"][number] }) {
 export default function OuraCard() {
   const [status, setStatus] = useState<OuraStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<Note | null>(null);
+  // which request is in flight, so Sync now says "Syncing…" only for its own
+  const [busy, setBusy] = useState<"sync" | "connect" | null>(null);
+  // read from storage after mount (the server render has no storage)
+  const [placeholder, setPlaceholder] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -103,9 +121,28 @@ export default function OuraCard() {
       );
     }
     let live = true;
+    try {
+      setPlaceholder(localStorage.getItem(SEEN_KEY));
+    } catch {
+      /* storage unavailable — the card just arrives */
+    }
     getOuraStatus()
-      .then((s) => live && setStatus(s))
+      .then((s) => {
+        if (!live) return;
+        setStatus(s);
+        setPlaceholder(null);
+        try {
+          if (s.available) {
+            localStorage.setItem(SEEN_KEY, s.connected ? "connected" : "available");
+          } else {
+            localStorage.removeItem(SEEN_KEY);
+          }
+        } catch {
+          /* fine — no placeholder next visit */
+        }
+      })
       .catch((e) => {
+        if (live) setPlaceholder(null);
         // Only the owner can get a 503 here (not migrated / not configured) —
         // anything else stays silent, so a demo account never sees the card.
         if (live && e instanceof ApiError && e.status === 503) {
@@ -115,7 +152,7 @@ export default function OuraCard() {
     // Back from Oura's consent screen via the back/forward cache: the page is
     // restored as it was left, mid-"Opening Oura…".
     const onShow = (e: PageTransitionEvent) => {
-      if (e.persisted) setBusy(false);
+      if (e.persisted) setBusy(null);
     };
     window.addEventListener("pageshow", onShow);
     return () => {
@@ -125,23 +162,24 @@ export default function OuraCard() {
   }, []);
 
   const connect = async () => {
-    setBusy(true);
+    setBusy("connect");
     setError(null);
     try {
       await connectOura(); // navigates away on success
     } catch (e) {
       setError(detail(e, "Couldn't start the Oura connection."));
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   const syncNow = async () => {
-    setBusy(true);
+    setBusy("sync");
     setError(null);
     setNote(null);
     try {
       const r = await syncOura(true);
-      setNote(missingNote(r.missing));
+      const missing = missingNote(r.missing);
+      setNote(missing ? { text: missing, kind: "warn" } : null);
     } catch (e) {
       setError(detail(e, "Sync failed. Try again."));
     }
@@ -152,10 +190,19 @@ export default function OuraCard() {
     } catch {
       /* keep what is shown */
     }
-    setBusy(false);
+    setBusy(null);
   };
 
-  if (!status?.available && !error) return null;
+  if (!status?.available && !error) {
+    return placeholder ? (
+      <section className="m3-section" aria-label="Oura">
+        <h2>Oura</h2>
+        {/* the condensed card: sync row, latest day, the week's disclosure
+            and Reconnect (estimates, not measured) */}
+        <Skeleton height={placeholder === "connected" ? 210 : 72} />
+      </section>
+    ) : null;
+  }
 
   const hint = status?.connected && !note ? missingNote(status.missing) : null;
 
@@ -163,8 +210,18 @@ export default function OuraCard() {
     <section className="m3-section" aria-label="Oura">
       <h2>Oura</h2>
       <div className="m3-card">
-        {note ? <p className="m3-status">{note}</p> : null}
-        {hint ? <p className="m3-status">{hint}</p> : null}
+        {/* a div, as ErrorNotice's: a <p> would bring its UA margins */}
+        {note?.kind === "ok" ? <p className="m3-status">{note.text}</p> : null}
+        {note && note.kind !== "ok" ? (
+          <div className={`notice ${note.kind}`}>
+            <span>{note.text}</span>
+          </div>
+        ) : null}
+        {hint ? (
+          <div className="notice warn">
+            <span>{hint}</span>
+          </div>
+        ) : null}
         {error ? <p className="sheet-error">{error}</p> : null}
         {status?.connected ? (
           <>
@@ -177,10 +234,18 @@ export default function OuraCard() {
               <button
                 type="button"
                 className="m3-link-btn"
-                disabled={busy}
+                disabled={busy !== null}
+                aria-busy={busy === "sync"}
                 onClick={syncNow}
               >
-                {busy ? "Working…" : "Sync now"}
+                {busy === "sync" ? (
+                  <>
+                    <span className="spinner" />
+                    Syncing…
+                  </>
+                ) : (
+                  "Sync now"
+                )}
               </button>
             </div>
             {/* newest first: the latest day, then the rest of the week */}
@@ -204,7 +269,7 @@ export default function OuraCard() {
                 <button
                   type="button"
                   className="m3-link-btn"
-                  disabled={busy}
+                  disabled={busy !== null}
                   onClick={connect}
                 >
                   Allow workouts &amp; activity
@@ -216,7 +281,7 @@ export default function OuraCard() {
                 <button
                   type="button"
                   className="m3-link-btn quiet"
-                  disabled={busy}
+                  disabled={busy !== null}
                   onClick={connect}
                 >
                   Reconnect
@@ -232,10 +297,10 @@ export default function OuraCard() {
             <button
               type="button"
               className="m3-link-btn"
-              disabled={busy}
+              disabled={busy !== null}
               onClick={connect}
             >
-              {busy ? "Opening Oura…" : "Connect Oura"}
+              {busy === "connect" ? "Opening Oura…" : "Connect Oura"}
             </button>
           </div>
         ) : null}

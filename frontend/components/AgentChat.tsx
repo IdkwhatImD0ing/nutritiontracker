@@ -50,7 +50,9 @@ export type ChatMessage =
        *  place, so it is patched rather than replaced by a second card */
       photo?: boolean;
     }
-  | { kind: "error"; id: string; text: string };
+  /** `retryable`: a text or photo send that may go through on a second try
+   *  (never the demo quota) — the chat offers Retry under it */
+  | { kind: "error"; id: string; text: string; retryable?: boolean };
 
 type Props = {
   messages: ChatMessage[];
@@ -95,7 +97,7 @@ type Props = {
 
 const NOTICE: Record<VoiceFailure, string> = {
   permission_denied: "Mic permission denied — type it instead.",
-  recorder_error: "Mic capture failed — type it instead.",
+  recorder_error: "Couldn't use the mic — type it instead.",
   too_short: "That was too short — hold the mic longer, or type it.",
   silent_blob: "No audio came through — type it instead.",
 };
@@ -173,10 +175,12 @@ const TOOL_ERRORS: Record<string, string> = {
  *  point of the window is seeing the work). For the owner the raw call and
  *  result stay one tap away under it (Bill, 2026-10-13: owner only). A run
  *  that ended before the tool answered leaves the line settled as
- *  interrupted, never spinning. */
+ *  interrupted, never spinning. `state` colours the line: a step that
+ *  errored (a weigh-in that didn't save) must not read as done. */
 function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   doing: string;
   result: string | null;
+  state: "ok" | "failed" | "interrupted";
 } {
   const a = m.args;
   const out =
@@ -339,11 +343,18 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       doing = m.done ? "Checked something" : "Checking something…";
       ok = "Done";
   }
-  if (!m.done) return { doing, result: null };
-  if (err === "interrupted") return { doing, result: "Interrupted — the run ended before this finished" };
-  if (raised) return { doing, result: "Didn't go through" };
-  if (err) return { doing, result: TOOL_ERRORS[err] ?? "Didn't go through" };
-  return { doing, result: ok };
+  if (!m.done) return { doing, result: null, state: "ok" };
+  if (err === "interrupted")
+    return { doing, result: "Interrupted — the run ended before this finished", state: "interrupted" };
+  if (raised) return { doing, result: "Didn't go through", state: "failed" };
+  // already_called is a benign skip: the first call did the work
+  if (err)
+    return {
+      doing,
+      result: TOOL_ERRORS[err] ?? "Didn't go through",
+      state: err === "already_called" ? "ok" : "failed",
+    };
+  return { doing, result: ok, state: "ok" };
 }
 
 function ToolLine({
@@ -353,9 +364,9 @@ function ToolLine({
   m: Extract<ChatMessage, { kind: "tool" }>;
   raw: boolean;
 }) {
-  const { doing, result } = describeTool(m);
+  const { doing, result, state } = describeTool(m);
   return (
-    <div className={`tool-line${m.done ? "" : " running"}`}>
+    <div className={`tool-line${m.done ? "" : " running"}${state === "ok" ? "" : ` ${state}`}`}>
       <div className="tool-head">
         {m.done ? null : <span className="spinner" aria-hidden="true" />}
         <span className="tool-text">{doing}</span>
@@ -460,6 +471,22 @@ export default function AgentChat({
   const bodyRef = useRef<HTMLDivElement>(null);
   const { supported, recording, elapsedMs, start, stop, cancel } =
     useVoiceCapture();
+  // The newest text or photo send, for a failed one's Retry (BACKLOG 176):
+  // the same words, or the same shot — same capturedAt, so the same client
+  // id (§8.6), never a second log or a second vision call.
+  const [lastSend, setLastSend] = useState<
+    | { kind: "text"; text: string }
+    | { kind: "photo"; shot: PhotoShot; said: string }
+    | null
+  >(null);
+  const sendText = (t: string) => {
+    setLastSend({ kind: "text", text: t });
+    return onSubmit(t);
+  };
+  const sendPhoto = (shot: PhotoShot, said: string) => {
+    setLastSend({ kind: "photo", shot, said });
+    return onSubmitPhoto(shot, said);
+  };
 
   // §8.1d/§13: ANY voice failure degrades to typing — focus the text field
   // so the retype is one keystroke away (rAF: the input re-renders after
@@ -620,8 +647,29 @@ export default function AgentChat({
 
   const last = messages[messages.length - 1];
   // "Thinking…" between the send and the first tool line, and between a
-  // finished tool and the reply — never while a tool line already spins
-  const thinking = busy && !(last?.kind === "tool" && !last.done);
+  // finished tool and the reply — never while a tool line already spins or
+  // the voice bubble still says "Transcribing…"
+  const thinking =
+    busy &&
+    !(last?.kind === "tool" && !last.done) &&
+    !(last?.kind === "user" && last.pending);
+  // The quota's sentence is already the newest bubble — once is enough.
+  const errorShown = last?.kind === "error" && last.text === error;
+  const canRetry = last?.kind === "error" && last.retryable === true && lastSend != null;
+
+  const retry = async () => {
+    const s = lastSend;
+    if (busy || !s) return;
+    if (recording) cancel(); // the retry is the turn now
+    setNotice(null);
+    const ok =
+      s.kind === "text" ? await sendText(s.text) : await sendPhoto(s.shot, s.said);
+    if (!ok) return;
+    // a failed composer send is still in the composer — it went through now
+    const said = s.kind === "text" ? s.text : s.said;
+    setText((cur) => (cur.trim() === said ? "" : cur));
+    if (s.kind === "photo") setAttached((cur) => (cur === s.shot ? null : cur));
+  };
 
   return (
     <>
@@ -647,12 +695,20 @@ export default function AgentChat({
           onScroll={onBodyScroll}
           aria-live="polite"
         >
+          {/* just above the composer, by the thumb. No tappable examples:
+              sending one would log a meal or a weigh-in for real. */}
           {messages.length === 0 ? (
-            <p className="chat-empty">
-              {supported
-                ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it adds."
-                : "No microphone here — type what you ate, or snap the plate."}
-            </p>
+            <div className="chat-empty">
+              <span className="chat-empty-glyph" aria-hidden="true">
+                {supported ? <Mic /> : <Camera />}
+              </span>
+              <p className="chat-empty-title">Tell it what you ate</p>
+              <p>
+                {supported
+                  ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it adds."
+                  : "No microphone here — type what you ate, or snap the plate."}
+              </p>
+            </div>
           ) : null}
           {messages.map((m) => {
             switch (m.kind) {
@@ -703,7 +759,7 @@ export default function AgentChat({
                               // the tap is the answer: a recording in progress
                               // is dropped, not left running under the turn
                               if (recording) cancel();
-                              void onSubmit(opt);
+                              void sendText(opt);
                             }}
                           >
                             {opt}
@@ -717,8 +773,22 @@ export default function AgentChat({
                 return <ResultCard key={m.id} m={m} onReview={onReview} />;
               case "error":
                 return (
-                  <div key={m.id} className="bubble error" role="alert">
-                    {m.text}
+                  <div key={m.id} className="bubble-wrap">
+                    <div className="bubble error" role="alert">
+                      {m.text}
+                    </div>
+                    {m === last && canRetry ? (
+                      <div className="chips agent-options">
+                        <button
+                          type="button"
+                          className="chip"
+                          disabled={busy}
+                          onClick={() => void retry()}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 );
             }
@@ -795,8 +865,8 @@ export default function AgentChat({
                 setText("");
                 setAttached(null);
                 const ok = shot
-                  ? await onSubmitPhoto(shot, trimmed)
-                  : await onSubmit(trimmed);
+                  ? await sendPhoto(shot, trimmed)
+                  : await sendText(trimmed);
                 if (ok) {
                   setNotice(null);
                   return;
@@ -840,7 +910,10 @@ export default function AgentChat({
                 ref={inputRef}
                 type="text"
                 value={text}
-                onChange={(e) => setText(e.target.value)}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setNotice(null); // typing is the fallback taken
+                }}
                 placeholder={attached ? "Ask about it…" : "Tell the agent…"}
                 aria-label="Tell the agent"
                 enterKeyHint="send"
@@ -856,7 +929,7 @@ export default function AgentChat({
               </button>
             </form>
           )}
-          {error ? <p className="capture-error">{error}</p> : null}
+          {error && !errorShown ? <p className="capture-error">{error}</p> : null}
           {notice && !error ? <p className="capture-notice">{notice}</p> : null}
         </div>
       </div>
@@ -873,7 +946,7 @@ export default function AgentChat({
           setNotice(null);
           if (openedLaneRef.current) {
             openedLaneRef.current = false;
-            void onSubmitPhoto(shot, "");
+            void sendPhoto(shot, "");
             return;
           }
           setAttached(shot);

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getWeights, type WeightEntry } from "@/lib/api";
+import Skeleton from "./Skeleton";
 
 const LB_PER_KG = 2.2046226; // WizardMath's constant; the card shows the unit the weigh-in was said in
 const DAYS = 30;
@@ -52,7 +53,8 @@ type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
 /** §6.4 weight tracking: the latest weigh-in, the change since the one
  *  before it, and a 30-day sparkline. Reads GET /api/weights; `refreshKey`
  *  re-reads it (Today bumps it when an agent log recorded a weigh-in). A
- *  read that fails renders nothing — never a stale or invented number.
+ *  read that fails shows no number — never a stale or invented one — only
+ *  that it couldn't load, in the card's own slot.
  *  `onLog` is the empty card's way in: Today opens the Agent lane, the one
  *  place a weigh-in is logged. The card with data stays static — there is no
  *  history screen to open, and a tap that starts the mic would be a trap. */
@@ -63,7 +65,8 @@ export default function WeightCard({
   refreshKey: number;
   onLog?: () => void;
 }) {
-  const [data, setData] = useState<Data | null>(null);
+  // undefined = the first read is in flight, null = it failed
+  const [data, setData] = useState<Data | null | undefined>(undefined);
   // Derived per render, not frozen in state: an installed PWA lives across
   // midnight, and a `useState` initialiser would have gone on calling
   // yesterday's weigh-in today's for as long as the app stayed open. Today
@@ -84,7 +87,32 @@ export default function WeightCard({
     };
   }, [refreshKey]);
 
-  if (!data) return null;
+  // Held at the card's height while the first read is out: the diary below
+  // usually lands first, and must not drop ~100px under a thumb when this
+  // does. A refetch keeps the old data until the new arrives.
+  if (data === undefined) {
+    return (
+      <section className="weight-card is-loading" aria-label="Weight" aria-busy="true">
+        <div className="weight-main">
+          <span className="label">Weight</span>
+          <Skeleton height={24} width={96} />
+          <div className="weight-sub">&nbsp;</div>
+        </div>
+      </section>
+    );
+  }
+  // The card, not nothing: its reserved slot collapsing would jump the diary,
+  // and an absent card reads as "never logged" rather than "missing".
+  if (!data) {
+    return (
+      <section className="weight-card" aria-label="Weight">
+        <div className="weight-main">
+          <span className="label">Weight</span>
+          <p className="weight-empty">Couldn&rsquo;t load your weight.</p>
+        </div>
+      </section>
+    );
+  }
   const latest = data.latest;
   if (!latest) {
     return (
