@@ -41,20 +41,19 @@
   --red: #f26b6b;
   --green: #74cf9c;
 
-  /* Names for colours the stylesheets paint as literals today. Each value is
-     the literal it stands for, so pointing a rule at its token changes
-     nothing on screen — except the two noted, where the literals differ. */
+  /* Colours outside the palette above, named once so every rule that paints
+     one shares its value (one web blue, one scrim, one red tint). */
   --accent-fill: linear-gradient(180deg, var(--accent), var(--accent-strong)); /* Commit, send, the user bubble */
-  --web: #8fd0e6; /* §3.4a web-sourced: the badge and its citation link */
+  --web: #8fd0e6; /* §3.4a web-sourced: the badge, its citation link, the diary row */
   --web-soft: rgba(108, 196, 221, 0.14);
   --off: #e0b58a; /* Open Food Facts badge (m3.css) */
   --off-soft: rgba(224, 181, 138, 0.16);
   --amber-soft: rgba(232, 196, 104, 0.16);
-  --red-soft: rgba(242, 107, 107, 0.12); /* m3.css .keys-status.expired has 0.14 */
+  --red-soft: rgba(242, 107, 107, 0.12);
   --green-soft: rgba(116, 207, 156, 0.14);
-  --scrim: rgba(6, 6, 9, 0.6); /* behind a sheet; .sheet-backdrop has 0.62 */
+  --scrim: rgba(6, 6, 9, 0.6); /* behind every sheet */
   --toast-bg: #26262d;
-  --surface-hero: #1d1c22; /* the top of the tracker's gradient */
+  --surface-hero: #1d1c22; /* the top of a hero card's gradient */
   --on-danger: #fff; /* text on a red fill */
   /* new, not yet used: a field placeholder at 5.2:1 on --surface-2, where
      --faint's 3.1:1 is under the 4.5:1 text minimum */
@@ -224,7 +223,6 @@ a.m3-link-btn,
   .portion-btn,
   button.name-btn,
   .meal-chip,
-  .meal-picker button,
   .row-remove,
   .sheet-close,
   .toast button,
@@ -236,11 +234,9 @@ a.m3-link-btn,
   .m3-link-btn,
   .m3-item-qty button,
   .m3-seg button,
-  .segmented button,
   .keys-btn,
   .account-signout,
   .diary-actions button,
-  .diary-stepper button,
   .web-cite a {
     position: relative;
   }
@@ -249,7 +245,6 @@ a.m3-link-btn,
   .portion-btn::before,
   button.name-btn::before,
   .meal-chip::before,
-  .meal-picker button::before,
   .row-remove::before,
   .sheet-close::before,
   .toast button::before,
@@ -261,11 +256,9 @@ a.m3-link-btn,
   .m3-link-btn::before,
   .m3-item-qty button::before,
   .m3-seg button::before,
-  .segmented button::before,
   .keys-btn::before,
   .account-signout::before,
   .diary-actions button::before,
-  .diary-stepper button::before,
   .scan-torch::before /* already absolute: its own containing block */ {
     content: "";
     position: absolute;
@@ -300,11 +293,6 @@ a.m3-link-btn,
     --hit-top: -5px;
   }
 
-  .sheet-foot .meal-picker button {
-    --hit-top: -14px;
-    --hit-h: calc(100% + 14px);
-  }
-
   /* m3 cards stack controls 8px apart (a field, a card, then the link) */
   .m3-link-btn {
     --hit-top: -4px;
@@ -319,17 +307,6 @@ a.m3-link-btn,
      would add a few px of scroll to a sheet that fits */
   .subsheet > .m3-actions .m3-link-btn {
     --hit-top: -13px;
-  }
-
-  /* the serving list opens 8px under it, so this one grows up into the
-     edit block's top padding instead; its retry twin sits under it */
-  .diary-change-serving {
-    --hit-top: -15px;
-    --hit-h: calc(100% + 19px);
-  }
-
-  .diary-change-serving + .diary-change-serving {
-    --hit-top: -4px;
   }
 }
 
@@ -481,7 +458,6 @@ a {
   height: 24px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -532,10 +508,10 @@ a {
 
 .tracker {
   position: relative;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 18px 18px 20px;
+  padding: 18px var(--card-pad-x) 20px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -676,16 +652,16 @@ a {
 
 .donut .center-sub {
   fill: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.04em;
 }
 
 .donut .macro-label {
-  font-size: 0.72rem;
+  font-size: var(--micro-size);
   color: var(--muted);
-  letter-spacing: 0.06em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: var(--micro-weight);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -743,7 +719,7 @@ a {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 18px;
+  padding: 14px var(--card-pad-x);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -842,7 +818,7 @@ a {
   height: 50px;
   border: none;
   border-radius: 50%;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: 1.15rem;
   font-weight: 700;
@@ -874,6 +850,14 @@ a {
 .send-btn svg {
   width: 20px;
   height: 20px;
+}
+
+/* the spinner's 6px gap is for text beside it; alone in a round button it
+   would sit off-centre (the add-item send too) */
+.capture button .spinner,
+.send-btn .spinner,
+.add-item button .spinner {
+  margin-right: 0;
 }
 
 .capture-error {
@@ -929,7 +913,7 @@ a {
 .capture .mic-btn.rec {
   background: var(--red);
   border-color: var(--red);
-  color: #fff;
+  color: var(--on-danger);
 }
 
 .capture .mic-btn:disabled {
@@ -954,7 +938,7 @@ a {
   border-radius: 50%;
   border: none;
   background: var(--red);
-  color: #fff;
+  color: var(--on-danger);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1026,15 +1010,17 @@ a {
   font-size: 0.85rem;
 }
 
+/* the secondary pill (.keys-btn's values): 40px, a hairline, .86rem/600 */
 .voice-alt {
   margin-top: 6px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.88rem;
-  font-weight: 550;
-  padding: 10px 18px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -1134,15 +1120,17 @@ a {
   border-left-color: var(--amber);
 }
 
+/* the secondary pill (.keys-btn's values), a step up off the notice */
 .notice-btn {
   flex-shrink: 0;
+  min-height: 40px;
   background: var(--surface-3);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  padding: 7px 14px;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -1162,7 +1150,7 @@ a {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.62);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 40;
@@ -1277,7 +1265,6 @@ a {
   height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.2;
   stroke-linecap: round;
 }
 
@@ -1311,32 +1298,37 @@ a {
   font-size: 0.8rem;
   font-weight: 650;
   cursor: pointer;
-  text-transform: capitalize;
 }
 
 .meal-picker {
-  display: flex;
-  gap: 6px;
   margin-top: 12px;
 }
 
-.meal-picker button {
-  flex: 1;
+/* The one segmented control for a single choice among a few: the meal
+   picker above, History's range, the wizard's units and sex, the API key
+   form. Its selected thumb is the quiet selected state (.quiet-selected). */
+.m3-seg {
+  display: flex;
+  gap: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 8px 0;
-  font-size: 0.8rem;
-  font-weight: 550;
-  color: var(--muted);
-  cursor: pointer;
-  text-transform: capitalize;
+  padding: 4px;
 }
 
-.meal-picker button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+.m3-seg button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  padding: 9px 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 150ms,
+    color 150ms;
 }
 
 .sheet-body {
@@ -1355,7 +1347,7 @@ a {
 .commit-btn {
   width: 100%;
   min-height: 54px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border: none;
   border-radius: 16px;
@@ -1471,8 +1463,8 @@ a.commit-btn {
 }
 
 .row-kcal .u {
-  font-size: 0.68rem;
-  color: var(--faint);
+  font-size: var(--micro-size);
+  color: var(--muted);
   letter-spacing: 0.04em;
 }
 
@@ -1498,7 +1490,7 @@ a.commit-btn {
 @media (hover: hover) {
   .row-remove:hover {
     color: var(--red);
-    background: rgba(242, 107, 107, 0.12);
+    background: var(--red-soft);
   }
 }
 
@@ -1512,9 +1504,9 @@ a.commit-btn {
 
 .badge {
   display: inline-block;
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   border-radius: 6px;
   padding: 3px 6px;
@@ -1525,8 +1517,8 @@ a.commit-btn {
 /* §3.4a web-transcribed food: distinct badge + the citation as a visible,
    clickable link (OpenAI usage-terms requirement, not taste) */
 .badge.web {
-  background: rgba(108, 196, 221, 0.14);
-  color: #8fd0e6;
+  background: var(--web-soft);
+  color: var(--web);
 }
 
 .web-cite {
@@ -1539,7 +1531,7 @@ a.commit-btn {
 }
 
 .web-cite a {
-  color: #8fd0e6;
+  color: var(--web);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -1614,15 +1606,9 @@ a.commit-btn {
   vertical-align: 1px;
 }
 
+/* its colours are the quiet selected state's (.quiet-selected, at the end) */
 .chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
   font-weight: 600;
-}
-
-.chip.active .usual-dot {
-  background: var(--on-accent);
 }
 
 /* §3.3 rule 3 "search instead" affordance (BACKLOG 32) */
@@ -1712,14 +1698,6 @@ a.commit-btn {
   text-underline-offset: 3px;
 }
 
-/* A cached food's display name is stored lowercase (the adapters' trigram
-   target — "fairlife 2% reduced fat ultra-filtered milk"); it reads as a
-   title wherever it is shown (owner feedback, 2026-09-06). Applied to names
-   only, never to a raw provider description or a UI label. */
-.food-name {
-  text-transform: capitalize;
-}
-
 /* expanded stats */
 
 .row-detail {
@@ -1754,10 +1732,10 @@ a.commit-btn {
 }
 
 .macro-cell .k {
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   margin-top: 2px;
 }
 
@@ -1792,10 +1770,10 @@ a.commit-btn {
 }
 
 .detail-meal > .k {
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
 }
 
 .detail-meal .meal-picker {
@@ -1814,10 +1792,10 @@ a.commit-btn {
 .add-item input {
   flex: 1;
   min-width: 0;
-  height: 44px;
+  height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--field-radius);
   padding: 0 14px;
   font-size: 1rem;
   outline: none;
@@ -1831,9 +1809,15 @@ a.commit-btn {
   border-color: var(--accent-line);
 }
 
+/* docked, the field sits on the tray's --surface-2: a step down to the
+   sheet's own surface keeps it from vanishing into the tray */
+.split-sheet > .stage-pane .add-item input {
+  background: var(--surface);
+}
+
 .add-item button {
-  width: 44px;
-  height: 44px;
+  width: var(--field-h); /* the field's height, like .capture's 50/50 */
+  height: var(--field-h);
   flex-shrink: 0;
   background: var(--surface-3);
   border: 1px solid var(--line);
@@ -1851,12 +1835,24 @@ a.commit-btn {
   cursor: default;
 }
 
+/* with text to send it lights up like every other composer's send */
+.add-item button:not(:disabled) {
+  background: var(--accent-fill);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.add-item button svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* ---------- sub-sheets over the staging sheet (portion, manual search) ---- */
 
 .subsheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.6);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 60;
@@ -1911,7 +1907,7 @@ a.commit-btn {
 .subsheet-title {
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: 1.2rem;
+  font-size: 1.15rem; /* .sheet-title's: one title size for every sheet */
   letter-spacing: -0.02em;
   line-height: 1.2;
 }
@@ -1962,37 +1958,71 @@ a.commit-btn {
   border-color: var(--accent-line);
 }
 
+/* One grouped list, like the diary's: the choices share a surface split by
+   hairlines, and the pick carries a trailing check rather than a fill.
+   :first-/:last-of-type round the buttons only, so a hint line in the list
+   stays outside the box. */
 .serving-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
 .serving-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   text-align: left;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   padding: 12px 14px;
   font-size: 0.9rem;
   color: var(--muted);
   cursor: pointer;
 }
 
+.serving-list button:first-of-type {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.serving-list button:last-of-type {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
 .serving-list button.active {
-  border-color: var(--accent-line);
   color: var(--text);
-  background: var(--accent-soft);
+}
+
+.serving-list button svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.serving-list button + .subsheet-hint {
+  margin-top: 8px;
+}
+
+/* A serving the §4 guard would refuse (a diary row's partial macros):
+   offered, so the list is the food's real one, but visibly not pickable. */
+.serving-list button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
 
 .edit-label {
-  font-size: 0.68rem;
-  font-weight: 600;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--micro-track);
   margin-bottom: 6px;
 }
 
@@ -2023,20 +2053,22 @@ a.commit-btn {
   cursor: default;
 }
 
-/* manual search results (BACKLOG 3 — deliberately boring) */
+/* manual search results (BACKLOG 3 — deliberately boring): one grouped
+   list, like .serving-list — hairlines between hits, the heading and the
+   empty line outside the box */
 
 .search-results {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   min-height: 60px;
 }
 
 .search-results button {
   text-align: left;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   padding: 11px 14px;
   cursor: pointer;
   display: flex;
@@ -2044,9 +2076,20 @@ a.commit-btn {
   gap: 2px;
 }
 
+.search-results button:first-of-type {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.search-results button:last-of-type {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
 @media (hover: hover) {
   .search-results button:hover {
-    border-color: var(--line-strong);
+    background: var(--surface-3);
   }
 }
 
@@ -2055,10 +2098,10 @@ a.commit-btn {
   cursor: default;
 }
 
-/* the food the row is on now (the edit sheet's "Foods you've used for this") */
+/* the food the row is on now (the edit sheet's "Foods you've used for this"):
+   the quiet selected fill, no border, since the grouped rows share hairlines */
 .search-results button.active {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
+  background: var(--spruce-deep);
 }
 
 .search-results .result-name {
@@ -2098,10 +2141,10 @@ a.commit-btn {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--muted);
-  margin: 2px 2px 0;
+  margin: 2px 2px 8px;
 }
 
-/* Find a food (the sub-sheet a staged row opens): the field stays under the
+/* Search (the sub-sheet a staged row opens): the field stays under the
    head and only the results scroll, so a long list can't carry the search
    away. The list takes the sheet's bottom padding, so rows still run to the
    edge, and 4px round its rows, so a focus ring isn't clipped. */
@@ -2228,7 +2271,7 @@ a.commit-btn {
      like "Logged 960 kcal to Lunch" wrapped in the pill. */
   width: max-content;
   max-width: calc(100% - 32px);
-  background: #26262d;
+  background: var(--toast-bg);
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   padding: 10px 10px 10px 18px;
@@ -2291,6 +2334,7 @@ a.commit-btn {
 }
 
 .pending-pill.failed button {
+  display: inline-flex;
   background: none;
   border: none;
   color: var(--faint);
@@ -2346,6 +2390,41 @@ a.commit-btn {
   margin-block: auto;
 }
 
+/* a phone gets an app screen, not a web-login card floating in black: the
+   fields sit on the ground, high and clear of the keyboard, under the mark;
+   the desktop keeps the card */
+@media (max-width: 899px) {
+  /* top-aligned 12px under the back bar (44px + the inset), so 56px + the
+     inset from the top; only the bottom margin stays auto. Not align-items:
+     in the column that would push the card left, not up. */
+  .auth-card {
+    margin-top: 12px;
+    background: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+}
+
+/* the app icon's mark (TallyMark): landing.css colours it there, and the
+   auth pages don't load landing.css */
+.auth-mark {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+}
+
+.auth-mark rect {
+  fill: var(--accent);
+}
+
+.auth-mark path {
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 .auth-card h1 {
   margin: 0 0 4px;
   font-family: var(--font-display);
@@ -2370,11 +2449,13 @@ a.commit-btn {
 }
 
 .auth-card input {
+  height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 13px 14px;
+  border-radius: var(--field-radius);
+  padding: 0 14px;
   font-size: 1rem;
+  color: var(--text); /* not the label's --muted: typed text isn't a placeholder */
   outline: none;
   transition: border-color 150ms;
 }
@@ -2384,7 +2465,7 @@ a.commit-btn {
 }
 
 .auth-card button[type="submit"] {
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border: none;
   border-radius: 14px;
@@ -2643,7 +2724,7 @@ a.commit-btn {
 .agent-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.6);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 34;
@@ -2675,13 +2756,15 @@ a.commit-btn {
 }
 
 /* the lane's one header: a grabber, a title, and — only while nothing is
-   staged — the ✕. Staged, the tray carries the ✕ that means anything. */
+   staged — the ✕. Staged, the tray carries the ✕ that means anything, and
+   the title steps back to a slim label; with nothing staged it is a sheet
+   title like any other. */
 .split-head {
   padding: 8px 18px 10px;
   border-bottom: none;
 }
 
-.split-head .sheet-title {
+.split-sheet[data-staged] .split-head .sheet-title {
   color: var(--muted);
   font-size: 0.9rem;
 }
@@ -2767,7 +2850,7 @@ a.commit-btn {
   padding: 0 16px;
   border: none;
   border-radius: 999px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-family: inherit;
   font-size: 0.94rem;
@@ -2832,6 +2915,23 @@ a.commit-btn {
   outline: none;
 }
 
+/* 26px to the eye, 44 to a finger (the touch baseline's hit area): a tap
+   cycles the stops, so a near miss must not land in the chat. The z-index
+   keeps the chat pane, later in the page, from painting over the lower half
+   of the grown area. */
+@media (pointer: coarse) {
+  .split-divider {
+    position: relative;
+    z-index: 1;
+  }
+
+  .split-divider::before {
+    content: "";
+    position: absolute;
+    inset: -9px 0;
+  }
+}
+
 /* The two end stops are about chrome, not proportion: `peek` is the tray's
    lip alone, `full` is the composer. Pixels, not a fraction — so the settled
    state says which pane's body goes, and the fraction only drives the drag. */
@@ -2883,41 +2983,6 @@ a.commit-btn {
   padding-bottom: 12px;
 }
 
-.split-divider {
-  flex: none;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-  cursor: row-resize;
-  touch-action: none; /* the drag is the divider's, never the scroller's */
-}
-
-.split-grip {
-  width: 44px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line-strong);
-  transition: background 140ms var(--ease);
-}
-
-.split-divider:focus-visible .split-grip {
-  background: var(--accent);
-}
-
-@media (hover: hover) {
-  .split-divider:hover .split-grip {
-    background: var(--accent);
-  }
-}
-
-.split-divider:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
 .chat-body {
   display: flex;
   flex-direction: column;
@@ -2946,7 +3011,7 @@ a.commit-btn {
 
 .bubble.user {
   align-self: flex-end;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border-bottom-right-radius: 6px;
 }
@@ -2962,6 +3027,13 @@ a.commit-btn {
   padding: 4px;
   max-width: 62%;
   line-height: 0;
+}
+
+/* nor does the accent fill frame the picture; without one ("📷 Photo") the
+   bubble keeps it, or its text would sit dark on the dark ground */
+.bubble.user.photo-bubble:has(> img) {
+  padding: 0;
+  background: none;
 }
 
 .bubble.user.photo-bubble img {
@@ -2995,7 +3067,7 @@ a.commit-btn {
 
 .bubble.error {
   align-self: flex-start;
-  background: rgba(242, 107, 107, 0.12);
+  background: var(--red-soft);
   border: 1px solid rgba(242, 107, 107, 0.4);
   color: var(--red);
 }
@@ -3073,7 +3145,7 @@ a.commit-btn {
   justify-content: space-between;
   gap: 12px;
   background: var(--surface-2);
-  border: 1px solid var(--accent-line);
+  border: 1px solid var(--line);
   border-radius: 16px;
   padding: 12px 14px;
 }
@@ -3091,13 +3163,16 @@ a.commit-btn {
   font-weight: 500;
 }
 
+/* Review is the quiet way into the tray: the Log pill is the one accent
+   action in the Agent sheet (§7.4 — the accent is rationed) */
 .result-card button {
   flex-shrink: 0;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: var(--on-accent);
+  background: var(--surface-3);
+  color: var(--text);
   border: none;
   border-radius: 999px;
   padding: 8px 16px;
+  font-size: 0.88rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -3106,6 +3181,11 @@ a.commit-btn {
   flex-shrink: 0;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+/* "Logged ✓": the drawn check sits on the text's middle, not its baseline */
+.result-card .result-state svg {
+  vertical-align: -0.125em;
 }
 
 .chat-thinking {
@@ -3213,7 +3293,9 @@ a.commit-btn {
   background: var(--surface-3);
   color: var(--muted);
   font-size: 0.9rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
@@ -3336,8 +3418,10 @@ a.commit-btn {
 /* The one quiet selected state: a pick among options, not an action, so it
    takes the accent as a tint and a line, never the fill (the accent is
    rationed, §7.4). A control whose own rule is more specific than one class
-   (`.meal-picker button.active`) joins this rule's selector list instead. */
-.quiet-selected {
+   (`.m3-seg button.active`) joins this rule's selector list instead. */
+.quiet-selected,
+.chip.active,
+.m3-seg button.active {
   background: var(--spruce-deep);
   border-color: var(--accent-line);
   color: var(--accent);

@@ -100,6 +100,8 @@ export default function SplitSheet({ stage, chat, onDismiss }: Props) {
         className="sheet split-sheet"
         ref={shellRef}
         data-snap={dragging ? undefined : nearest(split)}
+        // the slim title is for a staged lane only (globals.css .split-head)
+        data-staged={staged || undefined}
         // the stage pane's flex-basis mid-drag; a custom property so a drag
         // repaints one declaration rather than re-rendering a stylesheet
         style={{ "--stage-split": `${split * 100}%` } as React.CSSProperties}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState, type ReactNode } from "react";
 import { verifyEmailAction, type AuthFormState } from "@/app/auth/actions";
 import { ChevronLeft } from "./icons";
+import TallyMark from "./TallyMark";
 
 type Props = {
   title: string;
@@ -34,6 +35,7 @@ export default function AuthForm({
     <main className="auth-wrap">
       <AuthTop />
       <form className="auth-card" action={formAction}>
+        <TallyMark className="auth-mark" />
         <h1>{title}</h1>
         {intro ? <p className="subsheet-hint auth-intro">{intro}</p> : null}
         {withName ? (
@@ -102,6 +104,7 @@ function VerifyEmail({ verify }: { verify: Verify }) {
     <main className="auth-wrap">
       <AuthTop />
       <form className="auth-card" action={formAction}>
+        <TallyMark className="auth-mark" />
         <h1>Verify your email</h1>
         <p className="subsheet-hint auth-intro">
           {sent

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LogCreateResponse } from "@/lib/api";
+import { ArrowUp, Camera, Check, Close, Mic } from "./icons";
 import PhotoCapture, { type PhotoShot } from "./PhotoCapture";
 import { SheetClose } from "./SheetHeader";
 import useVoiceCapture, {
@@ -103,61 +104,10 @@ function mmss(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function MicIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="9" y="2" width="6" height="12" rx="3" />
-      <path d="M5 10v1a7 7 0 0 0 14 0v-1" />
-      <path d="M12 18v4" />
-    </svg>
-  );
-}
-
 function StopIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor" />
-    </svg>
-  );
-}
-
-function CameraIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
-      <circle cx="12" cy="13" r="3.5" />
-    </svg>
-  );
-}
-
-function SendIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 19V5M6 11l6-6 6 6" />
     </svg>
   );
 }
@@ -455,11 +405,15 @@ function ResultCard({
         </button>
       ) : (
         <span className="result-state">
-          {m.state === "committed"
-            ? "Logged ✓"
-            : m.state === "replaced"
-              ? "Replaced"
-              : "Discarded"}
+          {m.state === "committed" ? (
+            <>
+              Logged <Check />
+            </>
+          ) : m.state === "replaced" ? (
+            "Replaced"
+          ) : (
+            "Discarded"
+          )}
         </span>
       )}
     </div>
@@ -666,7 +620,9 @@ export default function AgentChat({
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={m.thumb} alt="The plate you sent" />
                       ) : (
-                        "📷 Photo"
+                        <>
+                          <Camera /> Photo
+                        </>
                       )}
                     </div>
                     {m.text ? <div className="bubble user">{m.text}</div> : null}
@@ -726,7 +682,7 @@ export default function AgentChat({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={attached.thumb} alt="Attached photo" />
               ) : (
-                <span aria-hidden="true">📷</span>
+                <Camera />
               )}
               <span className="chat-attached-hint">Photo attached</span>
               <button
@@ -735,7 +691,7 @@ export default function AgentChat({
                 onClick={() => setAttached(null)}
                 disabled={busy}
               >
-                ✕
+                <Close />
               </button>
             </div>
           ) : null}
@@ -790,7 +746,7 @@ export default function AgentChat({
                   disabled={busy || attached !== null}
                   onClick={toggleMic}
                 >
-                  <MicIcon />
+                  <Mic />
                 </button>
               ) : null}
               <button
@@ -804,7 +760,7 @@ export default function AgentChat({
                   setPickerOpen(true);
                 }}
               >
-                <CameraIcon />
+                <Camera />
               </button>
               <input
                 ref={inputRef}
@@ -822,7 +778,7 @@ export default function AgentChat({
                 disabled={busy || (!text.trim() && !attached)}
                 aria-label="Send"
               >
-                {busy ? <span className="spinner" /> : <SendIcon />}
+                {busy ? <span className="spinner" /> : <ArrowUp strokeWidth={2.4} />}
               </button>
             </form>
           )}

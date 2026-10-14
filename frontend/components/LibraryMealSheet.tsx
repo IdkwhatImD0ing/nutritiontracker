@@ -7,6 +7,7 @@ import {
   type FoodSearchResult,
   type StagedServing,
 } from "@/lib/api";
+import { foodName } from "@/lib/labels";
 import { hitSub } from "@/lib/sources";
 import {
   cacheFood,
@@ -17,6 +18,7 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
+import { ArrowRight, Close } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -27,6 +29,41 @@ type Props = {
 };
 
 const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+/** The qty an item takes: a quarter at least, to 2 places. */
+const normQty = (qty: number) => Math.max(0.25, Math.round(qty * 100) / 100);
+
+/** An item's qty as a field you can type into, between the ±0.5 steppers:
+ *  the typed text while the item holds the qty it typed, the item's qty
+ *  otherwise — so a step from the ± buttons mid-edit shows, not the text. */
+function QtyInput({
+  qty,
+  label,
+  onQty,
+}: {
+  qty: number;
+  label: string;
+  onQty: (qty: number) => void;
+}) {
+  const [draft, setDraft] = useState<{ text: string; qty: number } | null>(
+    null,
+  );
+  return (
+    <input
+      className="q"
+      inputMode="decimal"
+      aria-label={label}
+      value={draft && draft.qty === qty ? draft.text : fmtQ.format(qty)}
+      onChange={(e) => {
+        const n = Number(e.target.value);
+        const ok = Number.isFinite(n) && n > 0;
+        setDraft({ text: e.target.value, qty: ok ? normQty(n) : qty });
+        if (ok) onQty(n);
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
 
 /** §8.4 saved meals: build a new one (search → add foods) or edit an existing
  *  one — name, trigger phrases, the fixed item list (qty / remove),
@@ -52,7 +89,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const setQty = (i: number, qty: number) =>
     setItems((prev) =>
       prev.map((it, j) =>
-        j === i ? { ...it, qty: Math.max(0.25, Math.round(qty * 100) / 100) } : it,
+        j === i ? { ...it, qty: normQty(qty) } : it,
       ),
     );
   const removeItem = (i: number) =>
@@ -207,7 +244,9 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           {items.map((it, i) => (
             <div className="m3-item" key={`${it.food_id}:${it.serving_id}:${i}`}>
               <div className="info">
-                <div className="name">{it.food_name ?? it.food_id}</div>
+                <div className="name">
+                  {it.food_name ? foodName(it.food_name) : it.food_id}
+                </div>
                 {servingsByFood[it.food_id] ? (
                   <div className="m3-field">
                     <select
@@ -237,7 +276,11 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 >
                   −
                 </button>
-                <span className="q">{fmtQ.format(it.qty)}</span>
+                <QtyInput
+                  qty={it.qty}
+                  label={`Quantity of ${it.food_name ?? "item"}`}
+                  onQty={(q) => setQty(i, q)}
+                />
                 <button
                   type="button"
                   aria-label="More"
@@ -252,7 +295,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 aria-label={`Remove ${it.food_name ?? "item"}`}
                 onClick={() => removeItem(i)}
               >
-                ✕
+                <Close />
               </button>
             </div>
           ))}
@@ -272,7 +315,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search the food database"
+                placeholder="Search foods"
                 aria-label="Search foods"
                 autoComplete="off"
               />
@@ -281,7 +324,11 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 disabled={searching || adding || !query.trim()}
                 aria-label="Search"
               >
-                {searching ? <span className="spinner" /> : "→"}
+                {searching ? (
+                  <span className="spinner" />
+                ) : (
+                  <ArrowRight strokeWidth={2.4} />
+                )}
               </button>
             </form>
             {results ? (
@@ -293,7 +340,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                     disabled={adding}
                     onClick={() => addHit(r)}
                   >
-                    <span className="result-name">{r.label}</span>
+                    <span className="result-name">{foodName(r.label)}</span>
                     <span className="result-sub">{hitSub(r)}</span>
                   </button>
                 ))}
@@ -313,7 +360,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           disabled={busy || !valid}
           onClick={save}
         >
-          {meal ? "Save" : "Create meal"}
+          {meal ? "Save" : "Save meal"}
         </button>
 
         {meal ? (

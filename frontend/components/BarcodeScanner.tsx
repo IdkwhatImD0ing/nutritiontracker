@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { loadDetector } from "./barcodeDetector";
+import { ArrowRight } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -270,7 +271,11 @@ export default function BarcodeScanner({
             disabled={busy || digits.length < MIN_DIGITS}
             aria-label="Look up"
           >
-            {busy ? <span className="spinner" /> : "→"}
+            {busy ? (
+              <span className="spinner" />
+            ) : (
+              <ArrowRight strokeWidth={2.4} />
+            )}
           </button>
         </form>
       </div>

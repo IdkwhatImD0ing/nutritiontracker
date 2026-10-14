@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
 import { fmt0 } from "@/lib/format";
+import { foodName } from "@/lib/labels";
 import { hitSub } from "@/lib/sources";
+import { ArrowRight } from "./icons";
 import {
   cacheFood,
   getAliases,
@@ -197,7 +199,7 @@ export default function Library() {
         </div>
       ) : null}
 
-      <section className="m3-section lib-search" aria-label="Find a food">
+      <section className="m3-section lib-search" aria-label="Search foods">
         <form className="capture" onSubmit={runSearch}>
           <input
             value={query}
@@ -211,7 +213,11 @@ export default function Library() {
             disabled={searching || !query.trim()}
             aria-label="Search"
           >
-            {searching ? <span className="spinner" /> : "→"}
+            {searching ? (
+              <span className="spinner" />
+            ) : (
+              <ArrowRight strokeWidth={2.4} />
+            )}
           </button>
         </form>
         {searchError ? <p className="sheet-error">{searchError}</p> : null}
@@ -229,9 +235,7 @@ export default function Library() {
                 disabled={opening}
                 onClick={() => openHit(r)}
               >
-                <span className={`result-name${r.food_id ? " food-name" : ""}`}>
-                  {r.label}
-                </span>
+                <span className="result-name">{foodName(r.label)}</span>
                 <span className="result-sub">{hitSub(r)}</span>
               </button>
             ))}
@@ -245,7 +249,9 @@ export default function Library() {
       <section className="m3-section lib-meals" aria-label="Saved meals">
         <h2>
           Saved meals
-          <span className="count num">{meals ? activeMeals.length : ""}</span>
+          {activeMeals.length > 0 ? (
+            <span className="count num">{activeMeals.length}</span>
+          ) : null}
         </h2>
         {meals == null ? (
           <p className="m3-empty">Loading…</p>
@@ -276,9 +282,11 @@ export default function Library() {
       <section className="m3-section lib-foods" aria-label="Your phrases">
         <h2>
           Your phrases
-          <span className="count num">
-            {aliases ? `${aliases.length} phrase${aliases.length === 1 ? "" : "s"}` : ""}
-          </span>
+          {aliases?.length ? (
+            <span className="count num">
+              {`${aliases.length} phrase${aliases.length === 1 ? "" : "s"}`}
+            </span>
+          ) : null}
         </h2>
         {aliases == null ? (
           <p className="m3-empty">Loading…</p>
@@ -297,7 +305,7 @@ export default function Library() {
         {groups.map((g) => (
           <div className="m3-card" key={g.food_id}>
             <div className="m3-card-head">
-              <div className="m3-card-title food-name">
+              <div className="m3-card-title">
                 {/* prefetch off: this list is unbounded, and /library/food/[id]
                     is a dynamic auth-gated route, so the default viewport
                     prefetch would burn a middleware invocation per learned food
@@ -307,10 +315,13 @@ export default function Library() {
                   href={`/library/food/${encodeURIComponent(g.food_id)}`}
                   prefetch={false}
                 >
-                  {g.food_name}
+                  {foodName(g.food_name)}
                 </Link>
               </div>
-              <span className="m3-card-stat num">{fmt0.format(g.total)}×</span>
+              {/* one phrase: its chip already shows this total */}
+              {g.aliases.length > 1 ? (
+                <span className="m3-card-stat num">{fmt0.format(g.total)}×</span>
+              ) : null}
             </div>
             {g.brand ? <div className="m3-card-sub">{g.brand}</div> : null}
             <div className="chips">

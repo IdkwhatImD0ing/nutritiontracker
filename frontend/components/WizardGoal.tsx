@@ -339,7 +339,7 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                 />
               </label>
               <label className="m3-field">
-                Weight ({wUnit})
+                <span>Weight <span className="unit">({wUnit})</span></span>
                 <input
                   inputMode="decimal"
                   value={weight}
@@ -351,7 +351,7 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
 
             {units === "metric" ? (
               <label className="m3-field">
-                Height (cm)
+                <span>Height <span className="unit">(cm)</span></span>
                 <input
                   inputMode="decimal"
                   value={heightCm}
@@ -362,7 +362,7 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
             ) : (
               <div className="m3-grid-2">
                 <label className="m3-field">
-                  Height (ft)
+                  <span>Height <span className="unit">(ft)</span></span>
                   <input
                     inputMode="numeric"
                     value={feet}
@@ -371,7 +371,7 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                   />
                 </label>
                 <label className="m3-field">
-                  (in)
+                  Inches
                   <input
                     inputMode="numeric"
                     value={inches}
@@ -423,7 +423,7 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
             </p>
 
             <label className="m3-field">
-              Target weight ({wUnit})
+              <span>Target weight <span className="unit">({wUnit})</span></span>
               <input
                 inputMode="decimal"
                 value={target}

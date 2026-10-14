@@ -8,6 +8,7 @@ import {
   type DayTotals,
   type StagedItem,
 } from "@/lib/api";
+import { Close } from "./icons";
 import { readEstimate } from "./PhotoApi";
 
 const POLL_FIRST_MS = 250; // reopen feels immediate (BACKLOG 31 retry-on-open)
@@ -182,7 +183,7 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
               )
             }
           >
-            ✕
+            <Close />
           </button>
         </div>
       ))}

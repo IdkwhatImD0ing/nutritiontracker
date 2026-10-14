@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import { fmt0, withUnit } from "@/lib/format";
+import { foodName } from "@/lib/labels";
+import { Check } from "./icons";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
 
@@ -34,6 +36,7 @@ export default function LibraryAliasSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const deleteBtn = useRef<HTMLButtonElement>(null);
 
   // The food's serving list comes from the detail route (foods.servings).
   useEffect(() => {
@@ -94,7 +97,7 @@ export default function LibraryAliasSheet({
       <div className="subsheet" role="dialog" aria-label="Edit phrase">
         <SheetHeader title={`“${alias.alias_norm}”`} onClose={onClose} />
         <p className="subsheet-hint">
-          Logs as {alias.food_name}
+          Logs as {foodName(alias.food_name)}
           {alias.brand ? ` (${alias.brand})` : ""} · used{" "}
           <span className="num">{fmt0.format(alias.use_count)}×</span>
         </p>
@@ -142,7 +145,8 @@ export default function LibraryAliasSheet({
               className={!hasDefault ? "active" : undefined}
               onClick={() => setServingId("")}
             >
-              No default — use my recent portions
+              <span>No default — use my recent portions</span>
+              {!hasDefault ? <Check /> : null}
             </button>
             {(servings ?? []).map((s) => (
               <button
@@ -151,12 +155,15 @@ export default function LibraryAliasSheet({
                 className={s.serving_id === servingId ? "active" : undefined}
                 onClick={() => setServingId(s.serving_id)}
               >
-                {s.description}
-                {/* kcal, not grams: FDC descriptions already state theirs
-                    ("1 container (170 g)"), so a grams suffix repeated them */}
-                {typeof s.macros?.kcal === "number"
-                  ? ` · ${withUnit(fmt0.format(s.macros.kcal), "kcal")}`
-                  : ""}
+                <span>
+                  {s.description}
+                  {/* kcal, not grams: FDC descriptions already state theirs
+                      ("1 container (170 g)"), so a grams suffix repeated them */}
+                  {typeof s.macros?.kcal === "number"
+                    ? ` · ${withUnit(fmt0.format(s.macros.kcal), "kcal")}`
+                    : ""}
+                </span>
+                {s.serving_id === servingId ? <Check /> : null}
               </button>
             ))}
             {servings == null ? (
@@ -176,7 +183,9 @@ export default function LibraryAliasSheet({
           Save
         </button>
 
-        <div className="m3-actions">
+        {/* forgetting a phrase can't be undone: ApiKeysCard's inline
+            confirm, Cancel first and focused, then the red yes */}
+        <div className={`m3-actions${confirm ? " confirm" : ""}`}>
           {confirm ? (
             <>
               <span className="m3-note">
@@ -184,15 +193,28 @@ export default function LibraryAliasSheet({
               </span>
               <button
                 type="button"
+                className="m3-link-btn"
+                disabled={busy}
+                onClick={() => {
+                  setConfirm(false);
+                  requestAnimationFrame(() => deleteBtn.current?.focus());
+                }}
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
                 className="m3-link-btn danger"
                 disabled={busy}
                 onClick={remove}
               >
-                Forget
+                Yes, forget
               </button>
             </>
           ) : (
             <button
+              ref={deleteBtn}
               type="button"
               className="m3-link-btn danger"
               disabled={busy}

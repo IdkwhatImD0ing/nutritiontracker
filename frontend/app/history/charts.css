@@ -15,7 +15,10 @@
   box-shadow: var(--shadow-card);
 }
 
+/* the plot keeps the card's tighter 14px; the title takes the shared card
+   edge (--card-pad-x), in line with the cards above and below */
 .chart-title {
+  padding: 0 calc(var(--card-pad-x) - 14px);
   font-size: 0.7rem;
   font-weight: 650;
   text-transform: uppercase;

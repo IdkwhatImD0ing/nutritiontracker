@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import "@/app/photo.css";
+import { Camera } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 /** Vision needs nothing sharper than this; a 12 MP phone JPEG is ~4 MB and
@@ -14,7 +15,7 @@ const JPEG_QUALITY = 0.85;
 const THUMB_EDGE = 240;
 const THUMB_QUALITY = 0.6;
 /** A camera shot is a file made moments ago. Desktop browsers ignore
- *  `capture` and open a file picker, where "Take a photo" can hand back a
+ *  `capture` and open a file picker, where "Take photo" can hand back a
  *  photo from any day — so the phone's location rides only a file this new. */
 const FRESH_MS = 5 * 60_000;
 
@@ -104,7 +105,7 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
 }
 
 /** The photo picker (§3.4b; a chat turn since 2026-09-08) — a bottom sheet
- *  with "take a photo" and "choose from library". No camera stream of its
+ *  with "Take photo" and "Choose from library". No camera stream of its
  *  own: the file input's `capture` attribute hands off to the OS camera on
  *  phones.
  *
@@ -235,19 +236,8 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
                 className="photo-option"
                 onClick={() => cameraRef.current?.click()}
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
-                  <circle cx="12" cy="13" r="3.5" />
-                </svg>
-                Take a photo
+                <Camera />
+                Take photo
               </button>
               <button
                 type="button"

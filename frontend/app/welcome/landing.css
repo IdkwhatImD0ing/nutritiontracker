@@ -251,6 +251,20 @@
   margin-top: 32px;
 }
 
+/* a phone stacks the buttons at one width, primary first, and the text
+   link becomes a centred row of its own rather than a wrapped orphan */
+@media (max-width: 559px) {
+  .land-hero .land-cta,
+  .land-open .land-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .land-cta .land-textlink {
+    justify-content: center;
+  }
+}
+
 .land-btn {
   display: inline-flex;
   align-items: center;
@@ -293,7 +307,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 0; /* flush left when the CTA row wraps it onto its own line */
+  padding: 8px 0; /* flush with the buttons' edge in a row; centred below 560px */
   color: var(--muted);
   font-weight: 600;
   text-decoration: none;
@@ -351,12 +365,16 @@
     padding-bottom: 76px;
   }
 
+  /* a row even on a phone, where the hero's CTAs otherwise stack (the
+     max-width 559px rule above) */
   .land-hero .land-cta {
     position: fixed;
     z-index: 20;
     left: 0;
     right: 0;
     bottom: 0;
+    flex-direction: row;
+    align-items: center;
     flex-wrap: nowrap;
     justify-content: center;
     margin: 0;
@@ -416,6 +434,8 @@
   }
 }
 
+/* a picture of the sheet: its pills and button are not controls, so a
+   tap or a long-press finds nothing to poke or select */
 .land-sheet {
   width: 100%;
   max-width: 460px;
@@ -425,6 +445,9 @@
   border-radius: 24px;
   box-shadow: var(--shadow-float);
   overflow: hidden;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .land-sheet-head {
@@ -525,9 +548,9 @@
   border-radius: 6px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   vertical-align: 2px;
 }
@@ -581,8 +604,8 @@
 }
 
 .land-row-kcal .u {
-  font-size: 0.68rem;
-  color: var(--faint);
+  font-size: var(--micro-size);
+  color: var(--muted);
   letter-spacing: 0.04em;
 }
 
@@ -1034,7 +1057,7 @@
   display: grid;
   gap: 28px;
   padding: 32px 24px;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 70%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 70%);
   border: 1px solid var(--line);
   border-radius: 24px;
   box-shadow: var(--shadow-card);

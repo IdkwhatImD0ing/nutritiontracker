@@ -82,7 +82,7 @@ function Donut({ label, consumed, target, color, size, loud, loading, warnOver, 
             x="50%"
             y={loud ? "66%" : "70%"}
             textAnchor="middle"
-            fontSize={loud ? 11 : 9}
+            fontSize={11}
           >
             {centerSub}
           </text>

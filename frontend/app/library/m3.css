@@ -1,7 +1,8 @@
 /* Tally — M3 surfaces: tab bar, Library, Settings, goal wizard, food detail.
    Imported by TabBar and WizardGate themselves so the styles ride along
    wherever they mount; globals.css stays the base layer (tokens, .shell,
-   .chip, .stepper, .subsheet, .commit-btn, .badge are reused from there). */
+   .chip, .stepper, .subsheet, .commit-btn, .badge, .m3-seg are reused from
+   there). */
 
 /* ---------- tab bar: Today · History · [+] · Library · Settings (§7.4) ---------- */
 
@@ -83,7 +84,7 @@
   height: 58px;
   margin-top: -24px;
   border-radius: 50%;
-  background: linear-gradient(160deg, var(--spruce-soft), var(--accent) 45%, var(--accent-strong));
+  background: var(--accent-fill); /* the one primary fill (Log, send, auth) */
   border: none;
   outline: 5px solid var(--bg);
   color: var(--on-accent);
@@ -221,8 +222,10 @@ body:has(.tabbar) .shell {
   color: var(--muted);
 }
 
+/* flex: the drawn chevron centres on the row, not on a text baseline */
 .add-row-chev {
   margin-left: auto;
+  display: flex;
   color: var(--faint);
   font-size: 1.1rem;
 }
@@ -259,7 +262,7 @@ body:has(.tabbar) .shell {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 14px var(--card-pad-x);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -314,7 +317,7 @@ body:has(.tabbar) .shell {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 14px var(--card-pad-x);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -452,6 +455,19 @@ body:has(.tabbar) .shell {
   flex-shrink: 0;
 }
 
+/* the inline confirm for an irreversible action (a phrase's delete, sign
+   out), as an API key's revoke: the question on a line of its own, then
+   Cancel and the red yes where the first tap was */
+.m3-actions.confirm {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px 18px;
+}
+
+.m3-actions.confirm .m3-note {
+  flex-basis: 100%;
+}
+
 /* ---------- forms ---------- */
 
 .m3-field {
@@ -466,14 +482,22 @@ body:has(.tabbar) .shell {
   min-width: 0;
 }
 
+/* a unit in a label keeps its case: "(lb)", not "(LB)". The label's words
+   and its unit share one span, or the column flex puts each on its own line */
+.m3-field .unit {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .m3-field input,
 .m3-field select,
 .m3-field textarea,
 .m3-window input,
 .m3-window select {
+  min-height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--field-radius);
   padding: 12px 13px;
   font-size: 1rem;
   font-weight: 400;
@@ -549,7 +573,6 @@ body:has(.tabbar) .shell {
   align-items: center;
   font-size: 0.88rem;
   color: var(--muted);
-  text-transform: capitalize;
 }
 
 .m3-window > span,
@@ -568,7 +591,7 @@ body:has(.tabbar) .shell {
 .m3-window input[type="time"] {
   -webkit-appearance: none;
   appearance: none;
-  min-height: 42px;
+  min-height: var(--field-h);
   /* at 16px (no iOS focus zoom) "05:00 PM" and Chromium's clock only fit
      a 320px phone's half-row with the padding trimmed */
   padding-inline: 8px 6px;
@@ -582,33 +605,22 @@ body:has(.tabbar) .shell {
   margin-inline-start: 2px;
 }
 
-.m3-seg {
-  display: flex;
-  gap: 4px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px;
-}
-
-.m3-seg button {
-  flex: 1;
-  background: none;
-  border: none;
-  border-radius: 999px;
-  padding: 9px 0;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 150ms,
-    color 150ms;
-}
-
-.m3-seg button.active {
-  background: var(--accent);
-  color: var(--on-accent);
+/* A select drops the platform's chrome too: the fields' box, and a chevron
+   drawn as two gradient triangles so it takes the token colour (a data-URI
+   arrow would hard-code one). */
+.m3-field select,
+.m3-window select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 34px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    right 17px center,
+    right 12px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
 }
 
 /* saved-meal item row: name + compact qty stepper + remove */
@@ -669,11 +681,21 @@ body:has(.tabbar) .shell {
 }
 
 .m3-item-qty .q {
-  min-width: 36px;
+  width: 44px;
+  min-width: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 6px 0;
   text-align: center;
   font-family: var(--font-display);
-  font-size: 0.95rem;
+  font-size: 1rem; /* under 16px iOS zooms the page on focus */
   font-weight: 800;
+  outline: none;
+}
+
+.m3-item-qty .q:focus {
+  border-color: var(--accent-line);
 }
 
 /* 320px phones: the stepper and ✕ left the name and serving select ~132px,
@@ -774,7 +796,7 @@ body:has(.tabbar) .shell {
 /* the one loud element on the last step: the computed number */
 .wizard-hero {
   position: relative;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 22px 16px;
@@ -945,8 +967,8 @@ body:has(.tabbar) .shell {
 }
 
 .badge.off {
-  background: rgba(224, 181, 138, 0.16);
-  color: #e0b58a;
+  background: var(--off-soft);
+  color: var(--off);
 }
 
 .badge.state {
@@ -969,11 +991,11 @@ body:has(.tabbar) .shell {
 }
 
 .account-label {
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--micro-track);
   color: var(--muted);
-  font-weight: 600;
+  font-weight: var(--micro-weight);
 }
 
 .account-email {
@@ -995,15 +1017,15 @@ body:has(.tabbar) .shell {
   align-self: flex-start;
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
 }
 
 .account-badge.owner {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--spruce-deep);
+  color: var(--accent);
 }
 
 .account-badge.demo {
@@ -1018,16 +1040,17 @@ body:has(.tabbar) .shell {
   margin: 0;
 }
 
+/* the secondary pill (.keys-btn's values) */
 .account-signout {
   align-self: flex-start;
-  min-height: 42px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  padding: 0 18px;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -1036,11 +1059,6 @@ body:has(.tabbar) .shell {
     border-color: var(--red);
     color: var(--red);
   }
-}
-
-.account-signout:disabled {
-  color: var(--faint);
-  cursor: default;
 }
 
 /* ---------- Oura card (Settings § Oura, OuraCard.tsx) ---------- */
@@ -1464,19 +1482,14 @@ body:has(.tabbar) .shell {
   flex-shrink: 0;
   border-radius: 999px;
   padding: 3px 9px;
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
 }
 
-.keys-status.active {
-  background: rgba(116, 207, 156, 0.14);
-  color: var(--green);
-}
-
 .keys-status.expired {
-  background: rgba(242, 107, 107, 0.14);
+  background: var(--red-soft);
   color: var(--red);
 }
 
@@ -1507,9 +1520,9 @@ body:has(.tabbar) .shell {
 }
 
 .keys-meta dt {
-  font-size: 0.64rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   color: var(--faint);
 }

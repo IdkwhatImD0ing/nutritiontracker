@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { GITHUB_URL } from "@/lib/site";
 import { getMe, peekMe, type Me } from "./MeApi";
@@ -22,6 +22,9 @@ export default function AccountCard() {
   const [me, setMe] = useState<Me | null>(peekMe);
   const [failed, setFailed] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  // Sign out is two taps: getting back in means signing in again
+  const [confirming, setConfirming] = useState(false);
+  const signOutBtn = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -89,14 +92,40 @@ export default function AccountCard() {
           </p>
         ) : null}
 
-        <button
-          type="button"
-          className="account-signout"
-          onClick={signOut}
-          disabled={leaving}
-        >
-          {leaving ? "Signing out…" : "Sign out"}
-        </button>
+        {confirming ? (
+          <div className="m3-actions confirm">
+            <span className="m3-note">Sign out of this device?</span>
+            <button
+              type="button"
+              className="m3-link-btn"
+              disabled={leaving}
+              onClick={() => {
+                setConfirming(false);
+                requestAnimationFrame(() => signOutBtn.current?.focus());
+              }}
+              autoFocus
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="m3-link-btn danger"
+              disabled={leaving}
+              onClick={signOut}
+            >
+              {leaving ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        ) : (
+          <button
+            ref={signOutBtn}
+            type="button"
+            className="account-signout"
+            onClick={() => setConfirming(true)}
+          >
+            Sign out
+          </button>
+        )}
       </div>
     </section>
   );

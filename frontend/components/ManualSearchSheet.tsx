@@ -8,7 +8,9 @@ import {
   type FoodSearchResult,
 } from "@/lib/api";
 import { fmt0, withUnit } from "@/lib/format";
+import { foodName } from "@/lib/labels";
 import { hitSub } from "@/lib/sources";
+import { ArrowRight } from "./icons";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 
 type Props = {
@@ -119,8 +121,9 @@ export default function ManualSearchSheet({
   // unrelated foods.
   const showRecent = !query.trim() || (results == null && !searching);
 
-  // Cached foods (food_id set) carry the adapters' lowercase display names;
-  // .food-name capitalizes those. A raw FDC description is shown as-is.
+  // Cached foods (food_id set) carry the adapters' lowercase display names and
+  // a raw FDC description can be ALL CAPS; foodName() gives both one casing,
+  // the text itself unchanged.
   const hit = (r: FoodSearchResult, i: number) => (
     <button
       key={`${r.source}:${r.source_id}:${i}`}
@@ -128,9 +131,7 @@ export default function ManualSearchSheet({
       disabled={busy}
       onClick={() => onSelect(r)}
     >
-      <span className={`result-name${r.food_id ? " food-name" : ""}`}>
-        {r.label}
-      </span>
+      <span className="result-name">{foodName(r.label)}</span>
       <span className="result-sub">
         {hitSub(r)}
         {per100(r)}
@@ -156,7 +157,11 @@ export default function ManualSearchSheet({
           autoFocus={!phrase}
         />
         <button type="submit" disabled={searching || !query.trim()} aria-label="Search">
-          {searching ? <span className="spinner" /> : "→"}
+          {searching ? (
+            <span className="spinner" />
+          ) : (
+            <ArrowRight strokeWidth={2.4} />
+          )}
         </button>
       </form>
 
@@ -213,7 +218,7 @@ export default function ManualSearchSheet({
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Manual food search">
-        <SheetHeader title="Find a food" onClose={onClose} />
+        <SheetHeader title="Search" onClose={onClose} />
         {body}
       </div>
     </>

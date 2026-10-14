@@ -120,7 +120,7 @@ function ThreeDays({
               <span className="hcard-entries">
                 {d.logged
                   ? `${d.entries} ${d.entries === 1 ? "entry" : "entries"}`
-                  : "nothing logged"}
+                  : "Nothing logged"}
               </span>
             </div>
             <div className="hcard-kcal num">

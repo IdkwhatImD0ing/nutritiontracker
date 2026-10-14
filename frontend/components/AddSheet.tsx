@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { loadDetector } from "./barcodeDetector";
+import { Camera, ChevronRight, Mic } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 /** The + sheet (owner ruling, 2026-09-02): the mid-screen capture bar is
@@ -46,13 +47,9 @@ function BarcodeIcon() {
   );
 }
 
+// the shared drawing, at this sheet's lighter pictogram weight
 function CameraIcon() {
-  return (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden="true">
-      <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
-      <circle cx="12" cy="13" r="3.5" />
-    </svg>
-  );
+  return <Camera strokeWidth={stroke.strokeWidth} />;
 }
 
 function SearchIcon() {
@@ -65,12 +62,7 @@ function SearchIcon() {
 }
 
 function MicIcon() {
-  return (
-    <svg viewBox="0 0 24 24" {...stroke} aria-hidden="true">
-      <rect x="9" y="2" width="6" height="12" rx="3" />
-      <path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4" />
-    </svg>
-  );
+  return <Mic strokeWidth={stroke.strokeWidth} />;
 }
 
 const ROWS = [
@@ -143,7 +135,7 @@ export default function AddSheet({ open, onClose, onPick }: Props) {
               <span className="add-row-sub">{sub}</span>
             </span>
             <span className="add-row-chev" aria-hidden="true">
-              ›
+              <ChevronRight />
             </span>
           </button>
         ))}

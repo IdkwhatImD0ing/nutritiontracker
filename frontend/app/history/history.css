@@ -1,58 +1,24 @@
-/* History page (§7.4: 3D · W · M · Y) and the day view — X5b. Builds on
-   globals.css's tokens + .shell/.brand/.kcal-bar; the tab bar and its .shell
-   padding come from app/library/m3.css via components/TabBar. */
+/* History page (§7.4: 3 days · Week · Month · Year) and the day view — X5b.
+   Builds on globals.css's tokens + .shell/.brand/.kcal-bar; the tab bar and
+   its .shell padding come from app/library/m3.css via components/TabBar. */
 
-/* streak chip */
+/* the streak: a label in the header's trailing slot, where a bordered pill
+   read as a button that did nothing; the count is the part worth reading */
 
 .streak-chip {
   font-size: 0.74rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 5px 12px;
   color: var(--muted);
-  background: var(--surface);
   white-space: nowrap;
 }
 
-.streak-chip.live {
-  color: var(--accent);
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
+.streak-chip .num {
+  color: var(--text);
 }
 
-/* segmented range control */
-
-.segmented {
-  display: flex;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px;
-  gap: 2px;
-}
-
-.segmented button {
-  flex: 1;
-  background: none;
-  border: none;
-  border-radius: 999px;
-  padding: 9px 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 160ms,
-    color 160ms;
-}
-
-.segmented button.active {
-  background: var(--accent);
-  color: var(--on-accent);
-}
+/* the range control is globals.css's .m3-seg, the app's one segmented
+   control */
 
 .range-label {
   margin: -8px 0 0;
@@ -85,7 +51,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 16px 18px 18px;
+  padding: 16px var(--card-pad-x) 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -187,9 +153,9 @@
 .hcard-macro-row .k {
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 0.62rem;
-  font-weight: 600;
+  letter-spacing: var(--micro-track);
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
 }
 
 .hcard-macro-row .v {
@@ -284,7 +250,6 @@
 .day-step svg {
   width: 24px;
   height: 24px;
-  stroke-width: 2.2;
 }
 
 /* the date opens a picker: a native date input over it, invisible, so the
@@ -344,7 +309,7 @@
     grid-column: 1 / -1;
   }
 
-  .shell.history > .segmented {
+  .shell.history > .m3-seg {
     grid-column: 1;
   }
 

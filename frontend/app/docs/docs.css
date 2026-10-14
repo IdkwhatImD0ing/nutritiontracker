@@ -624,7 +624,7 @@
   padding: 18px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   box-shadow: var(--shadow-card);
 }
 

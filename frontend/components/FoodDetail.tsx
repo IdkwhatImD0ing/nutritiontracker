@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { fmtDate, nutrientParts, statesGrams, withUnit } from "@/lib/format";
+import { foodName } from "@/lib/labels";
 import { sourceName } from "@/lib/sources";
 import BackBar from "./BackBar";
 import {
@@ -182,7 +183,7 @@ export default function FoodDetail({ id }: { id: string }) {
       </header>
 
       <header className="fd-head">
-        <h1 className="food-name">{food.display_name}</h1>
+        <h1>{foodName(food.display_name)}</h1>
         <div className="fd-meta">
           {food.brand ? <span>{food.brand}</span> : null}
           <span className={`badge ${badge.cls}`}>{badge.label}</span>

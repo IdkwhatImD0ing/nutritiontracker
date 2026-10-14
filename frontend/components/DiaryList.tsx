@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ApiError, type DayTotals, type Meal } from "@/lib/api";
 import { portionText } from "@/lib/format";
+import { foodName, mealLabel } from "@/lib/labels";
 import "@/app/history/diary.css";
 import {
   deleteEntry,
@@ -110,7 +111,7 @@ function SaveMealSheet({
           {entries.map((e) => (
             <div className="m3-item" key={e.id}>
               <div className="info">
-                <div className="name">{e.food.name}</div>
+                <div className="name">{foodName(e.food.name)}</div>
                 <div className="sub num">
                   {portionText(e.qty, e.serving.description, e.grams)}
                 </div>
@@ -167,22 +168,25 @@ export default function DiaryList({
     return <p className="diary-empty">{emptyText}</p>;
   }
 
-  /** true when `fn` landed — the row keeps its draft on a refusal. */
-  const run = async (id: string, fn: () => Promise<void>): Promise<boolean> => {
+  /** null when `fn` landed, else the sentence for the refusal — the portion
+   *  sheet shows it in place; a delete's goes over the diary. */
+  const run = async (
+    id: string,
+    fn: () => Promise<void>,
+  ): Promise<string | null> => {
     setBusy(id);
     setError(null);
     try {
       await fn();
-      return true;
+      return null;
     } catch (e) {
       // A refused portion says why (a serving with partial macros is a 422
       // naming it, §4 invariant) — show the server's sentence, not a generic
       // one, the way every other lane does.
-      setError(
+      return (
         (e instanceof ApiError && e.status === 422 && e.detail) ||
-          "Couldn't save that change — try again.",
+        "Couldn't save that change — try again."
       );
-      return false;
     } finally {
       setBusy(null);
     }
@@ -194,7 +198,7 @@ export default function DiaryList({
       {groups.map((g) => (
         <div className="diary-meal" key={g.meal}>
           <div className="diary-meal-head">
-            <span className="diary-meal-name">{g.meal}</span>
+            <span className="diary-meal-name">{mealLabel(g.meal)}</span>
             <button
               type="button"
               className="m3-link-btn"
@@ -232,10 +236,10 @@ export default function DiaryList({
                 })
               }
               onDelete={() =>
-                run(e.id, async () => {
+                void run(e.id, async () => {
                   const totals = await deleteEntry(e.id);
                   onDeleted(e.id, totals);
-                })
+                }).then(setError)
               }
             />
           ))}

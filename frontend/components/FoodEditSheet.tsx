@@ -7,6 +7,8 @@ import {
   type StagedItem,
 } from "@/lib/api";
 import { fmt0 } from "@/lib/format";
+import { foodName } from "@/lib/labels";
+import { ArrowRight } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -120,7 +122,7 @@ export default function FoodEditSheet({
                     disabled={busy}
                     onClick={() => onPickAlias(a)}
                   >
-                    <span className="result-name">{a.food_name}</span>
+                    <span className="result-name">{foodName(a.food_name)}</span>
                     {sub ? <span className="result-sub">{sub}</span> : null}
                   </button>
                 );
@@ -152,7 +154,7 @@ export default function FoodEditSheet({
               disabled={busy || !text.trim()}
               aria-label="Look it up"
             >
-              →
+              <ArrowRight strokeWidth={2.4} />
             </button>
           </form>
         </div>
@@ -163,7 +165,7 @@ export default function FoodEditSheet({
           disabled={busy}
           onClick={onManualSearch}
         >
-          Search all foods
+          Search foods
           <span className="chev" aria-hidden="true" />
         </button>
       </div>

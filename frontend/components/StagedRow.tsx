@@ -2,6 +2,8 @@
 
 import type { Meal, StagedItem } from "@/lib/api";
 import { nutrientParts, portionText, withUnit } from "@/lib/format";
+import { foodName, MEAL_LABEL } from "@/lib/labels";
+import { Close } from "./icons";
 import { readEstimate } from "./PhotoApi";
 import "@/app/photo.css";
 
@@ -54,9 +56,11 @@ export default function StagedRow({
   const searching = busy || item.status === "searching";
   const notFound = item.status === "not_found";
   const editable = !searching && !notFound; // §7.1: resolved/needs_input rows
-  const name = item.food?.name ?? item.phrase;
+  const name = foodName(item.food?.name ?? item.phrase);
   // the phrase under the name only when it says something the name doesn't
-  const said = item.phrase !== name ? item.phrase : null;
+  // (foodName only re-cases, so a phrase that is the name in other case is
+  // the same words)
+  const said = item.phrase.toLowerCase() !== name.toLowerCase() ? item.phrase : null;
   const macros = item.macros;
   // §3.4a: photo-lane rows carry what vision guessed. "portion" = database
   // food, photo-estimated amount; "unresolved" = no database match at all —
@@ -108,7 +112,7 @@ export default function StagedRow({
             {editable ? (
               <button
                 type="button"
-                className="name-btn food-name"
+                className="name-btn"
                 aria-label={`Edit food for ${name}`}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -179,7 +183,7 @@ export default function StagedRow({
             onRemove();
           }}
         >
-          ✕
+          <Close />
         </button>
       </div>
 
@@ -224,7 +228,7 @@ export default function StagedRow({
                 disabled={busy}
                 onClick={() => onPick(opt)}
               >
-                {opt.label}
+                {foodName(opt.label)}
               </button>
             ))}
           </div>
@@ -245,7 +249,8 @@ export default function StagedRow({
               disabled={busy}
               onClick={() => onPick({ label: s })}
             >
-              {s}
+              {/* the answer sent stays the lowercase value */}
+              {s === "cooked" ? "Cooked" : "Raw"}
             </button>
           ))}
         </div>
@@ -263,7 +268,7 @@ export default function StagedRow({
               onClick={() => onPick(alt)}
             >
               {alt.usual ? <span className="usual-dot" /> : null}
-              {alt.label}
+              {foodName(alt.label)}
             </button>
           ))}
           {/* §3.3 rule 3 (BACKLOG 32): a weak-trigram-only match resolves the
@@ -276,7 +281,7 @@ export default function StagedRow({
               disabled={busy}
               onClick={onManualSearch}
             >
-              search instead
+              Search instead
             </button>
           ) : null}
         </div>
@@ -318,7 +323,7 @@ export default function StagedRow({
               row, so the four never wrap 3 + 1 on a narrow phone */}
           <div className="detail-meal">
             <span className="k">Meal</span>
-            <div className="meal-picker">
+            <div className="meal-picker m3-seg">
               {MEALS.map((m) => (
                 <button
                   key={m}
@@ -326,7 +331,7 @@ export default function StagedRow({
                   className={item.meal === m ? "active" : undefined}
                   onClick={() => onMeal(m)}
                 >
-                  {m}
+                  {MEAL_LABEL[m]}
                 </button>
               ))}
             </div>

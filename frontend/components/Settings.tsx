@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { mealLabel } from "@/lib/labels";
 import {
   getSettings,
   putSettings,
@@ -255,23 +256,23 @@ export default function Settings() {
             <div className="m3-card">
               {WINDOW_MEALS.map((m) => (
                 <div className="m3-window" key={m}>
-                  <span>{m}</span>
+                  <span>{mealLabel(m)}</span>
                   <input
                     type="time"
                     value={form.meal_windows[m].start}
                     onChange={(e) => setWindow(m, "start", e.target.value)}
-                    aria-label={`${m} start`}
+                    aria-label={`${mealLabel(m)} start`}
                   />
                   <input
                     type="time"
                     value={form.meal_windows[m].end}
                     onChange={(e) => setWindow(m, "end", e.target.value)}
-                    aria-label={`${m} end`}
+                    aria-label={`${mealLabel(m)} end`}
                   />
                 </div>
               ))}
               <div className="m3-window">
-                <span>otherwise</span>
+                <span>Any other time</span>
                 <select
                   value={form.meal_windows.default}
                   onChange={(e) =>
@@ -284,11 +285,11 @@ export default function Settings() {
                         : f,
                     )
                   }
-                  aria-label="Meal outside every window"
+                  aria-label="Meal at any other time"
                 >
                   {MEALS.map((meal) => (
                     <option key={meal} value={meal}>
-                      {meal}
+                      {mealLabel(meal)}
                     </option>
                   ))}
                 </select>
@@ -302,58 +303,62 @@ export default function Settings() {
 
           <section className="m3-section" aria-label="Time zone">
             <h2>Time zone</h2>
-            <label className="m3-field">
-              Region/City
-              <input
-                list="usual-tz-list"
-                value={form.timezone}
-                onChange={(e) =>
-                  setForm((f) => (f ? { ...f, timezone: e.target.value } : f))
-                }
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-            <datalist id="usual-tz-list">
-              {timezones().map((z) => (
-                <option value={z} key={z} />
-              ))}
-            </datalist>
-            {deviceTz && deviceTz !== form.timezone ? (
-              <p className="m3-note">
-                This device says {deviceTz}.{" "}
-                <button
-                  type="button"
-                  className="m3-link-btn"
-                  onClick={() =>
-                    setForm((f) => (f ? { ...f, timezone: deviceTz } : f))
+            <div className="m3-card">
+              <label className="m3-field">
+                <input
+                  list="usual-tz-list"
+                  value={form.timezone}
+                  onChange={(e) =>
+                    setForm((f) => (f ? { ...f, timezone: e.target.value } : f))
                   }
-                >
-                  Use it
-                </button>
-              </p>
-            ) : null}
+                  aria-label="Time zone"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <datalist id="usual-tz-list">
+                {timezones().map((z) => (
+                  <option value={z} key={z} />
+                ))}
+              </datalist>
+              {deviceTz && deviceTz !== form.timezone ? (
+                <p className="m3-note">
+                  This device says {deviceTz}.{" "}
+                  <button
+                    type="button"
+                    className="m3-link-btn"
+                    onClick={() =>
+                      setForm((f) => (f ? { ...f, timezone: deviceTz } : f))
+                    }
+                  >
+                    Use it
+                  </button>
+                </p>
+              ) : null}
+            </div>
           </section>
 
           <section className="m3-section m3-wide" aria-label="Profile notes">
             <h2>Profile notes</h2>
-            <label className="m3-field">
-              What Tally should always know
-              <textarea
-                value={form.profile_notes}
-                onChange={(e) =>
-                  setForm((f) => (f ? { ...f, profile_notes: e.target.value } : f))
-                }
-                placeholder={
-                  "lactose intolerant; 'fairlife' always means Core Power Elite 42g; I train ~6pm; weekday lunch is the office cafeteria, its menu is at example.com"
-                }
-              />
-            </label>
-            <p className="m3-note">
-              Tally reads this every time you log or photograph a meal, and when
-              it looks a food up. Add habits, what your words mean to you, and
-              where you usually eat.
-            </p>
+            <div className="m3-card">
+              <label className="m3-field">
+                <textarea
+                  value={form.profile_notes}
+                  onChange={(e) =>
+                    setForm((f) => (f ? { ...f, profile_notes: e.target.value } : f))
+                  }
+                  aria-label="Profile notes"
+                  placeholder={
+                    "lactose intolerant; 'fairlife' always means Core Power Elite 42g; I train ~6pm; weekday lunch is the office cafeteria, its menu is at example.com"
+                  }
+                />
+              </label>
+              <p className="m3-note">
+                What Tally should always know. It reads this every time you log
+                or photograph a meal, and when it looks a food up. Add habits,
+                what your words mean to you, and where you usually eat.
+              </p>
+            </div>
           </section>
 
           <button

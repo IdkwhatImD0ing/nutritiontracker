@@ -1,5 +1,6 @@
 /* Diary list (Today + History day view) — X5b. Reuses globals.css's .row /
-   .row-detail / .stepper vocabulary; only the diary-specific bits live here. */
+   .row-detail / .portion-btn vocabulary; only the diary-specific bits live
+   here. */
 
 .diary {
   display: flex;
@@ -21,7 +22,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 4px 16px;
+  padding: 4px var(--card-pad-x);
   box-shadow: var(--shadow-card);
 }
 
@@ -39,7 +40,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--accent);
+  color: var(--muted); /* a section label; the accent is rationed (§7.4) */
 }
 
 .diary-meal-head .m3-link-btn {
@@ -90,7 +91,7 @@
 }
 
 .diary-row.web .row-name {
-  color: #a8d0ee; /* §3.4a: web-transcribed rows are visually distinct */
+  color: var(--web); /* §3.4a: web-transcribed rows are visually distinct */
 }
 
 .diary-edit {
@@ -102,55 +103,29 @@
   gap: 8px;
 }
 
-/* not upper-cased: the serving carries units ("170 g" must not read "G") */
-.diary-edit > .k {
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.diary-stepper button {
-  width: 44px;
-  padding: 6px 0;
-  font-size: 1.1rem;
-}
-
-.diary-stepper input {
-  font-size: 1.05rem;
-  padding: 6px 0;
-}
-
-.diary-stepper button:disabled,
-.diary-stepper input:disabled {
-  color: var(--faint);
-  cursor: default;
-}
-
 .diary-actions {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
+/* the secondary pill (m3.css .keys-btn's values), a step up off the
+   expanded row's --surface-2 */
 .diary-actions button {
+  min-height: 40px;
   border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 0.8rem;
+  padding: 0 16px;
+  font-size: 0.86rem;
   font-weight: 600;
   cursor: pointer;
   border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
+  background: var(--surface-3);
+  color: var(--text);
 }
 
 .diary-actions button:disabled {
   color: var(--faint);
   cursor: default;
-}
-
-.diary-actions .diary-save:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
 }
 
 .diary-actions .diary-delete {
@@ -164,43 +139,5 @@
 .diary-actions .diary-delete.confirm:not(:disabled) {
   background: var(--red);
   border-color: var(--red);
-  color: #fff;
-}
-
-/* The row's serving picker (§3.5 post-commit portion edit). The opener sits
-   on its own line above the qty stepper; .diary-edit is a stretch column, so
-   it has to say it does not want the full width. */
-.diary-change-serving {
-  align-self: flex-start;
-  font-size: 0.76rem;
-  text-align: left;
-}
-
-/* A branded food can carry a dozen servings; cap the list so the qty stepper
-   and the actions stay on screen under it. */
-.diary-servings {
-  max-height: 168px;
-  overflow-y: auto;
-}
-
-.diary-servings button {
-  padding: 8px 12px;
-  font-size: 0.8rem;
-}
-
-/* A serving the §4 guard would refuse: offered, so the list is the food's
-   real one, but visibly not pickable. */
-.diary-servings button:disabled {
-  cursor: default;
-  opacity: 0.45;
-  border-style: dashed;
-}
-
-/* Picker status ("Loading servings…", "only the one serving"). Not .k — that
-   is the uppercase tracked micro-label for "Qty · 1 cup", and a sentence set
-   in it shouts. */
-.diary-note {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
+  color: var(--on-danger);
 }
