@@ -170,7 +170,7 @@ export default function DiaryList({
   const [savedMeal, setSavedMeal] = useState<string | null>(null);
 
   // The tapped row stays under the finger. One row is open at a time, so
-  // opening one closes the last; when that one sat above, its ~270px editor
+  // opening one closes the last; when that one sat above, its expanded panel
   // collapsing threw the tapped row up the screen. iOS Safari has no CSS
   // scroll anchoring, so the row's top is read before the toggle and the
   // window (the scroller on Today and the day view) is moved by however far

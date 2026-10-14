@@ -140,7 +140,7 @@
   color: var(--text);
 }
 
-/* the delete confirm: "Really delete" and "Keep", equal halves */
+/* the delete confirm: "Yes, delete" and "Cancel", equal halves */
 .diary-actions.confirming button {
   flex: 1;
   margin-left: 0;

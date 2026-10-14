@@ -768,10 +768,7 @@ export default function StagingSheet({
             undoable.has(item.item_index) ? (
               <div className="row row-removed" key={item.item_index}>
                 <span className="row-removed-text">
-                  Removed{" "}
-                  <span className="food-name">
-                    {foodName(item.food?.name ?? item.phrase)}
-                  </span>
+                  Removed {foodName(item.food?.name ?? item.phrase)}
                 </span>
                 {/* focus lands here from the ✕ it replaced; disabled while
                     a commit that already left the row out is in flight */}

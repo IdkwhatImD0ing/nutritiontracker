@@ -1,5 +1,5 @@
-/* Portion arithmetic shared by the three portion editors: the diary row,
-   the staging sheet's portion sheet and the saved-meal sheet. Plain TS. */
+/* Portion arithmetic shared by the portion editors: the portion sheet (a
+   staged row's and a diary row's) and the saved-meal sheet. Plain TS. */
 
 /** The same amount of food counted in another serving: qty × from ÷ to, to
  *  2 dp (floored at 0.01, so a tiny amount is still a valid draft). null when
@@ -22,7 +22,7 @@ export function isGramServing(grams: number | null | undefined): boolean {
 
 /** One tap of a −/+ stepper. A gram serving steps by 10 with a floor of 1 —
  *  a gram a tap is no step at all; any other serving steps by the editor's
- *  own `delta` with the 0.25 floor all three editors use. */
+ *  own `delta` with the 0.25 floor both editors use. */
 export function stepQty(
   qty: number,
   dir: 1 | -1,

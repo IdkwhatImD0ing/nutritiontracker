@@ -170,7 +170,7 @@ export default function DiaryEntryRow({
       >
         <div className="row-info">
           <div className="row-name">
-            <span className="food-name">{name}</span>
+            <span>{name}</span>
             {entry.web_source ? <span className="badge web">web</span> : null}
             {/* M4: the portion was read off a photo (and confirmed before
                 commit) — flagged the way the staged row was. */}

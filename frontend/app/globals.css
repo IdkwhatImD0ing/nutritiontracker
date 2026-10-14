@@ -44,7 +44,7 @@
   /* Colours outside the palette above, named once so every rule that paints
      one shares its value (one web blue, one scrim, one red tint). */
   --accent-fill: linear-gradient(180deg, var(--accent), var(--accent-strong)); /* Commit, send, the user bubble */
-  --web: #8fd0e6; /* §3.4a web-sourced: the badge, its citation link, the diary row */
+  --web: #8fd0e6; /* §3.4a web-sourced: the badge (its citation link is --sage) */
   --web-soft: rgba(108, 196, 221, 0.14);
   --off: #e0b58a; /* Open Food Facts badge (m3.css) */
   --off-soft: rgba(224, 181, 138, 0.16);
