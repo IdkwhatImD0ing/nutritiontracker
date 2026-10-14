@@ -9,12 +9,15 @@ type Props = {
    *  the detection loop pauses so one read can't fire twice, and a loading
    *  cover hides the camera so the read is visibly taken */
   busy: boolean;
-  /** the parent's outcome for the last code (not found, lookup failed); the
-   *  camera stays live so the user can try again, and search is offered */
+  /** the parent's failure for the last code (lookup failed, a demo 429);
+   *  the camera stays live so the user can try again, and search is offered */
   notice: string | null;
+  /** the last code's digits when neither database knows it — an ordinary
+   *  miss, said plainly (where we looked) with search as the way on */
+  miss: string | null;
   onCode: (code: string) => void;
   /** absent when search would meet the same wall (a demo account's day's
-   *  log is spent — the notice is the server's 429) — no chip is offered */
+   *  log is spent — the notice is the server's 429) — no search is offered */
   onSearchInstead?: () => void;
   onClose: () => void;
 };
@@ -34,8 +37,10 @@ const MIN_DIGITS = 6; // UPC-E prints as six
 const CAMERA_TEXT: Record<Camera, string> = {
   starting: "Starting camera…",
   live: "Point the camera at the barcode.",
-  denied: "Camera permission denied — type the number instead.",
-  unavailable: "No camera available — type the number instead.",
+  denied: "Camera access is off. Turn it on in Settings, or type the number.",
+  // also a camera that is busy elsewhere or refused the constraints, which
+  // "Try the camera again" can fix
+  unavailable: "Couldn't start the camera — type the number instead.",
 };
 
 /** The + sheet's Scan barcode lane. iOS Safari ships no BarcodeDetector, so
@@ -49,6 +54,7 @@ const CAMERA_TEXT: Record<Camera, string> = {
 export default function BarcodeScanner({
   busy,
   notice,
+  miss,
   onCode,
   onSearchInstead,
   onClose,
@@ -202,22 +208,51 @@ export default function BarcodeScanner({
             <button
               type="button"
               className={`scan-torch${torch ? " on" : ""}`}
+              aria-label="Torch"
               aria-pressed={torch}
               onClick={toggleTorch}
             >
-              {torch ? "Torch off" : "Torch on"}
+              {/* a flashlight */}
+              <svg
+                viewBox="0 0 24 24"
+                width="20"
+                height="20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M6 2h12v4l-2 4v10a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V10L6 6z" />
+                <path d="M6 6h12M12 13v2" />
+              </svg>
             </button>
           ) : null}
+          {/* a typed number takes this path too, so it says what is
+              happening rather than what was seen; the status line below
+              carries the words for a screen reader */}
           {busy ? (
-            <div className="scan-loading">
+            <div className="scan-loading" aria-hidden="true">
               <span className="spinner" />
-              Barcode found
+              Looking it up…
             </div>
           ) : null}
         </div>
 
+        {/* one "Looking it up…" on screen: the cover says it while the camera
+            shows, this line when there is no camera view */}
         <p className="scan-status" aria-live="polite">
-          {busy ? "Looking it up…" : CAMERA_TEXT[camera]}
+          {busy && !hideView ? (
+            <>
+              {"\u00a0"}
+              <span className="sr-only">Looking it up…</span>
+            </>
+          ) : busy ? (
+            "Looking it up…"
+          ) : (
+            CAMERA_TEXT[camera]
+          )}
         </p>
         {hideView ? (
           <div className="chips">
@@ -228,6 +263,25 @@ export default function BarcodeScanner({
             >
               Try the camera again
             </button>
+          </div>
+        ) : null}
+
+        {miss ? (
+          <div className="scan-miss">
+            <p className="scan-miss-title">No match for this barcode</p>
+            <p className="subsheet-hint">
+              Not in USDA FoodData Central or Open Food Facts ·{" "}
+              <span className="num">{miss}</span>
+            </p>
+            {onSearchInstead ? (
+              <button
+                type="button"
+                className="edit-manual-btn"
+                onClick={onSearchInstead}
+              >
+                Search instead
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -261,7 +315,11 @@ export default function BarcodeScanner({
             value={manual}
             onChange={(e) => setManual(e.target.value)}
             inputMode="numeric"
-            placeholder="Or type the number under the bars"
+            placeholder={
+              hideView
+                ? "Type the number under the bars"
+                : "Or type the number under the bars"
+            }
             aria-label="Barcode number"
             autoComplete="off"
           />
@@ -270,7 +328,7 @@ export default function BarcodeScanner({
             disabled={busy || digits.length < MIN_DIGITS}
             aria-label="Look up"
           >
-            {busy ? <span className="spinner" /> : "→"}
+            →
           </button>
         </form>
       </div>

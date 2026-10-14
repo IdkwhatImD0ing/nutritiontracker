@@ -14,6 +14,7 @@ import {
 } from "./HistoryApi";
 import ErrorNotice from "./ErrorNotice";
 import HistoryView from "./HistoryView";
+import Skeleton from "./Skeleton";
 import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
 
 const KINDS: { kind: RangeKind; label: string; title: string }[] = [
@@ -42,9 +43,16 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
   const router = useRouter();
   const [today, setToday] = useState(() => isoDate(new Date()));
   const [kind, setKind] = useState<RangeKind>(initialKind);
-  const [range, setRange] = useState<HistoryRange | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // The ranges read this visit, by kind, for the day they end on: a segment
+  // tap shows its range at once and re-reads it underneath. A new local day
+  // leaves them behind — every range ends today.
+  const [ranges, setRanges] = useState<{
+    day: string;
+    byKind: Partial<Record<RangeKind, HistoryRange>>;
+  }>({ day: today, byKind: {} });
+  // one number for every range: the last one read stays up across a switch
+  const [streak, setStreak] = useState<number | null>(null);
+  const [error, setError] = useState<"unavailable" | "failed" | null>(null);
   // `attempt` re-runs the read: the failure notice carries a Retry.
   const [attempt, setAttempt] = useState(0);
 
@@ -59,30 +67,26 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
     fetchHistory(kind, today)
       .then((r) => {
-        if (!cancelled) setRange(r);
+        if (cancelled) return;
+        setRanges((cur) => ({
+          day: today,
+          byKind: { ...(cur.day === today ? cur.byKind : {}), [kind]: r },
+        }));
+        setStreak(r.streak);
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setRange(null);
-        setError(
-          e instanceof HistoryUnavailable
-            ? "The year view needs GET /api/history — not wired yet."
-            : "Couldn't load this range.",
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        setError(e instanceof HistoryUnavailable ? "unavailable" : "failed");
       });
     return () => {
       cancelled = true;
     };
   }, [kind, today, attempt]);
 
-  const streak = range?.streak ?? null;
+  const range = ranges.day === today ? ranges.byKind[kind] : undefined;
 
   return (
     <main className="shell history">
@@ -115,27 +119,36 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         ))}
       </div>
 
-      {range && range.range === kind ? (
-        <p className="range-label">{spanLabel(range)}</p>
-      ) : null}
+      {/* always in place, so the content under it never moves by a line */}
+      <p className="range-label">{range ? spanLabel(range) : "\u00a0"}</p>
 
       {error ? (
-        <ErrorNotice message={error} onRetry={() => setAttempt((n) => n + 1)} />
+        <ErrorNotice
+          message={
+            error === "unavailable"
+              ? "The year view needs GET /api/history — not wired yet."
+              : range
+                ? "Couldn't refresh this range."
+                : "Couldn't load this range."
+          }
+          onRetry={() => setAttempt((n) => n + 1)}
+        />
       ) : null}
-      {loading && !range ? (
-        <p className="hhint">
-          <span className="spinner" />
-          Loading…
-        </p>
-      ) : null}
-      {range ? (
-        <div className={loading ? "hist-stale" : undefined}>
-          <HistoryView
-            kind={range.range}
-            range={range}
-            today={today}
-            onDay={(date) => router.push(`/history/${date}`)}
-          />
+      {range || !error ? (
+        <div>
+          {range ? (
+            <HistoryView
+              kind={range.range}
+              range={range}
+              today={today}
+              onDay={(date) => router.push(`/history/${date}`)}
+            />
+          ) : (
+            // not read yet: that range's shape, never the last range dimmed
+            <div className={`${kind === "3d" ? "hcards" : "hcharts"} hist-loading`}>
+              <Skeleton rows={kind === "3d" ? 3 : 2} height={180} radius={20} />
+            </div>
+          )}
         </div>
       ) : null}
     </main>

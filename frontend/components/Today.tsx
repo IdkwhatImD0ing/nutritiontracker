@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   discardLog,
   getDiary,
   patchTimings,
@@ -108,6 +109,9 @@ export default function Today() {
   const removedIndexesRef = useRef<Map<string, number[]>>(new Map());
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  // the digits of a barcode neither database knows — an ordinary miss, shown
+  // apart from captureError's failures
+  const [scanMiss, setScanMiss] = useState<string | null>(null);
   // Demo accounts (GET /api/me): the banner's quota, re-read after every
   // log attempt so "next log at …" shows the moment the day's log is spent.
   // Owner → demo null → no banner. A failed read renders nothing: the
@@ -339,6 +343,7 @@ export default function Today() {
 
   const pickLane = (next: AddLane) => {
     setCaptureError(null);
+    setScanMiss(null);
     // §3.4b (2026-09-08): "Take photo" opens the same chat, with the picker
     // up instead of the mic — so it is the Agent lane, and everything below
     // applies to it. The still-undoable discard is settled by the send
@@ -731,6 +736,7 @@ export default function Today() {
           text: quota
             ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
             : "Couldn't log that — check your connection and retry.",
+          retryable: !quota,
         });
       }
       return false;
@@ -890,6 +896,8 @@ export default function Today() {
           text: quota
             ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
             : photoErrorMessage(e),
+          // a refused image (too large, wrong type) fails the same way again
+          retryable: !quota && !(e instanceof ApiError && e.status < 500),
         });
       }
       return false;
@@ -955,6 +963,7 @@ export default function Today() {
   const scanCode = async (code: string): Promise<void> => {
     setCaptureBusy(true);
     setCaptureError(null);
+    setScanMiss(null);
     let hit: Awaited<ReturnType<typeof lookupBarcode>>;
     try {
       hit = await lookupBarcode(code);
@@ -965,12 +974,10 @@ export default function Today() {
     }
     if (!hit.found) {
       // An honest miss (§13: never fail silently): neither FDC Branded nor
-      // Open Food Facts knows this code. Say where we looked; the scanner
-      // offers search.
+      // Open Food Facts knows this code. The scanner says where we looked —
+      // as a miss, not an error — and offers search.
       setCaptureBusy(false);
-      setCaptureError(
-        `${code.replace(/\D/g, "")} isn't in USDA FoodData Central or Open Food Facts.`,
-      );
+      setScanMiss(code.replace(/\D/g, ""));
       return;
     }
     await quickAdd(hit.food.id, "barcode");
@@ -1259,6 +1266,7 @@ export default function Today() {
         <BarcodeScanner
           busy={captureBusy}
           notice={captureError}
+          miss={scanMiss}
           onCode={scanCode}
           // a spent quota meets the same 429 in the search lane — don't offer it
           onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}

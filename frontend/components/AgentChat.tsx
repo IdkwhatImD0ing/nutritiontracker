@@ -50,7 +50,9 @@ export type ChatMessage =
        *  place, so it is patched rather than replaced by a second card */
       photo?: boolean;
     }
-  | { kind: "error"; id: string; text: string };
+  /** `retryable`: a text or photo send that may go through on a second try
+   *  (never the demo quota) — the chat offers Retry under it */
+  | { kind: "error"; id: string; text: string; retryable?: boolean };
 
 type Props = {
   messages: ChatMessage[];
@@ -498,6 +500,22 @@ export default function AgentChat({
   const bodyRef = useRef<HTMLDivElement>(null);
   const { supported, recording, elapsedMs, start, stop, cancel } =
     useVoiceCapture();
+  // The newest text or photo send, for a failed one's Retry (BACKLOG 176):
+  // the same words, or the same shot — same capturedAt, so the same client
+  // id (§8.6), never a second log or a second vision call.
+  const [lastSend, setLastSend] = useState<
+    | { kind: "text"; text: string }
+    | { kind: "photo"; shot: PhotoShot; said: string }
+    | null
+  >(null);
+  const sendText = (t: string) => {
+    setLastSend({ kind: "text", text: t });
+    return onSubmit(t);
+  };
+  const sendPhoto = (shot: PhotoShot, said: string) => {
+    setLastSend({ kind: "photo", shot, said });
+    return onSubmitPhoto(shot, said);
+  };
 
   // §8.1d/§13: ANY voice failure degrades to typing — focus the text field
   // so the retype is one keystroke away (rAF: the input re-renders after
@@ -599,8 +617,29 @@ export default function AgentChat({
 
   const last = messages[messages.length - 1];
   // "Thinking…" between the send and the first tool line, and between a
-  // finished tool and the reply — never while a tool line already spins
-  const thinking = busy && !(last?.kind === "tool" && !last.done);
+  // finished tool and the reply — never while a tool line already spins or
+  // the voice bubble still says "Transcribing…"
+  const thinking =
+    busy &&
+    !(last?.kind === "tool" && !last.done) &&
+    !(last?.kind === "user" && last.pending);
+  // The quota's sentence is already the newest bubble — once is enough.
+  const errorShown = last?.kind === "error" && last.text === error;
+  const canRetry = last?.kind === "error" && last.retryable === true && lastSend != null;
+
+  const retry = async () => {
+    const s = lastSend;
+    if (busy || !s) return;
+    if (recording) cancel(); // the retry is the turn now
+    setNotice(null);
+    const ok =
+      s.kind === "text" ? await sendText(s.text) : await sendPhoto(s.shot, s.said);
+    if (!ok) return;
+    // a failed composer send is still in the composer — it went through now
+    const said = s.kind === "text" ? s.text : s.said;
+    setText((cur) => (cur.trim() === said ? "" : cur));
+    if (s.kind === "photo") setAttached((cur) => (cur === s.shot ? null : cur));
+  };
 
   return (
     <>
@@ -679,7 +718,7 @@ export default function AgentChat({
                               // the tap is the answer: a recording in progress
                               // is dropped, not left running under the turn
                               if (recording) cancel();
-                              void onSubmit(opt);
+                              void sendText(opt);
                             }}
                           >
                             {opt}
@@ -693,8 +732,22 @@ export default function AgentChat({
                 return <ResultCard key={m.id} m={m} onReview={onReview} />;
               case "error":
                 return (
-                  <div key={m.id} className="bubble error" role="alert">
-                    {m.text}
+                  <div key={m.id} className="bubble-wrap">
+                    <div className="bubble error" role="alert">
+                      {m.text}
+                    </div>
+                    {m === last && canRetry ? (
+                      <div className="chips agent-options">
+                        <button
+                          type="button"
+                          className="chip"
+                          disabled={busy}
+                          onClick={() => void retry()}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 );
             }
@@ -758,8 +811,8 @@ export default function AgentChat({
                 const trimmed = text.trim();
                 if (busy || (!trimmed && !attached)) return;
                 const ok = attached
-                  ? await onSubmitPhoto(attached, trimmed)
-                  : await onSubmit(trimmed);
+                  ? await sendPhoto(attached, trimmed)
+                  : await sendText(trimmed);
                 if (ok) {
                   setText("");
                   setAttached(null);
@@ -818,7 +871,7 @@ export default function AgentChat({
               </button>
             </form>
           )}
-          {error ? <p className="capture-error">{error}</p> : null}
+          {error && !errorShown ? <p className="capture-error">{error}</p> : null}
           {notice && !error ? <p className="capture-notice">{notice}</p> : null}
         </div>
       </div>
@@ -840,7 +893,7 @@ export default function AgentChat({
           setNotice(null);
           if (openedLaneRef.current) {
             openedLaneRef.current = false;
-            void onSubmitPhoto(shot, "");
+            void sendPhoto(shot, "");
             return;
           }
           setAttached(shot);

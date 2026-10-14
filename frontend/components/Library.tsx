@@ -89,7 +89,8 @@ export default function Library() {
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [fdcDown, setFdcDown] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [opening, setOpening] = useState(false);
+  // the hit being opened (`source:source_id`), marked with a spinner
+  const [opening, setOpening] = useState<string | null>(null);
   // `retry`: a failed search re-runs; a failed open is tapped again instead
   const [searchError, setSearchError] = useState<{
     text: string;
@@ -153,14 +154,14 @@ export default function Library() {
   // Manual search entry → food detail. FDC hits are cached first (the
   // existing /api/foods/select library path) so the detail page has a row.
   const openHit = async (hit: FoodSearchResult) => {
-    setOpening(true);
+    setOpening(`${hit.source}:${hit.source_id}`);
     setSearchError(null);
     try {
       const id = await cacheFood(hit);
       router.push(`/library/food/${encodeURIComponent(id)}`);
     } catch {
       setSearchError({ text: "Couldn't open that food.", retry: false });
-      setOpening(false);
+      setOpening(null);
     }
   };
 
@@ -207,7 +208,8 @@ export default function Library() {
               <button
                 key={`${r.source}:${r.source_id}:${i}`}
                 type="button"
-                disabled={opening}
+                disabled={opening != null}
+                aria-busy={opening === `${r.source}:${r.source_id}` || undefined}
                 onClick={() => openHit(r)}
               >
                 <span className={`result-name${r.food_id ? " food-name" : ""}`}>
@@ -217,6 +219,9 @@ export default function Library() {
                   {r.brand ? `${r.brand} · ` : ""}
                   {r.food_id ? "my foods" : (r.data_type ?? r.source)}
                 </span>
+                {opening === `${r.source}:${r.source_id}` ? (
+                  <span className="spinner" />
+                ) : null}
               </button>
             ))}
             {results.length === 0 && !searching && !searchError ? (

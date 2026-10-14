@@ -52,6 +52,10 @@ export default function ManualSearchSheet({
     retry: boolean;
   } | null>(null);
   const seq = useRef(0);
+  // The tapped row (`source:source_id`): it keeps a spinner while the
+  // parent's select runs; the rest stay readable but can't be tapped.
+  const [picked, setPicked] = useState<string | null>(null);
+  const pickedKey = busy ? picked : null;
 
   const run = async (q: string) => {
     const trimmed = q.trim();
@@ -123,7 +127,11 @@ export default function ManualSearchSheet({
       key={`${r.source}:${r.source_id}:${i}`}
       type="button"
       disabled={busy}
-      onClick={() => onSelect(r)}
+      aria-busy={pickedKey === `${r.source}:${r.source_id}` || undefined}
+      onClick={() => {
+        setPicked(`${r.source}:${r.source_id}`);
+        onSelect(r);
+      }}
     >
       <span className={`result-name${r.food_id ? " food-name" : ""}`}>
         {r.label}
@@ -132,6 +140,7 @@ export default function ManualSearchSheet({
         {r.brand ? `${r.brand} · ` : ""}
         {r.food_id ? "my foods" : (r.data_type ?? r.source)}
       </span>
+      {pickedKey === `${r.source}:${r.source_id}` ? <span className="spinner" /> : null}
     </button>
   );
 

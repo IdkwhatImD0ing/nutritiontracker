@@ -31,6 +31,8 @@ type Props = {
   yMax?: number;
   onTap?: (key: string) => void;
   format?: (v: number) => string;
+  /** centred on the plot when no bar is above zero (as ChartLines' own) */
+  emptyText?: string;
 };
 
 const W = 360;
@@ -63,6 +65,7 @@ export default function ChartBars({
   yMax: yMaxProp,
   onTap,
   format = (v) => fmt0.format(v),
+  emptyText,
 }: Props) {
   const H = height;
   const plotW = W - PAD.l - PAD.r;
@@ -188,6 +191,16 @@ export default function ChartBars({
               {targetLabel} {format(target)}
             </text>
           </g>
+        ) : null}
+        {emptyText && !values.some((v) => v > 0) ? (
+          <text
+            className="chart-empty"
+            x={PAD.l + plotW / 2}
+            y={PAD.t + plotH / 2}
+            textAnchor="middle"
+          >
+            {emptyText}
+          </text>
         ) : null}
       </svg>
     </figure>

@@ -44,7 +44,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [adding, setAdding] = useState(false);
+  // the hit being added (`source:source_id`), marked with a spinner
+  const [adding, setAdding] = useState<string | null>(null);
   const [servingsByFood, setServingsByFood] = useState<
     Record<string, StagedServing[]>
   >({});
@@ -101,7 +102,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
    *  and stepper on the row take it from there (§8.5). FDC hits are cached
    *  first so the macro can reference a foods row. */
   const addHit = async (hit: FoodSearchResult) => {
-    setAdding(true);
+    setAdding(`${hit.source}:${hit.source_id}`);
     setError(null);
     try {
       const food = await getFood(await cacheFood(hit));
@@ -127,7 +128,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
     } catch {
       setError("Couldn't add that food.");
     } finally {
-      setAdding(false);
+      setAdding(null);
     }
   };
 
@@ -278,7 +279,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               />
               <button
                 type="submit"
-                disabled={searching || adding || !query.trim()}
+                disabled={searching || adding != null || !query.trim()}
                 aria-label="Search"
               >
                 {searching ? <span className="spinner" /> : "→"}
@@ -290,7 +291,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                   <button
                     key={`${r.source}:${r.source_id}:${i}`}
                     type="button"
-                    disabled={adding}
+                    disabled={adding != null}
+                    aria-busy={adding === `${r.source}:${r.source_id}` || undefined}
                     onClick={() => addHit(r)}
                   >
                     <span className="result-name">{r.label}</span>
@@ -298,6 +300,9 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                       {r.brand ? `${r.brand} · ` : ""}
                       {r.food_id ? "my foods" : (r.data_type ?? r.source)}
                     </span>
+                    {adding === `${r.source}:${r.source_id}` ? (
+                      <span className="spinner" />
+                    ) : null}
                   </button>
                 ))}
                 {results.length === 0 && !searching ? (
