@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getSettings,
   putSettings,
@@ -16,6 +16,8 @@ import WizardGoal from "./WizardGoal";
 import AccountCard from "./AccountCard";
 import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
+import { useAutoGrow } from "./useAutoGrow";
+import { useFlash } from "./useFlash";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -109,16 +111,26 @@ function describeBody(b: Body): string | null {
 
 /** §7.4 Settings: targets, meal windows, timezone, profile_notes (the
  *  agent-visible free text, §6.1), the experiment link, the on-device-state
- *  note. One Save writes everything (PUT). The Cronometer baseline left this
- *  page on 2026-09-06 (owner feedback); the setting itself stays, read by the
- *  adherence chart, and PUT never touches a key it is not sent. */
+ *  note. One Save writes everything (PUT); it and Discard show in a bar
+ *  above the tab bar only while the form differs from what was last read or
+ *  saved. The Cronometer baseline left this page on 2026-09-06 (owner
+ *  feedback); the setting itself stays, read by the adherence chart, and PUT
+ *  never touches a key it is not sent. */
 export default function Settings() {
   const [form, setForm] = useState<SettingsT | null>(null);
+  // the settings as last read or written: what Discard puts back, and what
+  // the form is compared with to know whether anything is unsaved
+  const [saved, setSaved] = useState<SettingsT | null>(null);
   const [targets, setTargets] = useState<TargetText>(targetText({}));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, flashStatus] = useFlash(3000);
   const [wizard, setWizard] = useState(false);
+  // The notes box grows with the note instead of scrolling inside the page.
+  // It remounts when the wizard closes: "" while the wizard is up makes the
+  // value change on the way back, so the new box is measured too.
+  const notesRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(notesRef, wizard ? "" : (form?.profile_notes ?? ""));
   // about 400 labels, each from its own formatter: built once, not per render
   const zones = useMemo(() => {
     const groups = zoneGroups();
@@ -127,7 +139,19 @@ export default function Settings() {
 
   const load = (s: SettingsT) => {
     setForm(s);
+    setSaved(s);
     setTargets(targetText(s.targets));
+  };
+
+  /** After any edit a "Saved." is stale, and so is a refused save's reason. */
+  const edited = () => {
+    setError(null);
+    flashStatus(null);
+  };
+
+  const edit = (change: (f: SettingsT) => SettingsT) => {
+    setForm((f) => (f ? change(f) : f));
+    edited();
   };
 
   // `attempt` re-runs the read: the failure notice carries a Retry rather
@@ -153,17 +177,28 @@ export default function Settings() {
     field: "start" | "end",
     value: string,
   ) =>
-    setForm((f) =>
-      f
-        ? {
-            ...f,
-            meal_windows: {
-              ...f.meal_windows,
-              [meal]: { ...f.meal_windows[meal], [field]: value },
-            } as MealWindows,
-          }
-        : f,
-    );
+    edit((f) => ({
+      ...f,
+      meal_windows: {
+        ...f.meal_windows,
+        [meal]: { ...f.meal_windows[meal], [field]: value },
+      } as MealWindows,
+    }));
+
+  // Only what this page's Save writes counts: the Oura card, API keys and
+  // the wizard save on their own.
+  const dirty =
+    form != null &&
+    saved != null &&
+    (JSON.stringify(targets) !== JSON.stringify(targetText(saved.targets)) ||
+      JSON.stringify(form.meal_windows) !== JSON.stringify(saved.meal_windows) ||
+      form.timezone !== saved.timezone ||
+      form.profile_notes !== saved.profile_notes);
+
+  const discard = () => {
+    if (saved) load(saved);
+    setError(null);
+  };
 
   const save = async () => {
     if (!form) return;
@@ -181,7 +216,7 @@ export default function Settings() {
     }
     setBusy(true);
     setError(null);
-    setStatus(null);
+    flashStatus(null);
     try {
       load(
         await putSettings({
@@ -191,7 +226,7 @@ export default function Settings() {
           profile_notes: form.profile_notes,
         }),
       );
-      setStatus("Saved.");
+      flashStatus("Saved.");
     } catch {
       setError("Couldn't save — try again.");
     } finally {
@@ -204,9 +239,13 @@ export default function Settings() {
       <WizardGoal
         initial={form.body}
         onDone={(s) => {
-          load(s);
+          // The wizard wrote targets and body only: take just those, so
+          // unsaved meal-window, time zone and notes edits outlive it.
+          setForm((f) => (f ? { ...f, targets: s.targets, body: s.body } : s));
+          setSaved((v) => (v ? { ...v, targets: s.targets, body: s.body } : s));
+          setTargets(targetText(s.targets));
           setWizard(false);
-          setStatus("Targets saved.");
+          flashStatus("Targets saved.");
         }}
         onSkip={() => setWizard(false)}
       />
@@ -234,8 +273,6 @@ export default function Settings() {
             Retry
           </button>
         </div>
-      ) : error ? (
-        <p className="sheet-error">{error}</p>
       ) : null}
 
       <AccountCard />
@@ -256,9 +293,10 @@ export default function Settings() {
                       <input
                         inputMode="decimal"
                         value={targets[f.key]}
-                        onChange={(e) =>
-                          setTargets((t) => ({ ...t, [f.key]: e.target.value }))
-                        }
+                        onChange={(e) => {
+                          setTargets((t) => ({ ...t, [f.key]: e.target.value }));
+                          edited();
+                        }}
                         placeholder="—"
                         aria-label={`${f.label} target (${f.unit})`}
                         className="num"
@@ -308,14 +346,10 @@ export default function Settings() {
                 <select
                   value={form.meal_windows.default}
                   onChange={(e) =>
-                    setForm((f) =>
-                      f
-                        ? {
-                            ...f,
-                            meal_windows: { ...f.meal_windows, default: e.target.value },
-                          }
-                        : f,
-                    )
+                    edit((f) => ({
+                      ...f,
+                      meal_windows: { ...f.meal_windows, default: e.target.value },
+                    }))
                   }
                   aria-label="Meal outside every window"
                 >
@@ -342,9 +376,7 @@ export default function Settings() {
             <div className="m3-field">
               <select
                 value={form.timezone}
-                onChange={(e) =>
-                  setForm((f) => (f ? { ...f, timezone: e.target.value } : f))
-                }
+                onChange={(e) => edit((f) => ({ ...f, timezone: e.target.value }))}
                 aria-label="Time zone"
               >
                 {zones.ids.has(form.timezone) ? null : (
@@ -365,9 +397,7 @@ export default function Settings() {
               <button
                 type="button"
                 className="m3-ghost-btn"
-                onClick={() =>
-                  setForm((f) => (f ? { ...f, timezone: deviceTz } : f))
-                }
+                onClick={() => edit((f) => ({ ...f, timezone: deviceTz }))}
               >
                 Use this phone&rsquo;s time zone
                 {deviceZone ? ` (${deviceZone})` : ""}
@@ -380,9 +410,10 @@ export default function Settings() {
             <label className="m3-field">
               What the assistant should always know
               <textarea
+                ref={notesRef}
                 value={form.profile_notes}
                 onChange={(e) =>
-                  setForm((f) => (f ? { ...f, profile_notes: e.target.value } : f))
+                  edit((f) => ({ ...f, profile_notes: e.target.value }))
                 }
                 placeholder={
                   "lactose intolerant; 'fairlife' always means Core Power Elite 42g; I train ~6pm; weekday lunch is the office cafeteria, its menu is at example.com"
@@ -397,15 +428,40 @@ export default function Settings() {
             </p>
           </section>
 
-          <button
-            type="button"
-            className="commit-btn"
-            disabled={busy}
-            onClick={save}
-          >
-            {busy ? "Saving…" : "Save settings"}
-          </button>
-          {status ? <p className="m3-status">{status}</p> : null}
+          {/* Fixed above the tab bar, so it is in reach from whichever
+              section was edited; a refused save says why here, beside it. */}
+          {dirty ? (
+            <div className="m3-savebar">
+              {error ? (
+                <p className="m3-savebar-note error" role="alert">
+                  {error}
+                </p>
+              ) : (
+                <p className="m3-savebar-note">Unsaved changes</p>
+              )}
+              <button
+                type="button"
+                className="m3-savebar-discard"
+                disabled={busy}
+                onClick={discard}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                className="m3-savebar-save"
+                disabled={busy}
+                onClick={save}
+              >
+                {busy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          ) : null}
+          {status ? (
+            <div className="toast" role="status">
+              <span>{status}</span>
+            </div>
+          ) : null}
 
           <ApiKeysCard />
 

@@ -254,6 +254,7 @@ a.m3-link-btn,
   .diary-stepper button,
   .row-undo,
   .auth-alt a,
+  .auth-forgot,
   .auth-card button.auth-linkish,
   .web-cite a,
   .weight-log {
@@ -283,6 +284,7 @@ a.m3-link-btn,
   .diary-stepper button::before,
   .row-undo::before,
   .auth-alt a::before,
+  .auth-forgot::before,
   .auth-card button.auth-linkish::before,
   .weight-log::before,
   .web-cite a::before /* clipped to the line's padding (.web-cite) */,
@@ -2476,6 +2478,24 @@ a {
 
 .auth-card input:focus {
   border-color: var(--accent-line);
+}
+
+/* the emailed code: six digits, read and checked at a glance */
+.auth-card input.auth-otp {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+
+/* under the sign-in password; on touch the hit area is 44px (above), in
+   the card's gaps, clear of the field and the button */
+.auth-forgot {
+  align-self: flex-end;
+  color: var(--mint);
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-decoration: none;
 }
 
 .auth-card button[type="submit"] {

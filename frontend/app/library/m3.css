@@ -393,6 +393,79 @@ body:has(.tabbar) .shell {
   text-align: center;
 }
 
+/* Settings' one Save (targets, meal windows, time zone, notes), shown only
+   while one of them differs from what was last read or saved. It floats
+   where the toast does — above the tab bar and its raised + — so it is in
+   reach from any section; the "Saved." toast takes its place after. */
+.m3-savebar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100px + env(safe-area-inset-bottom));
+  z-index: 36; /* over the tab bar, under any sheet */
+  max-width: 448px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 6px 16px;
+  background: var(--toast-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  box-shadow: var(--shadow-float);
+  animation: rise 240ms var(--ease);
+}
+
+.m3-savebar-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.m3-savebar-note.error {
+  color: var(--red);
+}
+
+.m3-savebar button {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.m3-savebar .m3-savebar-discard {
+  background: none;
+  color: var(--muted);
+}
+
+.m3-savebar .m3-savebar-save {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.m3-savebar button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* narrow phone: "Unsaved changes" keeps one line */
+@media (max-width: 359px) {
+  .m3-savebar button {
+    padding: 0 12px;
+  }
+}
+
+/* the page's end scrolls clear of the bar */
+body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
+  padding-bottom: calc(172px + env(safe-area-inset-bottom));
+}
+
 .m3-row {
   display: flex;
   justify-content: space-between;
@@ -461,18 +534,18 @@ body:has(.tabbar) .shell {
   font-size: 1.05rem;
 }
 
+/* Every textarea here grows with its text (useAutoGrow) rather than
+   scrolling inside the page; the profile notes start at 120px. */
 .m3-field textarea {
   min-height: 120px;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
   line-height: 1.45;
 }
 
-/* a saved meal's trigger phrases: two lines that grow with the list
-   (useAutoGrow), not the notes field's 120px box */
+/* a saved meal's trigger phrases: two lines, not the notes field's 120px */
 .m3-field textarea.m3-phrases {
   min-height: 0;
-  resize: none;
-  overflow: hidden;
 }
 
 .m3-field select option,
@@ -1140,6 +1213,16 @@ body:has(.tabbar) .shell {
     left: calc(50% + var(--rail-w) / 2);
   }
 
+  /* Settings' save bar: where the toast is, beside the rail */
+  body:has(.tabbar) .m3-savebar {
+    left: calc(var(--rail-w) + 16px);
+    bottom: 32px;
+  }
+
+  body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
+    padding-bottom: 112px;
+  }
+
   /* the + sheet: four lanes as a 2 × 2 of tiles */
   .subsheet.add-sheet {
     display: grid;
@@ -1201,7 +1284,7 @@ body:has(.tabbar) .shell {
   }
 
   /* Settings: cards in pairs (equal height per row), the free-text notes
-     across both columns, Save and its status last */
+     across both columns (Save floats in its bar, .m3-savebar) */
   .shell.settings {
     max-width: 1200px;
     display: grid;
@@ -1212,29 +1295,14 @@ body:has(.tabbar) .shell {
   }
 
   .shell.settings > .brand,
-  .shell.settings > .sheet-error,
   .shell.settings > .notice,
   .shell.settings > .m3-empty,
-  .shell.settings > .m3-wide,
-  .shell.settings > .commit-btn,
-  .shell.settings > .m3-status {
+  .shell.settings > .m3-wide {
     grid-column: 1 / -1;
   }
 
   .shell.settings > .m3-section > .m3-card {
     flex: 1;
-  }
-
-  .shell.settings > .commit-btn {
-    order: 2;
-    width: auto;
-    justify-self: start;
-    padding: 14px 36px;
-  }
-
-  .shell.settings > .m3-status {
-    order: 3;
-    text-align: left;
   }
 }
 
