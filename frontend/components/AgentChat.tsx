@@ -5,6 +5,7 @@ import type { LogCreateResponse } from "@/lib/api";
 import { ArrowUp, Camera, Check, ChevronDown, Close, Mic } from "./icons";
 import PhotoCapture, { type PhotoShot } from "./PhotoCapture";
 import { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
 import useVoiceCapture, {
   type VoiceClip,
   type VoiceFailure,
@@ -90,8 +91,9 @@ type Props = {
    *  staged list stays on screen while the conversation continues under it
    *  (Bill, 2026-09-09: "I just wanna chat with the stage window open"). */
   docked?: boolean;
-  /** backdrop / × / Escape. A recording in progress is dropped — unmount
-   *  stops the tracks (useVoiceCapture's cleanup). */
+  /** backdrop / × / Escape / Back. A recording in progress is dropped —
+   *  unmount stops the tracks (useVoiceCapture's cleanup). Docked, the split
+   *  owns all of these (SplitSheet's onDismiss). */
   onClose: () => void;
 };
 
@@ -469,6 +471,7 @@ export default function AgentChat({
   const openedLaneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
   const { supported, recording, elapsedMs, start, stop, cancel } =
     useVoiceCapture();
   // The newest text or photo send, for a failed one's Retry (BACKLOG 176):
@@ -544,25 +547,18 @@ export default function AgentChat({
     if (laneOnly) onClose();
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // the picker is stacked above the chat — Escape is its own first
-      if (pickerOpen) {
-        dismissPicker();
-        return;
-      }
-      // then the attachment: closing would destroy a picture that may not be
-      // re-takeable, and the sheet is one more Escape away
-      if (attached) {
-        setAttached(null);
-        return;
-      }
-      onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, pickerOpen, attached, messages]);
+  // Escape and Back (sheetBack). The picker is a sub-sheet stacked above the
+  // chat, so its own header answers first. Then the attachment: closing would
+  // destroy a picture that may not be re-takeable, and the sheet is one more
+  // press away. Then the sheet — docked, that is the split's to close.
+  useSheetBack(paneRef, () => {
+    if (attached) {
+      setAttached(null);
+      return;
+    }
+    if (docked) return false;
+    onClose();
+  });
 
   // The parent worded the failure (a demo 429: "Demo accounts can log once a
   // day — resets at …") — drop this sheet's own "type it instead" notice so
@@ -678,6 +674,7 @@ export default function AgentChat({
         className={docked ? "split-pane chat-pane" : "sheet agent-sheet"}
         role="dialog"
         aria-label="Agent"
+        ref={paneRef}
       >
         {docked ? null : (
           <div className="sheet-head">

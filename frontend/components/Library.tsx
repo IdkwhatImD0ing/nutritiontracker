@@ -24,6 +24,7 @@ import { useScrollMemory } from "./useScrollMemory";
 import Skeleton from "./Skeleton";
 import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
 import { OFFLINE_NOTE, useOnline } from "./useOnline";
+import SheetPresence from "./useSheetPresence";
 
 type FoodGroup = {
   food_id: string;
@@ -431,40 +432,44 @@ export default function Library() {
         ))}
       </section>
 
-      {aliasSheet ? (
-        <LibraryAliasSheet
-          alias={aliasSheet}
-          onSaved={(u) => {
-            setAliases((prev) => (prev ?? []).map((a) => (a.id === u.id ? u : a)));
-            setAliasSheet(null);
-          }}
-          onDeleted={(id) => {
-            setAliases((prev) => (prev ?? []).filter((a) => a.id !== id));
-            setAliasSheet(null);
-          }}
-          onClose={() => setAliasSheet(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {aliasSheet ? (
+          <LibraryAliasSheet
+            alias={aliasSheet}
+            onSaved={(u) => {
+              setAliases((prev) => (prev ?? []).map((a) => (a.id === u.id ? u : a)));
+              setAliasSheet(null);
+            }}
+            onDeleted={(id) => {
+              setAliases((prev) => (prev ?? []).filter((a) => a.id !== id));
+              setAliasSheet(null);
+            }}
+            onClose={() => setAliasSheet(null)}
+          />
+        ) : null}
+      </SheetPresence>
 
-      {mealSheet || newMeal ? (
-        <LibraryMealSheet
-          meal={mealSheet}
-          onSaved={(u) => {
-            setMeals((prev) => {
-              const list = prev ?? [];
-              return list.some((m) => m.id === u.id)
-                ? list.map((m) => (m.id === u.id ? u : m))
-                : [u, ...list];
-            });
-            setMealSheet(null);
-            setNewMeal(false);
-          }}
-          onClose={() => {
-            setMealSheet(null);
-            setNewMeal(false);
-          }}
-        />
-      ) : null}
+      <SheetPresence>
+        {mealSheet || newMeal ? (
+          <LibraryMealSheet
+            meal={mealSheet}
+            onSaved={(u) => {
+              setMeals((prev) => {
+                const list = prev ?? [];
+                return list.some((m) => m.id === u.id)
+                  ? list.map((m) => (m.id === u.id ? u : m))
+                  : [u, ...list];
+              });
+              setMealSheet(null);
+              setNewMeal(false);
+            }}
+            onClose={() => {
+              setMealSheet(null);
+              setNewMeal(false);
+            }}
+          />
+        ) : null}
+      </SheetPresence>
     </main>
   );
 }

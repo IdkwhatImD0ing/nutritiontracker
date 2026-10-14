@@ -169,22 +169,24 @@ export default function PortionSheet({
           <p className="subsheet-hint">No serving data for this item yet.</p>
         ) : null}
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        <div className="subsheet-foot">
+          {error ? <p className="sheet-error">{error}</p> : null}
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={busy || !valid || !chosen}
-          onClick={() => {
-            if (valid && chosen) onApply(chosen, Math.round(qty * 100) / 100);
-          }}
-        >
-          <span className="num">
-            {busy
-              ? "Saving…"
-              : `Done${kcal != null ? ` · ${Math.round(kcal)} kcal` : ""}`}
-          </span>
-        </button>
+          <button
+            type="button"
+            className="commit-btn"
+            disabled={busy || !valid || !chosen}
+            onClick={() => {
+              if (valid && chosen) onApply(chosen, Math.round(qty * 100) / 100);
+            }}
+          >
+            <span className="num">
+              {busy
+                ? "Saving…"
+                : `Done${kcal != null ? ` · ${Math.round(kcal)} kcal` : ""}`}
+            </span>
+          </button>
+        </div>
       </div>
     </>
   );

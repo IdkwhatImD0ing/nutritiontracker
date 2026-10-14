@@ -16,6 +16,7 @@ import {
 import LibraryAliasSheet from "./LibraryAliasSheet";
 import { useMe } from "./MeApi";
 import Skeleton from "./Skeleton";
+import SheetPresence from "./useSheetPresence";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
@@ -417,26 +418,28 @@ export default function FoodDetail({ id }: { id: string }) {
         ) : null}
       </section>
 
-      {aliasSheet ? (
-        <LibraryAliasSheet
-          alias={aliasSheet}
-          onSaved={(u) => {
-            setFood((f) =>
-              f
-                ? { ...f, aliases: (f.aliases ?? []).map((a) => (a.id === u.id ? u : a)) }
-                : f,
-            );
-            setAliasSheet(null);
-          }}
-          onDeleted={(aid) => {
-            setFood((f) =>
-              f ? { ...f, aliases: (f.aliases ?? []).filter((a) => a.id !== aid) } : f,
-            );
-            setAliasSheet(null);
-          }}
-          onClose={() => setAliasSheet(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {aliasSheet ? (
+          <LibraryAliasSheet
+            alias={aliasSheet}
+            onSaved={(u) => {
+              setFood((f) =>
+                f
+                  ? { ...f, aliases: (f.aliases ?? []).map((a) => (a.id === u.id ? u : a)) }
+                  : f,
+              );
+              setAliasSheet(null);
+            }}
+            onDeleted={(aid) => {
+              setFood((f) =>
+                f ? { ...f, aliases: (f.aliases ?? []).filter((a) => a.id !== aid) } : f,
+              );
+              setAliasSheet(null);
+            }}
+            onClose={() => setAliasSheet(null)}
+          />
+        ) : null}
+      </SheetPresence>
     </main>
   );
 }

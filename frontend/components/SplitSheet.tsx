@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
 import { useDragDismiss } from "./useDragDismiss";
 
 /** The Agent lane's one sheet (§7.1, Bill 2026-09-09: "I just wanna chat with
@@ -53,9 +54,10 @@ type Props = {
   stage: ReactNode | null;
   /** the conversation, rendered `docked` — always present */
   chat: ReactNode;
-  /** the lane's ×, its backdrop and a pull on its header. The staged list
-   *  has its own × (it puts the rows away and leaves the conversation up);
-   *  this one closes the lane. */
+  /** the lane's ×, its backdrop, a pull on its header, Escape and Back. The
+   *  staged list has its own discard (a trash glyph: it puts the rows away
+   *  and leaves the conversation up); this one closes the lane, and with
+   *  rows staged it closes the tray first (Today's closeLane). */
   onDismiss: () => void;
   /** each change grows the staged list one stop (peek → half → full): a
    *  chat card's Review on the log that is already here still opens it */
@@ -100,10 +102,13 @@ export default function SplitSheet({
     });
   }, [expandSignal]);
 
-  // A pull on the header closes the lane like its ✕ — and, like that ✕, not
-  // while rows are staged: that would be a discard, which is the tray's ✕'s.
-  // The divider's drag is its own; it sits outside this header.
-  const drag = useDragDismiss(onDismiss, !staged);
+  // A pull on the header closes the lane like its ✕, staged rows or not
+  // (Bill, 2026-10-13). The divider's drag is its own; it sits outside this
+  // header.
+  const drag = useDragDismiss(onDismiss);
+  // Escape and Back too, once the chat has had its turn (an attached photo
+  // goes first) and with no sub-sheet stacked above
+  useSheetBack(shellRef, onDismiss);
 
   const end = () => {
     if (!from.current) return;
@@ -131,11 +136,11 @@ export default function SplitSheet({
           <div className="grabber" />
           <div className="sheet-head-row">
             <span className="sheet-title">Agent</span>
-            {/* While rows are staged the staged list's own × is the one that
-                acts — it puts the rows away (§5 discard, undoable) and this
-                one comes back. Two ×es, one of them inert, would be worse
-                than one. */}
-            {staged ? null : <SheetClose onClick={onDismiss} />}
+            {/* §7.1 (Bill, 2026-10-13): always here, and it puts the whole
+                lane away in one tap — with rows staged, through the tray's
+                own close first (the §5 discard with its Undo). The tray's
+                discard is a trash glyph, so the two never look alike. */}
+            <SheetClose onClick={onDismiss} />
           </div>
         </div>
 

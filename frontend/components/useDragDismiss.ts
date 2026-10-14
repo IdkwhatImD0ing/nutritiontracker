@@ -38,7 +38,7 @@ export function useDragDismiss(onClose: () => void, canDismiss = true) {
   const drag = useRef<Drag | null>(null);
   const leaving = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Read when the slide-out ends, not at release: a guard inside onClose
-  // (the Agent lane refuses while rows are staged) must see that moment's state.
+  // (a form with unsaved edits asks first) must see that moment's state.
   const close = useRef(onClose);
   close.current = onClose;
 
@@ -70,10 +70,17 @@ export function useDragDismiss(onClose: () => void, canDismiss = true) {
       close.current();
       // A close that declined leaves the sheet mounted: bring it back on
       // screen. Checked a beat later, once React has had time to unmount a
-      // sheet that did close — sooner, it would flash back for a frame.
-      setTimeout(() => {
-        if (sheet.isConnected) sheet.style.translate = "";
-      }, SETTLE_MS);
+      // sheet that did close — sooner, it would flash back for a frame. One
+      // that did close but is still playing its exit (useSheetPresence) stays
+      // where the pull left it, off screen, and is looked at again: gone by
+      // then, or reopened mid-exit (an `open`-prop sheet keeps its element),
+      // in which case it comes back up.
+      const settle = () => {
+        if (!sheet.isConnected) return;
+        if (sheet.closest("[data-closing]")) setTimeout(settle, SETTLE_MS);
+        else sheet.style.translate = "";
+      };
+      setTimeout(settle, SETTLE_MS);
     }, SETTLE_MS);
   };
 

@@ -198,65 +198,67 @@ export default function LibraryAliasSheet({
           )}
         </div>
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        <div className="subsheet-foot">
+          {error ? <p className="sheet-error">{error}</p> : null}
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={busy !== null || (hasDefault && !qtyValid)}
-          aria-busy={busy === "save"}
-          onClick={save}
-        >
-          {busy === "save" ? (
-            <>
-              <span className="spinner on-accent" />
-              Saving…
-            </>
-          ) : (
-            "Save"
-          )}
-        </button>
+          <button
+            type="button"
+            className="commit-btn"
+            disabled={busy !== null || (hasDefault && !qtyValid)}
+            aria-busy={busy === "save"}
+            onClick={save}
+          >
+            {busy === "save" ? (
+              <>
+                <span className="spinner on-accent" />
+                Saving…
+              </>
+            ) : (
+              "Save"
+            )}
+          </button>
 
-        {/* forgetting a phrase can't be undone: ApiKeysCard's inline
-            confirm, Cancel first and focused, then the red yes */}
-        <div className={`m3-actions${confirm ? " confirm" : ""}`}>
-          {confirm ? (
-            <>
-              <span className="m3-note">
-                Forget this phrase? Tally will stop matching it to this food.
-              </span>
+          {/* forgetting a phrase can't be undone: ApiKeysCard's inline
+              confirm, Cancel first and focused, then the red yes */}
+          <div className={`m3-actions${confirm ? " confirm" : ""}`}>
+            {confirm ? (
+              <>
+                <span className="m3-note">
+                  Forget this phrase? Tally will stop matching it to this food.
+                </span>
+                <button
+                  type="button"
+                  className="m3-link-btn"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    setConfirm(false);
+                    requestAnimationFrame(() => deleteBtn.current?.focus());
+                  }}
+                  autoFocus
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="m3-link-btn danger"
+                  disabled={busy !== null}
+                  onClick={remove}
+                >
+                  Yes, forget
+                </button>
+              </>
+            ) : (
               <button
-                type="button"
-                className="m3-link-btn"
-                disabled={busy !== null}
-                onClick={() => {
-                  setConfirm(false);
-                  requestAnimationFrame(() => deleteBtn.current?.focus());
-                }}
-                autoFocus
-              >
-                Cancel
-              </button>
-              <button
+                ref={deleteBtn}
                 type="button"
                 className="m3-link-btn danger"
                 disabled={busy !== null}
-                onClick={remove}
+                onClick={() => setConfirm(true)}
               >
-                Yes, forget
+                Forget phrase
               </button>
-            </>
-          ) : (
-            <button
-              ref={deleteBtn}
-              type="button"
-              className="m3-link-btn danger"
-              disabled={busy !== null}
-              onClick={() => setConfirm(true)}
-            >
-              Forget phrase
-            </button>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </>

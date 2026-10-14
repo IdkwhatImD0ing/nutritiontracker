@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { loadDetector } from "./barcodeDetector";
 import { ArrowRight } from "./icons";
-import SheetHeader from "./SheetHeader";
+import { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
 
 type Props = {
   /** true while the parent's lookup / from-food round trip is in flight —
@@ -51,7 +52,10 @@ const CAMERA_TEXT: Record<Camera, string> = {
  *  the + sheet opens — `loadDetector`). Camera via getUserMedia, rear-facing,
  *  720p requested, tracks stopped on close;
  *  a torch toggle where the track advertises one; a typed-number fallback
- *  when the camera is denied or the code won't read. */
+ *  when the camera is denied or the code won't read. Full screen, like the
+ *  Search lane (BACKLOG 142): the camera is the whole sheet, with the head and
+ *  a panel of the rest laid over it, so a miss grows the panel upward rather
+ *  than moving the viewfinder. */
 export default function BarcodeScanner({
   busy,
   notice,
@@ -63,6 +67,7 @@ export default function BarcodeScanner({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const [camera, setCamera] = useState<Camera>("starting");
   const [attempt, setAttempt] = useState(0); // bump → re-request the camera
   const [torch, setTorch] = useState<boolean | null>(null); // null = none
@@ -73,13 +78,7 @@ export default function BarcodeScanner({
   const onCodeRef = useRef(onCode);
   onCodeRef.current = onCode;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useSheetBack(sheetRef, onClose);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -144,7 +143,9 @@ export default function BarcodeScanner({
       // (no attempts run while busy), so a "not found" that took a second
       // cannot re-submit the code still in frame on the first dropped frame.
       const tick = async () => {
-        if (cancelled) return;
+        // closed but still sliding out (useSheetPresence): a code that comes
+        // into view now must not log anything
+        if (cancelled || video.closest("[data-closing]")) return;
         // readyState ≥ HAVE_CURRENT_DATA: detect() throws on a frameless video
         if (!busyRef.current && video.readyState >= 2) {
           let code: string | undefined;
@@ -157,7 +158,9 @@ export default function BarcodeScanner({
             missingSince = null;
             if (code !== last) {
               last = code;
-              if (!cancelled) onCodeRef.current(code);
+              if (!cancelled && !video.closest("[data-closing]")) {
+                onCodeRef.current(code);
+              }
             }
           } else if (last) {
             missingSince ??= performance.now();
@@ -198,9 +201,19 @@ export default function BarcodeScanner({
 
   return (
     <>
-      <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Scan barcode">
-        <SheetHeader title="Scan barcode" onClose={onClose} />
+      <div className="sheet-backdrop" onClick={onClose} />
+      <div
+        className="sheet scan-sheet"
+        role="dialog"
+        aria-label="Scan barcode"
+        ref={sheetRef}
+      >
+        <div className="sheet-head">
+          <div className="sheet-head-row">
+            <span className="sheet-title">Scan barcode</span>
+            <SheetClose onClick={onClose} />
+          </div>
+        </div>
 
         <div className={`scan-view${busy ? " busy" : ""}`} hidden={hideView}>
           <video ref={videoRef} playsInline muted autoPlay />
@@ -241,93 +254,95 @@ export default function BarcodeScanner({
           ) : null}
         </div>
 
-        {/* one "Looking it up…" on screen: the cover says it while the camera
-            shows, this line when there is no camera view */}
-        <p className="scan-status" aria-live="polite">
-          {busy && !hideView ? (
-            <>
-              {"\u00a0"}
-              <span className="sr-only">Looking it up…</span>
-            </>
-          ) : busy ? (
-            "Looking it up…"
-          ) : (
-            CAMERA_TEXT[camera]
-          )}
-        </p>
-        {hideView ? (
-          <div className="chips">
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setAttempt((n) => n + 1)}
-            >
-              Try the camera again
-            </button>
-          </div>
-        ) : null}
-
-        {miss ? (
-          <div className="scan-miss">
-            <p className="scan-miss-title">No match for this barcode</p>
-            <p className="subsheet-hint">
-              Not in USDA FoodData Central or Open Food Facts ·{" "}
-              <span className="num">{miss}</span>
-            </p>
-            {onSearchInstead ? (
+        <div className="scan-panel">
+          {/* one "Looking it up…" on screen: the cover says it while the
+              camera shows, this line when there is no camera view */}
+          <p className="scan-status" aria-live="polite">
+            {busy && !hideView ? (
+              <>
+                {"\u00a0"}
+                <span className="sr-only">Looking it up…</span>
+              </>
+            ) : busy ? (
+              "Looking it up…"
+            ) : (
+              CAMERA_TEXT[camera]
+            )}
+          </p>
+          {hideView ? (
+            <div className="chips">
               <button
                 type="button"
-                className="edit-manual-btn"
-                onClick={onSearchInstead}
+                className="chip"
+                onClick={() => setAttempt((n) => n + 1)}
               >
-                Search instead
+                Try the camera again
               </button>
-            ) : null}
-          </div>
-        ) : null}
+            </div>
+          ) : null}
 
-        {notice ? (
-          <>
-            <p className="sheet-error">{notice}</p>
-            {onSearchInstead ? (
-              <div className="chips">
+          {miss ? (
+            <div className="scan-miss">
+              <p className="scan-miss-title">No match for this barcode</p>
+              <p className="subsheet-hint">
+                Not in USDA FoodData Central or Open Food Facts ·{" "}
+                <span className="num">{miss}</span>
+              </p>
+              {onSearchInstead ? (
                 <button
                   type="button"
-                  className="chip search-instead"
+                  className="edit-manual-btn"
                   onClick={onSearchInstead}
                 >
                   Search instead
                 </button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
+              ) : null}
+            </div>
+          ) : null}
 
-        <form
-          className="capture"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (busy || digits.length < MIN_DIGITS) return;
-            onCode(digits);
-          }}
-        >
-          <input
-            ref={inputRef}
-            value={manual}
-            onChange={(e) => setManual(e.target.value)}
-            inputMode="numeric"
-            placeholder={hideView ? "Type the number" : "Or type the number"}
-            aria-label="Barcode number"
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            disabled={busy || digits.length < MIN_DIGITS}
-            aria-label="Look up"
+          {notice ? (
+            <>
+              <p className="sheet-error">{notice}</p>
+              {onSearchInstead ? (
+                <div className="chips">
+                  <button
+                    type="button"
+                    className="chip search-instead"
+                    onClick={onSearchInstead}
+                  >
+                    Search instead
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          <form
+            className="capture"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (busy || digits.length < MIN_DIGITS) return;
+              onCode(digits);
+            }}
           >
-            <ArrowRight strokeWidth={2.4} />
-          </button>
-        </form>
+            <input
+              ref={inputRef}
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              inputMode="numeric"
+              placeholder={hideView ? "Type the number" : "Or type the number"}
+              aria-label="Barcode number"
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              disabled={busy || digits.length < MIN_DIGITS}
+              aria-label="Look up"
+            >
+              <ArrowRight strokeWidth={2.4} />
+            </button>
+          </form>
+        </div>
       </div>
     </>
   );

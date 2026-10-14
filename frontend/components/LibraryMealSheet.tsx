@@ -21,7 +21,7 @@ import {
 import { FOOD_FIELD_PROPS } from "./fieldProps";
 import { ArrowRight, Close } from "./icons";
 import { qtyInput, rescaleQty, stepQty } from "./portion";
-import SheetHeader from "./SheetHeader";
+import SheetHeader, { DiscardConfirm } from "./SheetHeader";
 import { useAutoGrow } from "./useAutoGrow";
 
 type Props = {
@@ -81,6 +81,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const phrasesRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(phrasesRef, phrases);
+  // a close that would lose edits asks first, in place of Save
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   // The food search that adds to the item list — in an edit too (§8.4: "change
   // the item list in Library"). Servings are kept per food so the picked
@@ -251,13 +253,28 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
 
   const valid = name.trim().length > 0 && items.length > 0;
 
+  // Edits a backdrop tap, the ✕, a pull, Escape or Back would throw away:
+  // anything changed from what the sheet opened with (a new meal: anything
+  // typed or added). Those closes ask first, in the foot.
+  const itemKey = (list: SavedMealItem[]) =>
+    JSON.stringify(list.map(({ food_id, serving_id, qty }) => [food_id, serving_id, qty]));
+  const dirty = meal
+    ? name !== meal.name ||
+      phrases !== meal.trigger_phrases.join(", ") ||
+      itemKey(items) !== itemKey(meal.items)
+    : name.trim() !== "" || phrases.trim() !== "" || items.length > 0;
+  const requestClose = () => {
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  };
+
   return (
     <>
-      <div className="subsheet-backdrop" onClick={onClose} />
+      <div className="subsheet-backdrop" onClick={requestClose} />
       <div className="subsheet" role="dialog" aria-label="Edit saved meal">
         <SheetHeader
           title={!meal ? "New saved meal" : meal.is_active ? "Saved meal" : "Inactive meal"}
-          onClose={onClose}
+          onClose={requestClose}
         />
 
         <label className="m3-field">
@@ -421,51 +438,62 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           ) : null}
         </div>
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        <div className="subsheet-foot">
+          {error ? <p className="sheet-error">{error}</p> : null}
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={busy !== null || !valid}
-          aria-busy={busy === "save"}
-          onClick={save}
-        >
-          {busy === "save" ? (
-            <>
-              <span className="spinner on-accent" />
-              Saving…
-            </>
-          ) : meal ? (
-            "Save"
+          {confirmDiscard ? (
+            <DiscardConfirm
+              onKeep={() => setConfirmDiscard(false)}
+              onDiscard={onClose}
+            />
           ) : (
-            "Save meal"
-          )}
-        </button>
+            <>
+              <button
+                type="button"
+                className="commit-btn"
+                disabled={busy !== null || !valid}
+                aria-busy={busy === "save"}
+                onClick={save}
+              >
+                {busy === "save" ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Saving…
+                  </>
+                ) : meal ? (
+                  "Save"
+                ) : (
+                  "Save meal"
+                )}
+              </button>
 
-        {meal ? (
-          <div className="m3-actions">
-            {meal.is_active ? (
-              <button
-                type="button"
-                className="m3-link-btn danger"
-                disabled={busy !== null}
-                onClick={() => run({ is_active: false }, "toggle")}
-              >
-                Deactivate
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="m3-link-btn"
-                disabled={busy !== null}
-                onClick={() => run({ is_active: true }, "toggle")}
-              >
-                Reactivate
-              </button>
-            )}
-            <span className="m3-note">Past diary entries keep their numbers.</span>
-          </div>
-        ) : null}
+              {meal ? (
+                <div className="m3-actions">
+                  {meal.is_active ? (
+                    <button
+                      type="button"
+                      className="m3-link-btn danger"
+                      disabled={busy !== null}
+                      onClick={() => run({ is_active: false }, "toggle")}
+                    >
+                      Deactivate
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="m3-link-btn"
+                      disabled={busy !== null}
+                      onClick={() => run({ is_active: true }, "toggle")}
+                    >
+                      Reactivate
+                    </button>
+                  )}
+                  <span className="m3-note">Past diary entries keep their numbers.</span>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
     </>
   );

@@ -324,10 +324,11 @@ a.m3-link-btn,
     --hit-top: initial;
   }
 
-  /* a sub-sheet's last line (Forget phrase, Deactivate) sits 14px under
-     Save, over only the sheet's 18px bottom padding: grown down from -4px it
-     would add a few px of scroll to a sheet that fits */
-  .subsheet > .m3-actions .m3-link-btn {
+  /* a sub-sheet's last line (Forget phrase, Deactivate, the discard
+     confirm) sits 14px under Save, over only the foot's 18px bottom
+     padding: grown down from -4px it would add a few px of scroll to a
+     sheet that fits */
+  .subsheet-foot > .m3-actions .m3-link-btn {
     --hit-top: -13px;
   }
 }
@@ -1244,14 +1245,43 @@ a {
   animation: sheet-up 320ms var(--ease);
 }
 
+/* in from the screen's edge, opaque all the way: a fade would show the page
+   through a full-screen sheet (Search) while it rises */
 @keyframes sheet-up {
   from {
-    transform: translateY(40px);
-    opacity: 0;
+    transform: translateY(100%);
   }
+}
+
+/* A closed sheet stays mounted a beat (useSheetPresence.tsx) in a box-less
+   frame marked [data-closing]: it goes back down the way it came, and its
+   scrim fades with it — and so does any sub-sheet still open over it. A
+   pulled sheet already sits at translate 100%, so for it only the scrim
+   moves. */
+.sheet-frame {
+  display: contents;
+}
+
+[data-closing] .sheet,
+[data-closing] .subsheet {
+  animation: sheet-down 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+[data-closing] .sheet-backdrop,
+[data-closing] .subsheet-backdrop,
+[data-closing] .agent-backdrop {
+  animation: fade-out 220ms ease-in forwards;
+}
+
+@keyframes sheet-down {
   to {
-    transform: translateY(0);
-    opacity: 1;
+    transform: translateY(100%);
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
   }
 }
 
@@ -2089,6 +2119,42 @@ a.commit-btn {
   margin-top: -8px;
 }
 
+/* The head's mirror at the bottom: Save (Done, Create) and any danger line
+   under it, pinned while the body scrolls, so a long sheet opens with its
+   action in view. It reaches both side edges and carries the sheet's bottom
+   padding, safe area included, so it sits flush on the edge however a
+   browser places a sticky box in a scroller's padding; rows dissolve into
+   it through the fade above rather than end on a cut. */
+.subsheet-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 -18px;
+  padding: 10px 18px calc(18px + env(safe-area-inset-bottom));
+  background: var(--surface);
+}
+
+/* the sheet's 14px gap high, so at rest it lies over the gap and nothing
+   else */
+.subsheet-foot::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 14px;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
+}
+
+.subsheet:has(.subsheet-foot) {
+  padding-bottom: 0;
+}
+
 .subsheet-title {
   font-family: var(--font-display);
   font-weight: 800;
@@ -2449,14 +2515,17 @@ a.commit-btn {
 
 /* The + sheet's Search lane (owner ruling, 2026-09-06): the whole screen,
    not a 78dvh sub-sheet — a list you scroll with the keyboard up. Same
-   .sheet chrome as staging; the body keeps the sub-sheet's column rhythm. */
-.sheet.search-sheet {
+   .sheet chrome as staging; the body keeps the sub-sheet's column rhythm.
+   The Scan barcode lane is the whole screen too (below). */
+.sheet.search-sheet,
+.sheet.scan-sheet {
   height: var(--vvh, 100dvh);
   border: none;
   border-radius: 0;
 }
 
-.search-sheet .sheet-head {
+.search-sheet .sheet-head,
+.scan-sheet .sheet-head {
   padding-top: calc(14px + env(safe-area-inset-top));
 }
 
@@ -2468,13 +2537,27 @@ a.commit-btn {
   padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
-/* barcode scanner (the + sheet's Scan barcode lane) */
+/* barcode scanner (the + sheet's Scan barcode lane): the camera is the whole
+   sheet, as a native scanner's is, and the head and a panel of everything
+   else float over the picture */
+
+.sheet.scan-sheet {
+  background: #000;
+  overflow: hidden; /* the desktop modal's corners clip the picture */
+}
+
+.scan-sheet .sheet-head {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
 
 .scan-view {
-  position: relative;
-  aspect-ratio: 4 / 3;
+  position: absolute;
+  inset: 0;
   background: #000;
-  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -2485,9 +2568,15 @@ a.commit-btn {
   display: block;
 }
 
+/* a fixed-shape box in the middle of the screen: a share of a tall portrait
+   screen would be a tower no barcode fills */
 .scan-frame {
   position: absolute;
-  inset: 26% 12%;
+  top: 50%;
+  left: 50%;
+  width: min(78%, 340px);
+  aspect-ratio: 3 / 2;
+  translate: -50% -50%;
   border: 2px solid var(--accent);
   border-radius: 10px;
   opacity: 0.85;
@@ -2515,6 +2604,13 @@ a.commit-btn {
 .scan-torch.on {
   color: var(--amber);
   border-color: var(--amber);
+}
+
+/* over the full-screen camera: on the right, under the head */
+.scan-sheet .scan-torch {
+  top: calc(72px + env(safe-area-inset-top));
+  right: 14px;
+  bottom: auto;
 }
 
 /* covers the camera from the read until the lookup settles; a miss lifts it */
@@ -2567,6 +2663,24 @@ a.commit-btn {
   margin-top: 10px;
   justify-content: center;
   text-align: center;
+}
+
+/* Everything but the camera, along the bottom over the picture: a miss or a
+   notice grows it upward and the viewfinder stays where it was. The sheet
+   rides --kb and --vvh, so this sits on the keyboard while a number is
+   typed. */
+.scan-panel {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px calc(18px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  border-top: 1px solid var(--line-strong);
 }
 
 /* ---------- undo toast (BACKLOG 11) + pending badge (BACKLOG 12) ---------- */
@@ -2958,6 +3072,13 @@ a.commit-btn {
   }
 }
 
+@keyframes modal-out {
+  to {
+    transform: translate(-50%, -47%);
+    opacity: 0;
+  }
+}
+
 @media (min-width: 900px) {
   /* the sheet scroll lock hides a desktop scrollbar; keep its gutter so the
      page doesn't shift sideways each time a sheet opens */
@@ -3017,6 +3138,12 @@ a.commit-btn {
     animation: modal-in 220ms ease-out;
   }
 
+  /* a closing modal fades as it drops back the 3% it rose */
+  [data-closing] .sheet,
+  [data-closing] .subsheet {
+    animation: modal-out 220ms ease-in forwards;
+  }
+
   .sheet {
     width: min(600px, calc(100vw - 48px));
     height: min(86dvh, 860px);
@@ -3033,6 +3160,11 @@ a.commit-btn {
     padding: 22px 22px 6px;
   }
 
+  .subsheet-foot {
+    margin: 0 -22px;
+    padding: 10px 22px 22px;
+  }
+
   .grabber {
     display: none;
   }
@@ -3045,14 +3177,17 @@ a.commit-btn {
     padding-bottom: 14px;
   }
 
-  /* the Search lane is a centered modal here, like every other sheet */
-  .sheet.search-sheet {
+  /* the Search and Scan barcode lanes are centered modals here, like every
+     other sheet */
+  .sheet.search-sheet,
+  .sheet.scan-sheet {
     height: min(86dvh, 860px);
     border: 1px solid var(--line);
     border-radius: 20px;
   }
 
-  .search-sheet .sheet-head {
+  .search-sheet .sheet-head,
+  .scan-sheet .sheet-head {
     padding-top: 16px;
   }
 
@@ -3140,8 +3275,8 @@ a.commit-btn {
   overflow: hidden; /* the rounded top clips the panes' own edges */
 }
 
-/* the lane's one header: a grabber, a title, and — only while nothing is
-   staged — the ✕. Staged, the tray carries the ✕ that means anything, and
+/* the lane's one header: a grabber, a title and the ✕, which closes the lane
+   staged or not — staged, through the tray's own close first (§7.1). Staged,
    the title steps back to a slim label; with nothing staged it is a sheet
    title like any other. */
 .split-head {
@@ -3215,7 +3350,8 @@ a.commit-btn {
   gap: 8px;
 }
 
-/* the discard ✕ is the quiet one on this row — it undoes, and it is undoable */
+/* the discard is the quiet one on this row — it undoes, and it is undoable.
+   A trash glyph, never a second ✕ under the lane's. */
 .stage-lip .sheet-close {
   width: 30px;
   height: 30px;

@@ -40,12 +40,14 @@ import { photoErrorMessage } from "./PhotoApi";
 import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import { peek, put } from "./readCache";
+import { releaseForNavigation } from "./sheetBack";
 import SplitSheet from "./SplitSheet";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
 import { OFFLINE_NOTE, useOnline } from "./useOnline";
 import { useScrollMemory } from "./useScrollMemory";
+import SheetPresence from "./useSheetPresence";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
 import { TARGETS_EVENT } from "./WizardGate";
@@ -419,11 +421,28 @@ export default function Today() {
   };
   // Every way a lane closes. TabBar pushed Today over the origin, so the
   // entry behind this one is that page.
+  //
+  // §7.1 (Bill, 2026-10-13): the Agent lane's ✕, scrim, pull, Escape and
+  // Back put the whole lane away in one tap. With rows staged that goes
+  // through the tray's own close first — closeStaging with the tray's
+  // snapshot: the §5 discard with its Undo, or §3.4b's back-to-chat patch for
+  // a photo log — and an Undo after the lane is gone brings the rows back in
+  // the standalone sheet, since reopening Agent starts a new conversation.
+  // Only the docked tray: another lane's close leaves a standalone sheet be.
+  const closeTrayRef = useRef<(() => void) | null>(null);
   const closeLane = () => {
+    if (lane === "agent" && staging) closeTrayRef.current?.();
     setLane(null);
     const from = originRef.current;
     originRef.current = null;
-    if (from && !sentRef.current) router.back();
+    if (from && !sentRef.current) {
+      // The open lane holds a history entry over Today's (sheetBack), and a
+      // plain back() would pop only that, landing on Today again. Closed by
+      // its ✕ or scrim the entry is still current: take it from sheetBack and
+      // step back over both. Closed by system Back it is already gone.
+      if (releaseForNavigation()) window.history.go(-2);
+      else router.back();
+    }
   };
   // The + listener is bound once; the ref keeps it on the current closure.
   const pickRef = useRef(pickLane);
@@ -1207,6 +1226,7 @@ export default function Today() {
         noteCommitted(t.totals_day, landed);
       }}
       onClose={closeStaging}
+      closeRef={closeTrayRef}
     />
   ) : null;
 
@@ -1298,83 +1318,84 @@ export default function Today() {
           whether or not anything is staged: taking it in and out of the split
           as rows come and go would remount it, blanking the composer and
           re-running the mount effect that picks the mic or the photo picker. */}
-      {lane === "agent" ? (
-        <SplitSheet
-          stage={stageEl}
-          expandSignal={reviewTick}
-          // Escape reaches every window listener: while a sub-sheet is stacked
-          // above the split it is theirs, and while rows are staged the staged
-          // list's own × is what acts (SplitSheet hides this one then).
-          onDismiss={() => {
-            if (!staging) closeLane();
-          }}
-          chat={
-            <AgentChat
-              key={convoKey}
-              docked
-              messages={chat}
-              busy={captureBusy}
-              error={captureError}
-              openWith={openWith}
-              locate={me?.is_owner === true}
-              raw={me?.is_owner === true}
-              onSubmit={submit}
-              onSubmitAudio={submitAudio}
-              onSubmitPhoto={submitPhoto}
-              onVoiceFailure={(e) => {
-                voiceFailRef.current = e;
-              }}
-              onReview={(log) => {
-                // Inside the 6 s undo window the sheet's log is about to be
-                // discarded: Review is the undo — the timer is cancelled and
-                // the rows come back with their local edits, exactly as the
-                // toast's Undo does. Otherwise bring the staged log back up.
-                if (discardRef.current?.log.log_id === log.log_id) {
-                  undoDiscard();
-                  return;
-                }
-                // Already up: Review still visibly opens it — the tray
-                // grows a stop, so a tap at peek is never a no-op.
-                if (staging?.log.log_id === log.log_id) {
-                  setReviewTick((n) => n + 1);
-                  return;
-                }
-                setSavedNote(null);
-                setStaging({ log, restore: null });
-              }}
-              onClose={() => {
-                if (!staging) closeLane();
-              }}
-            />
-          }
-        />
-      ) : null}
+      <SheetPresence>
+        {lane === "agent" ? (
+          <SplitSheet
+            stage={stageEl}
+            expandSignal={reviewTick}
+            // Escape and Back go to the topmost sheet (sheetBack): a sub-sheet
+            // stacked above the split takes them before this does.
+            onDismiss={closeLane}
+            chat={
+              <AgentChat
+                key={convoKey}
+                docked
+                messages={chat}
+                busy={captureBusy}
+                error={captureError}
+                openWith={openWith}
+                locate={me?.is_owner === true}
+                raw={me?.is_owner === true}
+                onSubmit={submit}
+                onSubmitAudio={submitAudio}
+                onSubmitPhoto={submitPhoto}
+                onVoiceFailure={(e) => {
+                  voiceFailRef.current = e;
+                }}
+                onReview={(log) => {
+                  // Inside the 6 s undo window the sheet's log is about to be
+                  // discarded: Review is the undo — the timer is cancelled and
+                  // the rows come back with their local edits, exactly as the
+                  // toast's Undo does. Otherwise bring the staged log back up.
+                  if (discardRef.current?.log.log_id === log.log_id) {
+                    undoDiscard();
+                    return;
+                  }
+                  // Already up: Review still visibly opens it — the tray
+                  // grows a stop, so a tap at peek is never a no-op.
+                  if (staging?.log.log_id === log.log_id) {
+                    setReviewTick((n) => n + 1);
+                    return;
+                  }
+                  setSavedNote(null);
+                  setStaging({ log, restore: null });
+                }}
+                onClose={closeLane}
+              />
+            }
+          />
+        ) : null}
+      </SheetPresence>
 
-      {lane === "search" ? (
-        <ManualSearchSheet
-          phrase=""
-          fullScreen
-          busy={captureBusy}
-          error={captureError}
-          refused={searchRefused}
-          onSelect={searchSelect}
-          onClose={closeLane}
-        />
-      ) : null}
+      <SheetPresence>
+        {lane === "search" ? (
+          <ManualSearchSheet
+            phrase=""
+            fullScreen
+            busy={captureBusy}
+            error={captureError}
+            refused={searchRefused}
+            onSelect={searchSelect}
+            onClose={closeLane}
+          />
+        ) : null}
+      </SheetPresence>
 
-      {lane === "barcode" ? (
-        <BarcodeScanner
-          busy={captureBusy}
-          notice={captureError}
-          miss={scanMiss}
-          onCode={scanCode}
-          // a spent quota meets the same 429 in the search lane — don't offer it
-          onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}
-          onClose={closeLane}
-        />
-      ) : null}
+      <SheetPresence>
+        {lane === "barcode" ? (
+          <BarcodeScanner
+            busy={captureBusy}
+            notice={captureError}
+            miss={scanMiss}
+            onCode={scanCode}
+            // a spent quota meets the same 429 in the search lane — don't offer it
+            onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}
+            onClose={closeLane}
+          />
+        ) : null}
+      </SheetPresence>
 
-      {lane === "agent" ? null : stageEl}
+      <SheetPresence>{lane === "agent" ? null : stageEl}</SheetPresence>
 
       {discard ? (
         <div className="toast" role="status">

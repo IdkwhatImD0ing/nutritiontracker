@@ -9,6 +9,7 @@ import { sourceName } from "@/lib/sources";
 import type { DiaryEntry } from "./DiaryApi";
 import { getFood } from "./LibraryApi";
 import PortionSheet, { type PortionChoice } from "./PortionSheet";
+import SheetPresence from "./useSheetPresence";
 import "@/app/photo.css"; // .badge.estimate
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -335,25 +336,27 @@ export default function DiaryEntryRow({
         </div>
       ) : null}
 
-      {portionOpen ? (
-        <PortionSheet
-          title={name}
-          servings={choices}
-          initialServingId={own.id}
-          initialQty={entry.qty}
-          initialKcal={m.kcal}
-          isDisabled={unpickable}
-          error={
-            saveError ??
-            (servingsFailed
-              ? "Couldn’t load this food’s other servings — reopen to try again."
-              : null)
-          }
-          busy={busy === "save"}
-          onApply={applyPortion}
-          onClose={() => setPortionOpen(false)}
-        />
-      ) : null}
+      <SheetPresence>
+        {portionOpen ? (
+          <PortionSheet
+            title={name}
+            servings={choices}
+            initialServingId={own.id}
+            initialQty={entry.qty}
+            initialKcal={m.kcal}
+            isDisabled={unpickable}
+            error={
+              saveError ??
+              (servingsFailed
+                ? "Couldn’t load this food’s other servings — reopen to try again."
+                : null)
+            }
+            busy={busy === "save"}
+            onApply={applyPortion}
+            onClose={() => setPortionOpen(false)}
+          />
+        ) : null}
+      </SheetPresence>
     </div>
   );
 }

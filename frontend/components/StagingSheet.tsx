@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   answerQuestion,
   commitLog,
@@ -20,13 +20,15 @@ import {
 import { foodName, MEAL_LABEL } from "@/lib/labels";
 import { FOOD_FIELD_PROPS } from "./fieldProps";
 import FoodEditSheet from "./FoodEditSheet";
-import { ArrowUp } from "./icons";
+import { ArrowUp, Trash } from "./icons";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { readEstimate } from "./PhotoApi";
 import PortionSheet, { type PortionChoice } from "./PortionSheet";
 import { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
 import StagedRow, { type PickOption } from "./StagedRow";
 import { useDragDismiss } from "./useDragDismiss";
+import SheetPresence from "./useSheetPresence";
 import "@/app/photo.css";
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
@@ -102,9 +104,14 @@ type Props = {
   onClose: (snapshot: StagingSnapshot) => void;
   /** Rendered as the upper pane of <SplitSheet> rather than as a sheet of its
    *  own: no backdrop and no rounded shell, so the chat stays visible and
-   *  usable underneath (Bill, 2026-09-09). × still closes the staged list —
-   *  in the split that collapses the pane and leaves the conversation up. */
+   *  usable underneath (Bill, 2026-09-09). Its discard (a trash glyph there)
+   *  still closes the staged list — in the split that collapses the pane and
+   *  leaves the conversation up. */
   docked?: boolean;
+  /** set to this sheet's own close (`onClose` with its snapshot), for a
+   *  parent that closes the list along with something else: the Agent
+   *  lane's ✕ puts the tray away and then the lane (Today's closeLane) */
+  closeRef?: RefObject<(() => void) | null>;
 };
 
 export default function StagingSheet({
@@ -115,6 +122,7 @@ export default function StagingSheet({
   onCommitted,
   onClose,
   docked = false,
+  closeRef,
 }: Props) {
   const [items, setItems] = useState<StagedItem[]>(restore?.items ?? log.items);
   const [meal, setMeal] = useState<Meal>(restore?.meal ?? log.meal);
@@ -651,8 +659,16 @@ export default function StagingSheet({
   });
 
   const close = () => onClose(snapshot());
-  // a pull on the head closes exactly as the ✕ does (Today's closeStaging)
+  if (closeRef) closeRef.current = close;
+  // a pull on the head closes exactly as the ✕ does (Today's closeStaging),
+  // and so do Escape and Back; docked, they are the lane's (SplitSheet)
   const drag = useDragDismiss(close);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useSheetBack(sheetRef, close, !docked);
+  // an open meal picker sits above the list: Escape and Back shut it first,
+  // rather than discarding the rows under it
+  const pickerRef = useRef<HTMLDivElement>(null);
+  useSheetBack(pickerRef, () => setMealPickerOpen(false), mealPickerOpen);
 
   const visible = items.filter((i) => !removed.has(i.item_index));
   // what Log counts and sends: a row inside its Undo window is already out
@@ -724,7 +740,8 @@ export default function StagingSheet({
 
   // The staged batch's own controls. They sit in the sheet header standalone
   // and on the tray's lip when docked — one definition, so the two placements
-  // cannot drift.
+  // cannot drift. Docked, the discard is a trash glyph: the lane's ✕ sits in
+  // the header above it and closes more (§7.1, Bill 2026-10-13).
   const mealChip = (
     <button
       type="button"
@@ -735,11 +752,20 @@ export default function StagingSheet({
       {MEAL_LABEL[meal]}
     </button>
   );
-  const discardBtn = (
+  const discardBtn = docked ? (
+    <button
+      type="button"
+      className="sheet-close"
+      aria-label="Discard these items"
+      onClick={close}
+    >
+      <Trash />
+    </button>
+  ) : (
     <SheetClose label="Discard these items" onClick={close} />
   );
   const mealPicker = mealPickerOpen ? (
-    <div className="meal-picker m3-seg">
+    <div className="meal-picker m3-seg" ref={pickerRef}>
       {MEALS.map((m) => (
         <button
           key={m}
@@ -760,6 +786,7 @@ export default function StagingSheet({
         className={docked ? "split-pane stage-pane" : "sheet"}
         role="dialog"
         aria-label="Items to review"
+        ref={sheetRef}
       >
         {docked ? null : (
           <div className="sheet-head" {...drag}>
@@ -880,45 +907,51 @@ export default function StagingSheet({
         </div>
       </div>
 
-      {portionItem ? (
-        <PortionSheet
-          title={foodName(portionItem.food?.name ?? portionItem.phrase)}
-          servings={portionChoices(portionItem)}
-          initialServingId={portionItem.serving?.id ?? null}
-          initialQty={portionItem.qty ?? 1}
-          // the row's display kcal previews a serving the payload has no
-          // macros for (same serving only)
-          initialKcal={portionItem.qty ? portionItem.macros?.kcal : null}
-          onApply={(serving, qty) =>
-            applyPortion(portionItem.item_index, serving, qty)
-          }
-          onClose={() => setPortionFor(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {portionItem ? (
+          <PortionSheet
+            title={foodName(portionItem.food?.name ?? portionItem.phrase)}
+            servings={portionChoices(portionItem)}
+            initialServingId={portionItem.serving?.id ?? null}
+            initialQty={portionItem.qty ?? 1}
+            // the row's display kcal previews a serving the payload has no
+            // macros for (same serving only)
+            initialKcal={portionItem.qty ? portionItem.macros?.kcal : null}
+            onApply={(serving, qty) =>
+              applyPortion(portionItem.item_index, serving, qty)
+            }
+            onClose={() => setPortionFor(null)}
+          />
+        ) : null}
+      </SheetPresence>
 
-      {manualItem ? (
-        <ManualSearchSheet
-          phrase={manualItem.phrase}
-          busy={manualBusy}
-          error={manualError}
-          onSelect={manualSelect}
-          onClose={() => {
-            setManualFor(null);
-            setManualError(null);
-          }}
-        />
-      ) : null}
+      <SheetPresence>
+        {manualItem ? (
+          <ManualSearchSheet
+            phrase={manualItem.phrase}
+            busy={manualBusy}
+            error={manualError}
+            onSelect={manualSelect}
+            onClose={() => {
+              setManualFor(null);
+              setManualError(null);
+            }}
+          />
+        ) : null}
+      </SheetPresence>
 
-      {editItem ? (
-        <FoodEditSheet
-          item={editItem}
-          busy={busyRows.has(editItem.item_index)}
-          onPickAlias={editPickAlias}
-          onRephrase={editRephrase}
-          onManualSearch={editManualSearch}
-          onClose={() => setEditFor(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {editItem ? (
+          <FoodEditSheet
+            item={editItem}
+            busy={busyRows.has(editItem.item_index)}
+            onPickAlias={editPickAlias}
+            onRephrase={editRephrase}
+            onManualSearch={editManualSearch}
+            onClose={() => setEditFor(null)}
+          />
+        ) : null}
+      </SheetPresence>
     </>
   );
 }

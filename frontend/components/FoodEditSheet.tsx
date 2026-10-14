@@ -134,45 +134,49 @@ export default function FoodEditSheet({
           </div>
         ) : null}
 
-        {/* the prefill is the point: edit what was said and look it up again */}
-        <div>
-          <div className="edit-label">Describe it differently</div>
-          <form
-            className="capture"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const trimmed = text.trim();
-              if (trimmed && !busy) onRephrase(trimmed);
-            }}
-          >
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Describe it differently"
-              aria-label="Describe it differently"
-              autoComplete="off"
-              {...FOOD_FIELD_PROPS}
-              enterKeyHint="go"
-            />
-            <button
-              type="submit"
-              disabled={busy || !text.trim()}
-              aria-label="Look it up"
+        {/* the field and the search stay pinned at the foot, by the thumb and
+            above the keyboard; only the alias rows scroll */}
+        <div className="subsheet-foot">
+          {/* the prefill is the point: edit what was said and look it up again */}
+          <div>
+            <div className="edit-label">Describe it differently</div>
+            <form
+              className="capture"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const trimmed = text.trim();
+                if (trimmed && !busy) onRephrase(trimmed);
+              }}
             >
-              <ArrowRight strokeWidth={2.4} />
-            </button>
-          </form>
-        </div>
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Describe it differently"
+                aria-label="Describe it differently"
+                autoComplete="off"
+                {...FOOD_FIELD_PROPS}
+                enterKeyHint="go"
+              />
+              <button
+                type="submit"
+                disabled={busy || !text.trim()}
+                aria-label="Look it up"
+              >
+                <ArrowRight strokeWidth={2.4} />
+              </button>
+            </form>
+          </div>
 
-        <button
-          type="button"
-          className="edit-manual-btn"
-          disabled={busy}
-          onClick={onManualSearch}
-        >
-          Search foods
-          <span className="chev" aria-hidden="true" />
-        </button>
+          <button
+            type="button"
+            className="edit-manual-btn"
+            disabled={busy}
+            onClick={onManualSearch}
+          >
+            Search foods
+            <span className="chev" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </>
   );
