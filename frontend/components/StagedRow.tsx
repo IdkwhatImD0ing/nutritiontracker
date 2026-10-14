@@ -157,7 +157,7 @@ export default function StagedRow({
             ) : searching ? (
               "resolving…"
             ) : notFound ? (
-              <span className="manual-hint">tap to search manually</span>
+              <span className="manual-hint">Tap to search</span>
             ) : (
               item.phrase
             )}

@@ -307,7 +307,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search the food database"
+                placeholder="Search foods"
                 aria-label="Search foods"
                 autoComplete="off"
               />
@@ -355,7 +355,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           disabled={busy || !valid}
           onClick={save}
         >
-          {meal ? "Save" : "Create meal"}
+          {meal ? "Save" : "Save meal"}
         </button>
 
         {meal ? (

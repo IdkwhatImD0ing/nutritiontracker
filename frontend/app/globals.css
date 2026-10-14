@@ -41,20 +41,19 @@
   --red: #f26b6b;
   --green: #74cf9c;
 
-  /* Names for colours the stylesheets paint as literals today. Each value is
-     the literal it stands for, so pointing a rule at its token changes
-     nothing on screen — except the two noted, where the literals differ. */
+  /* Colours outside the palette above, named once so every rule that paints
+     one shares its value (one web blue, one scrim, one red tint). */
   --accent-fill: linear-gradient(180deg, var(--accent), var(--accent-strong)); /* Commit, send, the user bubble */
-  --web: #8fd0e6; /* §3.4a web-sourced: the badge and its citation link */
+  --web: #8fd0e6; /* §3.4a web-sourced: the badge, its citation link, the diary row */
   --web-soft: rgba(108, 196, 221, 0.14);
   --off: #e0b58a; /* Open Food Facts badge (m3.css) */
   --off-soft: rgba(224, 181, 138, 0.16);
   --amber-soft: rgba(232, 196, 104, 0.16);
-  --red-soft: rgba(242, 107, 107, 0.12); /* m3.css .keys-status.expired has 0.14 */
+  --red-soft: rgba(242, 107, 107, 0.12);
   --green-soft: rgba(116, 207, 156, 0.14);
-  --scrim: rgba(6, 6, 9, 0.6); /* behind a sheet; .sheet-backdrop has 0.62 */
+  --scrim: rgba(6, 6, 9, 0.6); /* behind every sheet */
   --toast-bg: #26262d;
-  --surface-hero: #1d1c22; /* the top of the tracker's gradient */
+  --surface-hero: #1d1c22; /* the top of a hero card's gradient */
   --on-danger: #fff; /* text on a red fill */
   /* new, not yet used: a field placeholder at 5.2:1 on --surface-2, where
      --faint's 3.1:1 is under the 4.5:1 text minimum */
@@ -480,10 +479,10 @@ a {
 
 .tracker {
   position: relative;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 18px 18px 20px;
+  padding: 18px var(--card-pad-x) 20px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -672,7 +671,7 @@ a {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 18px;
+  padding: 14px var(--card-pad-x);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -850,7 +849,7 @@ a {
 .capture .mic-btn.rec {
   background: var(--red);
   border-color: var(--red);
-  color: #fff;
+  color: var(--on-danger);
 }
 
 .capture .mic-btn:disabled {
@@ -875,7 +874,7 @@ a {
   border-radius: 50%;
   border: none;
   background: var(--red);
-  color: #fff;
+  color: var(--on-danger);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1087,7 +1086,7 @@ a {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.62);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 40;
@@ -1407,7 +1406,7 @@ a {
 @media (hover: hover) {
   .row-remove:hover {
     color: var(--red);
-    background: rgba(242, 107, 107, 0.12);
+    background: var(--red-soft);
   }
 }
 
@@ -1442,15 +1441,15 @@ a {
 }
 
 .badge.needs-input {
-  background: rgba(232, 196, 104, 0.16);
+  background: var(--amber-soft);
   color: var(--amber);
 }
 
 /* §3.4a web-transcribed food: distinct badge + the citation as a visible,
    clickable link (OpenAI usage-terms requirement, not taste) */
 .badge.web {
-  background: rgba(108, 196, 221, 0.14);
-  color: #8fd0e6;
+  background: var(--web-soft);
+  color: var(--web);
 }
 
 .web-cite {
@@ -1463,7 +1462,7 @@ a {
 }
 
 .web-cite a {
-  color: #8fd0e6;
+  color: var(--web);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -1715,10 +1714,10 @@ a {
 .add-item input {
   flex: 1;
   min-width: 0;
-  height: 44px;
+  height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--field-radius);
   padding: 0 14px;
   font-size: 1rem;
   outline: none;
@@ -1739,8 +1738,8 @@ a {
 }
 
 .add-item button {
-  width: 44px;
-  height: 44px;
+  width: var(--field-h); /* the field's height, like .capture's 50/50 */
+  height: var(--field-h);
   flex-shrink: 0;
   background: var(--surface-3);
   border: 1px solid var(--line);
@@ -1775,7 +1774,7 @@ a {
 .subsheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.6);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 60;
@@ -1881,27 +1880,54 @@ a {
   border-color: var(--accent-line);
 }
 
+/* One grouped list, like the diary's: the choices share a surface split by
+   hairlines, and the pick carries a trailing check rather than a fill.
+   :first-/:last-of-type round the buttons only, so a hint line in the list
+   stays outside the box. */
 .serving-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
 .serving-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   text-align: left;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   padding: 12px 14px;
   font-size: 0.9rem;
   color: var(--muted);
   cursor: pointer;
 }
 
+.serving-list button:first-of-type {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.serving-list button:last-of-type {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
 .serving-list button.active {
-  border-color: var(--accent-line);
   color: var(--text);
-  background: var(--accent-soft);
+}
+
+.serving-list button svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.serving-list button + .subsheet-hint {
+  margin-top: 8px;
 }
 
 /* A serving the §4 guard would refuse (a diary row's partial macros):
@@ -1909,7 +1935,6 @@ a {
 .serving-list button:disabled {
   cursor: default;
   opacity: 0.45;
-  border-style: dashed;
 }
 
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
@@ -1944,20 +1969,22 @@ a {
   cursor: default;
 }
 
-/* manual search results (BACKLOG 3 — deliberately boring) */
+/* manual search results (BACKLOG 3 — deliberately boring): one grouped
+   list, like .serving-list — hairlines between hits, the heading and the
+   empty line outside the box */
 
 .search-results {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   min-height: 60px;
 }
 
 .search-results button {
   text-align: left;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   padding: 11px 14px;
   cursor: pointer;
   display: flex;
@@ -1965,9 +1992,20 @@ a {
   gap: 2px;
 }
 
+.search-results button:first-of-type {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.search-results button:last-of-type {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
 @media (hover: hover) {
   .search-results button:hover {
-    border-color: var(--line-strong);
+    background: var(--surface-3);
   }
 }
 
@@ -1993,10 +2031,10 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--muted);
-  margin: 2px 2px 0;
+  margin: 2px 2px 8px;
 }
 
-/* Find a food (the sub-sheet a staged row opens): the field stays under the
+/* Search (the sub-sheet a staged row opens): the field stays under the
    head and only the results scroll, so a long list can't carry the search
    away. The list takes the sheet's bottom padding, so rows still run to the
    edge, and 4px round its rows, so a focus ring isn't clipped. */
@@ -2123,7 +2161,7 @@ a {
      like "Logged 960 kcal to Lunch" wrapped in the pill. */
   width: max-content;
   max-width: calc(100% - 32px);
-  background: #26262d;
+  background: var(--toast-bg);
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   padding: 10px 10px 10px 18px;
@@ -2289,10 +2327,11 @@ a {
 }
 
 .auth-card input {
+  height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 13px 14px;
+  border-radius: var(--field-radius);
+  padding: 0 14px;
   font-size: 1rem;
   color: var(--text); /* not the label's --muted: typed text isn't a placeholder */
   outline: none;
@@ -2528,7 +2567,7 @@ a {
 .agent-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.6);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 34;
@@ -2868,7 +2907,7 @@ a {
 
 .bubble.error {
   align-self: flex-start;
-  background: rgba(242, 107, 107, 0.12);
+  background: var(--red-soft);
   border: 1px solid rgba(242, 107, 107, 0.4);
   color: var(--red);
 }

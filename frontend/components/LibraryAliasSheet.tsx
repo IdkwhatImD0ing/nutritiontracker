@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import { foodName } from "@/lib/labels";
+import { Check } from "./icons";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
 import SheetHeader from "./SheetHeader";
 
@@ -143,7 +144,8 @@ export default function LibraryAliasSheet({
               className={!hasDefault ? "active" : undefined}
               onClick={() => setServingId("")}
             >
-              No default — use my recent portions
+              <span>No default — use my recent portions</span>
+              {!hasDefault ? <Check /> : null}
             </button>
             {(servings ?? []).map((s) => (
               <button
@@ -152,8 +154,11 @@ export default function LibraryAliasSheet({
                 className={s.serving_id === servingId ? "active" : undefined}
                 onClick={() => setServingId(s.serving_id)}
               >
-                {s.description}
-                {s.grams != null ? ` · ${Math.round(s.grams)} g` : ""}
+                <span>
+                  {s.description}
+                  {s.grams != null ? ` · ${Math.round(s.grams)} g` : ""}
+                </span>
+                {s.serving_id === servingId ? <Check /> : null}
               </button>
             ))}
             {servings == null ? (

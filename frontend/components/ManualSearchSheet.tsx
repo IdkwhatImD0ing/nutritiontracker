@@ -202,7 +202,7 @@ export default function ManualSearchSheet({
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
       <div className="subsheet" role="dialog" aria-label="Manual food search">
-        <SheetHeader title="Find a food" onClose={onClose} />
+        <SheetHeader title="Search" onClose={onClose} />
         {body}
       </div>
     </>

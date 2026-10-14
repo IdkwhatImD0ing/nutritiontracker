@@ -101,7 +101,7 @@
 
 /* same amber family as needs-input/verify: attention, not error */
 .badge.estimate {
-  background: rgba(232, 196, 104, 0.16);
+  background: var(--amber-soft);
   color: var(--amber);
 }
 

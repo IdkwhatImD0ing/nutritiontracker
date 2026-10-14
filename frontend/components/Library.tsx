@@ -172,12 +172,12 @@ export default function Library() {
         </div>
       ) : null}
 
-      <section className="m3-section lib-search" aria-label="Find a food">
+      <section className="m3-section lib-search" aria-label="Search foods">
         <form className="capture" onSubmit={runSearch}>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search the food database"
+            placeholder="Search foods"
             aria-label="Search foods"
             autoComplete="off"
           />

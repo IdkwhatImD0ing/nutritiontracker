@@ -43,7 +43,7 @@
 .exp-dupes {
   list-style: none;
   margin: 0;
-  padding: 4px 16px;
+  padding: 4px var(--card-pad-x);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);

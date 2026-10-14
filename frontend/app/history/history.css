@@ -51,7 +51,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 16px 18px 18px;
+  padding: 16px var(--card-pad-x) 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;

@@ -240,7 +240,7 @@ body:has(.tabbar) .shell {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 14px var(--card-pad-x);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -293,7 +293,7 @@ body:has(.tabbar) .shell {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 14px var(--card-pad-x);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -440,9 +440,10 @@ body:has(.tabbar) .shell {
 .m3-field textarea,
 .m3-window input,
 .m3-window select {
+  min-height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--field-radius);
   padding: 12px 13px;
   font-size: 1rem;
   font-weight: 400;
@@ -528,7 +529,7 @@ body:has(.tabbar) .shell {
 .m3-window input[type="time"] {
   -webkit-appearance: none;
   appearance: none;
-  min-height: 42px;
+  min-height: var(--field-h);
   /* at 16px (no iOS focus zoom) "05:00 PM" and Chromium's clock only fit
      a 320px phone's half-row with the padding trimmed */
   padding-inline: 8px 6px;
@@ -549,7 +550,6 @@ body:has(.tabbar) .shell {
 .m3-window select {
   -webkit-appearance: none;
   appearance: none;
-  min-height: 44px;
   padding-right: 34px;
   background-image:
     linear-gradient(45deg, transparent 50%, var(--muted) 50%),
@@ -559,11 +559,6 @@ body:has(.tabbar) .shell {
     right 12px center;
   background-size: 5px 5px;
   background-repeat: no-repeat;
-}
-
-/* the time inputs' height, in the same card */
-.m3-window select {
-  min-height: 42px;
 }
 
 /* saved-meal item row: name + compact qty stepper + remove */
@@ -690,7 +685,7 @@ body:has(.tabbar) .shell {
 /* the one loud element on the last step: the computed number */
 .wizard-hero {
   position: relative;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 22px 16px;
@@ -861,8 +856,8 @@ body:has(.tabbar) .shell {
 }
 
 .badge.off {
-  background: rgba(224, 181, 138, 0.16);
-  color: #e0b58a;
+  background: var(--off-soft);
+  color: var(--off);
 }
 
 .badge.state {
@@ -1322,12 +1317,12 @@ body:has(.tabbar) .shell {
 }
 
 .keys-status.active {
-  background: rgba(116, 207, 156, 0.14);
+  background: var(--green-soft);
   color: var(--green);
 }
 
 .keys-status.expired {
-  background: rgba(242, 107, 107, 0.14);
+  background: var(--red-soft);
   color: var(--red);
 }
 

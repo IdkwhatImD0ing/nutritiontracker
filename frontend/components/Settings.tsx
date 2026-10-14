@@ -334,7 +334,7 @@ export default function Settings() {
                 />
               </label>
               <p className="m3-note">
-                What the assistant should always know. Injected verbatim every
+                What the agent should always know. Injected verbatim every
                 time a log is parsed, a food is searched for, or a plate is
                 photographed. Preferences, conventions, what a word means to
                 you — and where you usually eat: a menu named here is one the

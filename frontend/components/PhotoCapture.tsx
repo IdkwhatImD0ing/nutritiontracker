@@ -15,7 +15,7 @@ const JPEG_QUALITY = 0.85;
 const THUMB_EDGE = 240;
 const THUMB_QUALITY = 0.6;
 /** A camera shot is a file made moments ago. Desktop browsers ignore
- *  `capture` and open a file picker, where "Take a photo" can hand back a
+ *  `capture` and open a file picker, where "Take photo" can hand back a
  *  photo from any day — so the phone's location rides only a file this new. */
 const FRESH_MS = 5 * 60_000;
 
@@ -105,7 +105,7 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
 }
 
 /** The photo picker (§3.4b; a chat turn since 2026-09-08) — a bottom sheet
- *  with "take a photo" and "choose from library". No camera stream of its
+ *  with "Take photo" and "Choose from library". No camera stream of its
  *  own: the file input's `capture` attribute hands off to the OS camera on
  *  phones.
  *
@@ -237,7 +237,7 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
                 onClick={() => cameraRef.current?.click()}
               >
                 <Camera />
-                Take a photo
+                Take photo
               </button>
               <button
                 type="button"

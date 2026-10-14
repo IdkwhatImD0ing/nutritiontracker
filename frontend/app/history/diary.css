@@ -22,7 +22,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 4px 16px;
+  padding: 4px var(--card-pad-x);
   box-shadow: var(--shadow-card);
 }
 
@@ -68,7 +68,7 @@
 }
 
 .diary-row.web .row-name {
-  color: #a8d0ee; /* §3.4a: web-transcribed rows are visually distinct */
+  color: var(--web); /* §3.4a: web-transcribed rows are visually distinct */
 }
 
 .diary-edit {
@@ -115,5 +115,5 @@
 .diary-actions .diary-delete.confirm:not(:disabled) {
   background: var(--red);
   border-color: var(--red);
-  color: #fff;
+  color: var(--on-danger);
 }

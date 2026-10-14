@@ -146,7 +146,7 @@ export default function FoodEditSheet({
           disabled={busy}
           onClick={onManualSearch}
         >
-          Search the food database…
+          Search foods…
         </button>
       </div>
     </>

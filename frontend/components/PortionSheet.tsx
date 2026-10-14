@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Check } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 /** A serving option normalized from the staged payload (§7.1 portion sheet). */
@@ -108,11 +109,12 @@ export default function PortionSheet({
         <div className="serving-list">
           {list.map((s) => {
             const off = isDisabled?.(s) ?? false;
+            const active = s.id === (chosen?.id ?? "");
             return (
               <button
                 key={s.id}
                 type="button"
-                className={s.id === (chosen?.id ?? "") ? "active" : undefined}
+                className={active ? "active" : undefined}
                 disabled={off}
                 title={
                   off
@@ -121,8 +123,11 @@ export default function PortionSheet({
                 }
                 onClick={() => setServingId(s.id)}
               >
-                {s.description}
-                {off ? " · no macros" : ""}
+                <span>
+                  {s.description}
+                  {off ? " · no macros" : ""}
+                </span>
+                {active ? <Check /> : null}
               </button>
             );
           })}
