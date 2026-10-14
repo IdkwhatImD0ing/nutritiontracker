@@ -48,6 +48,15 @@ export function getMe(): Promise<Me> {
   return p;
 }
 
+/** The newest read so far, or null: the first paint of a component that
+ *  then reads fresh with getMe() for the quota (Today, AccountCard), so a
+ *  return to it doesn't flash "…" or drop the demo banner. Null on a
+ *  hard load, server and client alike, so it is safe as a useState
+ *  initialiser. */
+export function peekMe(): Me | null {
+  return latest;
+}
+
 function subscribe(onChange: () => void) {
   listeners.add(onChange);
   return () => listeners.delete(onChange);

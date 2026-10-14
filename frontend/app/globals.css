@@ -1323,6 +1323,14 @@ a {
   cursor: default;
 }
 
+/* the same button as a link (the not-found page's way into the app) */
+a.commit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .sheet-error {
   color: var(--red);
   font-size: 0.82rem;

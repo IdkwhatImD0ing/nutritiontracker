@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getSettings,
   putSettings,
@@ -16,6 +16,8 @@ import WizardGoal from "./WizardGoal";
 import AccountCard from "./AccountCard";
 import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
+import { peek, put } from "./readCache";
+import { useScrollMemory } from "./useScrollMemory";
 
 const WINDOW_MEALS = ["breakfast", "lunch", "dinner"] as const;
 const MEALS = ["snack", "breakfast", "lunch", "dinner"];
@@ -71,16 +73,25 @@ function describeBody(b: Body): string | null {
  *  page on 2026-09-06 (owner feedback); the setting itself stays, read by the
  *  adherence chart, and PUT never touches a key it is not sent. */
 export default function Settings() {
-  const [form, setForm] = useState<SettingsT | null>(null);
-  const [targets, setTargets] = useState<TargetText>(targetText({}));
+  // A return to the tab paints the settings last read (readCache: the
+  // server's copy, never an unsaved edit) while the read below refreshes them.
+  const [form, setForm] = useState<SettingsT | null>(() => peek<SettingsT>("settings"));
+  const [targets, setTargets] = useState<TargetText>(() =>
+    targetText(form?.targets ?? {}),
+  );
+  // what the page opened with, so the read below can tell an edit begun on
+  // the cached form (kept) from the form as painted (refreshed)
+  const opened = useRef({ form, targets }).current;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [wizard, setWizard] = useState(false);
 
+  // the server's answer to a save or the wizard
   const load = (s: SettingsT) => {
     setForm(s);
     setTargets(targetText(s.targets));
+    put("settings", s);
   };
 
   // `attempt` re-runs the read: the failure notice carries a Retry rather
@@ -91,7 +102,10 @@ export default function Settings() {
     setError(null);
     getSettings()
       .then((s) => {
-        if (!cancelled) load(s);
+        if (cancelled) return;
+        setForm((f) => (f === opened.form ? s : f));
+        setTargets((t) => (t === opened.targets ? targetText(s.targets) : t));
+        put("settings", s);
       })
       .catch(() => {
         if (!cancelled) setError("Couldn't load your settings.");
@@ -100,6 +114,8 @@ export default function Settings() {
       cancelled = true;
     };
   }, [attempt]);
+
+  useScrollMemory(form !== null);
 
   const setWindow = (
     meal: (typeof WINDOW_MEALS)[number],

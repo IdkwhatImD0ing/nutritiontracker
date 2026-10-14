@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import AddSheet, { ADD_EVENT, ADD_HANDOFF_KEY, type AddLane } from "./AddSheet";
+import { useBehind } from "./BackBar";
 import "@/app/library/m3.css";
 
 /** §7.4 navigation: Today · History · [+] · Library · Settings — five equal
@@ -75,17 +76,35 @@ const LEFT = [
 ];
 const RIGHT = [{ href: "/library", label: "Library", Icon: LibraryIcon }];
 
+/** The tab a page belongs to, which is not always the one its URL sits
+ *  under: food detail is a drill-in from Library or any diary row (§7.4) and
+ *  keeps the tab it was opened from lit, and Experiment is pushed from
+ *  Settings. `behind` is the page under this one (BackBar's trail). */
+function ownerOf(pathname: string, behind: string | undefined): string {
+  if (pathname.startsWith("/library/food/")) {
+    if (behind === "/") return "/";
+    if (behind?.startsWith("/history")) return "/history";
+    return "/library";
+  }
+  if (pathname.startsWith("/experiment")) return "/settings";
+  return pathname;
+}
+
 export default function TabBar() {
   const pathname = usePathname() ?? "/";
+  const owner = ownerOf(pathname, useBehind());
   const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
   const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+    href === "/" ? owner === "/" : owner.startsWith(href);
 
+  // scroll={false}: each tab root puts its own scroll back (useScrollMemory),
+  // which Next's scroll-to-top on a push would undo.
   const tab = ({ href, label, Icon }: (typeof LEFT)[number]) => (
     <Link
       key={href}
       href={href}
+      scroll={false}
       className={isActive(href) ? "active" : undefined}
       aria-current={isActive(href) ? "page" : undefined}
     >
@@ -131,6 +150,7 @@ export default function TabBar() {
         {RIGHT.map(tab)}
         <Link
           href="/settings"
+          scroll={false}
           className={`gear${isActive("/settings") ? " active" : ""}`}
           aria-label="Settings"
           aria-current={isActive("/settings") ? "page" : undefined}

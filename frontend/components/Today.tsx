@@ -25,16 +25,18 @@ import DiaryList from "./DiaryList";
 import { parseISO } from "./HistoryApi";
 import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
-import { getMe, type Me } from "./MeApi";
+import { getMe, peekMe, type Me } from "./MeApi";
 import { syncOura } from "./OuraApi";
 import PendingItems from "./PendingItems";
 import { photoErrorMessage } from "./PhotoApi";
 import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
+import { peek, put } from "./readCache";
 import SplitSheet from "./SplitSheet";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import { useOnForeground } from "./useOnForeground";
+import { useScrollMemory } from "./useScrollMemory";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
 
@@ -65,10 +67,19 @@ function localDateISO(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** readCache: the day's diary as last shown, keyed by its date, so a return
+ *  to Today paints it at once and yesterday's is never read for today. */
+type CachedDay = { totals: DayTotals; meals: DiaryMeals };
+const dayKey = (day: string) => `diary:${day}`;
+
 export default function Today() {
-  const [totals, setTotals] = useState<DayTotals | null>(null);
+  const [totals, setTotals] = useState<DayTotals | null>(
+    () => peek<CachedDay>(dayKey(localDateISO()))?.totals ?? null,
+  );
   // §7.4 Today: the diary grouped by meal renders under the tracker.
-  const [meals, setMeals] = useState<DiaryMeals | null>(null);
+  const [meals, setMeals] = useState<DiaryMeals | null>(
+    () => peek<CachedDay>(dayKey(localDateISO()))?.meals ?? null,
+  );
   // The diary read failed. While no diary is on screen the tracker gives way
   // to an error with a Retry: a day we couldn't read must not look like an
   // empty one (BACKLOG 131's outage read as a wiped diary). A failed RE-read
@@ -117,7 +128,8 @@ export default function Today() {
   // log attempt so "next log at …" shows the moment the day's log is spent.
   // Owner → demo null → no banner. A failed read renders nothing: the
   // server enforces the quota; the banner only explains it.
-  const [me, setMe] = useState<Me | null>(null);
+  // Seeded with the visit's last read, so a return to Today keeps the banner.
+  const [me, setMe] = useState<Me | null>(peekMe);
   const demo = me?.demo ?? null;
   const quotaSpent = demo != null && demo.used_today >= demo.limit;
   // Owner ruling (2026-09-02): the capture bar left the Today screen; every
@@ -481,6 +493,14 @@ export default function Today() {
     // The card owns the series; Today only tells it the world moved (§6.4).
     setWeightsKey((k) => k + 1);
   });
+
+  // Whatever the diary now says (a read, a commit's totals, an inline edit)
+  // is what the next return to Today paints first (readCache), under the day
+  // this screen shows.
+  useEffect(() => {
+    if (totals && meals) put(dayKey(dayRef.current!), { totals, meals });
+  }, [totals, meals]);
+  useScrollMemory(meals !== null);
 
   // A demo 429 carries the server's own sentence and the reset instant: the
   // sentence goes in the lane's error surface verbatim (never the generic

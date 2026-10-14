@@ -53,6 +53,13 @@ export function NavTrail() {
   return null;
 }
 
+/** The page behind the one on screen, or undefined when nothing of ours is
+ *  (a cold launch). TabBar uses it to light the tab a drill-in was opened
+ *  from. */
+export function useBehind(): string | undefined {
+  return settle(usePathname()).trail.at(-2);
+}
+
 const TITLES: Record<string, string> = {
   "/": "Today",
   "/history": "History",
@@ -65,7 +72,7 @@ const TITLES: Record<string, string> = {
  *  day view have more than one way in), else opens `parent`. */
 export default function BackBar({ parent, label }: { parent: string; label: string }) {
   const router = useRouter();
-  const behind = settle(usePathname()).trail.at(-2);
+  const behind = useBehind();
   const name = behind ? TITLES[behind] : label;
   return (
     <Link

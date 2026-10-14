@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "@/lib/api";
 import { writeClipboard } from "@/lib/clipboard";
@@ -272,9 +271,17 @@ export default function ApiKeysCard() {
           >
             New key
           </button>
-          <Link href="/docs/api-keys" className="m3-link-btn">
+          {/* The docs are the public website: opened over the app (iOS's
+              Safari sheet with Done, a new tab elsewhere) rather than in its
+              window, whose only way back from them is the logo to Today. */}
+          <a
+            href="/docs/api-keys"
+            target="_blank"
+            rel="noopener"
+            className="m3-link-btn"
+          >
             How to use keys →
-          </Link>
+          </a>
         </div>
 
         {reveal ? (
