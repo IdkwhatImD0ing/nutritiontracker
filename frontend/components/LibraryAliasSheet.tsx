@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import { foodName } from "@/lib/labels";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
@@ -34,6 +34,7 @@ export default function LibraryAliasSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const deleteBtn = useRef<HTMLButtonElement>(null);
 
   // The food's serving list comes from the detail route (foods.servings).
   useEffect(() => {
@@ -172,10 +173,24 @@ export default function LibraryAliasSheet({
           Save
         </button>
 
-        <div className="m3-actions">
+        {/* forgetting a phrase can't be undone: ApiKeysCard's inline
+            confirm, Cancel first and focused, then the red yes */}
+        <div className={`m3-actions${confirm ? " confirm" : ""}`}>
           {confirm ? (
             <>
               <span className="m3-note">Forget this phrase → food mapping?</span>
+              <button
+                type="button"
+                className="m3-link-btn"
+                disabled={busy}
+                onClick={() => {
+                  setConfirm(false);
+                  requestAnimationFrame(() => deleteBtn.current?.focus());
+                }}
+                autoFocus
+              >
+                Cancel
+              </button>
               <button
                 type="button"
                 className="m3-link-btn danger"
@@ -187,6 +202,7 @@ export default function LibraryAliasSheet({
             </>
           ) : (
             <button
+              ref={deleteBtn}
               type="button"
               className="m3-link-btn danger"
               disabled={busy}

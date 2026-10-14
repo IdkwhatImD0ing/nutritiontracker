@@ -465,7 +465,6 @@ a {
   height: 24px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -615,16 +614,16 @@ a {
 
 .donut .center-sub {
   fill: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.04em;
 }
 
 .donut .macro-label {
-  font-size: 0.72rem;
+  font-size: var(--micro-size);
   color: var(--muted);
-  letter-spacing: 0.06em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: var(--micro-weight);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -812,6 +811,14 @@ a {
 .send-btn svg {
   width: 20px;
   height: 20px;
+}
+
+/* the spinner's 6px gap is for text beside it; alone in a round button it
+   would sit off-centre (the add-item send too) */
+.capture button .spinner,
+.send-btn .spinner,
+.add-item button .spinner {
+  margin-right: 0;
 }
 
 .capture-error {
@@ -1200,7 +1207,6 @@ a {
   height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.2;
   stroke-linecap: round;
 }
 
@@ -1366,8 +1372,8 @@ a {
 }
 
 .row-kcal .u {
-  font-size: 0.68rem;
-  color: var(--faint);
+  font-size: var(--micro-size);
+  color: var(--muted);
   letter-spacing: 0.04em;
 }
 
@@ -1407,9 +1413,9 @@ a {
 
 .badge {
   display: inline-block;
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   border-radius: 6px;
   padding: 3px 6px;
@@ -1641,10 +1647,10 @@ a {
 }
 
 .macro-cell .k {
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   margin-top: 2px;
 }
 
@@ -1679,10 +1685,10 @@ a {
 }
 
 .detail-meal > .k {
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
 }
 
 .detail-meal .chips {
@@ -1901,11 +1907,11 @@ a {
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
 
 .edit-label {
-  font-size: 0.68rem;
-  font-weight: 600;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--micro-track);
   margin-bottom: 6px;
 }
 
@@ -2168,6 +2174,7 @@ a {
 }
 
 .pending-pill.failed button {
+  display: inline-flex;
   background: none;
   border: none;
   color: var(--faint);
@@ -2931,6 +2938,11 @@ a {
   font-size: 0.84rem;
 }
 
+/* "Logged ✓": the drawn check sits on the text's middle, not its baseline */
+.result-card .result-state svg {
+  vertical-align: -0.125em;
+}
+
 .chat-thinking {
   align-self: flex-start;
   display: inline-flex;
@@ -3022,7 +3034,9 @@ a {
   background: var(--surface-3);
   color: var(--muted);
   font-size: 0.9rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 

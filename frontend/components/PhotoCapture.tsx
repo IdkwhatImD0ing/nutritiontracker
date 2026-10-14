@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import "@/app/photo.css";
+import { Camera } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 /** Vision needs nothing sharper than this; a 12 MP phone JPEG is ~4 MB and
@@ -235,18 +236,7 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
                 className="photo-option"
                 onClick={() => cameraRef.current?.click()}
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
-                  <circle cx="12" cy="13" r="3.5" />
-                </svg>
+                <Camera />
                 Take a photo
               </button>
               <button

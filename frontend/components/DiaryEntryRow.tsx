@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { StagedServing } from "@/lib/api";
 import { foodName } from "@/lib/labels";
 import type { DiaryEntry } from "./DiaryApi";
@@ -67,6 +67,7 @@ export default function DiaryEntryRow({
   const [servingsFailed, setServingsFailed] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteBtn = useRef<HTMLButtonElement>(null);
 
   // The food's servings, fetched when the portion sheet first opens and never
   // again for this row (a foods row's serving list does not change under us).
@@ -254,25 +255,32 @@ export default function DiaryEntryRow({
             <div className="diary-actions">
               {confirmDelete ? (
                 <>
+                  {/* the app's one wording for an irreversible delete
+                      (ApiKeysCard's revoke): a red yes and a focused Cancel */}
                   <button
                     type="button"
                     className="diary-delete confirm"
                     disabled={busy}
                     onClick={onDelete}
                   >
-                    Really delete
+                    Yes, delete
                   </button>
                   <button
                     type="button"
                     className="diary-cancel"
                     disabled={busy}
-                    onClick={() => setConfirmDelete(false)}
+                    onClick={() => {
+                      setConfirmDelete(false);
+                      requestAnimationFrame(() => deleteBtn.current?.focus());
+                    }}
+                    autoFocus
                   >
-                    Keep
+                    Cancel
                   </button>
                 </>
               ) : (
                 <button
+                  ref={deleteBtn}
                   type="button"
                   className="diary-delete"
                   disabled={busy}

@@ -7,6 +7,7 @@ import {
   type StagedItem,
 } from "@/lib/api";
 import { foodName } from "@/lib/labels";
+import { ArrowRight } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -135,7 +136,7 @@ export default function FoodEditSheet({
             autoComplete="off"
           />
           <button type="submit" disabled={busy || !text.trim()} aria-label="Resolve">
-            →
+            <ArrowRight strokeWidth={2.4} />
           </button>
         </form>
 

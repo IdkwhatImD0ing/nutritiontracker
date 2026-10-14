@@ -14,11 +14,13 @@ import {
 } from "./HistoryApi";
 import HistoryView from "./HistoryView";
 
-const KINDS: { kind: RangeKind; label: string; title: string }[] = [
-  { kind: "3d", label: "3D", title: "3 days" },
-  { kind: "w", label: "W", title: "Week" },
-  { kind: "m", label: "M", title: "Month" },
-  { kind: "y", label: "Y", title: "Year" },
+// §7.4's words, not letters: each segment is ~70px even at 320, and the
+// word is also the tab's accessible name (a title was only a description)
+const KINDS: { kind: RangeKind; label: string }[] = [
+  { kind: "3d", label: "3 days" },
+  { kind: "w", label: "Week" },
+  { kind: "m", label: "Month" },
+  { kind: "y", label: "Year" },
 ];
 
 function spanLabel(range: HistoryRange): string {
@@ -33,8 +35,9 @@ function spanLabel(range: HistoryRange): string {
     : `${monthShort(a)} ${a.getDate()} – ${monthShort(b)} ${b.getDate()}`;
 }
 
-/** §7.4 History: segmented 3D · W · M · Y (every range ends today, per
- *  routes/history.py), streak chip up top, tap a day → /history/<date>.
+/** §7.4 History: segmented 3 days · Week · Month · Year (every range ends
+ *  today, per routes/history.py), the streak up top, tap a day →
+ *  /history/<date>.
  *  The tab bar mounts from app/history/layout.tsx. */
 export default function History({ initialKind = "3d" }: { initialKind?: RangeKind }) {
   const router = useRouter();
@@ -70,17 +73,19 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
   }, [kind, today]);
 
   const streak = range?.streak ?? null;
+  const kindLabel = KINDS.find((k) => k.kind === kind)?.label;
 
   return (
     <main className="shell history">
       <header className="brand">
         <h1>History</h1>
-        {streak != null ? (
+        {/* a label, not a control; at zero there is nothing to say */}
+        {streak ? (
           <span
-            className={`streak-chip${streak > 0 ? " live" : ""}`}
+            className="streak-chip"
             title="Consecutive days with at least one entry"
           >
-            {streak === 0 ? "no streak" : `${streak}-day streak`}
+            <span className="num">{streak}</span>-day streak
           </span>
         ) : null}
       </header>
@@ -91,7 +96,6 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
             key={k.kind}
             type="button"
             role="tab"
-            title={k.title}
             aria-selected={kind === k.kind}
             className={kind === k.kind ? "active" : ""}
             onClick={() => setKind(k.kind)}
@@ -105,23 +109,26 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         <p className="range-label">{spanLabel(range)}</p>
       ) : null}
 
-      {error ? <p className="hist-error">{error}</p> : null}
-      {loading && !range ? (
-        <p className="hhint">
-          <span className="spinner" />
-          Loading…
-        </p>
-      ) : null}
-      {range ? (
-        <div className={loading ? "hist-stale" : undefined}>
-          <HistoryView
-            kind={range.range}
-            range={range}
-            today={today}
-            onDay={(date) => router.push(`/history/${date}`)}
-          />
-        </div>
-      ) : null}
+      {/* the span label stays outside: from 900px it sits beside the tabs */}
+      <div role="tabpanel" aria-label={kindLabel}>
+        {error ? <p className="hist-error">{error}</p> : null}
+        {loading && !range ? (
+          <p className="hhint">
+            <span className="spinner" />
+            Loading…
+          </p>
+        ) : null}
+        {range ? (
+          <div className={loading ? "hist-stale" : undefined}>
+            <HistoryView
+              kind={range.range}
+              range={range}
+              today={today}
+              onDay={(date) => router.push(`/history/${date}`)}
+            />
+          </div>
+        ) : null}
+      </div>
     </main>
   );
 }

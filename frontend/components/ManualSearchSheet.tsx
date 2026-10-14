@@ -8,6 +8,7 @@ import {
   type FoodSearchResult,
 } from "@/lib/api";
 import { foodName } from "@/lib/labels";
+import { ArrowRight } from "./icons";
 import SheetHeader, { SheetClose } from "./SheetHeader";
 
 type Props = {
@@ -140,7 +141,11 @@ export default function ManualSearchSheet({
           autoFocus={!phrase}
         />
         <button type="submit" disabled={searching || !query.trim()} aria-label="Search">
-          {searching ? <span className="spinner" /> : "→"}
+          {searching ? (
+            <span className="spinner" />
+          ) : (
+            <ArrowRight strokeWidth={2.4} />
+          )}
         </button>
       </form>
 

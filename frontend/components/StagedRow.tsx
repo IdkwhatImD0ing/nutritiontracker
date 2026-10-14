@@ -2,6 +2,7 @@
 
 import type { Meal, StagedItem } from "@/lib/api";
 import { foodName, MEAL_LABEL } from "@/lib/labels";
+import { Close } from "./icons";
 import { readEstimate } from "./PhotoApi";
 import "@/app/photo.css";
 
@@ -179,7 +180,7 @@ export default function StagedRow({
             onRemove();
           }}
         >
-          ✕
+          <Close />
         </button>
       </div>
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
 import { foodName } from "@/lib/labels";
+import { ArrowRight } from "./icons";
 import {
   cacheFood,
   getAliases,
@@ -188,7 +189,11 @@ export default function Library() {
             disabled={searching || !query.trim()}
             aria-label="Search"
           >
-            {searching ? <span className="spinner" /> : "→"}
+            {searching ? (
+              <span className="spinner" />
+            ) : (
+              <ArrowRight strokeWidth={2.4} />
+            )}
           </button>
         </form>
         {searchError ? <p className="sheet-error">{searchError}</p> : null}

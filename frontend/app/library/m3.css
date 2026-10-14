@@ -199,8 +199,10 @@ body:has(.tabbar) .shell {
   color: var(--muted);
 }
 
+/* flex: the drawn chevron centres on the row, not on a text baseline */
 .add-row-chev {
   margin-left: auto;
+  display: flex;
   color: var(--faint);
   font-size: 1.1rem;
 }
@@ -398,6 +400,19 @@ body:has(.tabbar) .shell {
   gap: 10px;
 }
 
+/* the inline confirm for an irreversible action (a phrase's delete, sign
+   out), as an API key's revoke: the question on a line of its own, then
+   Cancel and the red yes where the first tap was */
+.m3-actions.confirm {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px 18px;
+}
+
+.m3-actions.confirm .m3-note {
+  flex-basis: 100%;
+}
+
 /* ---------- forms ---------- */
 
 .m3-field {
@@ -410,6 +425,13 @@ body:has(.tabbar) .shell {
   text-transform: uppercase;
   color: var(--muted);
   min-width: 0;
+}
+
+/* a unit in a label keeps its case: "(lb)", not "(LB)". The label's words
+   and its unit share one span, or the column flex puts each on its own line */
+.m3-field .unit {
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .m3-field input,
@@ -869,11 +891,11 @@ body:has(.tabbar) .shell {
 }
 
 .account-label {
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--micro-track);
   color: var(--muted);
-  font-weight: 600;
+  font-weight: var(--micro-weight);
 }
 
 .account-email {
@@ -895,9 +917,9 @@ body:has(.tabbar) .shell {
   align-self: flex-start;
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
 }
 
@@ -941,11 +963,6 @@ body:has(.tabbar) .shell {
     border-color: var(--red);
     color: var(--red);
   }
-}
-
-.account-signout:disabled {
-  color: var(--faint);
-  cursor: default;
 }
 
 /* ---------- desktop: the tab bar stands up as a navigation rail ----------
@@ -1303,9 +1320,9 @@ body:has(.tabbar) .shell {
   flex-shrink: 0;
   border-radius: 999px;
   padding: 3px 9px;
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
 }
 
@@ -1346,9 +1363,9 @@ body:has(.tabbar) .shell {
 }
 
 .keys-meta dt {
-  font-size: 0.64rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   color: var(--faint);
 }

@@ -17,7 +17,7 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
-import { ArrowRight } from "./icons";
+import { ArrowRight, Close } from "./icons";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -287,7 +287,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 aria-label={`Remove ${it.food_name ?? "item"}`}
                 onClick={() => removeItem(i)}
               >
-                ✕
+                <Close />
               </button>
             </div>
           ))}

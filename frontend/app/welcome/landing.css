@@ -468,9 +468,9 @@
   border-radius: 6px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   vertical-align: 2px;
 }
@@ -524,8 +524,8 @@
 }
 
 .land-row-kcal .u {
-  font-size: 0.68rem;
-  color: var(--faint);
+  font-size: var(--micro-size);
+  color: var(--muted);
   letter-spacing: 0.04em;
 }
 
