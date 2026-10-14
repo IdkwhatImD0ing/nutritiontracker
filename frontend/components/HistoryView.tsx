@@ -1,5 +1,6 @@
 "use client";
 
+import { mealLabel } from "@/lib/labels";
 import ChartBars, { type Bar } from "./ChartBars";
 import ChartStrip, { type StripCell } from "./ChartStrip";
 import {
@@ -15,12 +16,6 @@ import {
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const MEAL_ORDER = ["breakfast", "lunch", "dinner", "snack"];
-const MEAL_LETTER: Record<string, string> = {
-  breakfast: "B",
-  lunch: "L",
-  dinner: "D",
-  snack: "S",
-};
 
 type Props = {
   kind: RangeKind;
@@ -150,14 +145,16 @@ function ThreeDays({
             </div>
             {mealChips.length ? (
               <div className="hcard-meals num">
+                {/* spelled out: a B/L/D/S key explained only in a hover
+                    title said nothing on a phone */}
                 {mealChips.map((c) => (
-                  <span key={c.meal} title={c.meal}>
-                    <span className="k">{MEAL_LETTER[c.meal] ?? c.meal}</span>{" "}
+                  <span key={c.meal}>
+                    <span className="k">{mealLabel(c.meal)}</span>{" "}
                     {fmt.format(c.kcal)}
                   </span>
                 ))}
                 {d.fiber_g != null ? (
-                  <span title="fiber">
+                  <span>
                     <span className="k">fiber</span> {fmt.format(d.fiber_g)}g
                   </span>
                 ) : null}

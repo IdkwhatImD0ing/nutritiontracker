@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { searchFoods, type FoodSearchResult } from "@/lib/api";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
+import { Close } from "./icons";
 import {
   cacheFood,
   getAliases,
@@ -86,6 +88,8 @@ export default function Library() {
   const [searching, setSearching] = useState(false);
   const [opening, setOpening] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const seq = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const [aliasSheet, setAliasSheet] = useState<AliasRow | null>(null);
   const [mealSheet, setMealSheet] = useState<SavedMeal | null>(null);
@@ -115,23 +119,55 @@ export default function Library() {
   const activeMeals = (meals ?? []).filter((m) => m.is_active);
   const inactiveMeals = (meals ?? []).filter((m) => !m.is_active);
 
-  const runSearch = async (e: FormEvent) => {
-    e.preventDefault();
-    const q = query.trim();
+  // The submitted query rides in the URL (?q=), so "‹ Library" back from a
+  // food — a fresh mount — runs it again instead of landing on an empty
+  // field. replaceState rather than the router: no navigation, no new
+  // history entry, and no useSearchParams Suspense on a prerendered page.
+  const search = async (raw: string) => {
+    const q = raw.trim();
     if (!q) return;
+    const id = ++seq.current;
+    window.history.replaceState(null, "", `?q=${encodeURIComponent(q)}`);
     setSearching(true);
     setSearchError(null);
     try {
       const r = await searchFoods(q);
+      if (seq.current !== id) return;
       setResults(r.hits);
       setFdcDown(r.fdcError != null);
     } catch {
+      if (seq.current !== id) return;
       setResults([]);
       setSearchError("Search failed. Try again.");
     } finally {
-      setSearching(false);
+      if (seq.current === id) setSearching(false);
     }
   };
+
+  const runSearch = (e: FormEvent) => {
+    e.preventDefault();
+    void search(query);
+  };
+
+  // The field emptied — by its ✕ or by hand: the search is over. No old
+  // results pinned above Saved meals, no late answer landing, no ?q= to
+  // bring them back.
+  const reset = () => {
+    seq.current++;
+    setResults(null);
+    setSearching(false);
+    setSearchError(null);
+    setFdcDown(false);
+    window.history.replaceState(null, "", window.location.pathname);
+  };
+
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (!q) return;
+    setQuery(q);
+    void search(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Manual search entry → food detail. FDC hits are cached first (the
   // existing /api/foods/select library path) so the detail page has a row.
@@ -175,13 +211,37 @@ export default function Library() {
 
       <section className="m3-section lib-search" aria-label="Find a food">
         <form className="capture" onSubmit={runSearch}>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search the food database"
-            aria-label="Search foods"
-            autoComplete="off"
-          />
+          <div className="capture-field">
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (!e.target.value.trim()) reset();
+              }}
+              placeholder="Search the food database"
+              aria-label="Search foods"
+              autoComplete="off"
+              {...FOOD_FIELD_PROPS}
+              enterKeyHint="search"
+            />
+            {query ? (
+              <button
+                type="button"
+                className="field-clear"
+                aria-label="Clear search"
+                // keep the field focused, so the keyboard doesn't drop and rise
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setQuery("");
+                  reset();
+                  inputRef.current?.focus();
+                }}
+              >
+                <Close />
+              </button>
+            ) : null}
+          </div>
           <button
             type="submit"
             disabled={searching || !query.trim()}

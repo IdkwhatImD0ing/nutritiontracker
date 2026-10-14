@@ -17,6 +17,7 @@ import {
   type Meal,
   type StagedItem,
 } from "@/lib/api";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
 import FoodEditSheet from "./FoodEditSheet";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { readEstimate } from "./PhotoApi";
@@ -787,6 +788,8 @@ export default function StagingSheet({
               placeholder="+ add item"
               aria-label="Add item"
               autoComplete="off"
+              {...FOOD_FIELD_PROPS}
+              enterKeyHint="go"
             />
             <button type="submit" disabled={!addText.trim()} aria-label="Add">
               ↑

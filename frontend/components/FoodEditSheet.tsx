@@ -6,6 +6,7 @@ import {
   type AliasRow,
   type StagedItem,
 } from "@/lib/api";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
 import SheetHeader from "./SheetHeader";
 
 type Props = {
@@ -132,6 +133,8 @@ export default function FoodEditSheet({
             placeholder="Describe it differently"
             aria-label="Re-resolve food"
             autoComplete="off"
+            {...FOOD_FIELD_PROPS}
+            enterKeyHint="go"
           />
           <button type="submit" disabled={busy || !text.trim()} aria-label="Resolve">
             →

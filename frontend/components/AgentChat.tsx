@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LogCreateResponse } from "@/lib/api";
+import { ChevronDown } from "./icons";
 import PhotoCapture, { type PhotoShot } from "./PhotoCapture";
 import { SheetClose } from "./SheetHeader";
 import useVoiceCapture, {
@@ -64,8 +65,9 @@ type Props = {
   /** Send a plate as a turn. With `text` the agent sees the picture and
    *  answers; without it the shot is the deterministic plate parse. */
   onSubmitPhoto: (shot: PhotoShot, text: string) => Promise<boolean>;
-  /** Returns true on success; the field only clears then, so a failed send
-   *  can be resubmitted unchanged (same client uuid upstream). */
+  /** Returns true on success. The field clears as the send starts (the words
+   *  are in the bubble now) and a failed send puts them back — the photo too —
+   *  so it can be resubmitted unchanged (same client uuid upstream). */
   onSubmit: (text: string) => Promise<boolean>;
   /** Upload a validated voice clip (§8.1d). Resolves false on any failure —
    *  upload error or the server's capture_failure — and the parent records
@@ -560,10 +562,57 @@ export default function AgentChat({
     if (error) setNotice(null);
   }, [error]);
 
-  // the newest line is always in view — a tool call landing, the reply
+  // The newest line stays in view — a tool call landing, the reply — only
+  // while the reader is at the bottom: someone scrolled up into an earlier
+  // turn is left there, with a ↓ above the composer to come back. Their own
+  // send always follows. A reply taller than the pane lands top-first, once,
+  // so it reads from its start rather than its last line.
+  const stuckRef = useRef(true);
+  const lastTopRef = useRef(0);
+  const [away, setAway] = useState(false);
+  const replyRef = useRef<HTMLDivElement>(null); // the newest message, when a reply
+  const placedRef = useRef<string | null>(null); // the reply already scrolled to
+  const stick = (stuck: boolean) => {
+    stuckRef.current = stuck;
+    setAway(!stuck);
+  };
+  // Only the reader scrolling UP lets go. A line landing grows scrollHeight
+  // under the last programmatic scroll and never moves scrollTop, so its
+  // scroll event can't be mistaken for the reader leaving.
+  const onBodyScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const up = el.scrollTop < lastTopRef.current;
+    lastTopRef.current = el.scrollTop;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) stick(true);
+    else if (up) stick(false);
+  };
+  const jumpToLatest = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: still ? "auto" : "smooth" });
+    stick(true);
+  };
   useEffect(() => {
     const el = bodyRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight });
+    if (!el) return;
+    const newest = messages[messages.length - 1];
+    // a fresh conversation and the user's own send always follow
+    const own = !newest || newest.kind === "user" || newest.kind === "photo";
+    if (!own && !stuckRef.current) return;
+    const reply = replyRef.current;
+    if (newest?.kind === "agent" && reply && placedRef.current !== newest.id) {
+      placedRef.current = newest.id;
+      if (reply.offsetHeight > el.clientHeight) {
+        const top = reply.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        el.scrollTo({ top: el.scrollTop + top - 12 });
+        stick(false);
+        return;
+      }
+    }
+    el.scrollTo({ top: el.scrollHeight });
+    stick(true);
   }, [messages, busy]);
 
   const toggleMic = async () => {
@@ -610,7 +659,12 @@ export default function AgentChat({
           </div>
         )}
 
-        <div className="sheet-body chat-body" ref={bodyRef} aria-live="polite">
+        <div
+          className="sheet-body chat-body"
+          ref={bodyRef}
+          onScroll={onBodyScroll}
+          aria-live="polite"
+        >
           {messages.length === 0 ? (
             <p className="chat-empty">
               {supported
@@ -647,7 +701,11 @@ export default function AgentChat({
                 return <ToolLine key={m.id} m={m} />;
               case "agent":
                 return (
-                  <div key={m.id} className="bubble-wrap">
+                  <div
+                    key={m.id}
+                    className="bubble-wrap"
+                    ref={m === last ? replyRef : undefined}
+                  >
                     <div className="bubble agent">{m.text}</div>
                     {m.options?.length ? (
                       <div className="chips agent-options" role="group" aria-label="Answers">
@@ -690,6 +748,16 @@ export default function AgentChat({
         </div>
 
         <div className="sheet-foot chat-foot">
+          {away ? (
+            <button
+              type="button"
+              className="chat-jump"
+              aria-label="Jump to the latest message"
+              onClick={jumpToLatest}
+            >
+              <ChevronDown />
+            </button>
+          ) : null}
           {/* the mic is disabled while this is up, so it never shows mid-recording */}
           {attached ? (
             <div className="chat-attached">
@@ -738,15 +806,22 @@ export default function AgentChat({
               onSubmit={async (e) => {
                 e.preventDefault();
                 const trimmed = text.trim();
-                if (busy || (!trimmed && !attached)) return;
-                const ok = attached
-                  ? await onSubmitPhoto(attached, trimmed)
+                const shot = attached;
+                if (busy || (!trimmed && !shot)) return;
+                setText("");
+                setAttached(null);
+                const ok = shot
+                  ? await onSubmitPhoto(shot, trimmed)
                   : await onSubmit(trimmed);
                 if (ok) {
-                  setText("");
-                  setAttached(null);
                   setNotice(null);
+                  return;
                 }
+                // back as it was sent (anything typed meanwhile wins): the
+                // same text is the same uuid upstream, and the picture may
+                // not be re-takeable
+                setText((t) => t || trimmed);
+                setAttached((a) => a ?? shot);
               }}
             >
               {supported ? (

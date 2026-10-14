@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   searchFoods,
@@ -16,6 +16,7 @@ import {
   type SavedMeal,
   type SavedMealItem,
 } from "./LibraryApi";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
 import { rescaleQty, stepQty } from "./portion";
 import SheetHeader from "./SheetHeader";
 import { useAutoGrow } from "./useAutoGrow";
@@ -42,8 +43,9 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const phrasesRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(phrasesRef, phrases);
 
-  // create mode only: the food search that fills the item list. Servings are
-  // kept per food so the picked portion can be changed without another fetch.
+  // The food search that adds to the item list — in an edit too (§8.4: "change
+  // the item list in Library"). Servings are kept per food so the picked
+  // portion can be changed without another fetch.
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -51,6 +53,27 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const [servingsByFood, setServingsByFood] = useState<
     Record<string, StagedServing[]>
   >({});
+
+  // Editing: each stored item's servings, so it gets the picker an added one
+  // has. A food that fails to load keeps its serving as plain text.
+  useEffect(() => {
+    if (!meal) return;
+    let cancelled = false;
+    const ids = [...new Set(meal.items.map((it) => it.food_id))];
+    Promise.allSettled(ids.map((id) => getFood(id))).then((res) => {
+      if (cancelled) return;
+      const found: Record<string, StagedServing[]> = {};
+      res.forEach((r, i) => {
+        if (r.status === "fulfilled" && r.value.servings?.length) {
+          found[ids[i]] = r.value.servings;
+        }
+      });
+      setServingsByFood((m) => ({ ...found, ...m }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [meal]);
 
   const setQty = (i: number, qty: number) =>
     setItems((prev) =>
@@ -234,7 +257,10 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
             <div className="m3-item" key={`${it.food_id}:${it.serving_id}:${i}`}>
               <div className="info">
                 <div className="name">{it.food_name ?? it.food_id}</div>
-                {servingsByFood[it.food_id] ? (
+                {/* a stored serving the food no longer lists stays text */}
+                {servingsByFood[it.food_id]?.some(
+                  (s) => s.serving_id === it.serving_id,
+                ) ? (
                   <div className="m3-field">
                     <select
                       value={it.serving_id}
@@ -295,54 +321,54 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
           {items.length === 0 ? (
             <p className="subsheet-hint">
               {meal
-                ? "No items — a meal needs at least one. Re-save a log as this meal to rebuild it."
+                ? "No items — add a food below."
                 : "No items yet — search below and tap a result to add one."}
             </p>
           ) : null}
         </div>
 
-        {!meal ? (
-          <div>
-            <div className="edit-label">Add a food</div>
-            <form className="add-item" onSubmit={runSearch}>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search the food database"
-                aria-label="Search foods"
-                autoComplete="off"
-              />
-              <button
-                type="submit"
-                disabled={searching || adding || !query.trim()}
-                aria-label="Search"
-              >
-                {searching ? <span className="spinner" /> : "→"}
-              </button>
-            </form>
-            {results ? (
-              <div className="search-results">
-                {results.map((r, i) => (
-                  <button
-                    key={`${r.source}:${r.source_id}:${i}`}
-                    type="button"
-                    disabled={adding}
-                    onClick={() => addHit(r)}
-                  >
-                    <span className="result-name">{r.label}</span>
-                    <span className="result-sub">
-                      {r.brand ? `${r.brand} · ` : ""}
-                      {r.food_id ? "my foods" : (r.data_type ?? r.source)}
-                    </span>
-                  </button>
-                ))}
-                {results.length === 0 && !searching ? (
-                  <p className="subsheet-hint">No matches — try fewer words.</p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        <div>
+          <div className="edit-label">Add a food</div>
+          <form className="add-item" onSubmit={runSearch}>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search the food database"
+              aria-label="Search foods"
+              autoComplete="off"
+              {...FOOD_FIELD_PROPS}
+              enterKeyHint="search"
+            />
+            <button
+              type="submit"
+              disabled={searching || adding || !query.trim()}
+              aria-label="Search"
+            >
+              {searching ? <span className="spinner" /> : "→"}
+            </button>
+          </form>
+          {results ? (
+            <div className="search-results">
+              {results.map((r, i) => (
+                <button
+                  key={`${r.source}:${r.source_id}:${i}`}
+                  type="button"
+                  disabled={adding}
+                  onClick={() => addHit(r)}
+                >
+                  <span className="result-name">{r.label}</span>
+                  <span className="result-sub">
+                    {r.brand ? `${r.brand} · ` : ""}
+                    {r.food_id ? "my foods" : (r.data_type ?? r.source)}
+                  </span>
+                </button>
+              ))}
+              {results.length === 0 && !searching ? (
+                <p className="subsheet-hint">No matches — try fewer words.</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
 
         {error ? <p className="sheet-error">{error}</p> : null}
 

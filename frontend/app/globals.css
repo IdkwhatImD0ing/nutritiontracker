@@ -820,6 +820,35 @@ a {
   background: var(--surface-3);
 }
 
+/* a search field with its ✕ inside the box (Library, Find a food): empties
+   the query and the results with it */
+.capture-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.capture-field input {
+  padding-right: 46px;
+}
+
+.capture .field-clear {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 44px;
+  height: 44px;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.capture .field-clear svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* the send: a round accent button (form submit) */
 .capture button,
 .send-btn {
@@ -2041,6 +2070,51 @@ a {
   font-weight: 700;
 }
 
+/* an on/off setting (role="switch", aria-checked): a 51 × 31 track that
+   turns accent when on, the knob sliding across. Drawn at 31px tall, it
+   takes taps over 44. The phrase sheet's pin is the first. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 51px;
+  height: 31px;
+  padding: 0;
+  border: none;
+  border-radius: 16px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  cursor: pointer;
+  transition: background 160ms var(--ease);
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 160ms var(--ease);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.switch[aria-checked="true"]::after {
+  transform: translateX(20px);
+}
+
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
 
 .edit-label {
@@ -2085,6 +2159,11 @@ a {
   flex-direction: column;
   gap: 6px;
   min-height: 60px;
+}
+
+/* the 60px holds room for a list landing — a lone "No matches" needs none */
+.search-results:has(> .subsheet-hint:only-child) {
+  min-height: 0;
 }
 
 .search-results button {
@@ -2835,7 +2914,8 @@ a {
   flex: 0 0 auto;
 }
 
-.split-sheet[data-snap="full"] > .chat-pane > .chat-body {
+.split-sheet[data-snap="full"] > .chat-pane > .chat-body,
+.split-sheet[data-snap="full"] .chat-jump {
   display: none;
 }
 
@@ -3105,6 +3185,30 @@ a {
 .chat-foot .capture-error,
 .chat-foot .capture-notice {
   margin-top: 8px;
+}
+
+/* scrolled up off the newest line: the way back down, floating over the
+   conversation just above the composer, whatever the composer holds */
+.chat-foot {
+  position: relative;
+}
+
+.chat-jump {
+  position: absolute;
+  right: 14px;
+  bottom: calc(100% + 10px);
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 1.25rem;
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  animation: fade 160ms ease-out;
 }
 
 .chat-rec {
