@@ -403,7 +403,8 @@ export default function StagingSheet({
     const said: string[] = [];
     for (const i of items) {
       if (i.status === "searching" || !wasSearchingRef.current.has(i.item_index)) continue;
-      if (removedRef.current.has(i.item_index)) continue;
+      // removed, or inside its Undo window (shown as "Removed X · Undo")
+      if (removedRef.current.has(i.item_index) || undoTimersRef.current.has(i.item_index)) continue;
       said.push(
         i.status === "not_found"
           ? `${i.phrase} not found`
