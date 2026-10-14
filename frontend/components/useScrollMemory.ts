@@ -16,12 +16,12 @@ const saved = new Map<string, number>();
  * scroll={false}, so Next's own scroll-to-top doesn't undo it. Restores once
  * per mount: a later re-read of the data leaves the reader where they are.
  *
- * Not covered: a browser back or forward between two tab roots (a desktop
- * browser, Android's back gesture). The browser can put back the scroll of
- * the entry it lands on before React swaps the page, and the page being
- * left would then save that offset instead of its own. The installed app
- * has no browser back; its pops are BackBar's, from screens that aren't
- * tab roots.
+ * A tab root left by a back or forward (a lane cancelled back to its tab,
+ * Today's router.back(); a browser button; Android's back gesture) saves
+ * the offset it had when the popstate fired: the browser then puts back the
+ * scroll of the entry it lands on (HTML's "restore persisted state" follows
+ * popstate) before React swaps the page, so a read at unmount would save
+ * that entry's offset instead of this page's.
  */
 export function useScrollMemory(ready: boolean): void {
   const pathname = usePathname();
@@ -41,11 +41,17 @@ export function useScrollMemory(ready: boolean): void {
 
   // A layout cleanup runs before React removes the page, while the document
   // still has its height. A page left before its content showed keeps the
-  // offset it had.
-  useLayoutEffect(
-    () => () => {
-      if (restored.current) saved.set(pathname, window.scrollY);
-    },
-    [pathname],
-  );
+  // offset it had. A pop away from this page is read as it fires (above);
+  // one that stays on it (a sheet's own entry) is not a leaving.
+  useLayoutEffect(() => {
+    let leftAt: number | null = null;
+    const onPop = () => {
+      if (location.pathname !== pathname) leftAt = window.scrollY;
+    };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (restored.current) saved.set(pathname, leftAt ?? window.scrollY);
+    };
+  }, [pathname]);
 }

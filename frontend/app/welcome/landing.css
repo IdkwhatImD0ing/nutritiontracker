@@ -328,17 +328,20 @@
    lands) is this page trimmed to an app's front door (Bill, 2026-10-13):
    the pitch and the preview, the two ways in pinned at the foot, and the
    Privacy and Terms line. The website's parts (Docs, GitHub, the claims,
-   lanes, developer and open-source sections) stay with the browser. */
+   lanes, developer and open-source sections) stay with the browser. Each
+   selector carries .land: the sections' own rules come later in this file
+   (.land-claims, .land-dev and .land-open set display: grid there), and an
+   equal one there would win. */
 @media (display-mode: standalone) {
-  .land-nav-links,
-  .land-hero .land-textlink,
-  .land-claims,
-  .land-lanes,
-  .land-dev,
-  .land-open,
-  .land-foot .land-mark,
-  .land-foot-links .land-web,
-  .land-foot-credit {
+  .land .land-nav-links,
+  .land .land-hero .land-textlink,
+  .land .land-claims,
+  .land .land-lanes,
+  .land .land-dev,
+  .land .land-open,
+  .land .land-foot .land-mark,
+  .land .land-foot-links .land-web,
+  .land .land-foot-credit {
     display: none;
   }
 
@@ -372,7 +375,7 @@
     padding: 0 16px;
   }
 
-  .land-foot-in {
+  .land .land-foot-in {
     justify-content: center;
   }
 }
