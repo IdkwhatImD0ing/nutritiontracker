@@ -1110,6 +1110,12 @@ html:has(.tabbar):has(.shell.settings > .m3-savebar) {
   }
 }
 
+/* Back, while Computing… or Saving… is out */
+.wizard-ghost:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 /* the wizard's sits in a short footer; this one carries a sentence that can
    wrap at phone width (Settings › Time zone) */
 .m3-ghost-btn {

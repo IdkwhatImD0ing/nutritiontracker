@@ -216,6 +216,7 @@ a.m3-link-btn,
 :where(
   :is(button, [role="button"], .row-main, a, summary):active:not(
       :disabled,
+      [aria-disabled="true"],
       .fab,
       .commit-btn,
       .commit-pill,
