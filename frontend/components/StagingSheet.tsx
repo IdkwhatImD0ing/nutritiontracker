@@ -73,6 +73,12 @@ function portionChoices(item: StagedItem): PortionChoice[] {
     : [];
 }
 
+/** A server copy of a row as far as its amount goes: a portion set in the
+ *  sheet outlives a newer copy only while this still reads the same (here,
+ *  and on the card closeStaging leaves it on: Today's agentDone). */
+export const amountKey = (i: StagedItem) =>
+  JSON.stringify([i.status, i.food?.id, i.serving?.id, i.qty, i.estimate_note]);
+
 /** Everything needed to restore the sheet unchanged after an undone discard
  *  (BACKLOG 11) — local edits included. */
 export type StagingSnapshot = {
@@ -81,6 +87,8 @@ export type StagingSnapshot = {
   removed: number[];
   logMealOverride: Meal | null;
   itemMealOverrides: Record<number, Meal>;
+  /** portionsRef: the server row each portion set here was set on */
+  portions: Record<number, string>;
 };
 
 type Props = {
@@ -96,6 +104,10 @@ type Props = {
   /** each row this mount removes for good, as the server hears of it: a
    *  later mount for the same log gets it in `removedIndexes` */
   onRemoved?: (logId: string, itemIndex: number) => void;
+  /** the portion records (portionsRef) an earlier mount of this log closed
+   *  with: a Review of the card that carries its portions keeps them
+   *  through the next correction as that mount would have */
+  portions?: Record<number, string>;
   /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
   onRendered?: () => void;
   /** `pending` = every row the commit did not land: the §3.5 late stragglers
@@ -118,6 +130,9 @@ type Props = {
    *  lane's ✕ puts the tray away and then the lane (Today's closeLane).
    *  It returns false, closing nothing, while Log is in flight. */
   closeRef?: RefObject<(() => boolean | void) | null>;
+  /** told as Log goes in flight and as it settles (or the sheet goes):
+   *  docked, the lane's own ✕ and pull refuse meanwhile (SplitSheet `busy`) */
+  onCommitting?: (committing: boolean) => void;
 };
 
 export default function StagingSheet({
@@ -125,11 +140,13 @@ export default function StagingSheet({
   restore,
   removedIndexes,
   onRemoved,
+  portions,
   onRendered,
   onCommitted,
   onClose,
   docked = false,
   closeRef,
+  onCommitting,
 }: Props) {
   // docked, the split around it is the dialog and takes the focus (SplitSheet)
   const sheetRef = useSheetFocus<HTMLDivElement>(!docked);
@@ -166,6 +183,11 @@ export default function StagingSheet({
 
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  // the highest item_index this mount has shown (addItem): a row can leave
+  // `items` while the server keeps its index — §3.4b's adjust_photo removes
+  // one, and the [log] effect below takes the plate without it
+  const maxShownRef = useRef(-1);
+  maxShownRef.current = Math.max(maxShownRef.current, ...items.map((i) => i.item_index));
   const mealRef = useRef(meal);
   mealRef.current = meal;
   const removedRef = useRef(removed);
@@ -176,6 +198,13 @@ export default function StagingSheet({
   const mealOverridesRef = useRef<{ log: Meal | null; items: Record<number, Meal> }>({
     log: restore?.logMealOverride ?? null,
     items: { ...(restore?.itemMealOverrides ?? {}) },
+  });
+  // §7.1: a portion set here is the sheet's own until Log (the server hears
+  // of it at commit). Per row, the server's row it was set on (amountKey):
+  // a newer copy of the plate (the [log] effect) keeps the portion while the
+  // server's row still reads so; a correction to that row (§3.4b) wins.
+  const portionsRef = useRef<Record<number, string>>({
+    ...(restore?.portions ?? portions ?? {}),
   });
   // Kick accounting per item (§3.4 lifecycle: kick once on arrival, re-kick a
   // stale row once, then not_found). Also guards StrictMode double-mount.
@@ -198,6 +227,7 @@ export default function StagingSheet({
 
   const mergeItem = (updated: StagedItem) => {
     const applied = withOverrides(updated);
+    delete portionsRef.current[applied.item_index]; // the server's row now
     setItems((prev) =>
       prev.map((i) => (i.item_index === applied.item_index ? applied : i)),
     );
@@ -284,17 +314,27 @@ export default function StagingSheet({
 
   // §3.4b: a chat correction to the plate open here (adjust_photo) hands down
   // the server's newer list for this same log (Today's agentDone). It takes
-  // over the rows, local portion edits with them. A row removed here stays
-  // out: `removed` and the Undo windows still hold its index. A row an
-  // inline /api/resolve owns is that call's to settle, as in the poll.
+  // over the rows, but a portion set here stays on a row the correction left
+  // alone (portionsRef). A row removed here stays out: `removed` and the
+  // Undo windows still hold its index. A row an inline /api/resolve owns is
+  // that call's to settle, as in the poll.
   const shownLogRef = useRef(log);
   useEffect(() => {
     if (shownLogRef.current === log) return;
     shownLogRef.current = log;
+    for (const s of log.items) {
+      if (portionsRef.current[s.item_index] !== amountKey(s)) delete portionsRef.current[s.item_index];
+    }
     setItems((prev) => {
       const owned = prev.filter((i) => resolvingRef.current.has(i.item_index));
-      const fresh = (s: StagedItem) =>
-        owned.find((i) => i.item_index === s.item_index) ?? withOverrides(s);
+      const fresh = (s: StagedItem) => {
+        const own = owned.find((i) => i.item_index === s.item_index);
+        if (own) return own;
+        const local = prev.find((i) => i.item_index === s.item_index);
+        return local && s.item_index in portionsRef.current
+          ? { ...withOverrides(s), serving: local.serving, qty: local.qty, macros: local.macros }
+          : withOverrides(s);
+      };
       return [
         ...log.items.map(fresh),
         ...owned.filter((i) => !log.items.some((s) => s.item_index === i.item_index)),
@@ -626,13 +666,9 @@ export default function StagingSheet({
     // re-resolve it (409 "item already removed"), and then refuses the WHOLE
     // commit for naming it (§3.5, removed rows are never resurrected). A row
     // removed in THIS mount is still in `items` — only `visible` hides it —
-    // so the gap that has to be closed is the one an earlier mount left.
-    const idx =
-      Math.max(
-        -1,
-        ...itemsRef.current.map((i) => i.item_index),
-        ...(removedIndexes ?? []),
-      ) + 1;
+    // and one the chat removed was shown here first (maxShownRef), so the
+    // gap that has to be closed is the one an earlier mount left.
+    const idx = Math.max(maxShownRef.current, ...(removedIndexes ?? [])) + 1;
     const m = mealRef.current;
     mealOverridesRef.current.items[idx] = m; // added rows keep the sheet's meal
     setItems((prev) => [
@@ -663,6 +699,7 @@ export default function StagingSheet({
     if (editFor == null) return;
     const idx = editFor;
     setEditFor(null);
+    delete portionsRef.current[idx]; // a new food, its own portion
     const before =
       itemsRef.current.find((i) => i.item_index === idx) ?? null;
     // Full row reset: the new phrase replaces the old resolution wholesale
@@ -698,6 +735,10 @@ export default function StagingSheet({
     serving: PortionChoice,
     qty: number,
   ) => {
+    const row = itemsRef.current.find((i) => i.item_index === itemIndex);
+    if (row && !(itemIndex in portionsRef.current)) {
+      portionsRef.current[itemIndex] = amountKey(row);
+    }
     setItems((prev) =>
       prev.map((i) => {
         if (i.item_index !== itemIndex) return i;
@@ -757,6 +798,7 @@ export default function StagingSheet({
     removed: [...removedRef.current, ...undoTimersRef.current.keys()],
     logMealOverride: mealOverridesRef.current.log,
     itemMealOverrides: { ...mealOverridesRef.current.items },
+    portions: { ...portionsRef.current },
   });
 
   // Refused (false) while Log is in flight: a discard armed now would say
@@ -767,6 +809,11 @@ export default function StagingSheet({
     onClose(snapshot());
   };
   if (closeRef) closeRef.current = close;
+  useEffect(() => {
+    onCommitting?.(committing);
+    return () => onCommitting?.(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [committing]);
   // a pull on the head closes exactly as the ✕ does (Today's closeStaging),
   // and so do Escape and Back; docked, they are the lane's (SplitSheet). A
   // refused close springs back, and Escape stops here rather than passing

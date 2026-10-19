@@ -42,7 +42,7 @@ import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
 import { dayKey, peek, put } from "./readCache";
 import { releaseForNavigation } from "./sheetBack";
 import SplitSheet from "./SplitSheet";
-import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
+import StagingSheet, { amountKey, type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
 import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
 import { OFFLINE_NOTE, useOnline } from "./useOnline";
@@ -130,6 +130,11 @@ export default function Today() {
   // the whole commit (§3.5). Remembered here, where the log outlives the
   // sheet, for as long as a card can be reviewed.
   const removedIndexesRef = useRef<Map<string, number[]>>(new Map());
+  // ...and the portions its tray set, which closeStaging leaves on the card
+  // (§3.4b): per row, the server's row each was set on (StagingSheet's
+  // portionsRef), so a correction to another row keeps them on the card and
+  // a later Review keeps them through the next one.
+  const portionsRef = useRef<Map<string, Record<number, string>>>(new Map());
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   // the digits of a barcode neither database knows — an ordinary miss, shown
@@ -245,13 +250,20 @@ export default function Today() {
   // on the outcome rather than as this turn's own (empty) log. The card that
   // owns that log shows the new list — a second card would be a lie, and
   // StagingSheet reads its rows from these props when Review mounts it.
-  const patchResult = (updated: LogResponse) =>
+  // `portions` (portionsRef's for that log): a card row whose server copy
+  // still reads as when its portion was set keeps that portion.
+  const patchResult = (updated: LogResponse, portions?: Record<number, string>) =>
     setChat((cur) =>
-      cur.map((m) =>
-        m.kind === "result" && m.log.log_id === updated.log_id
-          ? { ...m, log: { ...m.log, ...updated } }
-          : m,
-      ),
+      cur.map((m) => {
+        if (m.kind !== "result" || m.log.log_id !== updated.log_id) return m;
+        const items = updated.items.map((s) => {
+          const c = m.log.items.find((i) => i.item_index === s.item_index);
+          return c && portions?.[s.item_index] === amountKey(s)
+            ? { ...s, serving: c.serving, qty: c.qty, macros: c.macros }
+            : s;
+        });
+        return { ...m, log: { ...m.log, ...updated, items } };
+      }),
     );
   // a run that ended in an error leaves no tool line spinning
   const settleRunning = () =>
@@ -432,6 +444,8 @@ export default function Today() {
   // around it: put away, the rows would remount as the standalone sheet and
   // offer Log a second time while the first is still landing.
   const closeTrayRef = useRef<(() => boolean | void) | null>(null);
+  // ...and the lane's ✕ and pull say so up front (SplitSheet `busy`)
+  const [trayBusy, setTrayBusy] = useState(false);
   const closeLane = () => {
     if (lane === "agent" && staging && closeTrayRef.current?.() === false) return;
     setLane(null);
@@ -730,11 +744,33 @@ export default function Today() {
     // a correction: the earlier turn's log this one replaces
     if (mine) for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
     // §3.4b: adjust_photo edited the plate — patch its card, never add one
-    if (mine && log.agent?.updated) patchResult(log.agent.updated);
+    const updated = log.agent?.updated;
+    const portions = updated ? portionsRef.current.get(updated.log_id) : undefined;
+    if (mine && updated) patchResult(updated, portions);
     // ...and the tray, when the plate is open in it: its rows are what Log
     // sends, and what closing it writes back over the card
-    const updated = log.agent?.updated;
     if (updated) {
+      // a row the correction changed takes the server's amount from now on
+      if (portions) {
+        for (const s of updated.items) {
+          if (portions[s.item_index] !== amountKey(s)) delete portions[s.item_index];
+        }
+      }
+      // A row the correction removed is just missing from `updated`, and the
+      // server keeps its index: remembered as the tray's own removals are
+      // (removedIndexesRef), or a later sheet's "Add another food" reuses it.
+      // Read off the plate as this turn found it, the card's and the tray's.
+      const gone = [
+        ...chat.flatMap((m) =>
+          m.kind === "result" && m.log.log_id === updated.log_id ? m.log.items : [],
+        ),
+        ...(staging?.log.log_id === updated.log_id ? staging.log.items : []),
+      ]
+        .map((i) => i.item_index)
+        .filter((i) => !updated.items.some((s) => s.item_index === i));
+      const prior = removedIndexesRef.current.get(updated.log_id) ?? [];
+      const fresh = [...new Set(gone)].filter((i) => !prior.includes(i));
+      if (fresh.length) removedIndexesRef.current.set(updated.log_id, [...prior, ...fresh]);
       setStaging((cur) =>
         cur?.log.log_id === updated.log_id
           ? { ...cur, log: { ...cur.log, ...updated } }
@@ -1148,7 +1184,8 @@ export default function Today() {
       // to the card: a tray that kept its pre-correction rows would put
       // them back here. It also keeps the local portion edits, which is how
       // the sheet has always worked — they are what a commit from this card
-      // would send.
+      // would send — and what each was set on, for the next correction.
+      portionsRef.current.set(current.log.log_id, snap.portions);
       patchResult({
         log_id: current.log.log_id,
         meal: snap.meal,
@@ -1239,6 +1276,7 @@ export default function Today() {
           removedIndexesRef.current.set(logId, [...prior, itemIndex]);
         }
       }}
+      portions={portionsRef.current.get(staging.log.log_id)}
       onRendered={() => stagedRendered(staging.log.log_id)}
       onCommitted={(t, stragglers, landed) => {
         // The commit's totals are for the day the entries landed on (§7.2
@@ -1257,6 +1295,7 @@ export default function Today() {
       }}
       onClose={closeStaging}
       closeRef={closeTrayRef}
+      onCommitting={setTrayBusy}
     />
   ) : null;
 
@@ -1361,6 +1400,7 @@ export default function Today() {
           <SplitSheet
             stage={stageEl}
             expandSignal={reviewTick}
+            busy={trayBusy}
             // Escape and Back go to the topmost sheet (sheetBack): a sub-sheet
             // stacked above the split takes them before this does.
             onDismiss={closeLane}
