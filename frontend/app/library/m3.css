@@ -279,6 +279,8 @@ html:has(.tabbar) {
   letter-spacing: 0.12em;
   color: var(--muted);
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   justify-content: space-between;
   align-items: baseline;
 }
@@ -294,6 +296,10 @@ html:has(.tabbar) {
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
+  /* a long one (Nutrients' "per 1 package (makes about…)") wraps to its own
+     line at the right, rather than running into the heading */
+  margin-left: auto;
+  text-align: right;
 }
 
 .m3-card {
@@ -1143,8 +1149,18 @@ html:has(.tabbar):has(.shell.settings > .m3-savebar) {
 
 .fd-kcal {
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   align-items: baseline;
   justify-content: space-between;
+}
+
+/* a basis too long to sit beside the figure drops to its own line, at the
+   right, rather than shrinking against "kcal" ("284 kcalper 1 breast…") */
+.fd-kcal .m3-card-sub {
+  margin-left: auto;
+  text-align: right;
+  min-width: 0;
 }
 
 .fd-kcal .n {

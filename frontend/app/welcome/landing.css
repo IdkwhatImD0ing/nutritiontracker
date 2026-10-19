@@ -979,6 +979,26 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+
+  /* but never inside a flag ("--" / "header"), and a URL that doesn't fit
+     the line moves to the next one whole; only one too long for any line
+     breaks, at the <wbr> after /api/ (page.tsx), not mid-word ("api/mc" /
+     "p") */
+  .land-code .f {
+    white-space: nowrap;
+  }
+
+  .land-code .u {
+    display: inline-block;
+  }
+}
+
+/* wider, the panel scrolls: Chromium breaks at a <wbr> even under
+   white-space: pre ("…/api/" / "mcp --header"), so drop them */
+@media (min-width: 720px) {
+  .land-code wbr {
+    display: none;
+  }
 }
 
 .land-code:focus-visible {

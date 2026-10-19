@@ -332,13 +332,13 @@ export default function Welcome() {
                   <span className="c"># Add Tally to Claude Code over MCP</span>
                   {"\n"}
                   <span className="pr">$ </span>claude mcp add --transport http tally{" "}
-                  <span className="u">{SITE_URL}/api/mcp</span>{" "}
+                  <span className="u">{SITE_URL}/api/<wbr />mcp</span>{" "}
                   <span className="f">--header</span>{" "}
                   <span className="s">&quot;Authorization: Bearer {KEY}&quot;</span>
                   {"\n\n"}
                   <span className="c"># Or call the REST API</span>
                   {"\n"}
-                  <span className="pr">$ </span>curl <span className="u">{SITE_URL}/api/diary</span>{" "}
+                  <span className="pr">$ </span>curl <span className="u">{SITE_URL}/api/<wbr />diary</span>{" "}
                   <span className="f">-H</span>{" "}
                   <span className="s">&quot;Authorization: Bearer {KEY}&quot;</span>
                 </code>

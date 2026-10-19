@@ -217,8 +217,14 @@ export default function Library() {
     } catch {
       if (seq.current !== id) return;
       // Hits on screen for this same query (a Back's restored list, a Retry
-      // over it) stay, as the lists below keep theirs; another query's go.
-      setResults((r) => (r && peek<LastSearch>("library:search")?.q === q ? r : []));
+      // over it) stay, as the lists below keep theirs; another query's go,
+      // leaving no results block at all: an empty one holds 60px of blank
+      // under the error card.
+      const same = peek<LastSearch>("library:search")?.q === q;
+      setResults((r) => (r && same ? r : null));
+      // nor the last answer's "USDA didn't answer — showing…" over nothing;
+      // kept hits keep the hint that explains them
+      if (!same) setFdcDown(false);
       setSearchError({ text: "Search failed.", retry: true });
     } finally {
       if (seq.current === id) setSearching(false);
