@@ -355,11 +355,14 @@ export default function ApiKeysCard() {
                     aria-controls={open ? `key-${k.id}` : undefined}
                     onClick={() => toggle(k.id)}
                   >
-                    {/* "used 1 day ago" wraps as one piece, so a wrap never
-                        splits a number from its unit ('used 1' / 'day ago') */}
+                    {/* "· used 1 day ago" wraps as one piece, so a wrap never
+                        splits a number from its unit ('used 1' / 'day ago')
+                        or leaves the dot at the end of a line, as Oura's day
+                        row */}
                     <span className="keys-gist">
-                      <span className="keys-label">{k.label}</span> — {access} ·{" "}
+                      <span className="keys-label">{k.label}</span> — {access}{" "}
                       <span className="keys-used">
+                        ·&nbsp;
                         {k.last_used_at ? `used ${ago(k.last_used_at, now)}` : "never used"}
                       </span>
                     </span>

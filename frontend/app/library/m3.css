@@ -150,6 +150,12 @@ body:has(.tabbar) .shell {
   padding-bottom: calc(100px + env(safe-area-inset-bottom));
 }
 
+/* and so does keyboard focus: a control tabbed to under the bar scrolls up
+   clear of it, not just into the viewport behind it */
+html:has(.tabbar) {
+  scroll-padding-bottom: calc(100px + env(safe-area-inset-bottom));
+}
+
 /* ---------- + sheet (AddSheet): four rows, icon + label, big targets ---------- */
 
 .add-sheet {
@@ -449,7 +455,8 @@ body:has(.tabbar) .shell {
   color: var(--muted);
 }
 
-.m3-link-btn:disabled {
+/* aria-disabled: a button waiting on its own request keeps focus */
+.m3-link-btn:is(:disabled, [aria-disabled="true"]) {
   color: var(--faint);
   cursor: default;
 }
@@ -552,9 +559,13 @@ body:has(.tabbar) .shell {
   }
 }
 
-/* the page's end scrolls clear of the bar */
+/* the page's end scrolls clear of the bar, and so does keyboard focus */
 body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   padding-bottom: calc(172px + env(safe-area-inset-bottom));
+}
+
+html:has(.tabbar):has(.shell.settings > .m3-savebar) {
+  scroll-padding-bottom: calc(172px + env(safe-area-inset-bottom));
 }
 
 /* A toast that lands while the bar is up ("Targets saved." from the
@@ -976,7 +987,7 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   cursor: pointer;
 }
 
-/* while Compute or Save is out (a save can't be called back) */
+/* while Save is out (a save can't be called back) */
 .wizard-cancel:disabled {
   color: var(--faint);
   cursor: default;
@@ -1472,6 +1483,10 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
     padding-bottom: 64px;
   }
 
+  html:has(.tabbar) {
+    scroll-padding-bottom: 0;
+  }
+
   body:has(.tabbar) .toast {
     left: calc(50% + var(--rail-w) / 2);
   }
@@ -1484,6 +1499,10 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
 
   body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
     padding-bottom: 112px;
+  }
+
+  html:has(.tabbar):has(.shell.settings > .m3-savebar) {
+    scroll-padding-bottom: 112px;
   }
 
   body:has(.tabbar) .shell.settings:has(> .m3-savebar) > .toast-host > .toast {
@@ -1719,9 +1738,10 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   color: var(--muted);
 }
 
-/* "used 1 day ago" goes to the next line whole rather than split after
-   its number. A line too narrow for all of it (320px, large text, a
-   status) breaks it inside, between its words, never mid-word. */
+/* "· used 1 day ago" goes to the next line whole, dot first, rather than
+   split after its number or leaving the dot at a line's end. A line too
+   narrow for all of it (320px, large text, a status) breaks it inside,
+   between its words, never mid-word. */
 .keys-used {
   display: inline-block;
 }
