@@ -40,7 +40,7 @@ type Props = {
   alt: { text: string; href: string; label: string };
 };
 
-type Problem = { field: "name" | "email" | "password"; text: string };
+type Problem = { field: "name" | "email" | "password" | "otp"; text: string };
 
 /** What the browser's validation bubbles used to say, in the card's own
  *  error line. Sign-in only needs a password; sign-up holds it to 8. */
@@ -55,6 +55,28 @@ function checkFields(data: FormData, signUp: boolean): Problem | null {
   }
   if (!password) return { field: "password", text: "Enter your password." };
   if (signUp && password.length < 8) {
+    return { field: "password", text: "Your password needs at least 8 characters." };
+  }
+  return null;
+}
+
+/** The reset form's check, in the same words: an address to send the code
+ *  to, then the emailed code and a new password held to 8. */
+function checkReset(data: FormData, sent: boolean): Problem | null {
+  if (!sent) {
+    const email = String(data.get("email") ?? "").trim();
+    if (!email) return { field: "email", text: "Enter your email address." };
+    if (!email.includes("@")) {
+      return { field: "email", text: "That email address is missing an @." };
+    }
+    return null;
+  }
+  if (!/^\d{6}$/.test(String(data.get("otp") ?? ""))) {
+    return { field: "otp", text: "Enter the 6-digit code from the email." };
+  }
+  const password = String(data.get("password") ?? "");
+  if (!password) return { field: "password", text: "Enter a new password." };
+  if (password.length < 8) {
     return { field: "password", text: "Your password needs at least 8 characters." };
   }
   return null;
@@ -138,9 +160,9 @@ export default function AuthForm({
           ) : null}
         </label>
         {withName ? null : (
-          <a href="/auth/reset" className="auth-forgot">
+          <Link href="/auth/reset" className="auth-forgot">
             Forgot password?
-          </a>
+          </Link>
         )}
         {/* always there, so the line is held (no jump) and a new error is
             announced. A server error is about the last try: not shown while
@@ -222,7 +244,7 @@ function VerifyEmail({ verify }: { verify: Verify }) {
           </label>
         ) : null}
         <p className="auth-error" role="alert">
-          {state?.error}
+          {pending ? null : state?.error}
         </p>
         <button
           type="submit"
@@ -283,28 +305,54 @@ export function ResetPassword() {
   const [state, formAction, pending] = useActionState(resetPasswordAction, null);
   // the button that sent the form: only that one says it is working
   const [intent, setIntent] = useState<"reset" | "send" | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   const sent = state?.sent ?? false;
   const primary = sent ? "reset" : "send";
   const primaryBusy = pending && intent === primary;
   const resendBusy = pending && sent && intent === "send";
 
+  // AuthForm's check. "Send a new code" (formNoValidate) needs neither the
+  // code nor the password, so it is never refused.
+  const check = (e: FormEvent<HTMLFormElement>) => {
+    const by = (e.nativeEvent as SubmitEvent).submitter;
+    const resend = by instanceof HTMLButtonElement && by.formNoValidate;
+    const found = resend ? null : checkReset(new FormData(e.currentTarget), sent);
+    setProblem(found);
+    if (!found) return;
+    e.preventDefault();
+    const field = e.currentTarget.elements.namedItem(found.field);
+    if (field instanceof HTMLInputElement) field.focus();
+  };
+  const invalid = (field: Problem["field"]) => problem?.field === field || undefined;
+
   return (
     <main className="auth-wrap">
       <AuthTop />
-      <form className="auth-card" action={formAction}>
+      <form className="auth-card" action={formAction} onSubmit={check} noValidate>
         <TallyMark className="auth-mark" />
         <h1>Reset your password</h1>
-        <p className="subsheet-hint auth-intro">
+        <p className="subsheet-hint auth-intro" aria-live="polite">
           {sent
-            ? `If ${state?.email} has an account, we've emailed it a code. Enter it with a new password.`
+            ? state?.resent
+              ? `If ${state.email} has an account, we've emailed it a new code.`
+              : `If ${state?.email} has an account, we've emailed it a code. Enter it with a new password.`
             : "We'll email you a code to set a new one."}
         </p>
         {sent ? (
           <>
-            <input type="hidden" name="email" value={state?.email} />
+            {/* the account, as a username field, so a password manager can
+                file the new password under it: they ignore type=hidden */}
+            <input
+              name="email"
+              type="email"
+              autoComplete="username"
+              value={state?.email}
+              readOnly
+              hidden
+            />
             <label>
               Code
-              <input {...OTP_PROPS} enterKeyHint="next" />
+              <input {...OTP_PROPS} enterKeyHint="next" aria-invalid={invalid("otp")} />
             </label>
             <label>
               New password
@@ -314,7 +362,9 @@ export function ResetPassword() {
                 autoComplete="new-password"
                 required
                 minLength={8}
+                aria-invalid={invalid("password")}
               />
+              <span className="subsheet-hint">At least 8 characters</span>
             </label>
           </>
         ) : (
@@ -329,11 +379,12 @@ export function ResetPassword() {
               spellCheck={false}
               defaultValue={state?.email}
               required
+              aria-invalid={invalid("email")}
             />
           </label>
         )}
         <p className="auth-error" role="alert">
-          {state?.error}
+          {problem?.text ?? (pending ? null : state?.error)}
         </p>
         <button
           type="submit"
@@ -376,7 +427,8 @@ export function ResetPassword() {
           </button>
         ) : null}
         <p className="auth-alt">
-          <a href="/auth/sign-in">Back to sign in</a>
+          {/* a different route, so the sign-in form mounts fresh */}
+          <Link href="/auth/sign-in">Back to sign in</Link>
         </p>
       </form>
     </main>
