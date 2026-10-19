@@ -219,6 +219,8 @@ export default function Library() {
       // no results block at all: an empty one holds 60px of blank under
       // the error card
       setResults(null);
+      // nor the last answer's "USDA didn't answer — showing…" over nothing
+      setFdcDown(false);
       setSearchError({ text: "Search failed.", retry: true });
     } finally {
       if (seq.current === id) setSearching(false);

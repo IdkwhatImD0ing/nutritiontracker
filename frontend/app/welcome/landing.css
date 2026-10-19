@@ -993,6 +993,14 @@
   }
 }
 
+/* wider, the panel scrolls: Chromium breaks at a <wbr> even under
+   white-space: pre ("…/api/" / "mcp --header"), so drop them */
+@media (min-width: 720px) {
+  .land-code wbr {
+    display: none;
+  }
+}
+
 .land-code:focus-visible {
   outline: 2px solid var(--accent-line);
   outline-offset: -2px;
