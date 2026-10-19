@@ -14,7 +14,7 @@ import {
 import { Close } from "./icons";
 import ManualSearchSheet from "./ManualSearchSheet";
 import { readEstimate } from "./PhotoApi";
-import SheetPresence from "./useSheetPresence";
+import SheetPresence, { EXIT_MS } from "./useSheetPresence";
 
 const POLL_FIRST_MS = 250; // reopen feels immediate (BACKLOG 31 retry-on-open)
 const POLL_MS = 2_000;
@@ -56,6 +56,22 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
   waitingRef.current = waiting;
   const committingRef = useRef<Set<number>>(new Set());
   const rekickedRef = useRef<Set<number>>(new Set());
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // A failed pill about to go (found, or dismissed) takes its focused button
+  // with it, and the Find it sheet has no opener left to hand focus back to:
+  // the next failed pill's Find it takes it (else the one above), and with
+  // none left the + button does, rather than the page.
+  const handOff = (item: StagedItem) => {
+    const at = failed.findIndex((x) => x.item_index === item.item_index);
+    const next = failed[at + 1] ?? failed[at - 1];
+    const target = next
+      ? wrapRef.current?.querySelectorAll<HTMLElement>(".pending-find")[
+          failed.indexOf(next)
+        ]
+      : document.querySelector<HTMLElement>(".fab");
+    target?.focus({ preventScroll: true });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +199,7 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
         return;
       }
       onTotals(await commitItem(logId, { ...item, meal: f.meal }));
+      handOff(f);
       setFailed((prev) => prev.filter((x) => x.item_index !== f.item_index));
       setFinding(null);
     } catch (e) {
@@ -193,19 +210,24 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
   };
 
   const idle = waiting.length === 0 && failed.length === 0;
+  // Today drops this component on onDone, so a Find it sheet that fixed the
+  // last row gets its exit first (EXIT_MS) instead of vanishing mid-frame.
+  const doneRef = useRef(onDone);
+  doneRef.current = onDone;
   useEffect(() => {
-    if (idle) onDone();
-  }, [idle, onDone]);
-
-  if (idle) return null;
+    if (!idle) return;
+    const t = setTimeout(() => doneRef.current(), EXIT_MS);
+    return () => clearTimeout(t);
+  }, [idle]);
 
   // The wrap is the live region, not each pill: a count change or a pill
   // turning into "needs attention" is announced, not just the first mount.
   // The Find it sheet sits beside it, not in it: a live region would read
-  // out the whole sheet.
+  // out the whole sheet. Idle (the wrap empty, so out of the flow), the
+  // sheet stays mounted to play its exit.
   return (
     <>
-      <div className="pending-wrap" role="status">
+      <div className="pending-wrap" role="status" ref={wrapRef}>
         {waiting.length > 0 ? (
           <div className="pending-pill">
             <span className="spinner" />
@@ -232,11 +254,12 @@ export default function PendingItems({ logId, items, onTotals, onDone }: Props) 
             <button
               type="button"
               aria-label="Dismiss"
-              onClick={() =>
+              onClick={() => {
+                handOff(f);
                 setFailed((prev) =>
                   prev.filter((x) => x.item_index !== f.item_index),
-                )
-              }
+                );
+              }}
             >
               <Close />
             </button>

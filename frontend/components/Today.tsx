@@ -39,7 +39,7 @@ import PendingItems from "./PendingItems";
 import { photoErrorMessage } from "./PhotoApi";
 import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
-import { peek, put } from "./readCache";
+import { dayKey, peek, put } from "./readCache";
 import { releaseForNavigation } from "./sheetBack";
 import SplitSheet from "./SplitSheet";
 import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
@@ -76,7 +76,6 @@ function localDateISO(): string {
 /** readCache: the day's diary as last shown, keyed by its date, so a return
  *  to Today paints it at once and yesterday's is never read for today. */
 type CachedDay = { totals: DayTotals; meals: DiaryMeals };
-const dayKey = (day: string) => `diary:${day}`;
 
 export default function Today() {
   const [totals, setTotals] = useState<DayTotals | null>(
@@ -429,9 +428,12 @@ export default function Today() {
   // a photo log — and an Undo after the lane is gone brings the rows back in
   // the standalone sheet, since reopening Agent starts a new conversation.
   // Only the docked tray: another lane's close leaves a standalone sheet be.
-  const closeTrayRef = useRef<(() => void) | null>(null);
+  // A tray whose Log is in flight refuses (false), and the lane stays up
+  // around it: put away, the rows would remount as the standalone sheet and
+  // offer Log a second time while the first is still landing.
+  const closeTrayRef = useRef<(() => boolean | void) | null>(null);
   const closeLane = () => {
-    if (lane === "agent" && staging) closeTrayRef.current?.();
+    if (lane === "agent" && staging && closeTrayRef.current?.() === false) return;
     setLane(null);
     const from = originRef.current;
     originRef.current = null;
@@ -729,6 +731,16 @@ export default function Today() {
     if (mine) for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
     // §3.4b: adjust_photo edited the plate — patch its card, never add one
     if (mine && log.agent?.updated) patchResult(log.agent.updated);
+    // ...and the tray, when the plate is open in it: its rows are what Log
+    // sends, and what closing it writes back over the card
+    const updated = log.agent?.updated;
+    if (updated) {
+      setStaging((cur) =>
+        cur?.log.log_id === updated.log_id
+          ? { ...cur, log: { ...cur.log, ...updated } }
+          : cur,
+      );
+    }
     if (replay && mine) {
       // a voice bubble the replay carried no transcript for stays honest
       setChat((cur) =>
@@ -1131,9 +1143,12 @@ export default function Today() {
       // — is what makes this correct rather than merely fresher: there is no
       // window in which the next utterance reads the pre-sheet rows, and no
       // in-flight response that can land after an adjust_photo outcome and
-      // overwrite a newer list with an older one. It also keeps the local
-      // portion edits, which is how the sheet has always worked — they are
-      // what a commit from this card would send.
+      // overwrite a newer list with an older one. That holds because
+      // agentDone hands an adjust_photo outcome to the open tray as well as
+      // to the card: a tray that kept its pre-correction rows would put
+      // them back here. It also keeps the local portion edits, which is how
+      // the sheet has always worked — they are what a commit from this card
+      // would send.
       patchResult({
         log_id: current.log.log_id,
         meal: snap.meal,
@@ -1162,6 +1177,12 @@ export default function Today() {
     }
     const d = discardRef.current;
     if (!d) return;
+    // The toast's Undo leaves with the toast, so the sheet it brings back
+    // would record nothing to return focus to: the + it was opened from
+    // stands in. With a lane up its own sheet keeps the focus (the split).
+    if (lane === null) {
+      document.querySelector<HTMLElement>(".fab")?.focus({ preventScroll: true });
+    }
     setDiscard(null);
     setStaging({ log: d.log, restore: d.snap }); // local edits intact
   };
@@ -1205,6 +1226,9 @@ export default function Today() {
   // closes over.
   const stageEl = staging ? (
     <StagingSheet
+      // another log is another sheet: its rows, Undo windows and polls are
+      // all state, and none of it may carry over to the next log's commit
+      key={staging.log.log_id}
       log={staging.log}
       restore={staging.restore}
       docked={lane === "agent"}
@@ -1240,11 +1264,14 @@ export default function Today() {
         <span className="date">{today}</span>
       </header>
 
-      {online ? null : (
-        <div className="notice warn offline-note" role="status">
-          <span>{OFFLINE_NOTE}</span>
-        </div>
-      )}
+      {/* mounted online too, empty and out of the flow ([role=status]:empty),
+          so the note is announced as it arrives, like the toast host's */}
+      <div
+        className={online ? undefined : "notice warn offline-note"}
+        role="status"
+      >
+        {online ? null : <span>{OFFLINE_NOTE}</span>}
+      </div>
 
       {demo ? <DemoBanner demo={demo} /> : null}
 
@@ -1266,7 +1293,12 @@ export default function Today() {
         <Tracker totals={totals} />
       )}
 
-      <WeightCard refreshKey={weightsKey} onLog={() => pickLane("agent")} />
+      {/* offline, logging is off (§8.6) as it is in the + sheet: no button
+          that opens the mic only for the upload to fail */}
+      <WeightCard
+        refreshKey={weightsKey}
+        onLog={online ? () => pickLane("agent") : undefined}
+      />
 
       {pending.map((p) => (
         <PendingItems
@@ -1428,7 +1460,14 @@ export default function Today() {
             {committedNote.day ? (
               <button
                 type="button"
-                onClick={() => router.push(`/history/${committedNote.day}`)}
+                onClick={() => {
+                  // the Agent lane stays up after its Log, and its history
+                  // entry is the current one: the day view takes it over,
+                  // as TabBar's pick does, rather than leave it behind Back
+                  const url = `/history/${committedNote.day}`;
+                  if (releaseForNavigation()) router.replace(url);
+                  else router.push(url);
+                }}
               >
                 View
               </button>

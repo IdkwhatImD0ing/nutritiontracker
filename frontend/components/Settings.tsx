@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { DayTotals } from "@/lib/api";
 import { mealLabel } from "@/lib/labels";
 import {
   getSettings,
@@ -18,7 +19,8 @@ import AccountCard from "./AccountCard";
 import OuraCard from "./OuraCard";
 import ApiKeysCard from "./ApiKeysCard";
 import { useMe } from "./MeApi";
-import { peek, put } from "./readCache";
+import { isoDate } from "./HistoryApi";
+import { dayKey, peek, put } from "./readCache";
 import { useAutoGrow } from "./useAutoGrow";
 import { useFlash } from "./useFlash";
 import { useScrollMemory } from "./useScrollMemory";
@@ -45,6 +47,15 @@ function targetText(t: Partial<Targets>): TargetText {
     carb_g: s(t.carb_g),
     fat_g: s(t.fat_g),
   };
+}
+
+/** Today paints the diary it last showed (readCache) before its own read
+ *  lands, and works the tracker's "left" out from that copy's targets: new
+ *  targets go into it, or a return to Today shows the old ones first. */
+function putTodayTargets(targets: Partial<Targets>) {
+  const key = dayKey(isoDate(new Date()));
+  const day = peek<{ totals: DayTotals }>(key);
+  if (day) put(key, { ...day, totals: { ...day.totals, targets } });
 }
 
 function timezones(): string[] {
@@ -160,6 +171,7 @@ export default function Settings() {
     setSaved(s);
     setTargets(targetText(s.targets));
     put("settings", s);
+    putTodayTargets(s.targets);
   };
 
   /** After any edit a "Saved." is stale, and so is a refused save's reason. */
@@ -595,6 +607,7 @@ export default function Settings() {
           setSaved((v) => (v ? { ...v, targets: s.targets, body: s.body } : s));
           setTargets(targetText(s.targets));
           put("settings", s);
+          putTodayTargets(s.targets);
           setWizard(false);
           flashStatus("Targets saved.");
         }}

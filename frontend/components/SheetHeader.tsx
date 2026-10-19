@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useId, useRef, type ReactNode } from "react";
 import { Close } from "./icons";
 import { useSheetBack } from "./sheetBack";
 import { useDragDismiss } from "./useDragDismiss";
@@ -78,7 +78,8 @@ export default function SheetHeader({
 
 /** A form sheet's answer to a close that would lose its edits (Save as meal,
  *  a saved meal): in its foot, in place of Save — the inline confirm the
- *  phrase sheet's Forget phrase uses (m3.css .m3-actions.confirm). */
+ *  phrase sheet's Forget phrase uses (m3.css .m3-actions.confirm), focus
+ *  included: Keep editing takes it, and the question is read with it. */
 export function DiscardConfirm({
   onKeep,
   onDiscard,
@@ -86,10 +87,24 @@ export function DiscardConfirm({
   onKeep: () => void;
   onDiscard: () => void;
 }) {
+  const questionId = useId();
   return (
     <div className="m3-actions confirm">
-      <span className="m3-note">Discard changes?</span>
-      <button type="button" className="m3-link-btn" onClick={onKeep}>
+      <span className="m3-note" id={questionId}>
+        Discard changes?
+      </span>
+      <button
+        type="button"
+        className="m3-link-btn"
+        autoFocus
+        aria-describedby={questionId}
+        onClick={(e) => {
+          // the confirm leaves with this button: focus stays in the sheet
+          const sheet = e.currentTarget.closest<HTMLElement>('[role="dialog"]');
+          onKeep();
+          sheet?.focus({ preventScroll: true });
+        }}
+      >
         Keep editing
       </button>
       <button type="button" className="m3-link-btn danger" onClick={onDiscard}>

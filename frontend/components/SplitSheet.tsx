@@ -93,7 +93,17 @@ export default function SplitSheet({
   // dragging after it appears is not undone.
   const staged = stage !== null;
   useEffect(() => {
-    if (!staged) return;
+    // The tray coming or going can take the focused control with it (Log,
+    // its trash, the toast's Undo): focus stays in this dialog, not the page.
+    if (document.activeElement === document.body) {
+      shellRef.current?.focus({ preventScroll: true });
+    }
+    // Gone, the split goes back to `half`, which has no rules of its own: a
+    // `full` left behind would go on collapsing the chat with no tray above.
+    if (!staged) {
+      setSplit(STOPS.half);
+      return;
+    }
     const h = shellRef.current?.clientHeight ?? 0;
     setSplit(h > 0 && h < SHORT_SHEET_PX ? STOPS.peek : STOPS.half);
   }, [staged]);

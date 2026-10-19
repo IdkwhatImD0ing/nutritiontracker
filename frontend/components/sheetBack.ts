@@ -48,7 +48,11 @@ function ranked(): Entry[] {
     const el = e.el.current;
     return el != null && el.isConnected && !el.closest("[data-closing]");
   });
-  const sub = (e: Entry) => (e.el.current!.closest(".subsheet") ? 1 : 0);
+  // The tray's open meal picker ranks with the sub-sheets: in the Agent
+  // split the chat pane comes after it in the document, and would otherwise
+  // answer first by dropping an attached photo under the open picker.
+  const sub = (e: Entry) =>
+    e.el.current!.closest(".subsheet, .meal-picker") ? 1 : 0;
   return up.sort(
     (a, b) =>
       sub(b) - sub(a) ||

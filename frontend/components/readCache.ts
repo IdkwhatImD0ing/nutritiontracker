@@ -24,3 +24,7 @@ export function put(key: string, value: unknown): void {
   if (typeof window === "undefined") return;
   cache.set(key, value);
 }
+
+/** Today's diary as last shown, under the local date it is for (Today paints
+ *  it). One definition, because Settings writes new targets into it too. */
+export const dayKey = (day: string) => `diary:${day}`;
