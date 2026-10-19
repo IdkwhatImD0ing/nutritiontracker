@@ -56,7 +56,8 @@ const CAMERA_TEXT: Record<Camera, string> = {
  *  when the camera is denied or the code won't read. Full screen, like the
  *  Search lane (BACKLOG 142): the camera is the whole sheet, with the head and
  *  a panel of the rest laid over it, so a miss grows the panel upward rather
- *  than moving the viewfinder. */
+ *  than moving the picture (the aiming box re-centres in what is left). With
+ *  no camera there is no picture: the panel sits under the head instead. */
 export default function BarcodeScanner({
   busy,
   notice,
@@ -206,7 +207,7 @@ export default function BarcodeScanner({
       <div className="sheet-backdrop" onClick={onClose} />
       <div
         ref={sheetRef}
-        className="sheet scan-sheet"
+        className={`sheet scan-sheet${hideView ? " no-camera" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label="Scan barcode"
@@ -221,7 +222,6 @@ export default function BarcodeScanner({
 
         <div className={`scan-view${busy ? " busy" : ""}`} hidden={hideView}>
           <video ref={videoRef} playsInline muted autoPlay />
-          <div className="scan-frame" aria-hidden="true" />
           {torch != null ? (
             <button
               type="button"
@@ -258,6 +258,15 @@ export default function BarcodeScanner({
           ) : null}
         </div>
 
+        {/* the band between the head and the panel, so the aiming box is
+            centred in the picture the user can see, however tall the panel
+            grows; the loading cover hides the picture, so the box goes too */}
+        {hideView ? null : (
+          <div className="scan-aim" aria-hidden="true">
+            {busy ? null : <div className="scan-frame" />}
+          </div>
+        )}
+
         <div className="scan-panel">
           {/* one "Looking it up…" on screen: the cover says it while the
               camera shows, this line when there is no camera view */}
@@ -270,7 +279,14 @@ export default function BarcodeScanner({
             ) : busy ? (
               "Looking it up…"
             ) : (
-              CAMERA_TEXT[camera]
+              <>
+                {/* the lookup's outcome is the change worth saying; the
+                    miss block below has no live region of its own */}
+                {miss ? (
+                  <span className="sr-only">No match for this barcode. </span>
+                ) : null}
+                {CAMERA_TEXT[camera]}
+              </>
             )}
           </p>
           {hideView ? (
