@@ -20,7 +20,7 @@
 .docs-label,
 .docs-eyebrow {
   font-family: var(--docs-mono);
-  font-size: 0.6875rem;
+  font-size: var(--micro-size);
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -519,7 +519,7 @@
 
 .docs-code-lang {
   font-family: var(--docs-mono);
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
@@ -790,12 +790,14 @@
 .docs-scope {
   flex-shrink: 0;
   font-family: var(--docs-mono);
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   border-radius: 5px;
-  padding: 2px 6px;
+  /* 5px, not 6: at the 11px label floor the chips keep about their old width,
+     so "DELETE /api/keys/{key_id} SESSION ONLY" stays one line at 390 */
+  padding: 2px 5px;
   line-height: 1.4;
 }
 
@@ -849,7 +851,7 @@
 
 .docs-table th {
   font-family: var(--docs-mono);
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;

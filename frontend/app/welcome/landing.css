@@ -638,7 +638,7 @@
 .land-totals .k {
   margin-right: auto;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--faint);
@@ -895,7 +895,7 @@
 .land-term-bar > span {
   margin-left: 8px;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--faint);
@@ -1086,7 +1086,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);

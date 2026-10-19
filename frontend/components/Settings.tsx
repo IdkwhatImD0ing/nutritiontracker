@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DayTotals } from "@/lib/api";
 import { mealLabel } from "@/lib/labels";
 import {
@@ -334,6 +334,17 @@ export default function Settings() {
     wizardWas.current = wizard;
   }, [wizard]);
 
+  // The first edit brings the save bar up at the foot of the screen, where
+  // Tab may have left the field being edited: scroll it clear, by the
+  // scroll-padding the bar adds (m3.css). A field already clear stays put.
+  const shell = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const el = document.activeElement;
+    if (dirty && el && shell.current?.contains(el)) {
+      el.scrollIntoView({ block: "nearest" });
+    }
+  }, [dirty]);
+
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const deviceZone = deviceTz ? zoneGeneric(deviceTz) : null;
   const body = form ? describeBody(form.body) : null;
@@ -344,7 +355,7 @@ export default function Settings() {
   // and the screen reader out of what it covers.
   return (
     <>
-    <main className="shell settings" inert={wizard && form != null}>
+    <main className="shell settings" ref={shell} inert={wizard && form != null}>
       <header className="brand">
         <h1>Settings</h1>
       </header>

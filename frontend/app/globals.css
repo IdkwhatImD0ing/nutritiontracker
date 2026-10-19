@@ -1517,15 +1517,22 @@ a {
    "Breakfast" touched both ends of its thumb (the staged row's picker
    is 26px narrower than the header's). Only this picker: the API key
    form's "365 days" would wrap. At 320 a larger Text Size grows its
-   labels to 14px and no further, or Snack runs off the track. */
+   labels to 14px and no further, or Snack runs off the track; below 375
+   the padding drops to 4px for the same reason (the row's picker at 360
+   at the 1.3x cap). */
 .meal-picker.m3-seg button {
   padding-inline: 6px;
+}
+
+@media (max-width: 374px) {
+  .meal-picker.m3-seg button {
+    padding-inline: 4px;
+  }
 }
 
 @media (max-width: 359px) {
   .meal-picker.m3-seg button {
     font-size: min(0.84rem, 14px);
-    padding-inline: 4px;
   }
 }
 
