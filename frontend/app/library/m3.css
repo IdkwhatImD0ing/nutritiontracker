@@ -335,6 +335,12 @@ body:has(.tabbar) .shell {
   text-decoration: none;
 }
 
+/* its bottom edge is 4px above the chips, so the keyboard ring is drawn
+   inside the link: outside, it lay on the chips' top border */
+.m3-card-link:focus-visible {
+  outline-offset: -2px;
+}
+
 .m3-card-link .m3-card-stat {
   margin-left: auto; /* the count and the chevron sit together on the right */
 }

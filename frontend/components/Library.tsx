@@ -199,7 +199,7 @@ export default function Library() {
     // comes before Next wraps replaceState, and the bare call would wipe
     // the router's state from this entry, so a later Back onto it leaves
     // the page above it on screen.
-    if (new URLSearchParams(window.location.search).get("q") !== q) {
+    if (new URLSearchParams(window.location.search).get("q")?.trim() !== q) {
       window.history.replaceState(null, "", `?q=${encodeURIComponent(q)}`);
     }
     setSearching(true);
