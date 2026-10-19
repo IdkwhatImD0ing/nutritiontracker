@@ -456,7 +456,12 @@ export default function FoodDetail({ id }: { id: string }) {
               setAliasSheet(null);
             }}
             onDeleted={(aid) => {
-              phrasesHead.current?.focus({ preventScroll: true });
+              // not if focus has moved on (the sheet closed while the delete
+              // was out)
+              const at = document.activeElement;
+              if (!at || at === document.body || at.closest('[aria-modal="true"]')) {
+                phrasesHead.current?.focus({ preventScroll: true });
+              }
               setFood((f) =>
                 f ? { ...f, aliases: (f.aliases ?? []).filter((a) => a.id !== aid) } : f,
               );

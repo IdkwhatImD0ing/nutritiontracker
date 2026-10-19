@@ -491,8 +491,12 @@ export default function Library() {
             }}
             onDeleted={(id) => {
               // the chip that opened the sheet goes with the phrase: focus
-              // waits on the list's heading, not the top of the page
-              phrasesHead.current?.focus({ preventScroll: true });
+              // waits on the list's heading, not the top of the page. Not if
+              // it has moved on (the sheet closed while the delete was out).
+              const at = document.activeElement;
+              if (!at || at === document.body || at.closest('[aria-modal="true"]')) {
+                phrasesHead.current?.focus({ preventScroll: true });
+              }
               setAliases((prev) => (prev ?? []).filter((a) => a.id !== id));
               setAliasSheet(null);
             }}
