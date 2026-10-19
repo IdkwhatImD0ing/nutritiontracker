@@ -9,7 +9,7 @@ import {
 import { fmt0 } from "@/lib/format";
 import { foodName } from "@/lib/labels";
 import { FOOD_FIELD_PROPS } from "./fieldProps";
-import { ArrowRight } from "./icons";
+import { ArrowRight, Check } from "./icons";
 import SheetHeader from "./SheetHeader";
 import { useSheetFocus } from "./useSheetFocus";
 
@@ -30,13 +30,16 @@ type Props = {
 /** His cached foods for this phrase, read off the staged row: the current
  *  food plus every food_id-bearing alternate (tier-3 alternates carry
  *  source ids instead — those are database hits, not his aliases, and the
- *  row's own chips already offer them). Empty unless there is a real choice. */
+ *  row's own chips already offer them). Empty unless there is a real choice
+ *  or the row came from his alias for this phrase (tier 1): the GET returns
+ *  that one alias too, so seeding it keeps the sheet from growing when the
+ *  list lands. */
 function aliasesFromItem(item: StagedItem): AliasRow[] {
   const rivals = (item.alternates ?? []).filter(
     (a): a is typeof a & { food_id: string } =>
       !!a.food_id && a.food_id !== item.food?.id,
   );
-  if (!rivals.length) return [];
+  if (!rivals.length && item.tier !== 1) return [];
   const current: AliasRow[] = item.food
     ? [
         {
@@ -136,6 +139,7 @@ export default function FoodEditSheet({
                   >
                     <span className="result-name">{foodName(a.food_name)}</span>
                     {sub ? <span className="result-sub">{sub}</span> : null}
+                    {current ? <Check /> : null}
                   </button>
                 );
               })}
