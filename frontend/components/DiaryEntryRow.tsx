@@ -164,7 +164,9 @@ export default function DiaryEntryRow({
           row, so a tap meant to expand drilled in instead; the drill-in is
           now the expanded panel's "Food details" row. The row is a tap
           target, not a button: the kcal figure is the expander's button for
-          keyboard and VoiceOver, and its click bubbles to this handler. */}
+          keyboard and VoiceOver, and its click bubbles to this handler. The
+          row's vertical padding is this target's (diary.css), so its edges
+          expand it too. */}
       <div className="row-main" onClick={onToggle}>
         <div className="row-info">
           <div className="row-name">
@@ -194,9 +196,10 @@ export default function DiaryEntryRow({
         </button>
       </div>
 
-      {/* §3.4a: visible, clickable citation — collapsed or expanded. */}
+      {/* §3.4a: visible, clickable citation — collapsed or expanded. The
+          line is part of the row's tap target; its link stops the tap. */}
       {entry.web_source ? (
-        <p className="web-cite">
+        <p className="web-cite" onClick={onToggle}>
           Source:{" "}
           <a
             href={entry.web_source.url}
@@ -227,6 +230,7 @@ export default function DiaryEntryRow({
           </div>
           {microEntries.length ? (
             <div className="micro-list num">
+              <div className="k">Nutrients</div>
               {microEntries.map(([k, v]) => {
                 const { name: label, unit } = nutrientParts(k);
                 return (
@@ -293,12 +297,15 @@ export default function DiaryEntryRow({
               {confirmDelete ? (
                 <>
                   {/* the app's one wording for an irreversible delete
-                      (ApiKeysCard's revoke): a red yes and a focused Cancel */}
+                      (ApiKeysCard's revoke): a red yes and a focused Cancel.
+                      The yes waits as aria-disabled, not disabled: a
+                      disabled button drops focus to the page, and a failed
+                      delete's alert appears right above it. */}
                   <button
                     type="button"
                     className="diary-delete confirm"
-                    disabled={locked}
-                    onClick={onDelete}
+                    aria-disabled={locked || undefined}
+                    onClick={locked ? undefined : onDelete}
                   >
                     {busy === "delete" ? <span className="spinner" /> : null}
                     Yes, delete

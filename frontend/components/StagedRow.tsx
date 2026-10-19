@@ -348,6 +348,7 @@ export default function StagedRow({
           ) : null}
           {microEntries.length ? (
             <div className="micro-list num">
+              <div className="k">Nutrients</div>
               {microEntries.map(([k, v]) => {
                 const { name: label, unit } = nutrientParts(k);
                 return (

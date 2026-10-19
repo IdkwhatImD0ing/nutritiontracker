@@ -2018,12 +2018,29 @@ button.row-kcal {
   color: var(--muted);
 }
 
+/* A flex row, so a source badge that wraps under the portion pill starts
+   flush with "Portion:" (the gap spaces the label, pill, grams and badge) */
 .detail-serving {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 4px;
   font-size: 0.8rem;
   color: var(--muted);
   border-top: 1px solid var(--line);
   margin-top: 10px;
   padding-top: 8px;
+}
+
+/* the gap spaces it, and a plain (unfilled) badge's side padding would
+   indent its text when it wraps; the filled web badge keeps its padding */
+.detail-serving .badge {
+  margin: 0;
+}
+
+.detail-serving .badge:not(.web) {
+  padding-inline: 0;
 }
 
 .detail-meal {
@@ -2032,7 +2049,9 @@ button.row-kcal {
   padding-top: 8px;
 }
 
-.detail-meal > .k {
+/* a panel section's label: the staged row's "Meal", either row's "Nutrients" */
+.detail-meal > .k,
+.micro-list > .k {
   font-size: var(--micro-size);
   color: var(--muted);
   text-transform: uppercase;

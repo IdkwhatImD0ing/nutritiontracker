@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, type DayTotals, type Meal } from "@/lib/api";
 import { portionText } from "@/lib/format";
 import { foodName, mealLabel } from "@/lib/labels";
@@ -21,6 +21,12 @@ import SheetPresence from "./useSheetPresence";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const MEAL_ORDER: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
+
+/* The open row, kept past the list's unmount: Back from a row's Food
+   details remounts the list, and the row comes back open, so the page is
+   as tall as it was when useScrollMemory saved its offset. Entry ids are
+   unique, so another day's id opens nothing. */
+let lastOpen: string | null = null;
 
 /** Where a diary row's top sits on screen now (undefined: not rendered). */
 function rowTop(root: HTMLElement | null, id: string): number | undefined {
@@ -201,7 +207,10 @@ export default function DiaryList({
   onDeleted,
   emptyText = "Nothing logged yet.",
 }: Props) {
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(() => lastOpen);
+  useEffect(() => {
+    lastOpen = expanded;
+  }, [expanded]);
   // which row is waiting, and on what — the spinner goes in the tapped button
   const [busy, setBusy] = useState<{
     id: string;
@@ -234,6 +243,23 @@ export default function DiaryList({
     if (top != null && top !== a.top) window.scrollBy(0, top - a.top);
   }, [expanded]);
 
+  // A deleted row took focus with it: once it is gone, focus goes to the
+  // row now in its place, else the one above, else the empty line ("") —
+  // not back to the top of the page. Focus moved on meanwhile stays put.
+  const refocus = useRef<string | null>(null);
+  const emptyRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const id = refocus.current;
+    refocus.current = null;
+    if (id == null || document.activeElement !== document.body) return;
+    const el = id
+      ? sectionRef.current?.querySelector<HTMLElement>(
+          `[data-entry-id="${CSS.escape(id)}"] .row-kcal`,
+        )
+      : emptyRef.current;
+    el?.focus();
+  }, [meals]);
+
   const groups = MEAL_ORDER.map((meal) => ({
     meal,
     entries: meals[meal] ?? [],
@@ -246,8 +272,13 @@ export default function DiaryList({
   }
 
   if (groups.length === 0) {
-    return <p className="diary-empty">{emptyText}</p>;
+    return (
+      <p className="diary-empty" ref={emptyRef} tabIndex={-1}>
+        {emptyText}
+      </p>
+    );
   }
+  const order = groups.flatMap((g) => g.entries.map((e) => e.id));
 
   /** null when `fn` landed, else the sentence for the refusal — the portion
    *  sheet shows a save's in place; a delete's goes on its row. */
@@ -267,7 +298,9 @@ export default function DiaryList({
       // one, the way every other lane does.
       return (
         (e instanceof ApiError && e.status === 422 && e.detail) ||
-        "Couldn't save that change — try again."
+        (kind === "delete"
+          ? "Couldn't delete that entry — try again."
+          : "Couldn't save that change — try again.")
       );
     } finally {
       setBusy(null);
@@ -327,6 +360,8 @@ export default function DiaryList({
               onDelete={() =>
                 void run(e.id, "delete", async () => {
                   const totals = await deleteEntry(e.id);
+                  const i = order.indexOf(e.id);
+                  refocus.current = order[i + 1] ?? order[i - 1] ?? "";
                   onDeleted(e.id, totals);
                 }).then((text) => setError(text ? { id: e.id, text } : null))
               }

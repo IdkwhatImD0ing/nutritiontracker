@@ -119,6 +119,10 @@ export default function Library() {
   } | null>(null);
   const seq = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // A section's Retry swaps its notice for a skeleton: focus waits on the
+  // section's heading instead of falling to the top of the page.
+  const mealsHead = useRef<HTMLHeadingElement>(null);
+  const phrasesHead = useRef<HTMLHeadingElement>(null);
 
   const [aliasSheet, setAliasSheet] = useState<AliasRow | null>(null);
   const [mealSheet, setMealSheet] = useState<SavedMeal | null>(null);
@@ -332,14 +336,20 @@ export default function Library() {
       </section>
 
       <section className="m3-section lib-meals" aria-label="Saved meals">
-        <h2>
+        <h2 ref={mealsHead} tabIndex={-1}>
           Saved meals
           {activeMeals.length > 0 ? (
             <span className="count num">{activeMeals.length}</span>
           ) : null}
         </h2>
         {failed.meals ? (
-          <ErrorNotice message="Couldn't load your saved meals." onRetry={retry} />
+          <ErrorNotice
+            message="Couldn't load your saved meals."
+            onRetry={() => {
+              mealsHead.current?.focus();
+              retry();
+            }}
+          />
         ) : meals == null ? (
           <Skeleton rows={2} height={64} />
         ) : meals.length === 0 ? (
@@ -367,7 +377,7 @@ export default function Library() {
       {/* phrases, not every food (Bill, 2026-10-13): a barcode, search or
           photo log learns no alias (§3.5), so it never appears here */}
       <section className="m3-section lib-foods" aria-label="Your phrases">
-        <h2>
+        <h2 ref={phrasesHead} tabIndex={-1}>
           Your phrases
           {aliases?.length ? (
             <span className="count num">
@@ -376,7 +386,13 @@ export default function Library() {
           ) : null}
         </h2>
         {failed.aliases ? (
-          <ErrorNotice message="Couldn't load your phrases." onRetry={retry} />
+          <ErrorNotice
+            message="Couldn't load your phrases."
+            onRetry={() => {
+              phrasesHead.current?.focus();
+              retry();
+            }}
+          />
         ) : aliases == null ? (
           <Skeleton rows={2} height={64} />
         ) : groups.length === 0 ? (

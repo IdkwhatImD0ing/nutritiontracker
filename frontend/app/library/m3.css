@@ -277,6 +277,12 @@ body:has(.tabbar) .shell {
   align-items: baseline;
 }
 
+/* it takes focus only to hold a screen reader's place when its Retry goes
+   (Library.tsx); a heading is not a control, so it draws no ring */
+.m3-section > h2:focus {
+  outline: none;
+}
+
 .m3-section h2 .count {
   color: var(--faint);
   font-weight: 500;
