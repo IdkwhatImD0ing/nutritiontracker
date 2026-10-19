@@ -69,6 +69,10 @@ type Props = {
   /** each change grows the staged list one stop (peek → half → full): a
    *  chat card's Review on the log that is already here still opens it */
   expandSignal?: number;
+  /** the tray's Log is in flight, so the lane cannot close (closeLane
+   *  refuses): the ✕ greys out like the tray's trash, and a pull on the
+   *  header springs back rather than sliding the sheet away and back */
+  busy?: boolean;
 };
 
 export default function SplitSheet({
@@ -76,6 +80,7 @@ export default function SplitSheet({
   chat,
   onDismiss,
   expandSignal,
+  busy = false,
 }: Props) {
   const [split, setSplit] = useState<number>(STOPS.half);
   const [dragging, setDragging] = useState(false);
@@ -122,9 +127,9 @@ export default function SplitSheet({
   }, [expandSignal]);
 
   // A pull on the header closes the lane like its ✕, staged rows or not
-  // (Bill, 2026-10-13). The divider's drag is its own; it sits outside this
-  // header.
-  const drag = useDragDismiss(onDismiss);
+  // (Bill, 2026-10-13), and is refused with it while Log is in flight. The
+  // divider's drag is its own; it sits outside this header.
+  const drag = useDragDismiss(onDismiss, !busy);
   // Escape and Back too, once the chat has had its turn (an attached photo
   // goes first) and with no sub-sheet stacked above
   useSheetBack(shellRef, onDismiss);
@@ -165,7 +170,7 @@ export default function SplitSheet({
                 lane away in one tap — with rows staged, through the tray's
                 own close first (the §5 discard with its Undo). The tray's
                 discard is a trash glyph, so the two never look alike. */}
-            <SheetClose onClick={onDismiss} />
+            <SheetClose onClick={onDismiss} disabled={busy} />
           </div>
         </div>
 

@@ -1791,7 +1791,8 @@ button.row-kcal {
    crosses only what takes no taps: the row's bottom padding and the next
    row's top (a row's toggle, .row-main, sits inside it), an expanded diary
    row's macro figures, a card's foot. A closed diary row, whose padding is
-   its toggle's, stops it at 14px (diary.css). */
+   its toggle's, stops it at 14px (diary.css), and a line with taps of its
+   own under it stops it sooner (below). */
 .web-cite {
   font-size: 0.78rem;
   color: var(--muted);
@@ -1804,10 +1805,20 @@ button.row-kcal {
 
 /* ...but a line with another under it (FoodDetail's "Cited:" list) stops
    at 8px: 23px would carry its link over the next line's "Cited:" and the
-   blank beside a shorter link. */
-.web-cite:has(+ .web-cite) {
+   blank beside a shorter link. So does one over a staged row's question
+   or chips row, which starts 8px down: 23px took the question, "Cooked or
+   raw?" and the gaps between the chips. */
+.web-cite:has(+ .web-cite, + .question-text, + .chips) {
   margin-bottom: -8px;
   padding-bottom: 8px;
+}
+
+/* ...and one over a staged row's estimate note at its 4px margin: the note
+   ("… — check it.") reads as something to tap, and deeper the tap would
+   open the source in another tab. */
+.web-cite:has(+ .estimate-note) {
+  margin-bottom: -4px;
+  padding-bottom: 4px;
 }
 
 /* Visible and clickable is the requirement, hyperlink blue isn't: a quiet

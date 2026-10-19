@@ -432,6 +432,8 @@ export default function Today() {
   // around it: put away, the rows would remount as the standalone sheet and
   // offer Log a second time while the first is still landing.
   const closeTrayRef = useRef<(() => boolean | void) | null>(null);
+  // ...and the lane's ✕ and pull say so up front (SplitSheet `busy`)
+  const [trayBusy, setTrayBusy] = useState(false);
   const closeLane = () => {
     if (lane === "agent" && staging && closeTrayRef.current?.() === false) return;
     setLane(null);
@@ -735,6 +737,21 @@ export default function Today() {
     // sends, and what closing it writes back over the card
     const updated = log.agent?.updated;
     if (updated) {
+      // A row the correction removed is just missing from `updated`, and the
+      // server keeps its index: remembered as the tray's own removals are
+      // (removedIndexesRef), or a later sheet's "Add another food" reuses it.
+      // Read off the plate as this turn found it, the card's and the tray's.
+      const gone = [
+        ...chat.flatMap((m) =>
+          m.kind === "result" && m.log.log_id === updated.log_id ? m.log.items : [],
+        ),
+        ...(staging?.log.log_id === updated.log_id ? staging.log.items : []),
+      ]
+        .map((i) => i.item_index)
+        .filter((i) => !updated.items.some((s) => s.item_index === i));
+      const prior = removedIndexesRef.current.get(updated.log_id) ?? [];
+      const fresh = [...new Set(gone)].filter((i) => !prior.includes(i));
+      if (fresh.length) removedIndexesRef.current.set(updated.log_id, [...prior, ...fresh]);
       setStaging((cur) =>
         cur?.log.log_id === updated.log_id
           ? { ...cur, log: { ...cur.log, ...updated } }
@@ -1257,6 +1274,7 @@ export default function Today() {
       }}
       onClose={closeStaging}
       closeRef={closeTrayRef}
+      onCommitting={setTrayBusy}
     />
   ) : null;
 
@@ -1361,6 +1379,7 @@ export default function Today() {
           <SplitSheet
             stage={stageEl}
             expandSignal={reviewTick}
+            busy={trayBusy}
             // Escape and Back go to the topmost sheet (sheetBack): a sub-sheet
             // stacked above the split takes them before this does.
             onDismiss={closeLane}
