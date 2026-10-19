@@ -753,6 +753,12 @@ a {
   margin: 0;
 }
 
+/* the link's chevron (icons.tsx), in its colour, on the text's centre */
+.zero-hint .m3-link-btn svg {
+  margin-left: 2px;
+  vertical-align: -0.125em;
+}
+
 /* Not read yet (Tracker with no totals): dashes, bare tracks, and a soft
    sweep along the bar. On the bar, not the card — the card's own animation
    is the shell's rise. Parked off the bar so reduced motion (one 0.01ms
@@ -1917,11 +1923,16 @@ button.row-kcal {
   vertical-align: middle;
 }
 
+/* .chev's two-border chevron, not a '›' from whichever font has it */
 .portion-btn::after {
-  content: "›";
-  font-size: 0.95rem;
-  line-height: 1;
-  color: var(--faint);
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 2px;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(-45deg);
 }
 
 @media (hover: hover) {
@@ -1936,7 +1947,7 @@ button.row-kcal {
 }
 
 .portion-btn.verify::after {
-  color: var(--amber);
+  border-color: var(--amber);
 }
 
 /* tappable food name → §7.1 edit sheet (BACKLOG 23). Its cue is a small

@@ -92,6 +92,7 @@ export default function ExperimentCharts({ data }: { data: MetricsResponse }) {
           unit="days"
           showValues={weeks.length <= 14}
           labelEvery={Math.max(1, Math.ceil(weeks.length / 6))}
+          level={3}
         />
       </section>
 

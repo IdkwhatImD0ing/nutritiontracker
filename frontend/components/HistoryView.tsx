@@ -6,6 +6,7 @@ import ChartBars, { type Bar } from "./ChartBars";
 import ChartStrip, { type StripCell } from "./ChartStrip";
 import {
   addDays,
+  isoDate,
   monthShort,
   parseISO,
   weekdayShort,
@@ -16,6 +17,7 @@ import {
 } from "./HistoryApi";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const NBSP = "\u00a0";
 const MEAL_ORDER = ["breakfast", "lunch", "dinner", "snack"];
 
 type Props = {
@@ -130,6 +132,13 @@ function ThreeDays({
               ) : (
                 <span className="of"> kcal</span>
               )}
+              {/* at the end of the total's line: as a fifth item of the
+                  meal row it wrapped onto a line of its own on a phone */}
+              {d.fiber_g != null ? (
+                <span className="hcard-fiber">
+                  <span className="k">Fiber</span> {withUnit(fmt.format(d.fiber_g), "g")}
+                </span>
+              ) : null}
             </div>
             <div className="kcal-bar">
               <div
@@ -157,11 +166,6 @@ function ThreeDays({
                     <span className="k">{mealLabel(c.meal)}</span> {fmt.format(c.kcal)}
                   </span>
                 ))}
-                {d.fiber_g != null ? (
-                  <span>
-                    <span className="k">Fiber</span> {withUnit(fmt.format(d.fiber_g), "g")}
-                  </span>
-                ) : null}
               </div>
             ) : null}
           </button>
@@ -252,12 +256,21 @@ function Daily({
 // year — weekly averages + adherence strip
 // ---------------------------------------------------------------------------
 
-function weekHint(w: HistoryWeek, v: number | null, unit: string): string {
+/** A week's readout, and the Y slider's spoken value: "Oct 5 – Oct 11:
+ *  2,203 kcal avg · 4 of 7 days logged". The week holding `end` (today) is
+ *  "This week", counted over the days it has had. Each phrase is joined
+ *  with no-break spaces, so a narrow readout breaks at the "·". */
+function weekHint(w: HistoryWeek, v: number | null, unit: string, end: string): string {
   const s = parseISO(w.week_start);
   const e = addDays(s, 6);
-  return `${monthShort(s)} ${s.getDate()} – ${monthShort(e)} ${e.getDate()}: ${
-    v == null ? "—" : `${fmt.format(v)} ${unit} avg`
-  } · ${w.days_logged}/7 days logged`;
+  const current = isoDate(e) >= end;
+  const span = current ? "This week" : `${monthShort(s)} ${s.getDate()} – ${monthShort(e)} ${e.getDate()}`;
+  if (v == null || w.days_logged === 0) return `${span}: nothing logged`;
+  const days = current
+    ? Math.max(Math.round((parseISO(end).getTime() - s.getTime()) / 86_400_000) + 1, w.days_logged)
+    : 7;
+  const logged = [w.days_logged, "of", days, days === 1 ? "day" : "days", "logged"].join(NBSP);
+  return `${span}: ${withUnit(fmt.format(v), unit)}${NBSP}avg · ${logged}`;
 }
 
 function Year({ range }: { range: HistoryRange }) {
@@ -270,17 +283,29 @@ function Year({ range }: { range: HistoryRange }) {
     lastMonth = d.getMonth();
     return monthShort(d);
   });
+  // The bars' axis has room for every other month (a three-letter label is
+  // wider than a four-week month), and left to fitLabels it dropped
+  // whichever months were short: irregular, with "Oct" at both ends. So it
+  // keeps the months an even count back from the newest, and never a first
+  // label on a month the range only starts partway through. The strip
+  // below fits all twelve.
+  const newest = parseISO(weeks.at(-1)?.week_start ?? range.end);
+  const barLabels = labels.map((l, i) => {
+    const d = parseISO(weeks[i].week_start);
+    const back = (newest.getFullYear() - d.getFullYear()) * 12 + newest.getMonth() - d.getMonth();
+    return back % 2 === 0 && !(i === 0 && d.getDate() > 7) ? l : "";
+  });
   const bars = (pick: (w: HistoryWeek) => number | null, unit: string) =>
     weeks.map<Bar>((w, i) => ({
       key: w.week_start,
-      label: labels[i],
+      label: barLabels[i],
       value: pick(w),
       muted: w.days_logged === 0,
-      hint: weekHint(w, pick(w), unit),
+      hint: weekHint(w, pick(w), unit, range.end),
     }));
   const cells = weeks.map<StripCell>((w, i) => ({
     key: w.week_start,
-    hint: weekHint(w, w.avg?.kcal ?? null, "kcal"),
+    hint: weekHint(w, w.avg?.kcal ?? null, "kcal", range.end),
     level: w.adherence,
     label: labels[i],
   }));

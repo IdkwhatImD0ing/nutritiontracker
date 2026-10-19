@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getDiary, type DayTotals } from "@/lib/api";
 import "@/app/history/history.css";
 import BackBar, { markReplace } from "./BackBar";
@@ -15,6 +15,15 @@ import Tracker from "./Tracker";
  *  passes through 0002, 0020 and 0202 on the way to 2026; each is a whole
  *  date, and without a floor each would navigate. */
 const MIN_DAY = "2000-01-01";
+
+/** Keys that edit one segment of a date field (Alt+↓ opens its calendar). */
+const SEGMENT_KEY = /^(\d|ArrowUp|ArrowDown|Backspace|Delete)$/;
+
+type Refocus = "prev" | "next" | "pick" | null;
+/** The control that moved to the day now loading. Each move replaces the
+ *  [date] segment, which remounts this view and drops focus to <body>, so
+ *  the new view puts it back (markReplace's pattern: set before the move). */
+let refocus: Refocus = null;
 
 /** §7.4: tap any History day → its diary, entries editable per §5. The tab
  *  bar mounts from app/history/layout.tsx. */
@@ -34,11 +43,38 @@ export default function HistoryDay({ date }: { date: string }) {
   // Stepping days replaces rather than pushes, so back still returns to
   // wherever the day view was opened from (History, Today's View link), not
   // to the previous day. markReplace tells BackBar's trail the same.
-  const go = (to: string) => {
+  const go = (to: string, from: Refocus) => {
+    refocus = from;
     markReplace();
     router.replace(`/history/${to}`);
   };
-  const step = (n: number) => go(isoDate(addDays(parseISO(date), n)));
+  const step = (n: number) => go(isoDate(addDays(parseISO(date), n)), n < 0 ? "prev" : "next");
+
+  const prevRef = useRef<HTMLButtonElement>(null);
+  const nextRef = useRef<HTMLButtonElement>(null);
+  const pickRef = useRef<HTMLInputElement>(null);
+  // After `today` is read: Next is disabled until then, and stays disabled
+  // once a step lands on today, where Previous takes the focus instead.
+  useEffect(() => {
+    if (!today || !refocus) return;
+    const el = refocus === "pick" ? pickRef : refocus === "next" && date < today ? nextRef : prevRef;
+    el.current?.focus({ preventScroll: true });
+    refocus = null;
+  }, [today, date]);
+
+  // A desktop date field reports every segment edit that makes a whole
+  // date as a change: "03" typed into Oct 10's month is already Mar 10. So
+  // a typed date waits for Enter or for focus to leave the field; a pick
+  // from a calendar or a phone's picker still goes at once. `via` is how
+  // the field was last worked: a segment edit, another key, or a pointer.
+  const via = useRef<"edit" | "key" | null>(null);
+  const typed = useRef(false);
+  const choose = (input: HTMLInputElement, from: Refocus) => {
+    typed.current = false;
+    const v = input.value;
+    if (v && v !== date && v >= MIN_DAY && (!today || v <= today)) go(v, from);
+    else input.value = date;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -66,36 +102,58 @@ export default function HistoryDay({ date }: { date: string }) {
               2026-10-13): a native date input laid invisibly over it, so a
               tap opens the OS's own picker. */}
           <span className="day-pick">
-            {longDate(parseISO(date))}
+            {/* the year once it isn't this one; read from the phone's
+                clock, as `today` is, so the server can't disagree */}
+            {longDate(parseISO(date), !!today && date.slice(0, 4) !== today.slice(0, 4))}
             <ChevronDown />
+            {/* uncontrolled, so a half-typed date isn't reset under the
+                keys; keyed by the day so a new one always shows */}
             <input
+              key={date}
+              ref={pickRef}
               type="date"
-              value={date}
+              defaultValue={date}
               min={MIN_DAY}
               max={today ?? undefined}
               aria-label="Choose a day"
               // a desktop browser opens its calendar from the icon only;
               // a phone opens its picker on the tap itself
               onClick={(e) => {
+                via.current = null;
                 try {
                   e.currentTarget.showPicker();
                 } catch {
                   /* unsupported, or already showing */
                 }
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  if (typed.current) choose(e.currentTarget, "pick");
+                } else {
+                  via.current = !e.altKey && SEGMENT_KEY.test(e.key) ? "edit" : "key";
+                }
+              }}
               onChange={(e) => {
-                const v = e.target.value;
-                if (v && v !== date && v >= MIN_DAY && (!today || v <= today)) go(v);
+                if (via.current === "edit") typed.current = true;
+                // a keyboard user stays on the field; a tap's focus isn't
+                // moved, so a phone's picker can't open again by itself
+                else choose(e.currentTarget, via.current ? "pick" : null);
+              }}
+              onBlur={(e) => {
+                if (!typed.current) return;
+                const to = e.relatedTarget;
+                choose(e.currentTarget, to === prevRef.current ? "prev" : to === nextRef.current ? "next" : null);
               }}
             />
           </span>
         </h1>
         <div className="day-step">
-          <button type="button" aria-label="Previous day" onClick={() => step(-1)}>
+          <button type="button" ref={prevRef} aria-label="Previous day" onClick={() => step(-1)}>
             <ChevronLeft />
           </button>
           <button
             type="button"
+            ref={nextRef}
             aria-label="Next day"
             disabled={!today || date >= today}
             onClick={() => step(1)}

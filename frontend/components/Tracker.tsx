@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type React from "react";
 import type { DayTotals } from "@/lib/api";
+import { ChevronRight } from "./icons";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -146,12 +147,14 @@ export default function Tracker({
 
   const kcalFrac = kcalTarget > 0 ? kcal / kcalTarget : 0;
   const kcalLeft = kcalTarget - kcal;
+  // the Donut's rule, rounded like the figure: 0.4 kcal past reads "0 left"
+  const kcalOver = kcalTarget > 0 && Math.round(kcal - kcalTarget) > 0;
   // the calories row and its bar, spoken as one line like each ring
   const kcalSpoken = loading
     ? "Calories: loading"
     : kcalTarget > 0
       ? `Calories: ${fmt.format(kcal)} of ${fmt.format(kcalTarget)} kcal, ` +
-        `${fmt.format(Math.abs(kcalLeft))} ${kcalLeft < 0 ? "over" : past ? "under" : "left"}`
+        `${fmt.format(Math.abs(kcalLeft))} ${kcalOver ? "over" : past ? "under" : "left"}`
       : `Calories: ${fmt.format(kcal)} kcal`;
 
   return (
@@ -174,9 +177,9 @@ export default function Tracker({
             </span>
           </div>
           {kcalTarget > 0 ? (
-            <span className={`left num${kcalLeft < 0 ? " over" : ""}`}>
+            <span className={`left num${kcalOver ? " over" : ""}`}>
               <strong>{fmt.format(Math.abs(kcalLeft))}</strong>
-              {kcalLeft < 0 ? "over" : past ? "under" : "left"}
+              {kcalOver ? "over" : past ? "under" : "left"}
             </span>
           ) : null}
         </div>
@@ -184,7 +187,7 @@ export default function Tracker({
         {loading || kcalTarget > 0 ? (
           <div className="kcal-bar" style={{ marginTop: 12 }}>
             <div
-              className={`fill${kcalFrac > 1 ? " over" : ""}`}
+              className={`fill${kcalOver ? " over" : ""}`}
               style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
             />
           </div>
@@ -228,7 +231,8 @@ export default function Tracker({
         <p className="zero-hint">
           No targets yet.{" "}
           <Link href="/settings?setup=targets" className="m3-link-btn">
-            Set them ›
+            Set them
+            <ChevronRight />
           </Link>
         </p>
       ) : null}

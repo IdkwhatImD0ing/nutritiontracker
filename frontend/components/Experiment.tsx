@@ -47,7 +47,7 @@ export default function Experiment() {
       <header className="brand">
         <BackBar parent="/settings" label="Settings" />
         <h1>Experiment</h1>
-        <span className="date">last {RANGE.replace("w", " weeks")}</span>
+        <span className="date">Last {RANGE.replace("w", " weeks")}</span>
       </header>
       <p className="exp-intro">
         Does Tally get faster and more used as it learns? Logging speed, how
