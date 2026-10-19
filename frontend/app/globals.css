@@ -3199,10 +3199,12 @@ button.row-kcal {
   font-size: 0.78rem;
 }
 
+/* a link wraps whole: "Privacy Policy" split over two lines reads as two */
 .auth-legal a {
   color: inherit;
   font-weight: 500;
   text-decoration: underline;
+  white-space: nowrap;
 }
 
 /* the "send a new code" button on the verify step: a link, not a second CTA */

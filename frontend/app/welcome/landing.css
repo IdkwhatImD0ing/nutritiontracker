@@ -261,6 +261,15 @@
     align-items: stretch;
   }
 
+  /* the hero's column is align-items: flex-start, which would shrink the
+     stack to its widest button; it spans the column, as the open-source
+     card's does. (The installed app's fixed bar is sized by left and right,
+     so this leaves it alone.) */
+  .land-hero .land-cta {
+    align-self: stretch;
+  }
+
+  /* its 44px to the finger is globals.css's coarse hit area, not a taller box */
   .land-cta .land-textlink {
     justify-content: center;
   }
@@ -918,6 +927,22 @@
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
+}
+
+/* 44px tall to the finger, the pill kept at 28: up to the bar's top edge
+   (.land-term clips past it), the rest down over the code panel's top
+   padding; sideways half the 6px gap each, so they meet in the middle.
+   The insets count from inside the 1px border. */
+@media (pointer: coarse) {
+  .land-term-copy .docs-copy {
+    position: relative;
+  }
+
+  .land-term-copy .docs-copy::before {
+    content: "";
+    position: absolute;
+    inset: -7px -4px -11px;
+  }
 }
 
 @media (hover: hover) {

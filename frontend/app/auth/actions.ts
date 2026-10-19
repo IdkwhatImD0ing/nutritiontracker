@@ -102,10 +102,12 @@ export async function verifyEmailAction(
   if (formData.get("intent") === "send") {
     const result = await sendCode(email);
     // Only a code after one already sent is "new": sign-in's first send on
-    // an unverified address comes through here too.
-    return prev?.verify?.sent && !result?.error
-      ? { ...result, resent: true }
-      : result;
+    // an unverified address comes through here too. A failed resend keeps
+    // the code step: the code already sent still works.
+    if (!prev?.verify?.sent) return result;
+    return result?.error
+      ? { ...result, verify: { email, sent: true } }
+      : { ...result, resent: true };
   }
   const { data, error } = await getAuth().emailOtp.verifyEmail({
     email,
@@ -137,8 +139,14 @@ async function sendCode(email: string): Promise<AuthFormState> {
 }
 
 /** The reset step's state: `sent` once a code is on its way, and the form
- *  then asks for it and the new password. */
-export type ResetFormState = { email: string; sent: boolean; error?: string } | null;
+ *  then asks for it and the new password; `resent` when a second code went
+ *  out from "Send a new code". */
+export type ResetFormState = {
+  email: string;
+  sent: boolean;
+  resent?: boolean;
+  error?: string;
+} | null;
 
 /**
  * A forgotten password (/auth/reset; Bill, 2026-10-13), in the verify step's
@@ -148,7 +156,7 @@ export type ResetFormState = { email: string; sent: boolean; error?: string } | 
  * (sign-up and sign-in verification only) stay off.
  */
 export async function resetPasswordAction(
-  _prev: ResetFormState,
+  prev: ResetFormState,
   formData: FormData,
 ): Promise<ResetFormState> {
   const email = String(formData.get("email") ?? "");
@@ -159,10 +167,12 @@ export async function resetPasswordAction(
       email,
       type: "forget-password",
     });
+    // A failed resend keeps the code step: the code already sent still works.
+    const sent = !!prev?.sent;
     if (error) {
-      return { email, sent: false, error: authMessage(error, "Could not send the code") };
+      return { email, sent, error: authMessage(error, "Could not send the code") };
     }
-    return { email, sent: true };
+    return { email, sent: true, resent: sent };
   }
   const password = String(formData.get("password") ?? "");
   const error = await resetWithCode(email, String(formData.get("otp") ?? ""), password);
@@ -180,7 +190,8 @@ export async function resetPasswordAction(
  * posts to `email-otp/passcode`, a route Better Auth does not serve. So the
  * request goes through the SDK's own proxy handler — the one /api/auth
  * mounts, and the way the browser client would send it. Returns the error
- * message, or null once the password is set.
+ * message, or null once the password is set. The reply is Better Auth's own,
+ * which the SDK's error mapping never sees, so its codes get app copy here.
  */
 async function resetWithCode(
   email: string,
@@ -201,6 +212,16 @@ async function resetWithCode(
       { params: Promise.resolve({ path }) },
     );
   if (res.ok) return null;
+  // its rate limiter's 429 carries a sentence and no code
+  if (res.status === 429) return "Too many tries. Wait a little, then try again.";
   const body = await res.json().catch(() => null);
+  switch (body?.code) {
+    case "INVALID_OTP":
+      return "That code isn't right. Check the email and try again.";
+    case "OTP_EXPIRED":
+      return "That code has expired. Send a new code.";
+    case "TOO_MANY_ATTEMPTS":
+      return "Too many wrong tries for that code. Send a new code.";
+  }
   return body?.message ?? "Could not reset the password";
 }
