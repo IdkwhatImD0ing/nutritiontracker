@@ -90,8 +90,12 @@ type Props = {
   /** item_index values this log had removed before this mount. GET
    *  /api/logs/:id does not return removed rows, so a sheet reopened from a
    *  chat card cannot see the hole its own remove left — and "Add another
-   *  food" allocates from what it can see. */
+   *  food" allocates from what it can see. A card whose tray another log took
+   *  (Today's agentDone, a Review) still lists them: they stay out of the rows. */
   removedIndexes?: number[];
+  /** each row this mount removes for good, as the server hears of it: a
+   *  later mount for the same log gets it in `removedIndexes` */
+  onRemoved?: (logId: string, itemIndex: number) => void;
   /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
   onRendered?: () => void;
   /** `pending` = every row the commit did not land: the §3.5 late stragglers
@@ -120,6 +124,7 @@ export default function StagingSheet({
   log,
   restore,
   removedIndexes,
+  onRemoved,
   onRendered,
   onCommitted,
   onClose,
@@ -128,7 +133,10 @@ export default function StagingSheet({
 }: Props) {
   // docked, the split around it is the dialog and takes the focus (SplitSheet)
   const sheetRef = useSheetFocus<HTMLDivElement>(!docked);
-  const [items, setItems] = useState<StagedItem[]>(restore?.items ?? log.items);
+  const [items, setItems] = useState<StagedItem[]>(
+    restore?.items ??
+      log.items.filter((i) => !removedIndexes?.includes(i.item_index)),
+  );
   const [meal, setMeal] = useState<Meal>(restore?.meal ?? log.meal);
   const [mealPickerOpen, setMealPickerOpen] = useState(false);
   const [removed, setRemoved] = useState<ReadonlySet<number>>(
@@ -547,6 +555,7 @@ export default function StagingSheet({
     // the decompose error stays visible in telemetry. Commit-time absence is
     // the backstop, so a failure here (route not deployed yet) is swallowed.
     removeStagedItem(log.log_id, itemIndex).catch(() => {});
+    onRemoved?.(log.log_id, itemIndex);
   };
 
   const remove = (itemIndex: number) => {
@@ -599,9 +608,12 @@ export default function StagingSheet({
       for (const [itemIndex, timer] of timers) {
         clearTimeout(timer);
         removeStagedItem(logId, itemIndex).catch(() => {});
+        onRemoved?.(logId, itemIndex);
       }
       timers.clear();
     };
+    // on the way out only: onRemoved is a fresh closure every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log.log_id]);
 
   // §7.1 "Add another food": goes through POST /api/resolve with the log

@@ -1233,6 +1233,12 @@ export default function Today() {
       restore={staging.restore}
       docked={lane === "agent"}
       removedIndexes={removedIndexesRef.current.get(staging.log.log_id)}
+      onRemoved={(logId, itemIndex) => {
+        const prior = removedIndexesRef.current.get(logId) ?? [];
+        if (!prior.includes(itemIndex)) {
+          removedIndexesRef.current.set(logId, [...prior, itemIndex]);
+        }
+      }}
       onRendered={() => stagedRendered(staging.log.log_id)}
       onCommitted={(t, stragglers, landed) => {
         // The commit's totals are for the day the entries landed on (§7.2
