@@ -808,20 +808,31 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
 }
 
 /* A select drops the platform's chrome too: the fields' box, and a chevron
-   drawn as two gradient triangles so it takes the token colour (a data-URI
-   arrow would hard-code one). */
+   stroked like the app's .chev, as two 1.5px diagonal bands (one per 6px
+   tile) so it takes the token colour (a data-URI arrow would hard-code
+   one). */
 .m3-field select,
 .m3-window select {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 34px;
   background-image:
-    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
-    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.75px),
+      var(--muted) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    ),
+    linear-gradient(
+      135deg,
+      transparent calc(50% - 0.75px),
+      var(--muted) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    );
   background-position:
-    right 17px center,
+    right 18px center,
     right 12px center;
-  background-size: 5px 5px;
+  background-size: 6px 6px;
   background-repeat: no-repeat;
 }
 
@@ -965,6 +976,12 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   cursor: pointer;
 }
 
+/* while Compute or Save is out (a save can't be called back) */
+.wizard-cancel:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 .wizard-steps {
   flex: 1;
   display: flex;
@@ -990,6 +1007,12 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.05;
+}
+
+/* a step's title takes focus as the step opens (WizardGoal), so a screen
+   reader starts there; it is not a control, so it draws no ring */
+.wizard h1:focus {
+  outline: none;
 }
 
 .wizard-lead {
@@ -1559,7 +1582,6 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   }
 
   .shell.settings > .brand,
-  .shell.settings > .sheet-error,
   .shell.settings > .notice,
   .shell.settings > .m3-wide {
     grid-column: 1 / -1;
@@ -1660,6 +1682,12 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   padding: 0;
 }
 
+/* the last row's own 48px line spaces the card's foot, as the About rows
+   do theirs: the card's padding under it as well left twice the top's */
+.m3-card:has(> .keys-list:last-child) {
+  padding-bottom: 0;
+}
+
 .keys-row {
   border-top: 1px solid var(--line);
 }
@@ -1691,6 +1719,13 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   color: var(--muted);
 }
 
+/* "used 1 day ago" goes to the next line whole rather than split after
+   its number. A line too narrow for all of it (320px, large text, a
+   status) breaks it inside, between its words, never mid-word. */
+.keys-used {
+  display: inline-block;
+}
+
 /* The whole label, wrapped (up to 80 characters): it is the only way to tell
    two keys apart before Revoke, and an ellipsis kept ~28. */
 .keys-label {
@@ -1705,10 +1740,6 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   flex-direction: column;
   gap: 8px;
   padding-bottom: 12px;
-}
-
-.keys-row:last-child .keys-detail {
-  padding-bottom: 0;
 }
 
 .keys-status {

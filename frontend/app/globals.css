@@ -187,7 +187,8 @@ summary,
 .nav-back,
 .diary-food-link,
 a.m3-link-btn,
-.m3-card-link {
+.m3-card-link,
+.m3-nav-row {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
