@@ -1794,6 +1794,14 @@ button.row-kcal {
   white-space: nowrap;
 }
 
+/* ...but a line with another under it (FoodDetail's "Cited:" list) stops
+   at 8px: 23px would carry its link over the next line's "Cited:" and the
+   blank beside a shorter link. */
+.web-cite:has(+ .web-cite) {
+  margin-bottom: -8px;
+  padding-bottom: 8px;
+}
+
 /* Visible and clickable is the requirement, hyperlink blue isn't: a quiet
    sage link like the portion pill, and ↗ says it leaves the app. The second
    `content` keeps the arrow out of the link's spoken name where supported. */
