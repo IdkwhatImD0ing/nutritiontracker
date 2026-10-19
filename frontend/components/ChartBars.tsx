@@ -49,6 +49,10 @@ type Props = {
 
 const W = 360;
 const PAD = { l: 44, r: 10, t: 16, b: 22 };
+/** How far a bar's top must clear the target line to get a halo: half the
+ *  halo's 3-unit stroke (charts.css .chart-target-halo), plus a cap above it
+ *  at least as tall as the band and as a bar's largest corner (rx ≤ 3) */
+const HALO_CLEAR = 1.5 + 3;
 const fmt0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 /** Chart text size in viewBox units (charts.css .chart-xlabel and friends):
  *  the 360-unit viewBox draws at ~0.86-0.90 on a phone, so 12.5 renders at
@@ -294,14 +298,22 @@ export default function ChartBars({
         {hasTarget ? (
           <g className="chart-target" pointerEvents="none">
             {/* a surface band under the dashes keeps the line visible where
-                it crosses a bar, amber or not */}
-            <line
-              className="chart-target-halo"
-              x1={PAD.l}
-              x2={W - PAD.r}
-              y1={y(target)}
-              y2={y(target)}
-            />
+                it crosses a bar, amber or not. Only across a bar whose top
+                clears the line by HALO_CLEAR: a full-width band cut the top
+                off a bar just over the line, leaving it flat under the line
+                with a loose speck above, so it read as short of the target. */}
+            {bars.map((b, i) =>
+              b.value != null && y(b.value) < y(target) - HALO_CLEAR ? (
+                <line
+                  key={b.key}
+                  className="chart-target-halo"
+                  x1={barX(i)}
+                  x2={barX(i) + barW}
+                  y1={y(target)}
+                  y2={y(target)}
+                />
+              ) : null,
+            )}
             <line x1={PAD.l} x2={W - PAD.r} y1={y(target)} y2={y(target)} />
           </g>
         ) : null}

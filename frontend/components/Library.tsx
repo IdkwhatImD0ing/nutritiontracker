@@ -216,7 +216,9 @@ export default function Library() {
       put("library:search", { q, hits: r.hits, fdcDown: r.fdcError != null });
     } catch {
       if (seq.current !== id) return;
-      setResults([]);
+      // no results block at all: an empty one holds 60px of blank under
+      // the error card
+      setResults(null);
       setSearchError({ text: "Search failed.", retry: true });
     } finally {
       if (seq.current === id) setSearching(false);
