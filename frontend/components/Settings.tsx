@@ -336,11 +336,18 @@ export default function Settings() {
 
   // The first edit brings the save bar up at the foot of the screen, where
   // Tab may have left the field being edited: scroll it clear, by the
-  // scroll-padding the bar adds (m3.css). A field already clear stays put.
+  // scroll-padding the bar adds (m3.css). A field already clear stays put,
+  // and so does a box taller than the room above the bar (a long note):
+  // that would be aligned by an edge, carrying the caret far off where it
+  // was typed, and the browser already keeps the caret itself clear.
   const shell = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
     const el = document.activeElement;
-    if (dirty && el && shell.current?.contains(el)) {
+    if (!dirty || !el || !shell.current?.contains(el)) return;
+    const room =
+      window.innerHeight -
+      parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom);
+    if (el.getBoundingClientRect().height <= room) {
       el.scrollIntoView({ block: "nearest" });
     }
   }, [dirty]);
