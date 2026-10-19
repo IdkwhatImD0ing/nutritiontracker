@@ -1687,15 +1687,19 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   cursor: pointer;
 }
 
-/* its last-used phrase is one unbreakable run (ApiKeysCard), broken
-   anyway only where it can't fit a line (320px, large text, a status) */
 .keys-gist {
   flex: 1;
   min-width: 0;
   font-size: 0.84rem;
   line-height: 1.4;
   color: var(--muted);
-  overflow-wrap: anywhere;
+}
+
+/* "used 1 day ago" goes to the next line whole rather than split after
+   its number. A line too narrow for all of it (320px, large text, a
+   status) breaks it inside, between its words, never mid-word. */
+.keys-used {
+  display: inline-block;
 }
 
 /* The whole label, wrapped (up to 80 characters): it is the only way to tell
