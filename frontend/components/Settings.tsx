@@ -162,7 +162,14 @@ export default function Settings() {
   // what the page opened with, so the read below can tell an edit begun on
   // the cached form (kept) from the form as painted (refreshed)
   const opened = useRef({ form, targets }).current;
+  // a refused or failed save, shown in the save bar
   const [error, setError] = useState<string | null>(null);
+  // a failed read, shown at the top with its Retry: an edit or Discard
+  // leaves it, as neither reads the settings again
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // the first read has answered, either way (or the page opened on the
+  // cached copy): from then on a Retry doesn't take the cards below away
+  const [answered, setAnswered] = useState(form != null);
   // the empty targets of a half-filled set, outlined until the next edit
   const [targetsInvalid, setTargetsInvalid] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -204,10 +211,11 @@ export default function Settings() {
   useEffect(() => {
     let cancelled = false;
     const sent = writes.current;
-    setError(null);
+    setLoadError(null);
     getSettings()
       .then((s) => {
         if (cancelled) return;
+        setAnswered(true);
         if (writes.current === sent) {
           setForm((f) => (f === opened.form ? s : f));
           setSaved(s);
@@ -229,8 +237,10 @@ export default function Settings() {
         }
       })
       .catch(() => {
-        if (cancelled || writes.current !== sent) return;
-        setError(
+        if (cancelled) return;
+        setAnswered(true);
+        if (writes.current !== sent) return;
+        setLoadError(
           opened.form
             ? "Couldn't refresh your settings. Showing the last copy."
             : "Couldn't load your settings.",
@@ -302,6 +312,8 @@ export default function Settings() {
         }),
       );
       writes.current += 1;
+      // the server's own copy is on screen now
+      setLoadError(null);
       flashStatus("Saved.");
     } catch {
       setError("Couldn't save — try again.");
@@ -338,10 +350,10 @@ export default function Settings() {
       </header>
 
       {/* a failed read, or a refresh that failed over the cached form
-          (readCache); a refused save shows in the save bar instead */}
-      {error && (!form || !dirty) ? (
+          (readCache), edited or not; a refused save shows in the save bar */}
+      {loadError ? (
         <div className="notice error" role="alert">
-          <span>{error}</span>
+          <span>{loadError}</span>
           <button
             type="button"
             className="notice-btn"
@@ -357,7 +369,7 @@ export default function Settings() {
 
       {!form ? (
         // Daily targets and Meal windows, roughly to size
-        error ? null : (
+        loadError ? null : (
           <>
             <Skeleton height={150} />
             <Skeleton height={220} />
@@ -397,7 +409,6 @@ export default function Settings() {
                         aria-invalid={
                           targetsInvalid && !(Number.parseFloat(targets[f.key]) > 0)
                         }
-                        placeholder="—"
                         aria-label={`${f.label} target (${f.unit})`}
                         className="num"
                       />
@@ -530,9 +541,9 @@ export default function Settings() {
                 />
               </label>
               <p className="m3-note">
-                What Tally should always know. It reads this every time you log
-                or photograph a meal, and when it looks a food up. Add habits,
-                what your words mean to you, and where you usually eat.
+                What the agent should always know. It reads this every time you
+                log or photograph a meal, and when it looks a food up. Add
+                habits, what your words mean to you, and where you usually eat.
               </p>
             </div>
           </section>
@@ -586,9 +597,10 @@ export default function Settings() {
       )}
 
       {/* Neither needs the settings read, so a failed one doesn't hide them.
-          While it is out they wait: under the short skeletons they would
-          drop most of a screen when the form lands. */}
-      {form || error ? (
+          While the first is out they wait: under the short skeletons they
+          would drop most of a screen when the form lands. A Retry keeps
+          them, or a new key's one-time secret would go with the card. */}
+      {form || answered ? (
         <>
           <ApiKeysCard />
 

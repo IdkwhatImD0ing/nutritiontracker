@@ -466,12 +466,17 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
             />
           ) : (
             <>
+              {/* A request in flight holds the button pressed for it as
+                  aria-disabled, not disabled: a disabled button drops focus
+                  to the page, behind the sheet, and a failure's alert shows
+                  here. */}
               <button
                 type="button"
                 className="commit-btn"
-                disabled={busy !== null || !valid}
+                disabled={busy === "toggle" || !valid}
+                aria-disabled={busy === "save" || undefined}
                 aria-busy={busy === "save"}
-                onClick={save}
+                onClick={busy !== null ? undefined : save}
               >
                 {busy === "save" ? (
                   <>
@@ -491,8 +496,8 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                     <button
                       type="button"
                       className="m3-link-btn danger"
-                      disabled={busy !== null}
-                      onClick={() => run({ is_active: false }, "toggle")}
+                      aria-disabled={busy !== null || undefined}
+                      onClick={busy !== null ? undefined : () => run({ is_active: false }, "toggle")}
                     >
                       Deactivate
                     </button>
@@ -503,9 +508,13 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                     <button
                       type="button"
                       className="m3-link-btn"
-                      disabled={busy !== null || (dirty && !valid)}
-                      onClick={() =>
-                        run(dirty ? { ...edits(), is_active: true } : { is_active: true }, "toggle")
+                      disabled={dirty && !valid}
+                      aria-disabled={busy !== null || undefined}
+                      onClick={
+                        busy !== null
+                          ? undefined
+                          : () =>
+                              run(dirty ? { ...edits(), is_active: true } : { is_active: true }, "toggle")
                       }
                     >
                       Reactivate

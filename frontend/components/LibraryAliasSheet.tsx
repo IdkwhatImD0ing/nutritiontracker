@@ -230,12 +230,16 @@ export default function LibraryAliasSheet({
             </p>
           ) : null}
 
+          {/* A request in flight holds the button pressed for it as
+              aria-disabled, not disabled: a disabled button drops focus to
+              the page, behind the sheet, and a failure's alert shows here. */}
           <button
             type="button"
             className="commit-btn"
-            disabled={busy !== null || (hasDefault && !qtyValid)}
+            disabled={busy === "delete" || (hasDefault && !qtyValid)}
+            aria-disabled={busy === "save" || undefined}
             aria-busy={busy === "save"}
-            onClick={save}
+            onClick={busy !== null ? undefined : save}
           >
             {busy === "save" ? (
               <>
@@ -270,8 +274,8 @@ export default function LibraryAliasSheet({
                 <button
                   type="button"
                   className="m3-link-btn danger"
-                  disabled={busy !== null}
-                  onClick={remove}
+                  aria-disabled={busy !== null || undefined}
+                  onClick={busy !== null ? undefined : remove}
                 >
                   Yes, forget
                 </button>

@@ -292,12 +292,14 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
   const wUnit = units === "metric" ? "kg" : "lb";
 
   // A re-run closes on Back and Escape as any sheet does (sheetBack). Not
-  // while a request is out, Cancel included: a save can't be called back,
-  // and its "Targets saved." would land after a wizard that seemed cancelled.
+  // while Save is out (step 2's only request), Cancel included: a save can't
+  // be called back, and its "Targets saved." would land after a wizard that
+  // seemed cancelled. Compute writes nothing, so it can be walked away from.
+  const saving = busy && step === 2;
   useSheetBack(
     sheetRef,
     () => {
-      if (!busy) onCancel?.();
+      if (!saving) onCancel?.();
     },
     !!onCancel,
   );
@@ -342,7 +344,7 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
             <button
               type="button"
               className="wizard-cancel"
-              disabled={busy}
+              disabled={saving}
               onClick={onCancel}
             >
               Cancel
@@ -605,9 +607,11 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                   "See my targets"
                 )}
               </button>
+              {/* not while computing: its answer would move on to step 2 */}
               <button
                 type="button"
                 className="wizard-ghost"
+                disabled={busy}
                 onClick={() => setStep(0)}
               >
                 Back

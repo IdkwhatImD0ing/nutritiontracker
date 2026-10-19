@@ -59,7 +59,16 @@ export default function AccountCard() {
         <div className="account-who">
           <span className="account-label">Signed in as</span>
           <span className="account-email">
-            {me?.email ?? (failed ? "—" : <Skeleton height={14} width={160} />)}
+            {me?.email ??
+              (failed ? (
+                // a dash to the eye, words to a screen reader
+                <>
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">not available</span>
+                </>
+              ) : (
+                <Skeleton height={14} width={160} />
+              ))}
           </span>
         </div>
 

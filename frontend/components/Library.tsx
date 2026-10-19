@@ -216,7 +216,9 @@ export default function Library() {
       put("library:search", { q, hits: r.hits, fdcDown: r.fdcError != null });
     } catch {
       if (seq.current !== id) return;
-      setResults([]);
+      // Hits on screen for this same query (a Back's restored list, a Retry
+      // over it) stay, as the lists below keep theirs; another query's go.
+      setResults((r) => (r && peek<LastSearch>("library:search")?.q === q ? r : []));
       setSearchError({ text: "Search failed.", retry: true });
     } finally {
       if (seq.current === id) setSearching(false);
@@ -270,13 +272,16 @@ export default function Library() {
         <h1>Library</h1>
       </header>
 
-      {online ? null : (
-        <div className="notice warn offline-note" role="status">
-          <span>{OFFLINE_NOTE}</span>
-        </div>
-      )}
+      {/* mounted online too, empty and out of the flow ([role=status]:empty),
+          so the note is announced as it arrives, as on Today */}
+      <div
+        className={online ? undefined : "notice warn offline-note"}
+        role="status"
+      >
+        {online ? null : <span>{OFFLINE_NOTE}</span>}
+      </div>
 
-      <section className="m3-section lib-search" aria-label="Search foods">
+      <section className="m3-section lib-search" aria-label="Look up a food">
         <form className="capture" onSubmit={runSearch}>
           <div className="capture-field">
             <input
@@ -287,7 +292,7 @@ export default function Library() {
                 if (!e.target.value.trim()) reset();
               }}
               placeholder="Look up a food"
-              aria-label="Search foods"
+              aria-label="Look up a food"
               autoComplete="off"
               {...FOOD_FIELD_PROPS}
               enterKeyHint="search"
@@ -380,10 +385,10 @@ export default function Library() {
             logging, or tap <em>Save as meal</em> on a meal group.
           </p>
         ) : null}
-        {activeMeals.map((m) => (
-          <MealCard key={m.id} meal={m} onOpen={() => setMealSheet(m)} />
-        ))}
-        {inactiveMeals.map((m) => (
+        {/* one list, active first: a meal that is deactivated or
+            reactivated keeps its card (moved, not remounted), so focus goes
+            back to it as its sheet closes */}
+        {[...activeMeals, ...inactiveMeals].map((m) => (
           <MealCard key={m.id} meal={m} onOpen={() => setMealSheet(m)} />
         ))}
         <button
@@ -485,6 +490,9 @@ export default function Library() {
               setAliasSheet(null);
             }}
             onDeleted={(id) => {
+              // the chip that opened the sheet goes with the phrase: focus
+              // waits on the list's heading, not the top of the page
+              phrasesHead.current?.focus({ preventScroll: true });
               setAliases((prev) => (prev ?? []).filter((a) => a.id !== id));
               setAliasSheet(null);
             }}

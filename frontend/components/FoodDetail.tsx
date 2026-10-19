@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { fmtDate, nutrientParts, statesGrams, withUnit } from "@/lib/format";
 import { foodName } from "@/lib/labels";
@@ -131,6 +131,8 @@ export default function FoodDetail({ id }: { id: string }) {
   const [attempt, setAttempt] = useState(0);
   const [servingId, setServingId] = useState("");
   const [aliasSheet, setAliasSheet] = useState<AliasRow | null>(null);
+  // where focus waits once a forgotten phrase's chip is gone
+  const phrasesHead = useRef<HTMLHeadingElement>(null);
   const me = useMe();
 
   useEffect(() => {
@@ -361,7 +363,7 @@ export default function FoodDetail({ id }: { id: string }) {
       </section>
 
       <section className="m3-section" aria-label="Your phrases">
-        <h2>
+        <h2 ref={phrasesHead} tabIndex={-1}>
           Your phrases<span className="count num">{aliases.length}</span>
         </h2>
         {aliases.length === 0 ? (
@@ -454,6 +456,7 @@ export default function FoodDetail({ id }: { id: string }) {
               setAliasSheet(null);
             }}
             onDeleted={(aid) => {
+              phrasesHead.current?.focus({ preventScroll: true });
               setFood((f) =>
                 f ? { ...f, aliases: (f.aliases ?? []).filter((a) => a.id !== aid) } : f,
               );
