@@ -41,6 +41,10 @@ function spanLabel(range: HistoryRange): string {
     : `${monthShort(a)} ${a.getDate()} – ${monthShort(b)} ${b.getDate()}`;
 }
 
+/* Each range's card or chart height at 390px, so its blocks hold the
+   place the data lands in. */
+const LOADING_HEIGHT: Record<RangeKind, number> = { "3d": 207, w: 215, m: 259, y: 259 };
+
 /* The range last picked, kept for as long as the document lasts: back from
    a day, or a return to the tab, finds History on it, as native tabs do. A
    hard load is "3d" on server and client alike, so hydration is unaffected;
@@ -186,7 +190,7 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         ) : error ? null : (
           // not read yet: that range's shape, never the last range dimmed
           <div className={`${kind === "3d" ? "hcards" : "hcharts"} hist-loading`}>
-            <Skeleton rows={kind === "3d" ? 3 : 2} height={180} radius={20} />
+            <Skeleton rows={kind === "3d" ? 3 : 2} height={LOADING_HEIGHT[kind]} radius={20} />
           </div>
         )}
       </div>

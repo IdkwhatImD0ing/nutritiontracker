@@ -2,6 +2,7 @@
 
 import { useState, type KeyboardEvent, type PointerEvent } from "react";
 import "@/app/history/charts.css";
+import { ChevronRight } from "./icons";
 
 export type Bar = {
   key: string;
@@ -18,7 +19,7 @@ export type Bar = {
 type Props = {
   title: string;
   bars: Bar[];
-  /** dashed target line + label; omitted/0 = no target set */
+  /** dashed target line, keyed under the plot; omitted/0 = no target set */
   target?: number | null;
   targetLabel?: string;
   color?: string;
@@ -41,6 +42,9 @@ type Props = {
   format?: (v: number) => string;
   /** centred on the plot when no bar is above zero (as ChartLines' own) */
   emptyText?: string;
+  /** the title's heading level: 2 under History's h1, 3 in Experiment's
+   *  sections */
+  level?: 2 | 3;
 };
 
 const W = 360;
@@ -53,9 +57,9 @@ export const CHART_TEXT_PX = 12.5;
 
 /** The x labels that fit, as indices into `labels` ("" = none). Walks from
  *  the newest (right) end and keeps a label only when it ends at least 4
- *  units left of the last one kept, so "Oct 1" beats "Sep 30" beside it and
- *  "Nov" a partial first "Oct". `x` is the text's anchor: its centre for
- *  "middle", its left edge for "start". */
+ *  units left of the last one kept, so "Oct 1" beats "Sep 30" beside it.
+ *  `x` is the text's anchor: its centre for "middle", its left edge for
+ *  "start". */
 export function fitLabels(
   labels: { x: number; text: string }[],
   anchor: "middle" | "start",
@@ -93,7 +97,7 @@ export default function ChartBars({
   title,
   bars,
   target,
-  targetLabel = "target",
+  targetLabel = "Target",
   color = "var(--spruce-soft)",
   overColor = "var(--amber)",
   unit = "",
@@ -105,6 +109,7 @@ export default function ChartBars({
   select = false,
   format = (v) => fmt0.format(v),
   emptyText,
+  level = 2,
 }: Props) {
   const [selKey, setSelKey] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
@@ -141,20 +146,25 @@ export default function ChartBars({
   const selIdx = !select ? -1 : picked >= 0 ? picked : today >= 0 ? today : bars.length - 1;
   const sel = selIdx >= 0 ? bars[selIdx] : undefined;
   const tap = select ? undefined : onTap;
-  // a press, a drag, or a mouse's hover: the bar under the pointer's x
-  const scrub = (e: PointerEvent<SVGSVGElement>) => {
-    const hover = e.buttons === 0;
-    if (hover && e.pointerType !== "mouse") return;
+  // the bar under the pointer's x
+  const barAt = (e: PointerEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     const i = Math.floor((((e.clientX - r.left) / r.width) * W - PAD.l) / group);
-    const b = bars[Math.min(Math.max(i, 0), bars.length - 1)];
-    if (!b) return;
-    if (hover) {
-      setHoverKey(b.key);
-    } else {
-      setSelKey(b.key);
-      setHoverKey(null);
-    }
+    return bars[Math.min(Math.max(i, 0), bars.length - 1)];
+  };
+  // A press, a drag or a mouse's hover previews; lifting the press picks.
+  // A press alone is no pick: every scroll that starts on the plot begins
+  // as one, and the browser takes it over as a pan (pointercancel, which
+  // drops the preview) only after.
+  const scrub = (e: PointerEvent<SVGSVGElement>) => {
+    if (e.buttons === 0 && e.pointerType !== "mouse") return;
+    const b = barAt(e);
+    if (b) setHoverKey(b.key);
+  };
+  const pick = (e: PointerEvent<SVGSVGElement>) => {
+    const b = barAt(e);
+    if (b) setSelKey(b.key);
+    setHoverKey(null);
   };
   const step = (e: KeyboardEvent<SVGSVGElement>) => {
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -168,15 +178,21 @@ export default function ChartBars({
     }
   };
 
+  // a heading, so VoiceOver's rotor reaches each chart
+  const Title = level === 3 ? "h3" : "h2";
+
   return (
     <figure className="chart">
-      <figcaption className="chart-title">{title}</figcaption>
+      <figcaption>
+        <Title className="chart-title">{title}</Title>
+      </figcaption>
       {sel ? (
         <div className="chart-readout">
           <span className="num">{hintOf(sel)}</span>
           {onTap ? (
             <button type="button" className="chart-readout-open" onClick={() => onTap(sel.key)}>
-              Open ›
+              Open
+              <ChevronRight />
             </button>
           ) : null}
         </div>
@@ -198,6 +214,8 @@ export default function ChartBars({
         style={select ? { touchAction: "pan-y" } : undefined}
         onPointerDown={select ? scrub : undefined}
         onPointerMove={select ? scrub : undefined}
+        onPointerUp={select ? pick : undefined}
+        onPointerCancel={select ? () => setHoverKey(null) : undefined}
         onPointerLeave={select ? () => setHoverKey(null) : undefined}
         onKeyDown={select ? step : undefined}
       >
@@ -290,7 +308,7 @@ export default function ChartBars({
         {/* text last: bars, then the target line, then every label, so the
             line never strikes through a value. Taps fall through to the bar.
             Each bar's own name already says its value and day, so those
-            labels are hidden from a screen reader; the target's is not. */}
+            labels are hidden from a screen reader. */}
         <g pointerEvents="none">
           {bars.map((b, i) => {
             const v = b.value;
@@ -324,13 +342,6 @@ export default function ChartBars({
               </text>
             ) : null,
           )}
-          {hasTarget ? (
-            <g className="chart-target">
-              <text x={W - PAD.r} y={y(target) - 4} textAnchor="end">
-                {targetLabel} {format(target)}
-              </text>
-            </g>
-          ) : null}
           {emptyText && !values.some((v) => v > 0) ? (
             <text
               className="chart-empty"
@@ -343,6 +354,17 @@ export default function ChartBars({
           ) : null}
         </g>
       </svg>
+      {/* the target's figure, keyed under the plot as ChartLines keys its
+          baseline: in the plot it sat at the target's height over the
+          newest bars, and its halo erased a value label near the target */}
+      {hasTarget ? (
+        <div className="chart-legend">
+          <span className="chart-legend-item">
+            <span className="chart-legend-swatch dashed" style={{ color: "var(--amber)" }} />
+            {targetLabel} {format(target)}
+          </span>
+        </div>
+      ) : null}
     </figure>
   );
 }

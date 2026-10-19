@@ -73,7 +73,10 @@ export default function ChartLines({
 
   return (
     <figure className="chart">
-      <figcaption className="chart-title">{title}</figcaption>
+      {/* an h3: Experiment, its one page, groups its charts under h2s */}
+      <figcaption>
+        <h3 className="chart-title">{title}</h3>
+      </figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={title} className="chart-svg">
         <g className="chart-grid">
           {ticks.map((t) => (

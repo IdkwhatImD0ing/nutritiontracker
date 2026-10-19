@@ -80,10 +80,12 @@
   background: var(--surface-2);
 }
 
-/* an empty day reads dimmed, but its head ('Today Oct 13 · nothing
-   logged') keeps full contrast: it is the line that explains the card */
-.hcard.empty > :not(.hcard-head) {
-  opacity: 0.7;
+/* an empty day reads quieter: its zeros in --faint (5.2:1 on the card,
+   the protein's mint included), while every label and target keeps its
+   own colour. A fade of the whole body took those under AA. */
+.hcard.empty .hcard-kcal strong,
+.hcard.empty .hcard-macro .hcard-macro-row .v {
+  color: var(--faint);
 }
 
 .hcard-head {
@@ -114,8 +116,11 @@
   margin-left: 10px;
 }
 
+/* wraps only at the largest Text Size on a narrow phone, where the fiber
+   takes a line of its own rather than squeezing the total */
 .hcard-kcal {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
 }
@@ -131,6 +136,18 @@
 .hcard-kcal .of {
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+/* the day's fiber, right of its total, in the meal row's type */
+.hcard-fiber {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.hcard-fiber .k {
+  color: var(--faint);
+  font-weight: 600;
 }
 
 .hcard .kcal-bar {
@@ -220,9 +237,13 @@
    row, where iOS puts a pushed screen's actions, so the 1.6rem date under
    it keeps the full width ("Wednesday, Sep 30" and two 44px buttons don't
    share a 320px row). Their negative margins reach into the header's
-   padding, as .nav-back's do, so the row doesn't grow. */
+   padding, as .nav-back's do, so the row doesn't grow. Both rows' bottom
+   4px overlap the title's date picker, a positioned box that would paint
+   over them and take those taps; their own z-index keeps them on top. */
 .shell.day .brand .nav-back {
   grid-column: 1;
+  position: relative;
+  z-index: 1;
 }
 
 .shell.day .brand h1 {
@@ -235,6 +256,8 @@
   align-self: center;
   display: flex;
   margin: -10px -12px -4px 0;
+  position: relative;
+  z-index: 1;
 }
 
 .day-step button {
@@ -263,8 +286,8 @@
 
 /* the date opens a picker: a native date input over it, invisible, so the
    tap is the input's own and the OS picker opens (owner, 2026-10-13). The
-   input reaches 8px under the title for a taller target, not above it,
-   where the back link's hit area ends. */
+   input reaches 8px under the title for a taller target, not above it; the
+   back link and the day steps sit over its top edge (above). */
 .day-pick {
   position: relative;
   display: inline-flex;

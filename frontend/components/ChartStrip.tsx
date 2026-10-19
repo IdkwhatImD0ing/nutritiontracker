@@ -42,7 +42,9 @@ export default function ChartStrip({ title, cells, onTap }: Props) {
   );
   return (
     <figure className="chart">
-      <figcaption className="chart-title">{title}</figcaption>
+      <figcaption>
+        <h2 className="chart-title">{title}</h2>
+      </figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={title} className="chart-svg">
         {cells.map((c, i) => {
           const x = i * (cw + GAP);
