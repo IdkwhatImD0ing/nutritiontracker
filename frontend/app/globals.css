@@ -1512,6 +1512,22 @@ a {
     color 150ms;
 }
 
+/* the meal picker's longest word fills its segment, so a selected
+   "Breakfast" touched both ends of its thumb (the staged row's picker
+   is 26px narrower than the header's). Only this picker: the API key
+   form's "365 days" would wrap. At 320 a larger Text Size grows its
+   labels to 14px and no further, or Snack runs off the track. */
+.meal-picker.m3-seg button {
+  padding-inline: 6px;
+}
+
+@media (max-width: 359px) {
+  .meal-picker.m3-seg button {
+    font-size: min(0.84rem, 14px);
+    padding-inline: 4px;
+  }
+}
+
 .sheet-body {
   flex: 1;
   overflow-y: auto;
@@ -2622,6 +2638,24 @@ button.row-kcal {
 .search-results .result-sub {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+/* the loading rows (ManualSearchSheet's Skeleton) take the list's shape:
+   joined, hairlines between, the corners on the stack — its first child
+   is the screen reader's "Loading…", not a block */
+.search-results .skeleton-stack {
+  gap: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.search-results .skeleton {
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.search-results .skeleton:last-child {
+  border-bottom: none;
 }
 
 /* Library's search opens a result's food detail, where the +'s Search
