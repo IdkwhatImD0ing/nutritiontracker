@@ -14,7 +14,7 @@ import { useSheetFocus } from "./useSheetFocus";
  *
  *  The divider drags, and lets go at one of three stops:
  *
- *    peek  the staged header and its Commit button — the total stays in
+ *    peek  the tray's lip and its Log button — the total stays in
  *          sight, and the chat has the rest of the screen
  *    half  a few rows and a working chat — where it opens, unless the
  *          sheet is short (below)
@@ -89,7 +89,7 @@ export default function SplitSheet({
   // A staged list arrives at `half` however the last one was left — the rows
   // are the new thing on screen and deserve the room. On a short sheet it
   // arrives at `peek` instead: the lip still shows the meal, the total and
-  // Commit, and one tap on the divider shows the rows. Keyed on presence, so
+  // Log, and one tap on the divider shows the rows. Keyed on presence, so
   // dragging after it appears is not undone.
   const staged = stage !== null;
   useEffect(() => {

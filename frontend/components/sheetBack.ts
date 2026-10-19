@@ -23,7 +23,7 @@ import { useEffect, useRef, type RefObject } from "react";
    sheet registered meanwhile and the entry is still the current one. One
    entry for the stack, not one per sheet, is what survives the hand-offs
    that happen inside one tick — the + sheet giving way to a lane, Take photo
-   opening the chat and its picker, Edit food giving way to Find a food —
+   opening the chat and its picker, Change food giving way to Search foods —
    since history.back() lands asynchronously and would pop the next sheet's
    entry. Next's router lets an entry pushed with its own state through
    untouched, and a pop back onto the page's entry is a same-URL restore. */

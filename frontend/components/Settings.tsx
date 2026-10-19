@@ -214,7 +214,7 @@ export default function Settings() {
           setTargets((t) => (t === opened.targets ? targetText(s.targets) : t));
           put("settings", s);
         }
-        // Today's "Set them ›" (no targets yet) opens the wizard straight
+        // Today's "Set them" (no targets yet) opens the wizard straight
         // away; the param goes, so a reload or Back doesn't reopen it.
         const params = new URLSearchParams(window.location.search);
         if (params.get("setup") === "targets") {

@@ -25,8 +25,9 @@ export function usePresence(open: boolean) {
 
 /** True inside a sheet playing its exit (SheetFrame). useSheetFocus reads it
  *  to hand focus back as the exit starts, not EXIT_MS later at unmount, by
- *  which time a sheet the same tap opened (Edit food giving way to Search)
- *  has taken focus and recorded the leaving sheet's button as its opener. */
+ *  which time a sheet the same tap opened (Change food giving way to Search
+ *  foods) has taken focus and recorded the leaving sheet's button as its
+ *  opener. */
 export const SheetClosing = createContext(false);
 
 /** What a sheet closes inside: no box of its own (display: contents), and

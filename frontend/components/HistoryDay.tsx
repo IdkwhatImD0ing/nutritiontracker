@@ -76,8 +76,24 @@ export default function HistoryDay({ date }: { date: string }) {
   const choose = (input: HTMLInputElement, from: Refocus) => {
     typed.current = false;
     const v = input.value;
-    if (v && v !== date && v >= MIN_DAY && (!today || v <= today)) go(v, from);
+    const ok = !!v && v !== date && v >= MIN_DAY && (!today || v <= today);
+    if (ok) go(v, from);
     else input.value = date;
+    return ok;
+  };
+  // A mouse press on Previous or Next takes focus from a typed date's field
+  // before its click lands: the blur opens the typed day, then the click,
+  // stepping from the day still on screen, replaces it. So the press opens
+  // the typed day itself and its click is dropped. The press, not the blur's
+  // relatedTarget, because Safari doesn't focus a clicked button.
+  const dropClick = useRef(false);
+  const press = (from: "prev" | "next") => {
+    const input = pickRef.current;
+    dropClick.current = typed.current && !!input && choose(input, from);
+  };
+  const click = (n: number) => {
+    if (dropClick.current) dropClick.current = false;
+    else step(n);
   };
 
   useEffect(() => {
@@ -152,7 +168,13 @@ export default function HistoryDay({ date }: { date: string }) {
           </span>
         </h1>
         <div className="day-step">
-          <button type="button" ref={prevRef} aria-label="Previous day" onClick={() => step(-1)}>
+          <button
+            type="button"
+            ref={prevRef}
+            aria-label="Previous day"
+            onPointerDown={() => press("prev")}
+            onClick={() => click(-1)}
+          >
             <ChevronLeft />
           </button>
           <button
@@ -160,7 +182,8 @@ export default function HistoryDay({ date }: { date: string }) {
             ref={nextRef}
             aria-label="Next day"
             disabled={!today || date >= today}
-            onClick={() => step(1)}
+            onPointerDown={() => press("next")}
+            onClick={() => click(1)}
           >
             <ChevronRight />
           </button>

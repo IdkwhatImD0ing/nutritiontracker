@@ -136,7 +136,7 @@
   margin: 4px 0 0;
 }
 
-/* the one-line heads-up under Commit (a numberless row will not count) */
+/* the one-line heads-up above Log (a numberless row will not count) */
 .sheet-reason {
   color: var(--amber);
   font-size: 0.82rem;

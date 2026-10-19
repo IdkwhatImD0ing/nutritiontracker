@@ -251,7 +251,14 @@ export default function DiaryList({
   useEffect(() => {
     const id = refocus.current;
     refocus.current = null;
-    if (id == null || document.activeElement !== document.body) return;
+    // lost focus: <body>, <html> or none, or still on the removed node
+    const at = document.activeElement;
+    const lost =
+      !at ||
+      at === document.body ||
+      at === document.documentElement ||
+      !at.isConnected;
+    if (id == null || !lost) return;
     const el = id
       ? sectionRef.current?.querySelector<HTMLElement>(
           `[data-entry-id="${CSS.escape(id)}"] .row-kcal`,

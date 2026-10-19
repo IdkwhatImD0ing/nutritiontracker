@@ -1,6 +1,6 @@
 /* Tally — hand CSS, dark-first. One warm graphite ground, hairline surfaces,
    Bricolage Grotesque numerals, and a single apricot accent that is spent on
-   the things that matter: the +, Commit, protein, and the calorie bar.
+   the things that matter: the +, Log, protein, and the calorie bar.
    Every class name below is a contract with a component; the tokens are the
    theme. (§7.4 visual language.) */
 
@@ -43,7 +43,7 @@
 
   /* Colours outside the palette above, named once so every rule that paints
      one shares its value (one web blue, one scrim, one red tint). */
-  --accent-fill: linear-gradient(180deg, var(--accent), var(--accent-strong)); /* Commit, send, the user bubble */
+  --accent-fill: linear-gradient(180deg, var(--accent), var(--accent-strong)); /* Log, send, the user bubble */
   --web: #8fd0e6; /* §3.4a web-sourced: the badge (its citation link is --sage) */
   --web-soft: rgba(108, 196, 221, 0.14);
   --off: #e0b58a; /* Open Food Facts badge (m3.css) */
@@ -912,7 +912,7 @@ a {
   background: var(--surface-3);
 }
 
-/* a search field with its ✕ inside the box (Library, Find a food): empties
+/* a search field with its ✕ inside the box (Library, Search foods): empties
    the query and the results with it */
 .capture-field {
   position: relative;
@@ -3532,7 +3532,7 @@ button.row-kcal {
 }
 
 /* The lip: the batch's three controls on one row along the tray's bottom —
-   discard, the meal, and Commit. Commit is a PILL here, not the full-width
+   discard, the meal, and Log. Log is a PILL here, not the full-width
    band it is when the staging sheet stands alone: there it ends the flow, here
    the conversation carries on underneath it, and a band of apricot across the
    middle of the sheet spends the accent on the wrong thing. */
@@ -3557,7 +3557,7 @@ button.row-kcal {
   color: var(--faint);
 }
 
-/* beside the ✕, Commit pushed right: .meal-chip's own margin-left:auto
+/* beside the discard, Log pushed right: .meal-chip's own margin-left:auto
    (the header's) left it centred between the two */
 .stage-lip .meal-chip {
   margin-left: 0;
@@ -3704,7 +3704,7 @@ button.row-kcal {
 }
 
 /* the safe-area inset belongs to the composer at the true bottom of the
-   sheet, not to the Commit button sitting in the middle of it */
+   sheet, not to the Log button sitting in the middle of it */
 .split-sheet > .stage-pane > .sheet-foot {
   padding-bottom: 12px;
 }
