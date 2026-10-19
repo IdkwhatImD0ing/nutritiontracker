@@ -18,11 +18,14 @@ function readDismissed(): string | null {
 }
 
 /** "at 4:00 PM", or "tomorrow at 4:00 PM" when the next UTC midnight lands
- *  on a different local date than now. The + sheet's spent line uses it too. */
+ *  on a different local date than now. The + sheet's spent line uses it too.
+ *  The time's spaces are no-break, so "PM" never starts a line alone. */
 export function nextLogAt(iso: string): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "tomorrow";
-  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const time = at
+    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    .replace(/\s/g, "\u00a0");
   return at.toDateString() === new Date().toDateString()
     ? `at ${time}`
     : `tomorrow at ${time}`;

@@ -325,7 +325,8 @@ export default function Library() {
         ) : null}
         {fdcDown ? (
           <p className="subsheet-hint">
-            Food database unreachable — showing your foods only.
+            USDA search didn&rsquo;t answer — showing foods already saved in
+            Tally.
           </p>
         ) : null}
         {results ? (

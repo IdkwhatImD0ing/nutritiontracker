@@ -2692,20 +2692,39 @@ button.row-kcal {
   display: block;
 }
 
-/* a fixed-shape box in the middle of the screen: a share of a tall portrait
-   screen would be a tower no barcode fills */
+/* The band between the head and the panel (BarcodeScanner): the aiming box
+   centres in the picture left showing, not on the whole sheet, so a panel
+   grown by a miss — or a short landscape screen — never covers it. After
+   .scan-view and positioned, so it paints over the video; no z-index, so
+   the head and panel still paint over its dim. */
+.scan-aim {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  container-type: size;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* a fixed-shape box in the middle of the band: a share of a tall portrait
+   screen would be a tower no barcode fills; the band's height caps it too */
 .scan-frame {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(78%, 340px);
+  width: min(78%, 340px, (100cqh - 24px) * 1.5);
   aspect-ratio: 3 / 2;
-  translate: -50% -50%;
   border: 2px solid var(--accent);
   border-radius: 10px;
   opacity: 0.85;
   pointer-events: none;
   box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
+}
+
+/* a band too short to aim in (a small phone's keyboard up after a miss):
+   no box at all, not one collapsed to an orange dot */
+@container (max-height: 64px) {
+  .scan-frame {
+    display: none;
+  }
 }
 
 /* a 44px round icon button over the video; aria-pressed says on or off */
@@ -2730,11 +2749,13 @@ button.row-kcal {
   border-color: var(--amber);
 }
 
-/* over the full-screen camera: on the right, under the head */
+/* over the full-screen camera: on the right, under the head, and over the
+   aiming box's dim (.scan-aim paints after the video) */
 .scan-sheet .scan-torch {
   top: calc(72px + env(safe-area-inset-top));
   right: 14px;
   bottom: auto;
+  z-index: 1;
 }
 
 /* covers the camera from the read until the lookup settles; a miss lifts it */
@@ -2754,6 +2775,12 @@ button.row-kcal {
 /* no camera fringe at the cover's antialiased edge */
 .scan-view.busy video {
   visibility: hidden;
+}
+
+/* under the cover with the picture, as before .scan-aim raised it (the
+   aiming box is gone while the cover is up) */
+.scan-view.busy .scan-torch {
+  z-index: auto;
 }
 
 .scan-loading .spinner {
@@ -2789,14 +2816,14 @@ button.row-kcal {
   text-align: center;
 }
 
-/* Everything but the camera, along the bottom over the picture: a miss or a
-   notice grows it upward and the viewfinder stays where it was. The sheet
+/* Everything but the camera, along the bottom over the picture (.scan-aim
+   takes the room above it): a miss or a notice grows it upward, the picture
+   stays where it was and the aiming box re-centres above it. The sheet
    rides --kb and --vvh, so this sits on the keyboard while a number is
    typed. */
 .scan-panel {
   position: relative;
   z-index: 1;
-  margin-top: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2805,6 +2832,20 @@ button.row-kcal {
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   backdrop-filter: blur(18px) saturate(140%);
   border-top: 1px solid var(--line-strong);
+}
+
+/* No camera (denied, unavailable): no picture to float over, and a black
+   screen would read as one still loading. The sheet's own ground, and the
+   panel under the head as the Search lane's body is (no .scan-aim). */
+.sheet.scan-sheet.no-camera {
+  background: var(--surface);
+}
+
+.scan-sheet.no-camera .scan-panel {
+  border-top: 0;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /* ---------- undo toast (BACKLOG 11) + pending badge (BACKLOG 12) ---------- */

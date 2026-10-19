@@ -140,7 +140,7 @@ export default function TabBar() {
   const quotaNote =
     demo && demo.used_today >= demo.limit
       ? `Today's demo ${demo.limit === 1 ? "log is" : "logs are"} used. ` +
-        `Next ${nextLogAt(demo.resets_at)}. Search still works.`
+        `Next log ${nextLogAt(demo.resets_at)}. Search still works.`
       : null;
   const isActive = (href: string) =>
     href === "/" ? owner === "/" : owner.startsWith(href);

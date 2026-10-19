@@ -1469,7 +1469,8 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   }
 
   .add-sheet .subsheet-head,
-  .add-sheet > .notice {
+  .add-sheet > .notice,
+  .add-cancel {
     grid-column: 1 / -1;
   }
 
@@ -1487,8 +1488,10 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
 
   /* the rail's Log food is nowhere near the tiles: nothing to land on. Out
      of sight as .sr-only is, not display: none, so a screen reader keeps
-     the sheet's way out (AddSheet). */
-  .add-cancel {
+     the sheet's way out (AddSheet). Back in sight while the keyboard is on
+     it, as a skip link is: its full row under the tiles, never a Tab stop
+     with nothing to see. */
+  .add-cancel:not(:focus-visible) {
     position: absolute;
     width: 1px;
     height: 1px;
