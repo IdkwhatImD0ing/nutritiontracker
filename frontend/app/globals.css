@@ -2662,6 +2662,14 @@ button.row-kcal {
   box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
 }
 
+/* a band too short to aim in (a small phone's keyboard up after a miss):
+   no box at all, not one collapsed to an orange dot */
+@container (max-height: 64px) {
+  .scan-frame {
+    display: none;
+  }
+}
+
 /* a 44px round icon button over the video; aria-pressed says on or off */
 .scan-torch {
   position: absolute;
