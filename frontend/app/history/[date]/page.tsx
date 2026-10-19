@@ -43,5 +43,5 @@ export default async function HistoryDayPage({
 }) {
   const { date } = await params;
   if (!validDate(date)) notFound();
-  return <HistoryDay date={date} />;
+  return <HistoryDay date={date} year={String(new Date().getUTCFullYear())} />;
 }

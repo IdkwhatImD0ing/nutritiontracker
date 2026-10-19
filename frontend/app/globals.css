@@ -1550,12 +1550,12 @@ a {
 }
 
 @media (hover: hover) {
-  .commit-btn:hover:not(:disabled) {
+  .commit-btn:hover:not(:disabled, [aria-busy="true"]) {
     filter: brightness(1.05);
   }
 }
 
-.commit-btn:active:not(:disabled) {
+.commit-btn:active:not(:disabled, [aria-busy="true"]) {
   transform: scale(0.985);
 }
 
@@ -2022,6 +2022,11 @@ button.row-kcal {
   border-radius: var(--radius-sm);
   padding: 12px;
   animation: rise 220ms var(--ease);
+}
+
+/* a diary row restored open (DiaryEntryRow) cuts in with its page */
+.row-detail.settled {
+  animation: none;
 }
 
 .macro-grid {

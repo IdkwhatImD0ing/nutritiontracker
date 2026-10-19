@@ -57,7 +57,15 @@ export default function ChartSmall({
         ) : null}
       </div>
       <div className="chart-small-value num">
-        {latest == null ? "—" : format(latest)}
+        {/* no value: a dash to the eye, words to a screen reader */}
+        {latest == null ? (
+          <>
+            <span aria-hidden="true">—</span>
+            <span className="sr-only">no data</span>
+          </>
+        ) : (
+          format(latest)
+        )}
       </div>
       {/* stretched to the tile ("none"), so the line spans it rather than
           sitting in the middle as a stub; non-scaling strokes keep the line

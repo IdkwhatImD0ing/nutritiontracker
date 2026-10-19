@@ -140,11 +140,14 @@ export default function History({ initialKind = "3d" }: { initialKind?: RangeKin
         ) : null}
       </header>
 
-      {online ? null : (
-        <div className="notice warn offline-note" role="status">
-          <span>{OFFLINE_NOTE}</span>
-        </div>
-      )}
+      {/* mounted online too, empty and out of the flow ([role=status]:empty),
+          so the note is announced as it arrives, as on Today */}
+      <div
+        className={online ? undefined : "notice warn offline-note"}
+        role="status"
+      >
+        {online ? null : <span>{OFFLINE_NOTE}</span>}
+      </div>
 
       <div className="m3-seg" role="tablist" aria-label="Range">
         {KINDS.map((k) => (

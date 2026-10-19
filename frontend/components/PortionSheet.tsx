@@ -188,10 +188,14 @@ export default function PortionSheet({
           <button
             type="button"
             className="commit-btn"
-            disabled={busy || !valid || !chosen}
+            // busy waits as aria-disabled, not disabled: a disabled button
+            // drops focus to the page behind the sheet, and a refusal
+            // appears right above it
+            disabled={!valid || !chosen}
+            aria-disabled={busy || undefined}
             aria-busy={busy}
             onClick={() => {
-              if (valid && chosen) onApply(chosen, Math.round(qty * 100) / 100);
+              if (!busy && valid && chosen) onApply(chosen, Math.round(qty * 100) / 100);
             }}
           >
             {busy ? <span className="spinner on-accent" /> : null}
