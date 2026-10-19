@@ -222,12 +222,22 @@ def test_search_hits_carry_kcal_and_protein_per_100(monkeypatch):
             {"nutrientId": 1004, "value": 0.0},
         ]
 
+    # the other row shapes _hit_nutrient reads: `amount`, and a nested id
+    other_shapes = [
+        {"nutrient": {"id": 1008}, "amount": 23.0},
+        {"nutrientId": 1003, "amount": 2.9},
+        {"nutrient": {"id": 1005}, "amount": 3.63},
+        {"nutrientId": 1004, "amount": 0.39},
+    ]
+
     payloads = {
         "SR Legacy,Foundation": {"foods": [
             {"fdcId": 1, "description": "Yogurt, Greek, plain, nonfat",
              "dataType": "SR Legacy", "foodNutrients": nutrients(1008, 59.0)},
             {"fdcId": 2, "description": "Chicken, breast, raw",
              "dataType": "Foundation", "foodNutrients": nutrients(2047, 112.15)},
+            {"fdcId": 5, "description": "Spinach, raw",
+             "dataType": "SR Legacy", "foodNutrients": other_shapes},
         ]},
         "Branded": {"foods": [
             {"fdcId": 3, "description": "Core Power Elite", "dataType": "Branded",
@@ -243,7 +253,7 @@ def test_search_hits_carry_kcal_and_protein_per_100(monkeypatch):
     monkeypatch.setattr(fdc, "_get", fake_get)
     generic = _run(fdc.search_generic("yogurt"))
     assert [(h["kcal_per_100g"], h["protein_per_100g"]) for h in generic] == [
-        (59.0, 10.14), (112.15, 10.14),
+        (59.0, 10.14), (112.15, 10.14), (23.0, 2.9),
     ]
     branded = _run(fdc.search_branded("core power"))
     assert [

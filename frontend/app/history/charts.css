@@ -273,10 +273,10 @@
 }
 
 .chart-small-title {
-  font-size: 0.66rem;
-  font-weight: 600;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   color: var(--muted);
   display: flex;
   justify-content: space-between;

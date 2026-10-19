@@ -725,9 +725,10 @@ body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
   pointer-events: none;
 }
 
-/* Four across, a box is under 60px wide on a 320px phone: no room for
-   "2400" and "kcal" side by side, so the unit sits under the number, still
-   in the box. The value stays raw while it is edited (no "2,400"). */
+/* Four across, a box is ~70px wide on a 375-390px phone (two by two under
+   360px, above): no room for "2400" and "kcal" side by side, so the unit
+   sits under the number, still in the box. The value stays raw while it is
+   edited (no "2,400"). */
 .m3-grid-4 .m3-unit-wrap input {
   padding-right: 8px;
   padding-bottom: 22px;

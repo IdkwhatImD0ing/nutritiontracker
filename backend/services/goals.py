@@ -110,6 +110,7 @@ def macro_split(
     weight_kg: float,
     protein_g_per_kg: float | None = None,
     fat_g_per_kg: float | None = None,
+    deficit: bool = False,
 ) -> MacroSplit:
     p_per_kg = PROTEIN_G_PER_KG_DEFAULT if protein_g_per_kg is None else protein_g_per_kg
     f_per_kg = FAT_G_PER_KG_FLOOR if fat_g_per_kg is None else fat_g_per_kg
@@ -123,9 +124,11 @@ def macro_split(
     fat_g = round_half_up(f_per_kg * weight_kg)
     remainder = kcal - protein_g * KCAL_PER_G["protein"] - fat_g * KCAL_PER_G["fat"]
     if remainder < 0:
+        # a slower rate only frees calories in a deficit; at Maintain or Gain
+        # there is none to pick
         notes.append(
             "Protein and fat already use all your calories, so carbs are 0 g. "
-            "Lower protein or pick a slower rate."
+            + ("Lower protein or pick a slower rate." if deficit else "Lower protein.")
         )
         remainder = 0.0
     carb_g = round_half_up(remainder / KCAL_PER_G["carb"])
@@ -155,7 +158,8 @@ def compute_targets(
     bmr = bmr_mifflin_st_jeor(weight_kg, height_cm, age, sex)
     maint = tdee(bmr, activity_level)
     kt = kcal_target(maint, weight_kg, sex, goal_weight_kg, weekly_rate_kg)
-    ms = macro_split(kt.kcal, weight_kg, protein_g_per_kg, fat_g_per_kg)
+    ms = macro_split(kt.kcal, weight_kg, protein_g_per_kg, fat_g_per_kg,
+                     deficit=kt.daily_delta_kcal < 0)
     return {
         "bmr": round_half_up(bmr),
         "tdee": round_half_up(maint),

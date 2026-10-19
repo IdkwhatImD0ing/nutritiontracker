@@ -189,10 +189,12 @@ export default function PortionSheet({
             type="button"
             className="commit-btn"
             disabled={busy || !valid || !chosen}
+            aria-busy={busy}
             onClick={() => {
               if (valid && chosen) onApply(chosen, Math.round(qty * 100) / 100);
             }}
           >
+            {busy ? <span className="spinner on-accent" /> : null}
             <span className="num">
               {busy
                 ? "Saving…"

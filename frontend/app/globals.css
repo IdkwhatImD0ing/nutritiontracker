@@ -50,7 +50,6 @@
   --off-soft: rgba(224, 181, 138, 0.16);
   --amber-soft: rgba(232, 196, 104, 0.16);
   --red-soft: rgba(242, 107, 107, 0.12);
-  --green-soft: rgba(116, 207, 156, 0.14);
   --scrim: rgba(6, 6, 9, 0.6); /* behind every sheet */
   --toast-bg: #26262d;
   --surface-hero: #1d1c22; /* the top of a hero card's gradient */
@@ -260,12 +259,14 @@ a.m3-link-btn,
   .keys-btn,
   .account-signout,
   .diary-actions button,
+  .photo-actions button,
   .row-undo,
   .auth-alt a,
   .auth-forgot,
   .auth-card button.auth-linkish,
   .web-cite a,
-  .weight-log {
+  .weight-log,
+  .land-textlink {
     position: relative;
   }
 
@@ -287,11 +288,13 @@ a.m3-link-btn,
   .keys-btn::before,
   .account-signout::before,
   .diary-actions button::before,
+  .photo-actions button::before,
   .row-undo::before,
   .auth-alt a::before,
   .auth-forgot::before,
   .auth-card button.auth-linkish::before,
   .weight-log::before,
+  .land-textlink::before /* ::after is its arrow */,
   .web-cite a::before /* clipped to the line's padding (.web-cite) */,
   .scan-torch::before /* already absolute: its own containing block */ {
     content: "";
@@ -315,13 +318,19 @@ a.m3-link-btn,
     --hit-top: -1px;
   }
 
+  /* the citation line clips its link's area 4px above the line (.web-cite),
+     so the area starts there and grows down through the line's padding */
+  .web-cite a {
+    --hit-top: -6px;
+  }
+
   button.name-btn {
     --hit-top: -12px;
     --hit-h: calc(100% + 13px);
   }
 
   /* docked, the meal picker opens flush on the tray's lip: the lip's
-     controls grow down, the picker's up */
+     controls grow down; the picker's centred area stays in its track */
   .stage-lip .sheet-close,
   .stage-lip .meal-chip {
     --hit-top: -5px;
@@ -721,6 +730,14 @@ a {
   fill: var(--muted);
   font-size: 11px;
   letter-spacing: 0.04em;
+}
+
+/* the 320px rings above draw at 66/84 and 92/116 of their viewBox, which
+   took 11 units down to ~8.6px; 14 units draws at 11px again */
+@media (max-width: 359px) {
+  .donut .center-sub {
+    font-size: 14px;
+  }
 }
 
 .donut .macro-label {
@@ -1766,18 +1783,29 @@ button.row-kcal {
   color: var(--web);
 }
 
-/* The padding stands in for the old 4px top margin, and the -8px bottom
+/* The padding stands in for the old 4px top margin, and the -23px bottom
    margin cancels the rest, so the line sits where it did. It is there for
    the link's hit area, which overflow (the ellipsis) clips to this box: 4px
-   up, never into the row above, and 8px down. */
+   up, never into the row above, and 23px down, for 44px in all. Down it
+   crosses only what takes no taps: the row's bottom padding and the next
+   row's top (a row's toggle, .row-main, sits inside it), an expanded diary
+   row's macro figures, a card's foot. */
 .web-cite {
   font-size: 0.78rem;
   color: var(--muted);
-  margin: 0 0 -8px;
-  padding: 4px 0 8px;
+  margin: 0 0 -23px;
+  padding: 4px 0 23px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ...but a line with another under it (FoodDetail's "Cited:" list) stops
+   at 8px: 23px would carry its link over the next line's "Cited:" and the
+   blank beside a shorter link. */
+.web-cite:has(+ .web-cite) {
+  margin-bottom: -8px;
+  padding-bottom: 8px;
 }
 
 /* Visible and clickable is the requirement, hyperlink blue isn't: a quiet
@@ -3006,9 +3034,9 @@ button.row-kcal {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   color: var(--muted);
 }

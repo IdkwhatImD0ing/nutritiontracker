@@ -539,8 +539,16 @@ export default function ApiKeysCard() {
                   type="submit"
                   className="commit-btn"
                   disabled={creating || !label.trim()}
+                  aria-busy={creating}
                 >
-                  {creating ? "Creating…" : "Create key"}
+                  {creating ? (
+                    <>
+                      <span className="spinner on-accent" />
+                      Creating…
+                    </>
+                  ) : (
+                    "Create key"
+                  )}
                 </button>
               </div>
             </form>

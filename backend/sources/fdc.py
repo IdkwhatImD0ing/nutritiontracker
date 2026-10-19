@@ -524,16 +524,11 @@ async def search_generic(query: str) -> list[dict]:
     for f in r.json().get("foods", []):
         if not _hit_is_loggable(f):  # BACKLOG 184 — same rule as branded
             continue
-        protein = next(
-            (n.get("value") for n in f.get("foodNutrients", [])
-             if n.get("nutrientId") == 1003 and n.get("value") is not None),
-            None,
-        )
         hits.append({
             "fdc_id": f["fdcId"],
             "description": f.get("description", ""),
             "data_type": f.get("dataType", ""),
-            "protein_per_100g": protein,
+            "protein_per_100g": _hit_nutrient(f, 1003),
             "kcal_per_100g": _hit_nutrient(f, 1008, *_ATWATER_IDS),
         })
     return hits
