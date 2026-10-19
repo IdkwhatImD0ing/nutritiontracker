@@ -6,6 +6,7 @@ import { fmt0, withUnit } from "@/lib/format";
 import { foodName } from "@/lib/labels";
 import { Check } from "./icons";
 import { deleteAlias, getFood, patchAlias, type AliasRow } from "./LibraryApi";
+import { rescaleQty, stepQty } from "./portion";
 import SheetHeader from "./SheetHeader";
 import { useSheetFocus } from "./useSheetFocus";
 
@@ -65,9 +66,21 @@ export default function LibraryAliasSheet({
   const qtyValid = Number.isFinite(qty) && qty > 0;
   const hasDefault = servingId !== "";
 
-  const step = (d: number) => {
+  /** the chosen serving's weight, when the list is in */
+  const gramsOf = (id: string) => servings?.find((x) => x.serving_id === id)?.grams;
+
+  // the portion editors' shared rules (portion.ts): a gram serving steps by 10
+  const step = (d: 1 | -1) => {
     const base = qtyValid ? qty : 1;
-    setQtyText(fmtQty(Math.max(0.25, base + d)));
+    setQtyText(fmtQty(stepQty(base, d, gramsOf(servingId), 0.5)));
+  };
+
+  // Another serving counts the same amount: "2 × 1 cup (245 g)" becomes
+  // 4.9 × 100 g, not 2. From "No default" there is no amount to convert.
+  const pickServing = (s: StagedServing) => {
+    const r = hasDefault && qtyValid ? rescaleQty(qty, gramsOf(servingId), s.grams) : null;
+    if (r != null) setQtyText(fmtQty(r));
+    setServingId(s.serving_id);
   };
 
   const save = async () => {
@@ -113,7 +126,8 @@ export default function LibraryAliasSheet({
         <SheetHeader title={`“${alias.alias_norm}”`} onClose={onClose} />
         <p className="subsheet-hint">
           Logs as {foodName(alias.food_name)}
-          {alias.brand ? ` (${alias.brand})` : ""} · used{" "}
+          {/* a no-break space: "used 41×" wraps as one */}
+          {alias.brand ? ` (${alias.brand})` : ""} · used{"\u00a0"}
           <span className="num">{fmt0.format(alias.use_count)}×</span>
         </p>
 
@@ -161,7 +175,7 @@ export default function LibraryAliasSheet({
             <>
               {hasDefault ? (
                 <div className="stepper num" style={{ marginBottom: 8 }}>
-                  <button type="button" aria-label="Decrease quantity" onClick={() => step(-0.5)}>
+                  <button type="button" aria-label="Decrease quantity" onClick={() => step(-1)}>
                     −
                   </button>
                   <input
@@ -170,7 +184,7 @@ export default function LibraryAliasSheet({
                     inputMode="decimal"
                     aria-label="Default quantity"
                   />
-                  <button type="button" aria-label="Increase quantity" onClick={() => step(0.5)}>
+                  <button type="button" aria-label="Increase quantity" onClick={() => step(1)}>
                     +
                   </button>
                 </div>
@@ -191,7 +205,7 @@ export default function LibraryAliasSheet({
                     type="button"
                     className={s.serving_id === servingId ? "active" : undefined}
                     aria-pressed={s.serving_id === servingId}
-                    onClick={() => setServingId(s.serving_id)}
+                    onClick={() => pickServing(s)}
                   >
                     <span>
                       {s.description}

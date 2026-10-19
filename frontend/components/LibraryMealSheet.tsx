@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   searchFoods,
@@ -75,6 +75,7 @@ function QtyInput({
  *  normalization of trigger phrases happens server-side (§5). */
 export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
   const sheetRef = useSheetFocus<HTMLDivElement>();
+  const titleId = useId();
   const [name, setName] = useState(meal?.name ?? "");
   const [phrases, setPhrases] = useState(meal?.trigger_phrases.join(", ") ?? "");
   const [items, setItems] = useState<SavedMealItem[]>(meal?.items ?? []);
@@ -216,19 +217,22 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
     }
   };
 
+  /** the form as a PATCH / POST body */
+  const edits = (): MealPatch => ({
+    name: name.trim(),
+    trigger_phrases: phrases
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+    items: items.map(({ food_id, serving_id, qty }) => ({
+      food_id,
+      serving_id,
+      qty,
+    })),
+  });
+
   const save = async () => {
-    const patch: MealPatch = {
-      name: name.trim(),
-      trigger_phrases: phrases
-        .split(/[,\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-      items: items.map(({ food_id, serving_id, qty }) => ({
-        food_id,
-        serving_id,
-        qty,
-      })),
-    };
+    const patch = edits();
     if (meal) {
       run(patch, "save");
       return;
@@ -278,11 +282,12 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
         className="subsheet"
         role="dialog"
         aria-modal="true"
-        aria-label="Edit saved meal"
+        aria-labelledby={titleId}
         tabIndex={-1}
       >
         <SheetHeader
           title={!meal ? "New saved meal" : meal.is_active ? "Saved meal" : "Inactive meal"}
+          titleId={titleId}
           onClose={requestClose}
         />
 
@@ -352,7 +357,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
               <div className="m3-item-qty num">
                 <button
                   type="button"
-                  aria-label="Less"
+                  aria-label={`Decrease quantity of ${it.food_name ?? "item"}`}
                   onClick={() =>
                     setQty(
                       i,
@@ -369,7 +374,7 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                 />
                 <button
                   type="button"
-                  aria-label="More"
+                  aria-label={`Increase quantity of ${it.food_name ?? "item"}`}
                   onClick={() =>
                     setQty(
                       i,
@@ -492,11 +497,16 @@ export default function LibraryMealSheet({ meal, onSaved, onClose }: Props) {
                       Deactivate
                     </button>
                   ) : (
+                    // Reactivate keeps what was edited before it, so it is
+                    // held to Save's rule; Deactivate retires the meal, edits
+                    // and all
                     <button
                       type="button"
                       className="m3-link-btn"
-                      disabled={busy !== null}
-                      onClick={() => run({ is_active: true }, "toggle")}
+                      disabled={busy !== null || (dirty && !valid)}
+                      onClick={() =>
+                        run(dirty ? { ...edits(), is_active: true } : { is_active: true }, "toggle")
+                      }
                     >
                       Reactivate
                     </button>
