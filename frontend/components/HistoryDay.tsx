@@ -85,11 +85,13 @@ export default function HistoryDay({ date }: { date: string }) {
   // before its click lands: the blur opens the typed day, then the click,
   // stepping from the day still on screen, replaces it. So the press opens
   // the typed day itself and its click is dropped. The press, not the blur's
-  // relatedTarget, because Safari doesn't focus a clicked button.
+  // relatedTarget, because Safari doesn't focus a clicked button. A press on
+  // a disabled Next still gets a pointerdown; it is left to the blur.
   const dropClick = useRef(false);
   const press = (from: "prev" | "next") => {
     const input = pickRef.current;
-    dropClick.current = typed.current && !!input && choose(input, from);
+    const off = from === "next" && !!nextRef.current?.disabled;
+    dropClick.current = typed.current && !!input && !off && choose(input, from);
   };
   const click = (n: number) => {
     if (dropClick.current) dropClick.current = false;

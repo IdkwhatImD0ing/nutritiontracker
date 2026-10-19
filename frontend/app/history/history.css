@@ -236,10 +236,11 @@
 /* the day view's header: Previous and Next step a day from the right end
    of the back row, where iOS puts a pushed screen's actions, so the 1.6rem
    date under it keeps the full width ("Wednesday, Sep 30" and two 44px
-   buttons don't share a 320px row). Their negative margins reach into the header's
-   padding, as .nav-back's do, so the row doesn't grow. Both rows' bottom
-   4px overlap the title's date picker, a positioned box that would paint
-   over them and take those taps; their own z-index keeps them on top. */
+   buttons don't share a 320px row). Their negative margins reach into the
+   header's padding, as .nav-back's do, so the row doesn't grow. Both rows'
+   bottom 4px overlap the title's date picker, a positioned box that would
+   paint over them and take those taps; their own z-index keeps them on
+   top. */
 .shell.day .brand .nav-back {
   grid-column: 1;
   position: relative;
