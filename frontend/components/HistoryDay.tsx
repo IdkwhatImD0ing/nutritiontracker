@@ -173,13 +173,17 @@ export default function HistoryDay({ date, year }: { date: string; year: string 
               onBlur={(e) => {
                 if (!typed.current) return;
                 const to = e.relatedTarget;
+                // a press on the back link (focused by it, and :active) is
+                // its own way out: the typed day may never open, and a kept
+                // "back" would take focus in a later open of that day
+                const back = to instanceof Element ? to.closest(".nav-back") : null;
                 choose(
                   e.currentTarget,
                   to === prevRef.current
                     ? "prev"
                     : to === nextRef.current
                       ? "next"
-                      : to instanceof Element && to.closest(".nav-back")
+                      : back && !back.matches(":active")
                         ? "back"
                         : null,
                 );

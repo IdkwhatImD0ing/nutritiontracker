@@ -38,7 +38,9 @@ export default function HistoryView({ kind, range, today, onDay }: Props) {
   if (kind === "y") {
     return <Year range={range} />;
   }
-  return <Daily kind={kind} range={range} today={today} onDay={onDay} />;
+  // keyed: Week's charts are not Month's, so Month mounts its own and
+  // ChartBars seeds the pick it kept for that title
+  return <Daily key={kind} kind={kind} range={range} today={today} onDay={onDay} />;
 }
 
 // ---------------------------------------------------------------------------
