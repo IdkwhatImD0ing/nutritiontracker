@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { DemoQuota } from "./MeApi";
+import { SheetClose } from "./SheetHeader";
 
 /** Two dismissals, because the strip says two different things: the quota
  *  ("fresh") and, once it is spent, when the next log opens ("spent"). A
@@ -17,11 +18,14 @@ function readDismissed(): string | null {
 }
 
 /** "at 4:00 PM", or "tomorrow at 4:00 PM" when the next UTC midnight lands
- *  on a different local date than now. */
-function nextLogAt(iso: string): string {
+ *  on a different local date than now. The + sheet's spent line uses it too.
+ *  The time's spaces are no-break, so "PM" never starts a line alone. */
+export function nextLogAt(iso: string): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "tomorrow";
-  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const time = at
+    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    .replace(/\s/g, "\u00a0");
   return at.toDateString() === new Date().toDateString()
     ? `at ${time}`
     : `tomorrow at ${time}`;
@@ -56,14 +60,7 @@ export default function DemoBanner({ demo }: Props) {
         Demo account — {demo.limit} {demo.limit === 1 ? "log" : "logs"} per day
         {spent ? ` · next log ${nextLogAt(demo.resets_at)}` : ""}
       </span>
-      <button
-        type="button"
-        className="sheet-close"
-        aria-label="Dismiss"
-        onClick={dismiss}
-      >
-        ✕
-      </button>
+      <SheetClose label="Dismiss" onClick={dismiss} />
     </div>
   );
 }

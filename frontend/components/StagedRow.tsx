@@ -1,6 +1,9 @@
 "use client";
 
 import type { Meal, StagedItem } from "@/lib/api";
+import { nutrientParts, portionText, withUnit } from "@/lib/format";
+import { foodName, MEAL_LABEL } from "@/lib/labels";
+import { Close, Pencil } from "./icons";
 import { readEstimate } from "./PhotoApi";
 import "@/app/photo.css";
 
@@ -9,17 +12,6 @@ const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
-const UNITS = new Set(["g", "mg", "mcg", "ug", "iu", "kcal"]);
-
-function humanizeKey(key: string): string {
-  const parts = key.split("_");
-  const last = parts[parts.length - 1]?.toLowerCase();
-  const unit = last && UNITS.has(last) ? parts.pop() : null;
-  const name = parts
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(" ");
-  return unit ? `${name} (${unit})` : name;
-}
 
 /** A tapped question option or alternates chip. Id-bearing picks resolve
  * locally (§3.4/§7.1); an id-less label is a free-text answer. */
@@ -64,7 +56,16 @@ export default function StagedRow({
   const searching = busy || item.status === "searching";
   const notFound = item.status === "not_found";
   const editable = !searching && !notFound; // §7.1: resolved/needs_input rows
-  const name = item.food?.name ?? item.phrase;
+  const name = foodName(item.food?.name ?? item.phrase);
+  // split off the last character for the edit pencil (below); by code
+  // point, so an emoji is not cut in two
+  const nameChars = Array.from(name);
+  const nameHead = nameChars.slice(0, -1).join("");
+  const nameTail = nameChars.slice(-1).join("");
+  // the phrase under the name only when it says something the name doesn't
+  // (foodName only re-cases, so a phrase that is the name in other case is
+  // the same words)
+  const said = item.phrase.toLowerCase() !== name.toLowerCase() ? item.phrase : null;
   const macros = item.macros;
   // §3.4a: photo-lane rows carry what vision guessed. "portion" = database
   // food, photo-estimated amount; "unresolved" = no database match at all —
@@ -75,9 +76,16 @@ export default function StagedRow({
   const est = readEstimate(item);
   const estimated = est.estimated !== "none";
 
+  // the grams eaten, when the serving's weight is known — not the
+  // per-serving "(148 g)" the description carries
+  const servingGrams = item.servings?.find((s) => s.serving_id === item.serving?.id)?.grams;
   const portion =
     item.serving != null
-      ? `${item.qty != null && item.qty !== 1 ? `${fmt1.format(item.qty)} × ` : ""}${item.serving.description}`
+      ? portionText(
+          item.qty,
+          item.serving.description,
+          servingGrams != null && item.qty != null ? servingGrams * item.qty : null,
+        )
       : null;
   const verify =
     item.confidence === "low" ||
@@ -97,11 +105,13 @@ export default function StagedRow({
     <div
       className={`row${searching ? " searching" : ""}${notFound ? " not-found" : ""}${estimated ? " estimated" : ""}`}
     >
+      {/* The row is a tap target, not a button: it holds the name, portion
+          and remove buttons, which a role=button would flatten into one long
+          name. The kcal figure is its button for keyboard and VoiceOver; a
+          click there bubbles to this one handler. */}
       <div
         className="row-main"
         onClick={notFound ? onManualSearch : onToggle}
-        role="button"
-        aria-expanded={notFound ? undefined : expanded}
       >
         <div className="row-info">
           <div className="row-name">
@@ -109,25 +119,29 @@ export default function StagedRow({
             {editable ? (
               <button
                 type="button"
-                className="name-btn food-name"
-                aria-label={`Edit food for ${name}`}
+                className="name-btn"
+                aria-label={`Change food for ${name}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onEditFood();
                 }}
               >
-                {name}
+                {/* the edit cue, held to the last character by nowrap, so
+                    the last word wraps with it. Not a word joiner: a line
+                    may always break before an svg. Only the one character,
+                    so .row-name can still break a long unbroken token. */}
+                {nameHead}
+                <span className="name-tail">
+                  {nameTail}
+                  <Pencil className="name-edit" />
+                </span>
               </button>
             ) : (
               name
             )}
-            {searching ? (
-              <span className="badge searching">searching</span>
-            ) : null}
-            {notFound ? <span className="badge not-found">not found</span> : null}
-            {item.status === "needs_input" ? (
-              <span className="badge needs-input">needs input</span>
-            ) : null}
+            {/* no status badges: the spinner and the sub-line say searching
+                and not found, and the question under the row says it needs
+                an answer */}
             {item.web_source ? (
               <span className="badge web">web</span>
             ) : null}
@@ -137,38 +151,78 @@ export default function StagedRow({
           </div>
           <div className="row-sub">
             {/* the middot separates two text runs; before the portion pill it
-                would dangle, so the pill's own border does the separating */}
-            {item.food?.brand ? `${item.food.brand}${portion ? " " : " · "}` : ""}
+                would dangle, so the pill's own border does the separating,
+                and with nothing after the brand there is nothing to separate */}
+            {item.food?.brand
+              ? `${item.food.brand}${portion ? " " : searching || notFound || said ? " · " : ""}`
+              : ""}
             {portion ? (
               <button
                 type="button"
                 className={`portion-btn${verify ? " verify" : ""}`}
-                aria-label={`Change portion for ${name}`}
+                aria-label={`Portion for ${name}: ${portion}${verify ? ", please verify" : ""}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onPortion();
                 }}
               >
+                {/* the amber pill is the flag (§7.1: one signal); the label
+                    says it for a screen reader. The '~' of an estimate sits
+                    inside the pill, beside the amount it qualifies. */}
+                {estimated ? "~" : ""}
                 {portion}
-                {verify ? " · verify" : ""}
               </button>
             ) : searching ? (
-              "resolving…"
+              "Looking it up…"
             ) : notFound ? (
-              <span className="manual-hint">tap to search manually</span>
+              <>
+                {/* the badge is gone (the sub-line says it); the pill is the
+                    way forward, and the row-main tap still works too */}
+                Not found
+                <button
+                  type="button"
+                  className="portion-btn nf-search"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onManualSearch();
+                  }}
+                >
+                  Search foods
+                </button>
+              </>
             ) : (
-              item.phrase
+              said
             )}
           </div>
         </div>
-        <div className="row-kcal num">
-          <span className="n">
-            {macros != null
-              ? `${estimated ? "~" : ""}${fmt.format(macros.kcal)}`
-              : "—"}
-          </span>
-          <span className="u">kcal</span>
-        </div>
+        {/* The row's button for keyboard and VoiceOver; a click bubbles to
+            row-main's one handler. No numbers yet (or none to have): a quiet
+            dash, not a display-weight slab brighter than the row's own name */}
+        <button
+          type="button"
+          className={`row-kcal${macros != null ? "" : " empty"} num`}
+          aria-expanded={notFound ? undefined : expanded}
+          aria-label={
+            notFound
+              ? `Search for ${name}`
+              : searching
+                ? `${name}, searching, details`
+                : macros == null
+                  ? `${name}, no calories yet, details`
+                  : `${name}, ${estimated ? "about " : ""}${fmt.format(macros.kcal)} kcal, details`
+          }
+        >
+          {macros != null ? (
+            <>
+              <span className="n">
+                {`${estimated ? "~" : ""}${fmt.format(macros.kcal)}`}
+              </span>
+              <span className="u">kcal</span>
+            </>
+          ) : (
+            <span className="n">–</span>
+          )}
+        </button>
         <button
           type="button"
           className="row-remove"
@@ -178,7 +232,7 @@ export default function StagedRow({
             onRemove();
           }}
         >
-          ✕
+          <Close />
         </button>
       </div>
 
@@ -207,7 +261,7 @@ export default function StagedRow({
         <p className="estimate-note">
           {est.estimated === "unresolved"
             ? `${est.note ? `${est.note} · ` : ""}No database match, so no numbers — search to pick a food`
-            : `Portion estimated${est.note ? ` · ${est.note}` : ""}`}
+            : est.note || "Portion estimated"}
         </p>
       ) : null}
 
@@ -223,7 +277,7 @@ export default function StagedRow({
                 disabled={busy}
                 onClick={() => onPick(opt)}
               >
-                {opt.label}
+                {foodName(opt.label)}
               </button>
             ))}
           </div>
@@ -244,7 +298,8 @@ export default function StagedRow({
               disabled={busy}
               onClick={() => onPick({ label: s })}
             >
-              {s}
+              {/* the answer sent stays the lowercase value */}
+              {s === "cooked" ? "Cooked" : "Raw"}
             </button>
           ))}
         </div>
@@ -253,6 +308,8 @@ export default function StagedRow({
       {item.status === "resolved" &&
       (item.alternates?.length || searchInstead) ? (
         <div className="chips">
+          {/* says what the chips are: other matches, one tap to switch */}
+          <span className="state-q neutral">Or:</span>
           {(item.alternates ?? []).map((alt) => (
             <button
               key={alt.label}
@@ -262,7 +319,7 @@ export default function StagedRow({
               onClick={() => onPick(alt)}
             >
               {alt.usual ? <span className="usual-dot" /> : null}
-              {alt.label}
+              {foodName(alt.label)}
             </button>
           ))}
           {/* §3.3 rule 3 (BACKLOG 32): a weak-trigram-only match resolves the
@@ -275,7 +332,7 @@ export default function StagedRow({
               disabled={busy}
               onClick={onManualSearch}
             >
-              search instead
+              Search instead
             </button>
           ) : null}
         </div>
@@ -301,27 +358,33 @@ export default function StagedRow({
           ) : null}
           {microEntries.length ? (
             <div className="micro-list num">
-              {microEntries.map(([k, v]) => (
-                <div className="micro-line" key={k}>
-                  <span className="k">{humanizeKey(k)}</span>
-                  <span>{fmt1.format(v as number)}</span>
-                </div>
-              ))}
+              <div className="k">Nutrients</div>
+              {microEntries.map(([k, v]) => {
+                const { name: label, unit } = nutrientParts(k);
+                return (
+                  <div className="micro-line" key={k}>
+                    <span className="k">{label}</span>
+                    <span>{withUnit(v as number, unit)}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
           {/* per-item meal chip: overrides the header for mixed logs (§7.1);
-              a 4-option picker, never blind-cycle */}
+              a 4-option picker, never blind-cycle — the header's segmented
+              row, so the four never wrap 3 + 1 on a narrow phone */}
           <div className="detail-meal">
             <span className="k">Meal</span>
-            <div className="chips">
+            <div className="meal-picker m3-seg">
               {MEALS.map((m) => (
                 <button
                   key={m}
                   type="button"
-                  className={`chip${item.meal === m ? " active" : ""}`}
+                  className={item.meal === m ? "active" : undefined}
+                  aria-pressed={item.meal === m}
                   onClick={() => onMeal(m)}
                 >
-                  {m}
+                  {MEAL_LABEL[m]}
                 </button>
               ))}
             </div>

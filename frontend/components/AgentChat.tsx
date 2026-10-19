@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { LogCreateResponse } from "@/lib/api";
+import { ArrowUp, Camera, Check, ChevronDown, Close, Mic } from "./icons";
 import PhotoCapture, { type PhotoShot } from "./PhotoCapture";
 import { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
 import useVoiceCapture, {
   type VoiceClip,
   type VoiceFailure,
@@ -49,7 +51,9 @@ export type ChatMessage =
        *  place, so it is patched rather than replaced by a second card */
       photo?: boolean;
     }
-  | { kind: "error"; id: string; text: string };
+  /** `retryable`: a text or photo send that may go through on a second try
+   *  (never the demo quota) — the chat offers Retry under it */
+  | { kind: "error"; id: string; text: string; retryable?: boolean };
 
 type Props = {
   messages: ChatMessage[];
@@ -64,8 +68,9 @@ type Props = {
   /** Send a plate as a turn. With `text` the agent sees the picture and
    *  answers; without it the shot is the deterministic plate parse. */
   onSubmitPhoto: (shot: PhotoShot, text: string) => Promise<boolean>;
-  /** Returns true on success; the field only clears then, so a failed send
-   *  can be resubmitted unchanged (same client uuid upstream). */
+  /** Returns true on success. The field clears as the send starts (the words
+   *  are in the bubble now) and a failed send puts them back — the photo too —
+   *  so it can be resubmitted unchanged (same client uuid upstream). */
   onSubmit: (text: string) => Promise<boolean>;
   /** Upload a validated voice clip (§8.1d). Resolves false on any failure —
    *  upload error or the server's capture_failure — and the parent records
@@ -78,19 +83,23 @@ type Props = {
   onReview: (log: LogCreateResponse) => void;
   /** a camera shot carries where the phone was (PhotoCapture's `locate`) */
   locate?: boolean;
+  /** the raw call and result under each tool line — the owner's only
+   *  (Bill, 2026-10-13); everyone else reads the sentence and its result */
+  raw?: boolean;
   /** Rendered as the lower pane of <SplitSheet> rather than as a sheet of its
    *  own: no backdrop and no rounded shell — the split owns both — so the
    *  staged list stays on screen while the conversation continues under it
    *  (Bill, 2026-09-09: "I just wanna chat with the stage window open"). */
   docked?: boolean;
-  /** backdrop / × / Escape. A recording in progress is dropped — unmount
-   *  stops the tracks (useVoiceCapture's cleanup). */
+  /** backdrop / × / Escape / Back. A recording in progress is dropped —
+   *  unmount stops the tracks (useVoiceCapture's cleanup). Docked, the split
+   *  owns all of these (SplitSheet's onDismiss). */
   onClose: () => void;
 };
 
 const NOTICE: Record<VoiceFailure, string> = {
   permission_denied: "Mic permission denied — type it instead.",
-  recorder_error: "Mic capture failed — type it instead.",
+  recorder_error: "Couldn't use the mic — type it instead.",
   too_short: "That was too short — hold the mic longer, or type it.",
   silent_blob: "No audio came through — type it instead.",
 };
@@ -100,61 +109,10 @@ function mmss(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function MicIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="9" y="2" width="6" height="12" rx="3" />
-      <path d="M5 10v1a7 7 0 0 0 14 0v-1" />
-      <path d="M12 18v4" />
-    </svg>
-  );
-}
-
 function StopIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor" />
-    </svg>
-  );
-}
-
-function CameraIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
-      <circle cx="12" cy="13" r="3.5" />
-    </svg>
-  );
-}
-
-function SendIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 19V5M6 11l6-6 6 6" />
     </svg>
   );
 }
@@ -184,8 +142,9 @@ function host(url: string): string {
 }
 
 /** A tool's refusal in words, by its error code (backend agent.py and the
- *  deps in routes/logs.py and photo.py). The code itself stays in the raw
- *  result under the line; one not listed reads as the plain failure. */
+ *  deps in routes/logs.py and photo.py). The code itself stays in the
+ *  owner's raw result under the line; one not listed reads as the plain
+ *  failure. */
 const TOOL_ERRORS: Record<string, string> = {
   already_called: "Skipped — already done this turn",
   food_in_flight: "Too early — the food was still being looked up",
@@ -214,13 +173,16 @@ const TOOL_ERRORS: Record<string, string> = {
   repeated_item: "The same item was changed twice",
 };
 
-/** A tool line in words: what the agent is doing, then what came back. The
- *  raw call and result stay one tap away under it (the point of the window
- *  is seeing the work). A run that ended before the tool answered leaves the
- *  line settled as interrupted, never spinning. */
+/** A tool line in words: what the agent is doing, then what came back (the
+ *  point of the window is seeing the work). For the owner the raw call and
+ *  result stay one tap away under it (Bill, 2026-10-13: owner only). A run
+ *  that ended before the tool answered leaves the line settled as
+ *  interrupted, never spinning. `state` colours the line: a step that
+ *  errored (a weigh-in that didn't save) must not read as done. */
 function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   doing: string;
   result: string | null;
+  state: "ok" | "failed" | "interrupted";
 } {
   const a = m.args;
   const out =
@@ -234,10 +196,10 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
   switch (m.name) {
     case "web_search": {
       const sources = out && Array.isArray(out.sources) ? (out.sources as string[]) : [];
-      // one host once, the first few — the full list is in the details
+      // one host once, the first few — the full list is in the raw result
       const hosts = [...new Set(sources.map(host))];
-      const shown = hosts.slice(0, 5).join(", ");
-      const more = hosts.length > 5 ? ` +${hosts.length - 5} more` : "";
+      const shown = hosts.slice(0, 3).join(", ");
+      const more = hosts.length > 3 ? ` +${hosts.length - 3} more` : "";
       // live: the line is up before the query is known (the completed item brings it)
       doing = a.query ? `Searching the web: “${str(a.query)}”` : "Searching the web…";
       ok = hosts.length ? `Read ${shown}${more}` : "Done";
@@ -303,7 +265,10 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
       // §6.4 (2026-09-11): the agent names each food itself — items, not text
       const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
       const rows = out && Array.isArray(out.items) ? (out.items as Record<string, unknown>[]) : null;
-      doing = `Looking up ${items.map((it) => `“${str(it.phrase)}”`).join(", ") || "food"}`;
+      // the first few, like look_up — a long list would fill the screen
+      doing =
+        `Looking up ${items.slice(0, 4).map((it) => `“${str(it.phrase)}”`).join(", ") || "food"}` +
+        (items.length > 4 ? ` +${items.length - 4} more` : "");
       // what the lookups found, never "staged" for a food that was not
       const found = rows ? rows.filter((r) => r.status === "resolved").length : 0;
       const pending = rows ? rows.filter((r) => r.status === "searching").length : 0;
@@ -376,38 +341,63 @@ function describeTool(m: Extract<ChatMessage, { kind: "tool" }>): {
     }
     default:
       // a tool this file has no words for yet: never its identifier on the
-      // line (the raw call under it names it)
+      // line (the owner's raw call under it names it)
       doing = m.done ? "Checked something" : "Checking something…";
       ok = "Done";
   }
-  if (!m.done) return { doing, result: null };
-  if (err === "interrupted") return { doing, result: "Interrupted — the run ended before this finished" };
-  if (raised) return { doing, result: "Didn't go through" };
-  if (err) return { doing, result: TOOL_ERRORS[err] ?? "Didn't go through" };
-  return { doing, result: ok };
+  if (!m.done) return { doing, result: null, state: "ok" };
+  if (err === "interrupted")
+    return { doing, result: "Interrupted — the run ended before this finished", state: "interrupted" };
+  if (raised) return { doing, result: "Didn't go through", state: "failed" };
+  // already_called is a benign skip: the first call did the work
+  if (err)
+    return {
+      doing,
+      result: TOOL_ERRORS[err] ?? "Didn't go through",
+      state: err === "already_called" ? "ok" : "failed",
+    };
+  return { doing, result: ok, state: "ok" };
 }
 
-function ToolLine({ m }: { m: Extract<ChatMessage, { kind: "tool" }> }) {
-  const { doing, result } = describeTool(m);
+function ToolLine({
+  m,
+  raw,
+}: {
+  m: Extract<ChatMessage, { kind: "tool" }>;
+  raw: boolean;
+}) {
+  const { doing, result, state } = describeTool(m);
   return (
-    <div className={`tool-line${m.done ? "" : " running"}`}>
+    <div className={`tool-line${m.done ? "" : " running"}${state === "ok" ? "" : ` ${state}`}`}>
       <div className="tool-head">
         {m.done ? null : <span className="spinner" aria-hidden="true" />}
         <span className="tool-text">{doing}</span>
       </div>
       {result ? <div className="tool-result">{result}</div> : null}
-      <details>
-        <summary>Raw call and result</summary>
-        <pre>{JSON.stringify(m.args, null, 1)}</pre>
-        {m.done && m.output !== undefined ? (
-          <pre>{JSON.stringify(m.output, null, 1)}</pre>
-        ) : null}
-      </details>
+      {raw ? (
+        <details className="disclosure">
+          <summary>Raw call and result</summary>
+          <pre>{JSON.stringify(m.args, null, 1)}</pre>
+          {m.done && m.output !== undefined ? (
+            <pre>{JSON.stringify(m.output, null, 1)}</pre>
+          ) : null}
+        </details>
+      ) : null}
     </div>
   );
 }
 
 const kcalFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+/** The result card's line in words, for the chat's spoken status. */
+function resultLine(m: Extract<ChatMessage, { kind: "result" }>): string {
+  const n = m.log.items.length;
+  const kcal = m.log.items.reduce((sum, it) => sum + (it.macros?.kcal ?? 0), 0);
+  return (
+    `${m.photo ? "From the photo: " : ""}${n} item${n === 1 ? "" : "s"} to review` +
+    (kcal > 0 ? `, ${kcalFmt.format(kcal)} kcal` : "")
+  );
+}
 
 function ResultCard({
   m,
@@ -422,9 +412,9 @@ function ResultCard({
   return (
     <div className="result-card">
       <span className="result-text">
-        {m.photo ? "From the photo · " : ""}
+        {m.photo ? "From the photo ·\u00a0" : ""}
         {n} item{n === 1 ? "" : "s"} to review
-        {kcal > 0 ? ` · ${kcalFmt.format(kcal)} kcal` : ""}
+        {kcal > 0 ? ` ·\u00a0${kcalFmt.format(kcal)}\u00a0kcal` : ""}
         {estimated ? (
           <span className="result-sub">
             {m.photo
@@ -434,16 +424,24 @@ function ResultCard({
         ) : null}
       </span>
       {m.state === "staged" ? (
-        <button type="button" onClick={() => onReview(m.log)}>
+        <button
+          type="button"
+          aria-label={`Review ${n} item${n === 1 ? "" : "s"}`}
+          onClick={() => onReview(m.log)}
+        >
           Review
         </button>
       ) : (
         <span className="result-state">
-          {m.state === "committed"
-            ? "Logged ✓"
-            : m.state === "replaced"
-              ? "Replaced"
-              : "Discarded"}
+          {m.state === "committed" ? (
+            <>
+              Logged <Check />
+            </>
+          ) : m.state === "replaced" ? (
+            "Replaced"
+          ) : (
+            "Discarded"
+          )}
         </span>
       )}
     </div>
@@ -470,6 +468,7 @@ export default function AgentChat({
   onClose,
   docked = false,
   locate = false,
+  raw = false,
 }: Props) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -486,8 +485,25 @@ export default function AgentChat({
   const openedLaneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
   const { supported, recording, elapsedMs, start, stop, cancel } =
     useVoiceCapture();
+  // The newest text or photo send, for a failed one's Retry (BACKLOG 176):
+  // the same words, or the same shot — same capturedAt, so the same client
+  // id (§8.6), never a second log or a second vision call.
+  const [lastSend, setLastSend] = useState<
+    | { kind: "text"; text: string }
+    | { kind: "photo"; shot: PhotoShot; said: string }
+    | null
+  >(null);
+  const sendText = (t: string) => {
+    setLastSend({ kind: "text", text: t });
+    return onSubmit(t);
+  };
+  const sendPhoto = (shot: PhotoShot, said: string) => {
+    setLastSend({ kind: "photo", shot, said });
+    return onSubmitPhoto(shot, said);
+  };
 
   // §8.1d/§13: ANY voice failure degrades to typing — focus the text field
   // so the retype is one keystroke away (rAF: the input re-renders after
@@ -533,25 +549,30 @@ export default function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supported, openWith]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // the picker is stacked above the chat — Escape is its own first
-      if (pickerOpen) {
-        setPickerOpen(false);
-        return;
-      }
-      // then the attachment: closing would destroy a picture that may not be
-      // re-takeable, and the sheet is one more Escape away
-      if (attached) {
-        setAttached(null);
-        return;
-      }
-      onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, pickerOpen, attached]);
+  // The picker dismissed without a pick. The lane's one send-on-pick is
+  // spent, or the composer's next camera tap would send instead of attach.
+  // And when the lane opened only for that picker (+ → Take photo) and
+  // nothing has been said, the empty chat under it was never asked for:
+  // the whole lane closes.
+  const dismissPicker = () => {
+    const laneOnly = openedLaneRef.current && messages.length === 0;
+    openedLaneRef.current = false;
+    setPickerOpen(false);
+    if (laneOnly) onClose();
+  };
+
+  // Escape and Back (sheetBack). The picker is a sub-sheet stacked above the
+  // chat, so its own header answers first. Then the attachment: closing would
+  // destroy a picture that may not be re-takeable, and the sheet is one more
+  // press away. Then the sheet — docked, that is the split's to close.
+  useSheetBack(paneRef, () => {
+    if (attached) {
+      setAttached(null);
+      return;
+    }
+    if (docked) return false;
+    onClose();
+  });
 
   // The parent worded the failure (a demo 429: "Demo accounts can log once a
   // day — resets at …") — drop this sheet's own "type it instead" notice so
@@ -560,10 +581,57 @@ export default function AgentChat({
     if (error) setNotice(null);
   }, [error]);
 
-  // the newest line is always in view — a tool call landing, the reply
+  // The newest line stays in view — a tool call landing, the reply — only
+  // while the reader is at the bottom: someone scrolled up into an earlier
+  // turn is left there, with a ↓ above the composer to come back. Their own
+  // send always follows. A reply taller than the pane lands top-first, once,
+  // so it reads from its start rather than its last line.
+  const stuckRef = useRef(true);
+  const lastTopRef = useRef(0);
+  const [away, setAway] = useState(false);
+  const replyRef = useRef<HTMLDivElement>(null); // the newest message, when a reply
+  const placedRef = useRef<string | null>(null); // the reply already scrolled to
+  const stick = (stuck: boolean) => {
+    stuckRef.current = stuck;
+    setAway(!stuck);
+  };
+  // Only the reader scrolling UP lets go. A line landing grows scrollHeight
+  // under the last programmatic scroll and never moves scrollTop, so its
+  // scroll event can't be mistaken for the reader leaving.
+  const onBodyScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const up = el.scrollTop < lastTopRef.current;
+    lastTopRef.current = el.scrollTop;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) stick(true);
+    else if (up) stick(false);
+  };
+  const jumpToLatest = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: still ? "auto" : "smooth" });
+    stick(true);
+  };
   useEffect(() => {
     const el = bodyRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight });
+    if (!el) return;
+    const newest = messages[messages.length - 1];
+    // a fresh conversation and the user's own send always follow
+    const own = !newest || newest.kind === "user" || newest.kind === "photo";
+    if (!own && !stuckRef.current) return;
+    const reply = replyRef.current;
+    if (newest?.kind === "agent" && reply && placedRef.current !== newest.id) {
+      placedRef.current = newest.id;
+      if (reply.offsetHeight > el.clientHeight) {
+        const top = reply.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        el.scrollTo({ top: el.scrollTop + top - 12 });
+        stick(false);
+        return;
+      }
+    }
+    el.scrollTo({ top: el.scrollHeight });
+    stick(true);
   }, [messages, busy]);
 
   const toggleMic = async () => {
@@ -587,18 +655,76 @@ export default function AgentChat({
     }
   };
 
+  // The conversation is not a live region: that read every echo of what was
+  // just typed, "Thinking…" and each raw call aloud. What is new is said
+  // here instead (§6.4: you hear what it looks up): each tool's doing line as
+  // it starts and its result as it lands, the reply, the result card, and a
+  // voice transcript as it replaces "Transcribing…". `said` keys what was
+  // spoken, so a re-attached stream's replay stays quiet; whatever the chat
+  // mounted with is history, not news.
+  const [spoken, setSpoken] = useState("");
+  const saidRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const quiet = saidRef.current == null;
+    const said = (saidRef.current ??= new Set());
+    const lines: string[] = [];
+    const say = (key: string, text: string | null) => {
+      if (said.has(key)) return;
+      said.add(key);
+      if (text && !quiet) lines.push(text);
+    };
+    for (const m of messages) {
+      if (m.kind === "user") {
+        if (m.pending) said.add(`${m.id}:pending`);
+        else if (said.has(`${m.id}:pending`)) say(m.id, m.text);
+      } else if (m.kind === "tool") {
+        const { doing, result } = describeTool(m);
+        say(`${m.id}:start`, doing);
+        if (m.done) say(`${m.id}:end`, result);
+      } else if (m.kind === "agent") {
+        say(m.id, m.text);
+      } else if (m.kind === "result") {
+        say(m.id, resultLine(m));
+      }
+    }
+    if (lines.length) setSpoken(lines.join(". "));
+  }, [messages]);
+
   const last = messages[messages.length - 1];
   // "Thinking…" between the send and the first tool line, and between a
-  // finished tool and the reply — never while a tool line already spins
-  const thinking = busy && !(last?.kind === "tool" && !last.done);
+  // finished tool and the reply — never while a tool line already spins or
+  // the voice bubble still says "Transcribing…"
+  const thinking =
+    busy &&
+    !(last?.kind === "tool" && !last.done) &&
+    !(last?.kind === "user" && last.pending);
+  // The quota's sentence is already the newest bubble — once is enough.
+  const errorShown = last?.kind === "error" && last.text === error;
+  const canRetry = last?.kind === "error" && last.retryable === true && lastSend != null;
+
+  const retry = async () => {
+    const s = lastSend;
+    if (busy || !s) return;
+    if (recording) cancel(); // the retry is the turn now
+    setNotice(null);
+    const ok =
+      s.kind === "text" ? await sendText(s.text) : await sendPhoto(s.shot, s.said);
+    if (!ok) return;
+    // a failed composer send is still in the composer — it went through now
+    const said = s.kind === "text" ? s.text : s.said;
+    setText((cur) => (cur.trim() === said ? "" : cur));
+    if (s.kind === "photo") setAttached((cur) => (cur === s.shot ? null : cur));
+  };
 
   return (
     <>
       {docked ? null : <div className="agent-backdrop" onClick={onClose} />}
       <div
         className={docked ? "split-pane chat-pane" : "sheet agent-sheet"}
-        role="dialog"
-        aria-label="Agent"
+        // docked, it is a pane of SplitSheet's dialog, not a second dialog
+        role={docked ? "region" : "dialog"}
+        aria-label={docked ? "Conversation" : "Agent"}
+        ref={paneRef}
       >
         {docked ? null : (
           <div className="sheet-head">
@@ -610,13 +736,21 @@ export default function AgentChat({
           </div>
         )}
 
-        <div className="sheet-body chat-body" ref={bodyRef} aria-live="polite">
+        <div className="sheet-body chat-body" ref={bodyRef} onScroll={onBodyScroll}>
+          {/* just above the composer, by the thumb. No tappable examples:
+              sending one would log a meal or a weigh-in for real. */}
           {messages.length === 0 ? (
-            <p className="chat-empty">
-              {supported
-                ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it adds."
-                : "No microphone here — type what you ate, or snap the plate."}
-            </p>
+            <div className="chat-empty">
+              <span className="chat-empty-glyph" aria-hidden="true">
+                {supported ? <Mic /> : <Camera />}
+              </span>
+              <p className="chat-empty-title">Tell it what you ate</p>
+              <p>
+                {supported
+                  ? "Say it, type it, or snap the plate — what you ate, your weight, a platter from the deli with no label. You'll see what the agent looks up and what it adds."
+                  : "No microphone here — type what you ate, or snap the plate."}
+              </p>
+            </div>
           ) : null}
           {messages.map((m) => {
             switch (m.kind) {
@@ -637,17 +771,23 @@ export default function AgentChat({
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={m.thumb} alt="The plate you sent" />
                       ) : (
-                        "📷 Photo"
+                        <>
+                          <Camera /> Photo
+                        </>
                       )}
                     </div>
                     {m.text ? <div className="bubble user">{m.text}</div> : null}
                   </div>
                 );
               case "tool":
-                return <ToolLine key={m.id} m={m} />;
+                return <ToolLine key={m.id} m={m} raw={raw} />;
               case "agent":
                 return (
-                  <div key={m.id} className="bubble-wrap">
+                  <div
+                    key={m.id}
+                    className="bubble-wrap"
+                    ref={m === last ? replyRef : undefined}
+                  >
                     <div className="bubble agent">{m.text}</div>
                     {m.options?.length ? (
                       <div className="chips agent-options" role="group" aria-label="Answers">
@@ -661,7 +801,7 @@ export default function AgentChat({
                               // the tap is the answer: a recording in progress
                               // is dropped, not left running under the turn
                               if (recording) cancel();
-                              void onSubmit(opt);
+                              void sendText(opt);
                             }}
                           >
                             {opt}
@@ -675,8 +815,22 @@ export default function AgentChat({
                 return <ResultCard key={m.id} m={m} onReview={onReview} />;
               case "error":
                 return (
-                  <div key={m.id} className="bubble error" role="alert">
-                    {m.text}
+                  <div key={m.id} className="bubble-wrap">
+                    <div className="bubble error" role="alert">
+                      {m.text}
+                    </div>
+                    {m === last && canRetry ? (
+                      <div className="chips agent-options">
+                        <button
+                          type="button"
+                          className="chip"
+                          disabled={busy}
+                          onClick={() => void retry()}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 );
             }
@@ -688,8 +842,21 @@ export default function AgentChat({
             </div>
           ) : null}
         </div>
+        <p className="sr-only" role="status">
+          {spoken}
+        </p>
 
         <div className="sheet-foot chat-foot">
+          {away ? (
+            <button
+              type="button"
+              className="chat-jump"
+              aria-label="Jump to the latest message"
+              onClick={jumpToLatest}
+            >
+              <ChevronDown />
+            </button>
+          ) : null}
           {/* the mic is disabled while this is up, so it never shows mid-recording */}
           {attached ? (
             <div className="chat-attached">
@@ -697,7 +864,7 @@ export default function AgentChat({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={attached.thumb} alt="Attached photo" />
               ) : (
-                <span aria-hidden="true">📷</span>
+                <Camera />
               )}
               <span className="chat-attached-hint">Photo attached</span>
               <button
@@ -706,12 +873,12 @@ export default function AgentChat({
                 onClick={() => setAttached(null)}
                 disabled={busy}
               >
-                ✕
+                <Close />
               </button>
             </div>
           ) : null}
           {recording ? (
-            <div className="chat-rec" aria-live="polite">
+            <div className="chat-rec">
               <button
                 type="button"
                 className="voice-big"
@@ -725,7 +892,7 @@ export default function AgentChat({
                 <div className="voice-timer num">{mmss(elapsedMs)}</div>
                 <div className="voice-caption">
                   <span className="rec-dot" />
-                  Listening — tap to stop
+                  Listening…
                 </div>
               </div>
               <button type="button" className="voice-alt" onClick={typeInstead}>
@@ -738,15 +905,22 @@ export default function AgentChat({
               onSubmit={async (e) => {
                 e.preventDefault();
                 const trimmed = text.trim();
-                if (busy || (!trimmed && !attached)) return;
-                const ok = attached
-                  ? await onSubmitPhoto(attached, trimmed)
-                  : await onSubmit(trimmed);
+                const shot = attached;
+                if (busy || (!trimmed && !shot)) return;
+                setText("");
+                setAttached(null);
+                const ok = shot
+                  ? await sendPhoto(shot, trimmed)
+                  : await sendText(trimmed);
                 if (ok) {
-                  setText("");
-                  setAttached(null);
                   setNotice(null);
+                  return;
                 }
+                // back as it was sent (anything typed meanwhile wins): the
+                // same text is the same uuid upstream, and the picture may
+                // not be re-takeable
+                setText((t) => t || trimmed);
+                setAttached((a) => a ?? shot);
               }}
             >
               {supported ? (
@@ -761,7 +935,7 @@ export default function AgentChat({
                   disabled={busy || attached !== null}
                   onClick={toggleMic}
                 >
-                  <MicIcon />
+                  <Mic />
                 </button>
               ) : null}
               <button
@@ -775,14 +949,17 @@ export default function AgentChat({
                   setPickerOpen(true);
                 }}
               >
-                <CameraIcon />
+                <Camera />
               </button>
               <input
                 ref={inputRef}
                 type="text"
                 value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder={attached ? "Ask about it — or just send it" : "Tell the agent…"}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  setNotice(null); // typing is the fallback taken
+                }}
+                placeholder={attached ? "Ask about it…" : "Tell the agent…"}
                 aria-label="Tell the agent"
                 enterKeyHint="send"
                 autoComplete="off"
@@ -793,12 +970,19 @@ export default function AgentChat({
                 disabled={busy || (!text.trim() && !attached)}
                 aria-label="Send"
               >
-                {busy ? <span className="spinner" /> : <SendIcon />}
+                {busy ? <span className="spinner" /> : <ArrowUp strokeWidth={2.4} />}
               </button>
             </form>
           )}
-          {error ? <p className="capture-error">{error}</p> : null}
-          {notice && !error ? <p className="capture-notice">{notice}</p> : null}
+          {error && !errorShown ? (
+            <p className="capture-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {/* kept mounted, so the notice is announced as it appears */}
+          <p className="capture-notice" role="status">
+            {notice && !error ? notice : null}
+          </p>
         </div>
       </div>
 
@@ -808,18 +992,13 @@ export default function AgentChat({
       <PhotoCapture
         open={pickerOpen}
         locate={locate}
-        onClose={() => {
-          // dismissed without a pick: the lane's one send-on-pick is spent,
-          // or the composer's next camera tap would send instead of attach
-          openedLaneRef.current = false;
-          setPickerOpen(false);
-        }}
+        onClose={dismissPicker}
         onPicked={(shot) => {
           setPickerOpen(false);
           setNotice(null);
           if (openedLaneRef.current) {
             openedLaneRef.current = false;
-            void onSubmitPhoto(shot, "");
+            void sendPhoto(shot, "");
             return;
           }
           setAttached(shot);

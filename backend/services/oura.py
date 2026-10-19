@@ -92,7 +92,8 @@ _RACE_WAIT_S = _TIMEOUT_S + 2
 _POLL_S = 0.25
 
 NOT_CONNECTED = "Oura is not connected — connect it from Settings."
-NOT_MIGRATED = "Oura sync is not set up on this database yet (migration 005)"
+# migration 005 isn't applied; the Settings card shows this to the owner as is
+NOT_MIGRATED = "Oura isn't available on this server yet."
 
 
 class OuraError(Exception):

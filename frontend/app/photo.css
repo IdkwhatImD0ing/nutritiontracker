@@ -73,22 +73,23 @@
   gap: 8px;
 }
 
+/* the secondary pill (m3.css .keys-btn's values) */
 .photo-actions button {
   flex: 1;
-  min-height: 46px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 0 14px;
-  font-size: 0.9rem;
+  border-radius: 999px;
+  padding: 0 16px;
+  font-size: 0.86rem;
   font-weight: 600;
-  color: var(--sage);
+  color: var(--text);
   cursor: pointer;
 }
 
 .photo-actions button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: transparent;
   color: var(--on-accent);
 }
 
@@ -98,9 +99,9 @@
    confirmed/unconfirmed pair any more — an estimate reads as an
    estimate for as long as it is one. ---------- */
 
-/* same amber family as needs-input/verify: attention, not error */
+/* same amber family as a row's question and verify: attention, not error */
 .badge.estimate {
-  background: rgba(232, 196, 104, 0.16);
+  background: var(--amber-soft);
   color: var(--amber);
 }
 
@@ -109,21 +110,18 @@
    caps pills stacked down the tray shout over the calorie figure, which this
    file's own rule makes the headline of a row. And they label the wrong
    thing: the food is the database's, only the AMOUNT is a guess, and the
-   amount is right there in the sub-line. So mark that: a tilde and the amber.
-   Says more, an order of magnitude quieter, and it survives a list where
-   every row is flagged. The diary keeps its badge (History mixes estimated
-   rows in among ordinary ones, so there the word is the exception). */
+   amount is right there in the sub-line. So mark that: a tilde in the pill
+   (StagedRow writes it, so a wrapped line can't strand it outside the
+   border), and the amber. Says more, an order of magnitude quieter, and it
+   survives a list where every row is flagged. The diary keeps its badge
+   (History mixes estimated rows in among ordinary ones, so there the word is
+   the exception). */
 .row.estimated .badge.estimate {
   display: none;
 }
 
 .row.estimated .row-sub {
   color: var(--amber);
-}
-
-.row.estimated .row-sub::before {
-  content: "~";
-  margin-right: 1px;
 }
 
 /* The figure is NOT muted any more. Muting it made sense when an estimate was
@@ -138,7 +136,7 @@
   margin: 4px 0 0;
 }
 
-/* the one-line heads-up under Commit (a numberless row will not count) */
+/* the one-line heads-up above Log (a numberless row will not count) */
 .sheet-reason {
   color: var(--amber);
   font-size: 0.82rem;

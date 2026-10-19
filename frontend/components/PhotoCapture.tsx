@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import "@/app/photo.css";
+import { Camera } from "./icons";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
+import { SheetFrame, usePresence } from "./useSheetPresence";
 
 /** Vision needs nothing sharper than this; a 12 MP phone JPEG is ~4 MB and
  *  the route caps uploads at 12 MB, so downscale client-side, always. */
@@ -14,7 +17,7 @@ const JPEG_QUALITY = 0.85;
 const THUMB_EDGE = 240;
 const THUMB_QUALITY = 0.6;
 /** A camera shot is a file made moments ago. Desktop browsers ignore
- *  `capture` and open a file picker, where "Take a photo" can hand back a
+ *  `capture` and open a file picker, where "Take photo" can hand back a
  *  photo from any day — so the phone's location rides only a file this new. */
 const FRESH_MS = 5 * 60_000;
 
@@ -104,7 +107,7 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
 }
 
 /** The photo picker (§3.4b; a chat turn since 2026-09-08) — a bottom sheet
- *  with "take a photo" and "choose from library". No camera stream of its
+ *  with "Take photo" and "Choose from library". No camera stream of its
  *  own: the file input's `capture` attribute hands off to the OS camera on
  *  phones.
  *
@@ -115,18 +118,21 @@ async function toJpeg(src: ImageBitmap | HTMLImageElement): Promise<Blob> {
  *  a file input cannot be opened from an effect, because the user activation
  *  is long gone by the time the lane has mounted. */
 export default function PhotoCapture({ open, onClose, onPicked, locate = false }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>(open);
   const [phase, setPhase] = useState<Phase>("pick");
   const [error, setError] = useState<string | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
   const whereRef = useRef<Fix | null>(null);
+  const { mounted, closing } = usePresence(open);
 
-  // A reopened sheet starts clean.
+  // A reopened sheet starts clean — reset once it is gone, not as it closes,
+  // so it slides out showing what it showed.
   useEffect(() => {
-    if (open) return;
+    if (mounted) return;
     setPhase("pick");
     setError(null);
-  }, [open]);
+  }, [mounted]);
 
   // Where the phone is, asked when the sheet opens rather than on the camera
   // tap: the permission prompt then comes before the camera instead of over
@@ -186,7 +192,7 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
     }
   };
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const locked = phase === "preparing";
   const close = () => {
@@ -194,9 +200,16 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
   };
 
   return (
-    <>
+    <SheetFrame closing={closing}>
       <div className="subsheet-backdrop" onClick={close} />
-      <div className="subsheet" role="dialog" aria-label="Log a photo">
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Log a photo"
+        tabIndex={-1}
+      >
         <SheetHeader title="Log a photo" onClose={close} canClose={!locked} />
 
         <input
@@ -235,19 +248,8 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
                 className="photo-option"
                 onClick={() => cameraRef.current?.click()}
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
-                  <circle cx="12" cy="13" r="3.5" />
-                </svg>
-                Take a photo
+                <Camera />
+                Take photo
               </button>
               <button
                 type="button"
@@ -273,16 +275,22 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
           </>
         ) : null}
 
-        {phase === "preparing" ? (
-          <p className="photo-status" aria-live="polite">
-            <span className="spinner" />
-            Preparing photo…
-          </p>
-        ) : null}
+        {/* mounted in every phase, empty and out of the flow
+            ([role=status]:empty), so the line is announced as it arrives */}
+        <p className="photo-status" role="status">
+          {phase === "preparing" ? (
+            <>
+              <span className="spinner" />
+              Preparing photo…
+            </>
+          ) : null}
+        </p>
 
         {phase === "error" ? (
           <>
-            <p className="sheet-error">{error}</p>
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
             <div className="photo-actions">
               <button
                 type="button"
@@ -297,6 +305,6 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
           </>
         ) : null}
       </div>
-    </>
+    </SheetFrame>
   );
 }

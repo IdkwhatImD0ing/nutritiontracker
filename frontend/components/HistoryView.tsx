@@ -1,9 +1,12 @@
 "use client";
 
+import { withUnit } from "@/lib/format";
+import { mealLabel } from "@/lib/labels";
 import ChartBars, { type Bar } from "./ChartBars";
 import ChartStrip, { type StripCell } from "./ChartStrip";
 import {
   addDays,
+  isoDate,
   monthShort,
   parseISO,
   weekdayShort,
@@ -14,13 +17,8 @@ import {
 } from "./HistoryApi";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const NBSP = "\u00a0";
 const MEAL_ORDER = ["breakfast", "lunch", "dinner", "snack"];
-const MEAL_LETTER: Record<string, string> = {
-  breakfast: "B",
-  lunch: "L",
-  dinner: "D",
-  snack: "S",
-};
 
 type Props = {
   kind: RangeKind;
@@ -40,7 +38,9 @@ export default function HistoryView({ kind, range, today, onDay }: Props) {
   if (kind === "y") {
     return <Year range={range} />;
   }
-  return <Daily kind={kind} range={range} today={today} onDay={onDay} />;
+  // keyed: Week's charts are not Month's, so Month mounts its own and
+  // ChartBars seeds the pick it kept for that title
+  return <Daily key={kind} kind={kind} range={range} today={today} onDay={onDay} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -53,19 +53,24 @@ function MacroBar({
   target,
   color,
   loud,
+  warnOver,
 }: {
   label: string;
   value: number;
   target: number;
   color: string;
   loud?: boolean;
+  /** an overage reads amber (carbs, fat); protein's target is a floor */
+  warnOver?: boolean;
 }) {
   const frac = target > 0 ? Math.min(value / target, 1) : 0;
+  // the Tracker donut's rule, rounded like the figure
+  const over = warnOver && target > 0 && Math.round(value - target) > 0;
   return (
     <div className={`hcard-macro${loud ? " loud" : ""}`}>
       <div className="hcard-macro-row">
         <span className="k">{label}</span>
-        <span className="v num">
+        <span className={`v num${over ? " over" : ""}`}>
           {fmt.format(value)}g
           {target > 0 ? <span className="of"> / {fmt.format(target)}</span> : null}
         </span>
@@ -95,6 +100,8 @@ function ThreeDays({
         const date = parseISO(d.date);
         const t = d.targets ?? targets; // the day's own: Oura's burn included
         const kcalFrac = t.kcal > 0 ? d.kcal / t.kcal : 0;
+        // the Tracker's rule, rounded like the figure: 2,400.4 isn't over
+        const kcalOver = t.kcal > 0 && Math.round(d.kcal - t.kcal) > 0;
         const mealChips = d.meals
           ? MEAL_ORDER.filter((m) => d.meals![m]).map((m) => ({
               meal: m,
@@ -107,7 +114,6 @@ function ThreeDays({
             key={d.date}
             className={`hcard${d.logged ? "" : " empty"}`}
             onClick={() => onDay(d.date)}
-            aria-label={`Open diary for ${d.date}`}
           >
             <div className="hcard-head">
               <span className="hcard-day">
@@ -120,8 +126,9 @@ function ThreeDays({
               <span className="hcard-entries">
                 {d.logged
                   ? `${d.entries} ${d.entries === 1 ? "entry" : "entries"}`
-                  : "nothing logged"}
+                  : "Nothing logged"}
               </span>
+              <span className="chev" aria-hidden="true" />
             </div>
             <div className="hcard-kcal num">
               <strong>{fmt.format(d.kcal)}</strong>
@@ -130,10 +137,17 @@ function ThreeDays({
               ) : (
                 <span className="of"> kcal</span>
               )}
+              {/* at the end of the total's line: as a fifth item of the
+                  meal row it wrapped onto a line of its own on a phone */}
+              {d.fiber_g != null ? (
+                <span className="hcard-fiber">
+                  <span className="k">Fiber</span> {withUnit(fmt.format(d.fiber_g), "g")}
+                </span>
+              ) : null}
             </div>
             <div className="kcal-bar">
               <div
-                className={`fill${kcalFrac > 1 ? " over" : ""}`}
+                className={`fill${kcalOver ? " over" : ""}`}
                 style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
               />
             </div>
@@ -145,22 +159,18 @@ function ThreeDays({
                 color="var(--mint)"
                 loud
               />
-              <MacroBar label="Carbs" value={d.carb_g} target={t.carb_g} color="var(--carb)" />
-              <MacroBar label="Fat" value={d.fat_g} target={t.fat_g} color="var(--fat)" />
+              <MacroBar label="Carbs" value={d.carb_g} target={t.carb_g} color="var(--carb)" warnOver />
+              <MacroBar label="Fat" value={d.fat_g} target={t.fat_g} color="var(--fat)" warnOver />
             </div>
             {mealChips.length ? (
               <div className="hcard-meals num">
+                {/* spelled out: a B/L/D/S key explained only in a hover
+                    title said nothing on a phone */}
                 {mealChips.map((c) => (
-                  <span key={c.meal} title={c.meal}>
-                    <span className="k">{MEAL_LETTER[c.meal] ?? c.meal}</span>{" "}
-                    {fmt.format(c.kcal)}
+                  <span key={c.meal}>
+                    <span className="k">{mealLabel(c.meal)}</span> {fmt.format(c.kcal)}
                   </span>
                 ))}
-                {d.fiber_g != null ? (
-                  <span title="fiber">
-                    <span className="k">fiber</span> {fmt.format(d.fiber_g)}g
-                  </span>
-                ) : null}
               </div>
             ) : null}
           </button>
@@ -186,24 +196,34 @@ function Daily({
   onDay: (date: string) => void;
 }) {
   const week = kind === "w";
+  // nothing in the whole range: each chart says so, and the hint has no day
+  // worth tapping. Neutral words — a range can't tell a new account from a
+  // gap in an old one.
+  const empty = range.days.every((d) => !d.logged)
+    ? `Nothing logged in the last ${week ? 7 : 30} days`
+    : undefined;
   const toBar = (pick: (d: HistoryDay) => number, unit: string) =>
     range.days.map<Bar>((d) => {
       const date = parseISO(d.date);
+      // weekHint's joins: a narrow readout breaks only after the colon
+      const day = [weekdayShort(date), monthShort(date), date.getDate()].join(NBSP);
       return {
         key: d.date,
+        // today always carries a label (ChartBars marks it there); the
+        // overlap guard keeps the newest, so it survives in M
         label: week
           ? weekdayShort(date)
-          : date.getDate() === 1 || date.getDate() % 5 === 0
+          : d.date === today || date.getDate() === 1 || date.getDate() % 5 === 0
             ? `${monthShort(date)} ${date.getDate()}`
             : "",
         value: pick(d),
         muted: !d.logged,
         active: d.date === today,
-        hint: `${weekdayShort(date)} ${monthShort(date)} ${date.getDate()}: ${fmt.format(pick(d))} ${unit}${
-          d.logged ? "" : " (nothing logged)"
-        }`,
+        hint: `${day}: ${d.logged ? withUnit(fmt.format(pick(d)), unit) : "nothing logged"}`,
       };
     });
+  // W's bars are ~41px wide with printed values: a tap opens the day. M's
+  // are ~9px, so they select and the readout's Open goes to the diary.
   return (
     <div className="hcharts">
       <ChartBars
@@ -215,19 +235,24 @@ function Daily({
         showValues={week}
         labelEvery={1}
         onTap={onDay}
+        select={!week}
+        emptyText={empty}
       />
       <ChartBars
         title={week ? "Protein · last 7 days" : "Protein · last 30 days"}
         bars={toBar((d) => d.protein_g, "g")}
         target={range.targets.protein_g}
         color="var(--mint)"
+        overColor={null}
         unit="g"
         showValues={week}
         labelEvery={1}
         onTap={onDay}
+        select={!week}
         format={(v) => `${fmt.format(v)}g`}
+        emptyText={empty}
       />
-      <p className="hhint">Tap a day to open its diary.</p>
+      {week && !empty ? <p className="hhint">Tap a day to open its diary.</p> : null}
     </div>
   );
 }
@@ -236,12 +261,21 @@ function Daily({
 // year — weekly averages + adherence strip
 // ---------------------------------------------------------------------------
 
-function weekHint(w: HistoryWeek, v: number | null, unit: string): string {
+/** A week's readout, and the Y slider's spoken value: "Oct 5 – Oct 11:
+ *  2,203 kcal avg · 4 of 7 days logged". The week holding `end` (today) is
+ *  "This week", counted over the days it has had. Each phrase is joined
+ *  with no-break spaces, so a narrow readout breaks at the "·". */
+function weekHint(w: HistoryWeek, v: number | null, unit: string, end: string): string {
   const s = parseISO(w.week_start);
   const e = addDays(s, 6);
-  return `${monthShort(s)} ${s.getDate()} – ${monthShort(e)} ${e.getDate()}: ${
-    v == null ? "—" : `${fmt.format(v)} ${unit} avg`
-  } · ${w.days_logged}/7 days logged`;
+  const current = isoDate(e) >= end;
+  const span = current ? "This week" : `${monthShort(s)} ${s.getDate()} – ${monthShort(e)} ${e.getDate()}`;
+  if (v == null || w.days_logged === 0) return `${span}: nothing logged`;
+  const days = current
+    ? Math.max(Math.round((parseISO(end).getTime() - s.getTime()) / 86_400_000) + 1, w.days_logged)
+    : 7;
+  const logged = [w.days_logged, "of", days, days === 1 ? "day" : "days", "logged"].join(NBSP);
+  return `${span}: ${withUnit(fmt.format(v), unit)}${NBSP}avg · ${logged}`;
 }
 
 function Year({ range }: { range: HistoryRange }) {
@@ -254,48 +288,70 @@ function Year({ range }: { range: HistoryRange }) {
     lastMonth = d.getMonth();
     return monthShort(d);
   });
+  // The bars' axis has room for every other month (a three-letter label is
+  // wider than a four-week month), and left to fitLabels it dropped
+  // whichever months were short: irregular, with "Oct" at both ends. So it
+  // keeps the months an even count back from the newest, and never a first
+  // label on a month the range only starts partway through. The strip
+  // below fits all twelve.
+  const newest = parseISO(weeks.at(-1)?.week_start ?? range.end);
+  const barLabels = labels.map((l, i) => {
+    const d = parseISO(weeks[i].week_start);
+    const back = (newest.getFullYear() - d.getFullYear()) * 12 + newest.getMonth() - d.getMonth();
+    return back % 2 === 0 && !(i === 0 && d.getDate() > 7) ? l : "";
+  });
   const bars = (pick: (w: HistoryWeek) => number | null, unit: string) =>
     weeks.map<Bar>((w, i) => ({
       key: w.week_start,
-      label: labels[i],
+      label: barLabels[i],
       value: pick(w),
       muted: w.days_logged === 0,
-      hint: weekHint(w, pick(w), unit),
+      hint: weekHint(w, pick(w), unit, range.end),
     }));
   const cells = weeks.map<StripCell>((w, i) => ({
     key: w.week_start,
-    hint: weekHint(w, w.avg?.kcal ?? null, "kcal"),
+    hint: weekHint(w, w.avg?.kcal ?? null, "kcal", range.end),
     level: w.adherence,
     label: labels[i],
   }));
   const loggedWeeks = weeks.filter((w) => w.days_logged > 0).length;
   const loggedDays = weeks.reduce((s, w) => s + w.days_logged, 0);
   const baseline = range.baseline_days_per_week;
+  const empty = loggedDays === 0 ? "Nothing logged in the last 52 weeks" : undefined;
 
   return (
     <div className="hcharts">
+      {/* select with no onTap: a readout of the week's averages, which
+          touch could not read before */}
       <ChartBars
-        title="Calories · weekly average, last 52 weeks"
+        title="Calories · weekly avg"
         bars={bars((w) => w.avg?.kcal ?? null, "kcal")}
         target={range.targets.kcal}
         color="var(--spruce-soft)"
         unit="kcal"
         labelEvery={1}
+        select
+        emptyText={empty}
       />
       <ChartBars
-        title="Protein · weekly average"
+        title="Protein · weekly avg"
         bars={bars((w) => w.avg?.protein_g ?? null, "g")}
         target={range.targets.protein_g}
         color="var(--mint)"
+        overColor={null}
         unit="g"
         labelEvery={1}
+        select
         format={(v) => `${fmt.format(v)}g`}
+        emptyText={empty}
       />
       <ChartStrip title="Days logged per week" cells={cells} />
-      <p className="hhint">
-        {loggedDays} days logged across {loggedWeeks} of {weeks.length} weeks
-        {baseline > 0 ? ` · Cronometer baseline ${fmt.format(baseline)}/week` : ""}.
-      </p>
+      {empty ? null : (
+        <p className="hhint">
+          {loggedDays} days logged across {loggedWeeks} of {weeks.length} weeks
+          {baseline > 0 ? ` · Cronometer baseline ${fmt.format(baseline)}/week` : ""}.
+        </p>
+      )}
     </div>
   );
 }

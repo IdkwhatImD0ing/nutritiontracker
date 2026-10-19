@@ -132,12 +132,26 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+// The iPhone's Text Size / Larger Text setting (owner decision, 2026-10-13):
+// an installed app has no Safari aA menu, so a probe in `font:
+// -apple-system-body` reads the size iOS gives body text (17px by default)
+// and the root follows it, probe / 17 × 16px clamped to 16–20.8px (1.3×, what
+// the layouts absorb). Re-read on return from Settings. A browser without the
+// keyword rejects it (an empty style) and keeps its own root. Inline in <head>
+// so the first paint is at size; tab-bar labels stay in px (m3.css).
+const TEXT_SIZE = `(function(){var d=document.documentElement;function fit(){var p=document.createElement("span");p.style.font="-apple-system-body";if(!p.style.length)return;d.appendChild(p);var px=parseFloat(getComputedStyle(p).fontSize);d.removeChild(p);if(px>0)d.style.fontSize=Math.min(Math.max(px/17*16,16),20.8)+"px"}fit();document.addEventListener("visibilitychange",function(){if(!document.hidden)fit()})})()`;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
       className={`${archivo.variable} ${bricolage.variable} ${plexMono.variable}`}
+      // TEXT_SIZE sets the root's font-size before React hydrates
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: TEXT_SIZE }} />
+      </head>
       <body>
         <ServiceWorkerProvider>
           <LegacyChatCleanup />

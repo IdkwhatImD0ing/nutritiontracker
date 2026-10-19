@@ -55,7 +55,12 @@ class FoodHit(BaseModel):
     brand: str | None = None
     food_id: str | None = None  # set on local-cache hits (already persisted)
     data_type: str | None = None  # FDC: "SR Legacy" | "Foundation" | "Branded"
+    # what tells near-identical rows apart (§7.1: calories are the headline):
+    # per 100 g, or per 100 ml where per_100ml (a beverage). None when the
+    # source gave no per-100 figures (a web food is per serving only).
     protein_per_100g: float | None = None
+    kcal_per_100g: float | None = None
+    per_100ml: bool = False
 
 
 class FoodSearchResponse(BaseModel):
@@ -97,6 +102,7 @@ async def _local_hits(q: str) -> list[FoodHit]:
     rows = await db.fetchall(
         f"""
         SELECT id, source, source_id, display_name, brand,
+               {foods_repo.PER_100_SQL.format(t="foods")},
                similarity(display_name || ' ' || coalesce(brand, ''), %s) AS sim
         FROM foods
         WHERE source <> 'estimate'
@@ -115,6 +121,9 @@ async def _local_hits(q: str) -> list[FoodHit]:
             label=r["display_name"],
             brand=r["brand"],
             food_id=str(r["id"]),
+            protein_per_100g=r["protein_per_100g"],
+            kcal_per_100g=r["kcal_per_100g"],
+            per_100ml=r["per_100ml"],
         )
         for r in rows
     ]
@@ -148,6 +157,7 @@ async def search_foods(
                     label=g["description"],
                     data_type=g["data_type"],
                     protein_per_100g=g["protein_per_100g"],
+                    kcal_per_100g=g["kcal_per_100g"],
                 )
                 for g in generic_raw
                 if ("fdc", str(g["fdc_id"])) not in cached
@@ -159,6 +169,9 @@ async def search_foods(
                     label=b["description"],
                     brand=b.get("brand_name") or b.get("brand_owner"),
                     data_type=b["data_type"],
+                    protein_per_100g=b["protein_per_100g"],
+                    kcal_per_100g=b["kcal_per_100g"],
+                    per_100ml=b["per_100ml"],
                 )
                 for b in branded_raw
                 if ("fdc", str(b["fdc_id"])) not in cached
@@ -187,6 +200,9 @@ async def list_recent_foods() -> list[FoodHit]:
             label=r["display_name"],
             brand=r["brand"],
             food_id=r["id"],
+            protein_per_100g=r["protein_per_100g"],
+            kcal_per_100g=r["kcal_per_100g"],
+            per_100ml=r["per_100ml"],
         )
         for r in await foods_repo.recent_foods()
     ]

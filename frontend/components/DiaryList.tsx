@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, type DayTotals, type Meal } from "@/lib/api";
+import { portionText } from "@/lib/format";
+import { foodName, mealLabel } from "@/lib/labels";
 import "@/app/history/diary.css";
 import {
   deleteEntry,
@@ -11,11 +14,28 @@ import {
 } from "./DiaryApi";
 import DiaryEntryRow from "./DiaryEntryRow";
 import { createMeal, type SavedMeal } from "./LibraryApi";
-import SheetHeader from "./SheetHeader";
+import SheetHeader, { DiscardConfirm } from "./SheetHeader";
+import { useAutoGrow } from "./useAutoGrow";
+import { useFlash } from "./useFlash";
+import { useSheetFocus } from "./useSheetFocus";
+import SheetPresence from "./useSheetPresence";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-const fmtQ = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const MEAL_ORDER: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
+
+/* Each screen's open row, by pathname as useScrollMemory keeps its offset,
+   kept past the list's unmount: Back from a row's Food details, or a return
+   to the tab, remounts the list, and the row comes back open, so the page
+   is as tall as it was when that offset was saved. A row toggled on
+   another day leaves this one's alone. */
+const openRows = new Map<string, string | null>();
+
+/** Where a diary row's top sits on screen now (undefined: not rendered). */
+function rowTop(root: HTMLElement | null, id: string): number | undefined {
+  return root
+    ?.querySelector(`[data-entry-id="${CSS.escape(id)}"]`)
+    ?.getBoundingClientRect().top;
+}
 
 type Props = {
   meals: DiaryMeals;
@@ -41,10 +61,22 @@ function SaveMealSheet({
   onSaved: (m: SavedMeal) => void;
   onClose: () => void;
 }) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [name, setName] = useState(`usual ${meal}`);
   const [phrases, setPhrases] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const phrasesRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(phrasesRef, phrases);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  // A close that would throw away a typed name or phrases (the backdrop, the
+  // ✕, a pull, Escape, Back) asks first, in the foot.
+  const dirty = name !== `usual ${meal}` || phrases !== "";
+  const requestClose = () => {
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  };
 
   const save = async () => {
     setBusy(true);
@@ -54,7 +86,7 @@ function SaveMealSheet({
         await createMeal({
           name: name.trim(),
           trigger_phrases: phrases
-            .split(",")
+            .split(/[,\n]/)
             .map((s) => s.trim())
             .filter(Boolean),
           items: entries.map((e) => ({
@@ -76,9 +108,16 @@ function SaveMealSheet({
 
   return (
     <>
-      <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Save as meal">
-        <SheetHeader title={`Save this ${meal} as a meal`} onClose={onClose} />
+      <div className="subsheet-backdrop" onClick={requestClose} />
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Save as meal"
+        tabIndex={-1}
+      >
+        <SheetHeader title={`Save this ${meal} as a meal`} onClose={requestClose} />
 
         <label className="m3-field">
           Name
@@ -90,42 +129,72 @@ function SaveMealSheet({
         </label>
 
         <label className="m3-field">
-          Trigger phrases
-          <input
+          Phrases
+          {/* a long list wraps and grows instead of scrolling sideways in
+              one line (useAutoGrow) */}
+          <textarea
+            ref={phrasesRef}
+            className="m3-phrases"
+            rows={2}
             value={phrases}
             onChange={(e) => setPhrases(e.target.value)}
-            placeholder="usual breakfast, my breakfast"
+            placeholder={`e.g. usual ${meal}, my ${meal}`}
             autoComplete="off"
           />
         </label>
         <p className="m3-note">
-          Comma-separated; leave empty to use the name. Saying one stages these{" "}
+          Separate phrases with commas or new lines; leave empty to use the
+          name. Saying one adds these{" "}
           {entries.length} item{entries.length === 1 ? "" : "s"} exactly as they
-          are now — no search, no AI.
+          are now.
         </p>
 
+        {/* Library's item layout: the portion on its own line under the
+            name, so a long serving never squeezes into '1 mug / (12 fl / oz)' */}
         <div className="m3-card">
           {entries.map((e) => (
-            <div className="m3-row" key={e.id}>
-              <span className="k">{e.food.name}</span>
-              <span className="num">
-                {e.qty !== 1 ? `${fmtQ.format(e.qty)} × ` : ""}
-                {e.serving.description}
-              </span>
+            <div className="m3-item" key={e.id}>
+              <div className="info">
+                <div className="name">{foodName(e.food.name)}</div>
+                <div className="sub num">
+                  {portionText(e.qty, e.serving.description, e.grams)}
+                </div>
+              </div>
             </div>
           ))}
         </div>
 
-        {error ? <p className="sheet-error">{error}</p> : null}
+        <div className="subsheet-foot">
+          {error ? (
+            <p className="sheet-error" role="alert">
+              {error}
+            </p>
+          ) : null}
 
-        <button
-          type="button"
-          className="commit-btn"
-          disabled={busy || !name.trim()}
-          onClick={save}
-        >
-          {busy ? "Saving…" : "Save meal"}
-        </button>
+          {confirmDiscard ? (
+            <DiscardConfirm
+              onKeep={() => setConfirmDiscard(false)}
+              onDiscard={onClose}
+            />
+          ) : (
+            <button
+              type="button"
+              className="commit-btn"
+              disabled={busy || !name.trim()}
+              aria-busy={busy}
+              onClick={save}
+            >
+              {busy ? (
+                <>
+                  <span className="spinner on-accent" />
+                  Saving…
+                </>
+              ) : (
+                "Save meal"
+              )}
+            </button>
+          )}
+        </div>
       </div>
     </>
   );
@@ -140,14 +209,74 @@ export default function DiaryList({
   onDeleted,
   emptyText = "Nothing logged yet.",
 }: Props) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const pathname = usePathname();
+  const [expanded, setExpanded] = useState<string | null>(
+    () => openRows.get(pathname) ?? null,
+  );
+  useEffect(() => {
+    openRows.set(pathname, expanded);
+  }, [pathname, expanded]);
+  // which row is waiting, and on what — the spinner goes in the tapped button
+  const [busy, setBusy] = useState<{
+    id: string;
+    kind: "save" | "delete" | "move";
+  } | null>(null);
+  // a failed edit, kept with its row so it shows where the user is looking
+  const [error, setError] = useState<{
+    id: string;
+    kind: "delete" | "move";
+    text: string;
+  } | null>(null);
   const [saveGroup, setSaveGroup] = useState<{
     meal: string;
     entries: DiaryEntry[];
   } | null>(null);
-  const [savedMeal, setSavedMeal] = useState<string | null>(null);
+  // A toast, not a line under the last meal: saving Breakfast put that line
+  // off screen. Rendered here, so Today and the History day both get it;
+  // under-sheets, like Today's commit note, so a sheet opened next covers it.
+  const [savedMeal, flashSavedMeal] = useFlash(4000);
+
+  // The tapped row stays under the finger. One row is open at a time, so
+  // opening one closes the last; when that one sat above, its expanded panel
+  // collapsing threw the tapped row up the screen. iOS Safari has no CSS
+  // scroll anchoring, so the row's top is read before the toggle and the
+  // window (the scroller on Today and the day view) is moved by however far
+  // it went.
+  const sectionRef = useRef<HTMLElement>(null);
+  const anchor = useRef<{ id: string; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    anchor.current = null;
+    if (!a) return;
+    const top = rowTop(sectionRef.current, a.id);
+    if (top != null && top !== a.top) window.scrollBy(0, top - a.top);
+  }, [expanded]);
+
+  // A deleted row took focus with it: once it is gone, focus goes to the
+  // row now in its place, else the one above, else the empty line ("") —
+  // not back to the top of the page. A row moved to another meal remounts
+  // under it, and focus goes back to its meal picker (`part`). Focus moved
+  // on meanwhile stays put.
+  const refocus = useRef<{ id: string; part: string } | null>(null);
+  const emptyRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const to = refocus.current;
+    refocus.current = null;
+    // lost focus: <body>, <html> or none, or still on the removed node
+    const at = document.activeElement;
+    const lost =
+      !at ||
+      at === document.body ||
+      at === document.documentElement ||
+      !at.isConnected;
+    if (to == null || !lost) return;
+    const el = to.id
+      ? sectionRef.current?.querySelector<HTMLElement>(
+          `[data-entry-id="${CSS.escape(to.id)}"] ${to.part}`,
+        )
+      : emptyRef.current;
+    el?.focus();
+  }, [meals]);
 
   const groups = MEAL_ORDER.map((meal) => ({
     meal,
@@ -161,40 +290,53 @@ export default function DiaryList({
   }
 
   if (groups.length === 0) {
-    return <p className="diary-empty">{emptyText}</p>;
+    return (
+      <p className="diary-empty" ref={emptyRef} tabIndex={-1}>
+        {emptyText}
+      </p>
+    );
   }
+  const order = groups.flatMap((g) => g.entries.map((e) => e.id));
 
-  /** true when `fn` landed — the row keeps its draft on a refusal. */
-  const run = async (id: string, fn: () => Promise<void>): Promise<boolean> => {
-    setBusy(id);
+  /** null when `fn` landed, else the sentence for the refusal — the portion
+   *  sheet shows a save's in place; a delete's or a move's goes on its row. */
+  const run = async (
+    id: string,
+    kind: "save" | "delete" | "move",
+    fn: () => Promise<void>,
+  ): Promise<string | null> => {
+    setBusy({ id, kind });
     setError(null);
     try {
       await fn();
-      return true;
+      return null;
     } catch (e) {
       // A refused portion says why (a serving with partial macros is a 422
       // naming it, §4 invariant) — show the server's sentence, not a generic
       // one, the way every other lane does.
-      setError(
+      return (
         (e instanceof ApiError && e.status === 422 && e.detail) ||
-          "Couldn't save that change — try again.",
+        (kind === "delete"
+          ? "Couldn't delete that entry — try again."
+          : kind === "move"
+            ? "Couldn't move that entry — try again."
+            : "Couldn't save that change — try again.")
       );
-      return false;
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <section className="diary" aria-label="Diary">
-      {error ? <p className="capture-error">{error}</p> : null}
+    <section className="diary" aria-label="Diary" ref={sectionRef}>
       {groups.map((g) => (
         <div className="diary-meal" key={g.meal}>
           <div className="diary-meal-head">
-            <span className="diary-meal-name">{g.meal}</span>
+            <h2 className="diary-meal-name">{mealLabel(g.meal)}</h2>
             <button
               type="button"
               className="m3-link-btn"
+              aria-label={`Save as meal: ${mealLabel(g.meal)}`}
               onClick={() => setSaveGroup(g)}
             >
               Save as meal
@@ -208,10 +350,17 @@ export default function DiaryList({
               key={e.id}
               entry={e}
               expanded={expanded === e.id}
-              busy={busy === e.id}
-              onToggle={() => setExpanded((cur) => (cur === e.id ? null : e.id))}
+              busy={busy?.id === e.id ? busy.kind : null}
+              error={error?.id === e.id ? error : null}
+              onToggle={() => {
+                // an error belongs to the open row; any toggle closes that row
+                setError(null);
+                const top = rowTop(sectionRef.current, e.id);
+                anchor.current = top != null ? { id: e.id, top } : null;
+                setExpanded((cur) => (cur === e.id ? null : e.id));
+              }}
               onSave={(patch) =>
-                run(e.id, async () => {
+                run(e.id, "save", async () => {
                   const res = await patchEntry(e.id, patch);
                   // routes/entries.py builds its DiaryEntry without the
                   // source/citation/estimate fields — keep the ones already
@@ -228,28 +377,65 @@ export default function DiaryList({
                   );
                 })
               }
+              onMove={(meal) =>
+                void run(e.id, "move", async () => {
+                  const res = await patchEntry(e.id, { meal });
+                  refocus.current = { id: e.id, part: ".meal-picker .active" };
+                  // the fields routes/entries.py leaves out, as onSave keeps them
+                  onPatched(
+                    {
+                      ...res.entry,
+                      web_source: e.web_source,
+                      source: e.source,
+                      estimated: e.estimated,
+                    },
+                    res.totals,
+                  );
+                }).then((text) =>
+                  setError(text ? { id: e.id, kind: "move", text } : null),
+                )
+              }
               onDelete={() =>
-                run(e.id, async () => {
+                void run(e.id, "delete", async () => {
                   const totals = await deleteEntry(e.id);
+                  const i = order.indexOf(e.id);
+                  refocus.current = {
+                    id: order[i + 1] ?? order[i - 1] ?? "",
+                    part: ".row-kcal",
+                  };
                   onDeleted(e.id, totals);
-                })
+                }).then((text) =>
+                  setError(text ? { id: e.id, kind: "delete", text } : null),
+                )
               }
             />
           ))}
         </div>
       ))}
-      {savedMeal ? <p className="m3-status">{savedMeal}</p> : null}
-      {saveGroup ? (
-        <SaveMealSheet
-          meal={saveGroup.meal}
-          entries={saveGroup.entries}
-          onSaved={(m) => {
-            setSaveGroup(null);
-            setSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
-          }}
-          onClose={() => setSaveGroup(null)}
-        />
-      ) : null}
+      {/* kept mounted, so the confirmation is announced as it appears */}
+      <div className="toast-host" role="status">
+        {savedMeal ? (
+          <div className="toast under-sheets">
+            <span>{savedMeal}</span>
+            <button type="button" onClick={() => flashSavedMeal(null)}>
+              OK
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <SheetPresence>
+        {saveGroup ? (
+          <SaveMealSheet
+            meal={saveGroup.meal}
+            entries={saveGroup.entries}
+            onSaved={(m) => {
+              setSaveGroup(null);
+              flashSavedMeal(`Saved as “${m.name}” — say it to log it again.`);
+            }}
+            onClose={() => setSaveGroup(null)}
+          />
+        ) : null}
+      </SheetPresence>
     </section>
   );
 }

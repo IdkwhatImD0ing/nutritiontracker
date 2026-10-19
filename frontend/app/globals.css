@@ -1,6 +1,6 @@
 /* Tally — hand CSS, dark-first. One warm graphite ground, hairline surfaces,
    Bricolage Grotesque numerals, and a single apricot accent that is spent on
-   the things that matter: the +, Commit, protein, and the calorie bar.
+   the things that matter: the +, Log, protein, and the calorie bar.
    Every class name below is a contract with a component; the tokens are the
    theme. (§7.4 visual language.) */
 
@@ -16,7 +16,7 @@
   /* ink */
   --text: #f4f1ea;
   --muted: #a3a29f;
-  --faint: #6f6e6c;
+  --faint: #8e8c88; /* 4.7:1 on --surface-2: notes, units and empty lines are text */
 
   /* the accent family. Kept under the old names so every component that
      already says var(--spruce) / var(--mint) follows the theme unchanged. */
@@ -40,6 +40,31 @@
   --amber: #e8c468; /* verify / estimate flags */
   --red: #f26b6b;
   --green: #74cf9c;
+
+  /* Colours outside the palette above, named once so every rule that paints
+     one shares its value (one web blue, one scrim, one red tint). */
+  --accent-fill: linear-gradient(180deg, var(--accent), var(--accent-strong)); /* Log, send, the user bubble */
+  --web: #8fd0e6; /* §3.4a web-sourced: the badge (its citation link is --sage) */
+  --web-soft: rgba(108, 196, 221, 0.14);
+  --off: #e0b58a; /* Open Food Facts badge (m3.css) */
+  --off-soft: rgba(224, 181, 138, 0.16);
+  --amber-soft: rgba(232, 196, 104, 0.16);
+  --red-soft: rgba(242, 107, 107, 0.12);
+  --scrim: rgba(6, 6, 9, 0.6); /* behind every sheet */
+  --toast-bg: #26262d;
+  --surface-hero: #1d1c22; /* the top of a hero card's gradient */
+  --on-danger: #fff; /* text on a red fill */
+  /* a field placeholder: 5.2:1 on --surface-2, 4.6:1 on a focused field's
+     --surface-3, where --faint drops to 4.1:1 */
+  --placeholder: #969490;
+
+  /* layout and type: one card edge, one form field, one micro label */
+  --card-pad-x: 16px;
+  --field-h: 48px;
+  --field-radius: 14px;
+  --micro-size: 0.7rem; /* 11.2px, the floor for uppercase tracked labels */
+  --micro-track: 0.08em;
+  --micro-weight: 600;
 
   --radius: 20px;
   --radius-sm: 12px;
@@ -104,7 +129,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 15px;
+  font-size: 0.9375rem; /* 15px at the default root; follows Text Size (layout.tsx) */
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -131,6 +156,14 @@ textarea {
   color: inherit;
 }
 
+/* One placeholder colour for every field; left to the UA, WebKit and
+   Chromium each drew their own grey, under the text minimum. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+
 /* iOS zooms the page into any focused field under 16px. This floors fields
    with no size of their own; a class rule outranks it, so keep those ≥ 1rem. */
 @media (pointer: coarse) {
@@ -144,19 +177,33 @@ textarea {
 /* Controls are chrome, not text: a long press raises no selection loupe or
    link callout, and a quick second tap doesn't zoom. Only links that act as
    controls are listed; a link in running text (a citation, the docs) stays
-   selectable. */
+   selectable. A diary or staged .row-main is a tap target that holds
+   controls, so it is listed by class rather than given a role. */
 button,
 [role="button"],
+.row-main,
 summary,
 .tabbar a,
 .nav-back,
-a.name-btn,
+.diary-food-link,
 a.m3-link-btn,
-.m3-card-title a {
+.m3-card-link,
+.m3-nav-row {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+}
+
+/* Headings and big figures are display, not prose: a long press on them
+   raises no loupe or Copy bubble. Not the whole .shell — older iOS can then
+   refuse typing in a field, and chat replies and citations stay copyable. */
+.brand h1,
+.tracker,
+.weight-card,
+.diary-meal-head {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Pressed. The tap highlight is off (body), so a control answers a touch
@@ -164,10 +211,12 @@ a.m3-link-btn,
    finger only — a pressed pill doesn't dim the row it sits in. Opacity, not
    motion, so reduced motion has nothing to take away. Controls with a press
    of their own (a scale, a fill step) keep it, and zero specificity lets a
-   control's own opacity win. */
+   control's own opacity win. A row's kcal figure is that row's expander
+   (StagedRow, DiaryEntryRow), so its press dims the row, as it always did. */
 :where(
-  :is(button, [role="button"], a, summary):active:not(
+  :is(button, [role="button"], .row-main, a, summary):active:not(
       :disabled,
+      [aria-disabled="true"],
       .fab,
       .commit-btn,
       .commit-pill,
@@ -178,8 +227,9 @@ a.m3-link-btn,
       .add-row,
       .m3-card-btn,
       .hcard,
-      .tabbar a
-    ):not(:has(:is(button, [role="button"], a, summary):active))
+      .tabbar a,
+      .row-kcal
+    ):not(:has(:is(button:not(.row-kcal), [role="button"], a, summary):active))
 ) {
   opacity: 0.6;
 }
@@ -197,7 +247,6 @@ a.m3-link-btn,
   .portion-btn,
   button.name-btn,
   .meal-chip,
-  .meal-picker button,
   .row-remove,
   .sheet-close,
   .toast button,
@@ -209,12 +258,17 @@ a.m3-link-btn,
   .m3-link-btn,
   .m3-item-qty button,
   .m3-seg button,
-  .segmented button,
   .keys-btn,
   .account-signout,
   .diary-actions button,
-  .diary-stepper button,
-  .web-cite a {
+  .photo-actions button,
+  .row-undo,
+  .auth-alt a,
+  .auth-forgot,
+  .auth-card button.auth-linkish,
+  .web-cite a,
+  .weight-log,
+  .land-textlink {
     position: relative;
   }
 
@@ -222,7 +276,6 @@ a.m3-link-btn,
   .portion-btn::before,
   button.name-btn::before,
   .meal-chip::before,
-  .meal-picker button::before,
   .row-remove::before,
   .sheet-close::before,
   .toast button::before,
@@ -234,11 +287,17 @@ a.m3-link-btn,
   .m3-link-btn::before,
   .m3-item-qty button::before,
   .m3-seg button::before,
-  .segmented button::before,
   .keys-btn::before,
   .account-signout::before,
   .diary-actions button::before,
-  .diary-stepper button::before,
+  .photo-actions button::before,
+  .row-undo::before,
+  .auth-alt a::before,
+  .auth-forgot::before,
+  .auth-card button.auth-linkish::before,
+  .weight-log::before,
+  .land-textlink::before /* ::after is its arrow */,
+  .web-cite a::before /* clipped to the line's padding (.web-cite) */,
   .scan-torch::before /* already absolute: its own containing block */ {
     content: "";
     position: absolute;
@@ -261,21 +320,22 @@ a.m3-link-btn,
     --hit-top: -1px;
   }
 
+  /* the citation line clips its link's area 4px above the line (.web-cite),
+     so the area starts there and grows down through the line's padding */
+  .web-cite a {
+    --hit-top: -6px;
+  }
+
   button.name-btn {
     --hit-top: -12px;
     --hit-h: calc(100% + 13px);
   }
 
   /* docked, the meal picker opens flush on the tray's lip: the lip's
-     controls grow down, the picker's up */
+     controls grow down; the picker's centred area stays in its track */
   .stage-lip .sheet-close,
   .stage-lip .meal-chip {
     --hit-top: -5px;
-  }
-
-  .sheet-foot .meal-picker button {
-    --hit-top: -14px;
-    --hit-h: calc(100% + 14px);
   }
 
   /* m3 cards stack controls 8px apart (a field, a card, then the link) */
@@ -287,22 +347,12 @@ a.m3-link-btn,
     --hit-top: initial;
   }
 
-  /* a sub-sheet's last line (Delete mapping, Deactivate) sits 14px under
-     Save, over only the sheet's 18px bottom padding: grown down from -4px it
-     would add a few px of scroll to a sheet that fits */
-  .subsheet > .m3-actions .m3-link-btn {
+  /* a sub-sheet's last line (Forget phrase, Deactivate, the discard
+     confirm) sits 14px under Save, over only the foot's 18px bottom
+     padding: grown down from -4px it would add a few px of scroll to a
+     sheet that fits */
+  .subsheet-foot > .m3-actions .m3-link-btn {
     --hit-top: -13px;
-  }
-
-  /* the serving list opens 8px under it, so this one grows up into the
-     edit block's top padding instead; its retry twin sits under it */
-  .diary-change-serving {
-    --hit-top: -15px;
-    --hit-h: calc(100% + 19px);
-  }
-
-  .diary-change-serving + .diary-change-serving {
-    --hit-top: -4px;
   }
 }
 
@@ -313,6 +363,20 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--accent-line);
   outline-offset: 2px;
+}
+
+/* A sheet takes focus itself as it opens (useSheetFocus), so a screen reader
+   starts inside it; the sheet is not a control, so it draws no ring. */
+[role="dialog"]:focus {
+  outline: none;
+}
+
+/* A status line stays mounted so its text is announced as it arrives (a
+   region inserted together with its text is often skipped). Empty, it takes
+   no room and no flex gap, and stays in the accessibility tree — never
+   display: none. */
+[role="status"]:empty {
+  position: absolute;
 }
 
 a {
@@ -330,6 +394,20 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* except what says "still working": a spinner frozen mid-arc looks hung.
+     A turn in place and an opacity pulse are what iOS itself keeps under
+     Reduce Motion; the halo's scale and the tracker's sweep stay stopped.
+     A class with !important outranks `*` with !important. */
+  .spinner {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .rec-dot {
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
   }
 }
 
@@ -349,11 +427,14 @@ a {
    The stagger this used to carry (40/80/120/160ms) cost more than it bought:
    `backwards` pins each child at opacity 0 for the whole delay, so the last
    card sat invisible for 160ms and finished ~580ms in — on data we already
-   had, and again on every remount. `backwards`, not `both`: a lingering
-   transform would make each card the containing block for any position:fixed
-   sheet mounted inside it (DiaryList's save-as-meal sheet lives inside
-   .diary). */
-.shell > * {
+   had. `backwards`, not `both`: a lingering transform would make each card
+   the containing block for any position:fixed sheet mounted inside it
+   (DiaryList's save-as-meal sheet lives inside .diary). The document's first
+   page only: NavTrail marks <html> data-navigated on the first navigation,
+   so a tab switch or drill-in cuts like a native app instead of replaying it.
+   :where() keeps this at one class, so `.brand { animation: none }` still
+   wins and the sticky header never rises. */
+:where(html:not([data-navigated])) .shell > * {
   animation: rise 200ms var(--ease) backwards;
 }
 
@@ -451,20 +532,38 @@ a {
   height: 24px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-/* Quiet one-line states, shared by History and Experiment (which never
-   loads history.css). */
-.hist-error {
-  color: var(--amber);
-  font-size: 0.82rem;
-  margin: 0;
-  text-align: center;
+/* The sticky top bar of a screen with no .brand header (the goal wizard,
+   sign-in and sign-up). Like .brand it carries the status-bar inset itself:
+   the status bar is black-translucent, so a scrolled page has to pass under
+   a blurred band, not straight under the clock. One 44px row under the inset
+   holds the screen's controls; each screen sets the bar's edges against its
+   own padding (.wizard-top, .auth-top). */
+.top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: calc(44px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
 }
 
+/* a back control in the bar (the auth pages): centred in the row, its
+   chevron still pulled into the gutter */
+.top-bar .nav-back {
+  margin: 0 0 0 -12px;
+}
+
+/* Quiet one-line hints, shared by History and Experiment (which never
+   loads history.css). */
 .hhint {
   font-size: 0.78rem;
   color: var(--faint);
@@ -476,10 +575,10 @@ a {
 
 .tracker {
   position: relative;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 18px 18px 20px;
+  padding: 18px var(--card-pad-x) 20px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -590,8 +689,32 @@ a {
   gap: 8px;
 }
 
+/* Sized here, not by the svg's own 84/116: in rem the rings grow with Text
+   Size (layout.tsx), and their text, in viewBox units, grows with them. The
+   cap is what three fit across the card: 100vw - 90px is the row on a phone
+   (shell and card padding, two gaps), split 84:116:84, and 96 / 133 is all
+   the desktop tracker column holds. */
 .donut svg {
   display: block;
+  width: clamp(84px, 5.25rem, min((100vw - 90px) * 84 / 284, 96px));
+  height: auto;
+}
+
+.donut.loud svg {
+  width: clamp(116px, 7.25rem, min((100vw - 90px) * 116 / 284, 133px));
+}
+
+/* 320px phones: 84 + 116 + 84 needs 300px and the card has 246, so the
+   third ring was sliced off. The viewBox scales strokes and text along. */
+@media (max-width: 359px) {
+  .donut svg {
+    width: 66px;
+    height: 66px;
+  }
+  .donut.loud svg {
+    width: 92px;
+    height: 92px;
+  }
 }
 
 .donut .center-num {
@@ -599,18 +722,32 @@ a {
   fill: var(--text);
 }
 
+/* past a carbs or fat target, in the kcal row's overshoot amber (.left.over);
+   protein over its floor keeps the plain figure */
+.donut.over.warn .center-num {
+  fill: var(--amber);
+}
+
 .donut .center-sub {
   fill: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.04em;
 }
 
+/* the 320px rings above draw at 66/84 and 92/116 of their viewBox, which
+   took 11 units down to ~8.6px; 14 units draws at 11px again */
+@media (max-width: 359px) {
+  .donut .center-sub {
+    font-size: 14px;
+  }
+}
+
 .donut .macro-label {
-  font-size: 0.72rem;
+  font-size: var(--micro-size);
   color: var(--muted);
-  letter-spacing: 0.06em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: var(--micro-weight);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -633,6 +770,12 @@ a {
   color: var(--faint);
   text-align: center;
   margin: 0;
+}
+
+/* the link's chevron (icons.tsx), in its colour, on the text's centre */
+.zero-hint .m3-link-btn svg {
+  margin-left: 2px;
+  vertical-align: -0.125em;
 }
 
 /* Not read yet (Tracker with no totals): dashes, bare tracks, and a soft
@@ -668,7 +811,7 @@ a {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 18px;
+  padding: 14px var(--card-pad-x);
   display: flex;
   align-items: center;
   gap: 14px;
@@ -682,7 +825,7 @@ a {
   letter-spacing: 0.12em;
   font-weight: 600;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin: 0 0 4px; /* an h2 */
 }
 
 .weight-main {
@@ -711,12 +854,28 @@ a {
   font-size: 0.78rem;
   color: var(--muted);
   margin-top: 5px;
+  text-wrap: pretty;
 }
 
 .weight-empty {
   font-size: 0.8rem;
   color: var(--faint);
   margin: 0;
+}
+
+/* the empty card's way in: the Agent lane, the one place a weigh-in is
+   logged (§6.4) */
+.weight-log {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
 }
 
 .weight-spark {
@@ -749,13 +908,38 @@ a {
     background 150ms;
 }
 
-.capture input::placeholder {
-  color: var(--faint);
-}
-
 .capture input:focus {
   border-color: var(--accent-line);
   background: var(--surface-3);
+}
+
+/* a search field with its ✕ inside the box (Library, Search foods): empties
+   the query and the results with it */
+.capture-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.capture-field input {
+  padding-right: 46px;
+}
+
+.capture .field-clear {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 44px;
+  height: 44px;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.capture .field-clear svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* the send: a round accent button (form submit) */
@@ -766,7 +950,7 @@ a {
   height: 50px;
   border: none;
   border-radius: 50%;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: 1.15rem;
   font-weight: 700;
@@ -798,6 +982,14 @@ a {
 .send-btn svg {
   width: 20px;
   height: 20px;
+}
+
+/* the spinner's 6px gap is for text beside it; alone in a round button it
+   would sit off-centre (the add-item send too) */
+.capture button .spinner,
+.send-btn .spinner,
+.add-item button .spinner {
+  margin-right: 0;
 }
 
 .capture-error {
@@ -835,10 +1027,25 @@ a {
   height: 44px;
 }
 
+/* 320px phones: the field was down to ~86px of text and cut 'Tell the
+   agent…' mid-word. Tighter edges and gaps give it ~118px. */
+@media (max-width: 359px) {
+  .sheet-foot.chat-foot {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .chat-foot .capture {
+    gap: 6px;
+  }
+  .chat-foot .capture input {
+    padding: 0 10px;
+  }
+}
+
 .capture .mic-btn.rec {
   background: var(--red);
   border-color: var(--red);
-  color: #fff;
+  color: var(--on-danger);
 }
 
 .capture .mic-btn:disabled {
@@ -863,7 +1070,7 @@ a {
   border-radius: 50%;
   border: none;
   background: var(--red);
-  color: #fff;
+  color: var(--on-danger);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -935,15 +1142,17 @@ a {
   font-size: 0.85rem;
 }
 
+/* the secondary pill (.keys-btn's values): 40px, a hairline, .86rem/600 */
 .voice-alt {
   margin-top: 6px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.88rem;
-  font-weight: 550;
-  padding: 10px 18px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -1043,15 +1252,17 @@ a {
   border-left-color: var(--amber);
 }
 
+/* the secondary pill (.keys-btn's values), a step up off the notice */
 .notice-btn {
   flex-shrink: 0;
+  min-height: 40px;
   background: var(--surface-3);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  padding: 7px 14px;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -1071,7 +1282,7 @@ a {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.62);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 40;
@@ -1106,14 +1317,43 @@ a {
   animation: sheet-up 320ms var(--ease);
 }
 
+/* in from the screen's edge, opaque all the way: a fade would show the page
+   through a full-screen sheet (Search) while it rises */
 @keyframes sheet-up {
   from {
-    transform: translateY(40px);
-    opacity: 0;
+    transform: translateY(100%);
   }
+}
+
+/* A closed sheet stays mounted a beat (useSheetPresence.tsx) in a box-less
+   frame marked [data-closing]: it goes back down the way it came, and its
+   scrim fades with it — and so does any sub-sheet still open over it. A
+   pulled sheet already sits at translate 100%, so for it only the scrim
+   moves. */
+.sheet-frame {
+  display: contents;
+}
+
+[data-closing] .sheet,
+[data-closing] .subsheet {
+  animation: sheet-down 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+[data-closing] .sheet-backdrop,
+[data-closing] .subsheet-backdrop,
+[data-closing] .agent-backdrop {
+  animation: fade-out 220ms ease-in forwards;
+}
+
+@keyframes sheet-down {
   to {
-    transform: translateY(0);
-    opacity: 1;
+    transform: translateY(100%);
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
   }
 }
 
@@ -1147,6 +1387,7 @@ a {
 }
 
 .sheet-title {
+  margin: 0; /* an h2: every sheet's title is a heading */
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1.15rem;
@@ -1186,7 +1427,6 @@ a {
   height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.2;
   stroke-linecap: round;
 }
 
@@ -1220,32 +1460,80 @@ a {
   font-size: 0.8rem;
   font-weight: 650;
   cursor: pointer;
-  text-transform: capitalize;
+}
+
+/* It opens the meal picker, and says so: .chev's two-border chevron in the
+   chip's colour, down while closed and up while the picker is open. (Its
+   ::before is the touch area.) */
+.meal-chip::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  vertical-align: middle;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 150ms var(--ease);
+}
+
+.meal-chip[aria-expanded="true"]::after {
+  transform: translateY(1px) rotate(-135deg);
 }
 
 .meal-picker {
-  display: flex;
-  gap: 6px;
   margin-top: 12px;
 }
 
-.meal-picker button {
-  flex: 1;
+/* The one segmented control for a single choice among a few: the meal
+   picker above, History's range, the wizard's units and sex, the API key
+   form. Its selected thumb is the quiet selected state (.quiet-selected). */
+.m3-seg {
+  display: flex;
+  gap: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 8px 0;
-  font-size: 0.8rem;
-  font-weight: 550;
-  color: var(--muted);
-  cursor: pointer;
-  text-transform: capitalize;
+  padding: 4px;
 }
 
-.meal-picker button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+.m3-seg button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  padding: 9px 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 150ms,
+    color 150ms;
+}
+
+/* the meal picker's longest word fills its segment, so a selected
+   "Breakfast" touched both ends of its thumb (the staged row's picker
+   is 26px narrower than the header's). Only this picker: the API key
+   form's "365 days" would wrap. At 320 a larger Text Size grows its
+   labels to 14px and no further, or Snack runs off the track; below 375
+   the padding drops to 4px for the same reason (the row's picker at 360
+   at the 1.3x cap). */
+.meal-picker.m3-seg button {
+  padding-inline: 6px;
+}
+
+@media (max-width: 374px) {
+  .meal-picker.m3-seg button {
+    padding-inline: 4px;
+  }
+}
+
+@media (max-width: 359px) {
+  .meal-picker.m3-seg button {
+    font-size: min(0.84rem, 14px);
+  }
 }
 
 .sheet-body {
@@ -1253,6 +1541,12 @@ a {
   overflow-y: auto;
   padding: 6px 18px;
   overscroll-behavior: contain;
+}
+
+/* the rows are locked while Log is in flight (StagingSheet) — an edit then
+   would be lost; the lock lifts if the commit fails */
+.sheet-body[inert] {
+  opacity: 0.6;
 }
 
 .sheet-foot {
@@ -1264,7 +1558,7 @@ a {
 .commit-btn {
   width: 100%;
   min-height: 54px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border: none;
   border-radius: 16px;
@@ -1280,12 +1574,12 @@ a {
 }
 
 @media (hover: hover) {
-  .commit-btn:hover:not(:disabled) {
+  .commit-btn:hover:not(:disabled, [aria-busy="true"]) {
     filter: brightness(1.05);
   }
 }
 
-.commit-btn:active:not(:disabled) {
+.commit-btn:active:not(:disabled, [aria-busy="true"]) {
   transform: scale(0.985);
 }
 
@@ -1294,6 +1588,22 @@ a {
   color: var(--faint);
   box-shadow: none;
   cursor: default;
+}
+
+/* the same button as a link (the not-found page's way into the app) */
+a.commit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+/* busy is not unavailable: a button doing what was asked keeps its fill,
+   with a .spinner.on-accent ahead of its "…ing" label */
+.commit-btn[aria-busy="true"] {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  cursor: progress;
 }
 
 .sheet-error {
@@ -1328,13 +1638,25 @@ a {
 
 /* The name wraps (owner feedback, 2026-09-06 — a scanned carton's full label
    used to vanish under the kcal figure behind an ellipsis); overflow-wrap
-   keeps one unbroken token from pushing the kcal column out. */
+   keeps one unbroken token from pushing the kcal column out. A flex row,
+   so a badge that wraps starts flush with the name rather than indented. */
 .row-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 4px;
   font-size: 0.98rem;
   font-weight: 600;
   line-height: 1.25;
   overflow-wrap: anywhere;
   letter-spacing: -0.01em;
+}
+
+/* the row's column-gap spaces these now */
+.row-name .badge,
+.row-name .spinner {
+  margin: 0;
 }
 
 .row-sub {
@@ -1355,14 +1677,45 @@ a {
   gap: 3px;
 }
 
+/* the row's expander for keyboard and VoiceOver: a button drawn as the
+   figure it always was. Longhands, not `font: inherit`, which would also
+   undo .num's tabular figures on the same element. */
+button.row-kcal {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
 .row-kcal .n {
   font-size: 1.3rem;
 }
 
 .row-kcal .u {
-  font-size: 0.68rem;
-  color: var(--faint);
+  font-size: var(--micro-size);
+  color: var(--muted);
   letter-spacing: 0.04em;
+}
+
+/* the diary row's chevron rides inside its expander (the kcal button), to
+   turn with that button's aria-expanded: centred and spaced as it was when
+   it sat beside the figure in .row-main (3px gap + 9 = the row's 12) */
+.row-kcal .chev {
+  align-self: center;
+  margin-left: 9px;
+}
+
+/* no macros yet (searching) or none to have (not found, a numberless
+   estimate): body font, normal weight, faint */
+.row-kcal.empty .n {
+  font-family: var(--font);
+  font-weight: 400;
+  font-size: 1rem;
+  color: var(--faint);
 }
 
 .row-remove {
@@ -1387,23 +1740,60 @@ a {
 @media (hover: hover) {
   .row-remove:hover {
     color: var(--red);
-    background: rgba(242, 107, 107, 0.12);
+    background: var(--red-soft);
   }
+}
+
+/* A removed row inside its Undo window (§7.1): one quiet line where the row
+   was, until the window closes or Undo brings the row back. */
+.row.row-removed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.row-removed-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-undo {
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.row-undo:disabled {
+  color: var(--faint);
+  cursor: default;
 }
 
 .row.searching .row-name {
   color: var(--muted);
 }
 
+/* not found needs the user's tap, so it must not read as disabled */
 .row.not-found .row-name {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .badge {
   display: inline-block;
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   border-radius: 6px;
   padding: 3px 6px;
@@ -1411,41 +1801,62 @@ a {
   vertical-align: 2px;
 }
 
-.badge.searching {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.badge.not-found {
-  background: var(--surface-3);
-  color: var(--faint);
-}
-
-.badge.needs-input {
-  background: rgba(232, 196, 104, 0.16);
-  color: var(--amber);
-}
-
 /* §3.4a web-transcribed food: distinct badge + the citation as a visible,
    clickable link (OpenAI usage-terms requirement, not taste) */
 .badge.web {
-  background: rgba(108, 196, 221, 0.14);
-  color: #8fd0e6;
+  background: var(--web-soft);
+  color: var(--web);
 }
 
+/* The padding stands in for the old 4px top margin, and the -23px bottom
+   margin cancels the rest, so the line sits where it did. It is there for
+   the link's hit area, which overflow (the ellipsis) clips to this box: 4px
+   up, never into the row above, and 23px down, for 44px in all. Down it
+   crosses only what takes no taps: the row's bottom padding and the next
+   row's top (a row's toggle, .row-main, sits inside it), an expanded diary
+   row's macro figures, a card's foot. A closed diary row, whose padding is
+   its toggle's, stops it at 14px (diary.css), and a line with taps of its
+   own under it stops it sooner (below). */
 .web-cite {
   font-size: 0.78rem;
   color: var(--muted);
-  margin: 4px 0 0;
+  margin: 0 0 -23px;
+  padding: 4px 0 23px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* ...but a line with another under it (FoodDetail's "Cited:" list) stops
+   at 8px: 23px would carry its link over the next line's "Cited:" and the
+   blank beside a shorter link. So does one over a staged row's question
+   or chips row, which starts 8px down: 23px took the question, "Cooked or
+   raw?" and the gaps between the chips. */
+.web-cite:has(+ .web-cite, + .question-text, + .chips) {
+  margin-bottom: -8px;
+  padding-bottom: 8px;
+}
+
+/* ...and one over a staged row's estimate note at its 4px margin: the note
+   ("… — check it.") reads as something to tap, and deeper the tap would
+   open the source in another tab. */
+.web-cite:has(+ .estimate-note) {
+  margin-bottom: -4px;
+  padding-bottom: 4px;
+}
+
+/* Visible and clickable is the requirement, hyperlink blue isn't: a quiet
+   sage link like the portion pill, and ↗ says it leaves the app. The second
+   `content` keeps the arrow out of the link's spoken name where supported. */
 .web-cite a {
-  color: #8fd0e6;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  color: var(--sage);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.web-cite a::after {
+  content: " \2197";
+  content: " \2197" / "";
 }
 
 .spinner {
@@ -1458,6 +1869,13 @@ a {
   animation: spin 0.8s linear infinite;
   vertical-align: -1px;
   margin-right: 6px;
+}
+
+/* on an accent fill (a busy Log / Save / Sign in), where the accent arc
+   would vanish */
+.spinner.on-accent {
+  border-color: color-mix(in srgb, var(--on-accent) 25%, transparent);
+  border-top-color: var(--on-accent);
 }
 
 @keyframes spin {
@@ -1475,10 +1893,15 @@ a {
   margin-top: 8px;
 }
 
+/* Alternates and aliases are food names, some FDC-length, so a chip wraps:
+   a fixed radius of half its one-line height (as .portion-btn), left-aligned
+   — a capsule on one line, a rounded rectangle on two, not a centred lozenge. */
 .chip {
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 16px;
+  max-width: 100%;
+  text-align: left;
   padding: 6px 12px;
   font-size: 0.8rem;
   font-weight: 500;
@@ -1502,7 +1925,8 @@ a {
   cursor: default;
 }
 
-.chip .usual-dot {
+.chip .usual-dot,
+.m3-note .usual-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
@@ -1512,15 +1936,9 @@ a {
   vertical-align: 1px;
 }
 
+/* its colours are the quiet selected state's (.quiet-selected, at the end) */
 .chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
   font-weight: 600;
-}
-
-.chip.active .usual-dot {
-  background: var(--on-accent);
 }
 
 /* §3.3 rule 3 "search instead" affordance (BACKLOG 32) */
@@ -1541,6 +1959,11 @@ a {
   align-self: center;
 }
 
+/* "Or:" before a row's other matches: a label, not a question waiting */
+.state-q.neutral {
+  color: var(--muted);
+}
+
 /* The portion is a tap target (§7.1 portion sheet) — and has to look like
    one. As an underlined 0.8rem label it read as a stated fact, not a
    control: a scanned or searched food defaults to qty 1, which renders as a
@@ -1554,19 +1977,27 @@ a {
   gap: 5px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  /* A pill whose text can wrap takes a fixed radius of half its one-line
+     height, not 999px: a capsule on one line, a rounded rectangle on two. */
+  border-radius: 13px;
   padding: 4px 9px;
+  text-align: left;
   font-size: 0.78rem;
   color: var(--sage);
   cursor: pointer;
   vertical-align: middle;
 }
 
+/* .chev's two-border chevron, not a '›' from whichever font has it */
 .portion-btn::after {
-  content: "›";
-  font-size: 0.95rem;
-  line-height: 1;
-  color: var(--faint);
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 2px;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(-45deg);
 }
 
 @media (hover: hover) {
@@ -1581,17 +2012,18 @@ a {
 }
 
 .portion-btn.verify::after {
-  color: var(--amber);
+  border-color: var(--amber);
 }
 
-.manual-hint {
-  color: var(--sage);
-  text-decoration: underline;
-  text-decoration-color: var(--faint);
-  text-underline-offset: 3px;
+/* after "Not found", the .chips gap rather than a bare space (a pill that
+   starts the sub-line needs none, so this is not on every .portion-btn) */
+.row-sub .nf-search {
+  margin-left: 6px;
 }
 
-/* tappable food name → §7.1 edit sheet (BACKLOG 23) */
+/* tappable food name → §7.1 edit sheet (BACKLOG 23). Its cue is a small
+   trailing pencil (owner, 2026-10-13): the dotted underline it replaces read
+   as a web link, under every name in the list. */
 
 .name-btn {
   background: none;
@@ -1601,18 +2033,19 @@ a {
   color: inherit;
   text-align: left; /* a wrapped name's lines start flush, not centred (button UA default) */
   cursor: pointer;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: var(--faint);
-  text-underline-offset: 3px;
 }
 
-/* A cached food's display name is stored lowercase (the adapters' trigram
-   target — "fairlife 2% reduced fat ultra-filtered milk"); it reads as a
-   title wherever it is shown (owner feedback, 2026-09-06). Applied to names
-   only, never to a raw provider description or a UI label. */
-.food-name {
-  text-transform: capitalize;
+.name-btn .name-edit {
+  width: 0.8em;
+  height: 0.8em;
+  margin-left: 0.35em;
+  vertical-align: -0.05em;
+  color: var(--faint);
+}
+
+/* the name's last character and the pencil: they wrap as one */
+.name-btn .name-tail {
+  white-space: nowrap;
 }
 
 /* expanded stats */
@@ -1624,6 +2057,11 @@ a {
   border-radius: var(--radius-sm);
   padding: 12px;
   animation: rise 220ms var(--ease);
+}
+
+/* a diary row restored open (DiaryEntryRow) cuts in with its page */
+.row-detail.settled {
+  animation: none;
 }
 
 .macro-grid {
@@ -1649,10 +2087,10 @@ a {
 }
 
 .macro-cell .k {
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   margin-top: 2px;
 }
 
@@ -1672,12 +2110,29 @@ a {
   color: var(--muted);
 }
 
+/* A flex row, so a source badge that wraps under the portion pill starts
+   flush with "Portion:" (the gap spaces the label, pill, grams and badge) */
 .detail-serving {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 4px;
   font-size: 0.8rem;
   color: var(--muted);
   border-top: 1px solid var(--line);
   margin-top: 10px;
   padding-top: 8px;
+}
+
+/* the gap spaces it, and a plain (unfilled) badge's side padding would
+   indent its text when it wraps; the filled web badge keeps its padding */
+.detail-serving .badge {
+  margin: 0;
+}
+
+.detail-serving .badge:not(.web) {
+  padding-inline: 0;
 }
 
 .detail-meal {
@@ -1686,15 +2141,39 @@ a {
   padding-top: 8px;
 }
 
-.detail-meal > .k {
-  font-size: 0.66rem;
+/* a panel section's label: either row's "Meal" and "Nutrients" */
+.detail-meal > .k,
+.micro-list > .k {
+  font-size: var(--micro-size);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
 }
 
-.detail-meal .chips {
+/* .m3-seg's --surface-2 track would vanish into the expanded row's own
+   --surface-2: a step up, as the diary's pills take */
+.detail-meal .meal-picker {
   margin-top: 6px;
+  background: var(--surface-3);
+}
+
+/* every staged row removed: say so, over the add field */
+.stage-empty {
+  text-align: center;
+  padding: 32px 12px 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.stage-empty p {
+  margin: 0;
+}
+
+.stage-empty .stage-empty-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 
 /* ---------- add-item field (§7.1) ---------- */
@@ -1709,26 +2188,28 @@ a {
 .add-item input {
   flex: 1;
   min-width: 0;
-  height: 44px;
+  height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--field-radius);
   padding: 0 14px;
   font-size: 1rem;
   outline: none;
-}
-
-.add-item input::placeholder {
-  color: var(--faint);
 }
 
 .add-item input:focus {
   border-color: var(--accent-line);
 }
 
+/* docked, the field sits on the tray's --surface-2: a step down to the
+   sheet's own surface keeps it from vanishing into the tray */
+.split-sheet > .stage-pane .add-item input {
+  background: var(--surface);
+}
+
 .add-item button {
-  width: 44px;
-  height: 44px;
+  width: var(--field-h); /* the field's height, like .capture's 50/50 */
+  height: var(--field-h);
   flex-shrink: 0;
   background: var(--surface-3);
   border: 1px solid var(--line);
@@ -1746,12 +2227,24 @@ a {
   cursor: default;
 }
 
+/* with text to send it lights up like every other composer's send */
+.add-item button:not(:disabled) {
+  background: var(--accent-fill);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.add-item button svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* ---------- sub-sheets over the staging sheet (portion, manual search) ---- */
 
 .subsheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.6);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 60;
@@ -1803,10 +2296,47 @@ a {
   margin-top: -8px;
 }
 
+/* The head's mirror at the bottom: Save (Done, Create) and any danger line
+   under it, pinned while the body scrolls, so a long sheet opens with its
+   action in view. It reaches both side edges and carries the sheet's bottom
+   padding, safe area included, so it sits flush on the edge however a
+   browser places a sticky box in a scroller's padding; rows dissolve into
+   it through the fade above rather than end on a cut. */
+.subsheet-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 -18px;
+  padding: 10px 18px calc(18px + env(safe-area-inset-bottom));
+  background: var(--surface);
+}
+
+/* the sheet's 14px gap high, so at rest it lies over the gap and nothing
+   else */
+.subsheet-foot::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 14px;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
+}
+
+.subsheet:has(.subsheet-foot) {
+  padding-bottom: 0;
+}
+
 .subsheet-title {
+  margin: 0; /* an h2: every sheet's title is a heading */
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: 1.2rem;
+  font-size: 1.15rem; /* .sheet-title's: one title size for every sheet */
   letter-spacing: -0.02em;
   line-height: 1.2;
 }
@@ -1857,37 +2387,121 @@ a {
   border-color: var(--accent-line);
 }
 
+/* what the portion sheet's number counts: "× 1 slice (32 g) = 64 g" */
+.portion-caption {
+  margin: -6px 0 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* One grouped list, like the diary's: the choices share a surface split by
+   hairlines, and the pick carries a trailing check rather than a fill.
+   :first-/:last-of-type round the buttons only, so a hint line in the list
+   stays outside the box. */
 .serving-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
 .serving-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px; /* a finger-sized pick, the diary row's portion sheet too */
   text-align: left;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   padding: 12px 14px;
   font-size: 0.9rem;
-  color: var(--muted);
+  color: var(--text);
   cursor: pointer;
 }
 
-.serving-list button.active {
-  border-color: var(--accent-line);
-  color: var(--text);
-  background: var(--accent-soft);
+.serving-list button:first-of-type {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.serving-list button:last-of-type {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.serving-list button svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.serving-list button + .subsheet-hint {
+  margin-top: 8px;
+}
+
+/* A serving the §4 guard would refuse (a diary row's partial macros):
+   offered, so the list is the food's real one, but visibly not pickable. */
+.serving-list button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* an on/off setting (role="switch", aria-checked): a 51 × 31 track that
+   turns accent when on, the knob sliding across. Drawn at 31px tall, it
+   takes taps over 44. The phrase sheet's pin is the first. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 51px;
+  height: 31px;
+  padding: 0;
+  border: none;
+  border-radius: 16px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  cursor: pointer;
+  transition: background 160ms var(--ease);
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 160ms var(--ease);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.switch[aria-checked="true"]::after {
+  transform: translateX(20px);
 }
 
 /* food edit sheet (§7.1 food bullet, BACKLOG 23) */
 
 .edit-label {
-  font-size: 0.68rem;
-  font-weight: 600;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--micro-track);
   margin-bottom: 6px;
 }
 
@@ -1896,19 +2510,20 @@ a {
   margin-left: 4px;
 }
 
-.chip.active .alias-count {
-  color: var(--on-accent);
-  opacity: 0.7;
-}
-
+/* a row that opens the search sheet, not a second empty field */
 .edit-manual-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
   text-align: left;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 12px 14px;
   font-size: 0.9rem;
-  color: var(--sage);
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -1917,20 +2532,44 @@ a {
   cursor: default;
 }
 
-/* manual search results (BACKLOG 3 — deliberately boring) */
+/* every staged row removed: Discard stands where Log did, at Log's size, so
+   the foot doesn't jump — a full-width band, or the lip's pill */
+.sheet-foot .edit-manual-btn {
+  width: 100%;
+  min-height: 54px;
+  justify-content: center;
+  text-align: center;
+}
+
+.stage-lip .edit-manual-btn {
+  width: auto;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+}
+
+/* manual search results (BACKLOG 3 — deliberately boring): one grouped
+   list, like .serving-list — hairlines between hits, the heading and the
+   empty line outside the box */
 
 .search-results {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   min-height: 60px;
+}
+
+/* the 60px holds room for a list landing — a lone "No matches" needs none */
+.search-results:has(> .subsheet-hint:only-child) {
+  min-height: 0;
 }
 
 .search-results button {
   text-align: left;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   padding: 11px 14px;
   cursor: pointer;
   display: flex;
@@ -1938,15 +2577,65 @@ a {
   gap: 2px;
 }
 
+.search-results button:first-of-type {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.search-results button:last-of-type {
+  border-bottom: none;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
 @media (hover: hover) {
-  .search-results button:hover {
-    border-color: var(--line-strong);
+  .search-results button:hover:not(:disabled) {
+    background: var(--surface-3);
   }
 }
 
+/* while a pick runs the other rows stay readable but inert; the tapped one
+   is outlined and carries a spinner at its right edge */
 .search-results button:disabled {
-  opacity: 0.5;
   cursor: default;
+}
+
+/* the food the row is on now (the edit sheet's "Foods you've used for this"):
+   a trailing check, as .serving-list marks its pick, rather than a fill. The
+   rows stack name over sub, so the check is positioned. */
+.search-results button.active {
+  position: relative;
+  padding-right: 40px;
+}
+
+.search-results button.active > svg {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 18px;
+  height: 18px;
+}
+
+/* after a demo 429 on a pick: every row would meet it again (the notice
+   above says why), so they read as off, not just busy */
+.search-results button.refused {
+  opacity: 0.5;
+}
+
+/* an inset ring, not a border colour: the grouped rows have only a
+   bottom hairline, which alone would not outline the row */
+.search-results button[aria-busy="true"] {
+  position: relative;
+  padding-right: 40px;
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.search-results button > .spinner {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  margin: -6px 0 0;
 }
 
 .search-results .result-name {
@@ -1959,6 +2648,49 @@ a {
   color: var(--muted);
 }
 
+/* the loading rows (ManualSearchSheet's Skeleton) take the list's shape:
+   joined, hairlines between, the corners on the stack — its first child
+   is the screen reader's "Loading…", not a block */
+.search-results .skeleton-stack {
+  gap: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.search-results .skeleton {
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.search-results .skeleton:last-child {
+  border-bottom: none;
+}
+
+/* Library's search opens a result's food detail, where the +'s Search
+   stages a log: its rows carry a trailing drill-in chevron (drawn as .chev
+   is) so the two read differently */
+.lib-search .search-results button {
+  position: relative;
+  padding-right: 36px;
+}
+
+.lib-search .search-results button::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 4px);
+  right: 16px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(-45deg);
+}
+
+/* the hit being opened: its spinner stands where the chevron was */
+.lib-search .search-results button[aria-busy="true"]::after {
+  content: none;
+}
+
 /* the "Previously added" heading over the recent-foods list */
 .search-label {
   font-size: 0.7rem;
@@ -1966,10 +2698,10 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--muted);
-  margin: 2px 2px 0;
+  margin: 2px 2px 8px;
 }
 
-/* Find a food (the sub-sheet a staged row opens): the field stays under the
+/* Search (the sub-sheet a staged row opens): the field stays under the
    head and only the results scroll, so a long list can't carry the search
    away. The list takes the sheet's bottom padding, so rows still run to the
    edge, and 4px round its rows, so a focus ring isn't clipped. */
@@ -1986,14 +2718,17 @@ a {
 
 /* The + sheet's Search lane (owner ruling, 2026-09-06): the whole screen,
    not a 78dvh sub-sheet — a list you scroll with the keyboard up. Same
-   .sheet chrome as staging; the body keeps the sub-sheet's column rhythm. */
-.sheet.search-sheet {
+   .sheet chrome as staging; the body keeps the sub-sheet's column rhythm.
+   The Scan barcode lane is the whole screen too (below). */
+.sheet.search-sheet,
+.sheet.scan-sheet {
   height: var(--vvh, 100dvh);
   border: none;
   border-radius: 0;
 }
 
-.search-sheet .sheet-head {
+.search-sheet .sheet-head,
+.scan-sheet .sheet-head {
   padding-top: calc(14px + env(safe-area-inset-top));
 }
 
@@ -2005,13 +2740,27 @@ a {
   padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
-/* barcode scanner (the + sheet's Scan barcode lane) */
+/* barcode scanner (the + sheet's Scan barcode lane): the camera is the whole
+   sheet, as a native scanner's is, and the head and a panel of everything
+   else float over the picture */
+
+.sheet.scan-sheet {
+  background: #000;
+  overflow: hidden; /* the desktop modal's corners clip the picture */
+}
+
+.scan-sheet .sheet-head {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
 
 .scan-view {
-  position: relative;
-  aspect-ratio: 4 / 3;
+  position: absolute;
+  inset: 0;
   background: #000;
-  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -2022,9 +2771,26 @@ a {
   display: block;
 }
 
+/* The band between the head and the panel (BarcodeScanner): the aiming box
+   centres in the picture left showing, not on the whole sheet, so a panel
+   grown by a miss — or a short landscape screen — never covers it. After
+   .scan-view and positioned, so it paints over the video; no z-index, so
+   the head and panel still paint over its dim. */
+.scan-aim {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  container-type: size;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* a fixed-shape box in the middle of the band: a share of a tall portrait
+   screen would be a tower no barcode fills; the band's height caps it too */
 .scan-frame {
-  position: absolute;
-  inset: 26% 12%;
+  width: min(78%, 340px, (100cqh - 24px) * 1.5);
+  aspect-ratio: 3 / 2;
   border: 2px solid var(--accent);
   border-radius: 10px;
   opacity: 0.85;
@@ -2032,22 +2798,43 @@ a {
   box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
 }
 
+/* a band too short to aim in (a small phone's keyboard up after a miss):
+   no box at all, not one collapsed to an orange dot */
+@container (max-height: 64px) {
+  .scan-frame {
+    display: none;
+  }
+}
+
+/* a 44px round icon button over the video; aria-pressed says on or off */
 .scan-torch {
   position: absolute;
   right: 10px;
   bottom: 10px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
   background: rgba(17, 17, 19, 0.75);
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: 50%;
   color: var(--sage);
-  font-size: 0.78rem;
-  padding: 6px 12px;
   cursor: pointer;
 }
 
 .scan-torch.on {
   color: var(--amber);
   border-color: var(--amber);
+}
+
+/* over the full-screen camera: on the right, under the head, and over the
+   aiming box's dim (.scan-aim paints after the video) */
+.scan-sheet .scan-torch {
+  top: calc(72px + env(safe-area-inset-top));
+  right: 14px;
+  bottom: auto;
+  z-index: 1;
 }
 
 /* covers the camera from the read until the lookup settles; a miss lifts it */
@@ -2069,6 +2856,12 @@ a {
   visibility: hidden;
 }
 
+/* under the cover with the picture, as before .scan-aim raised it (the
+   aiming box is gone while the cover is up) */
+.scan-view.busy .scan-torch {
+  z-index: auto;
+}
+
 .scan-loading .spinner {
   width: 32px;
   height: 32px;
@@ -2082,7 +2875,69 @@ a {
   margin: 0;
 }
 
+/* a code neither database knows: an ordinary outcome, not an error — said
+   plainly, where we looked under it, and search as a full-width way on */
+.scan-miss {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scan-miss-title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.scan-miss .edit-manual-btn {
+  margin-top: 10px;
+  justify-content: center;
+  text-align: center;
+}
+
+/* Everything but the camera, along the bottom over the picture (.scan-aim
+   takes the room above it): a miss or a notice grows it upward, the picture
+   stays where it was and the aiming box re-centres above it. The sheet
+   rides --kb and --vvh, so this sits on the keyboard while a number is
+   typed. */
+.scan-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px calc(18px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+  border-top: 1px solid var(--line-strong);
+}
+
+/* No camera (denied, unavailable): no picture to float over, and a black
+   screen would read as one still loading. The sheet's own ground, and the
+   panel under the head as the Search lane's body is (no .scan-aim). */
+.sheet.scan-sheet.no-camera {
+  background: var(--surface);
+}
+
+.scan-sheet.no-camera .scan-panel {
+  border-top: 0;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 /* ---------- undo toast (BACKLOG 11) + pending badge (BACKLOG 12) ---------- */
+
+/* A page's one live region for its toasts (Today, Settings, the diary's
+   saved-meal note). Out of flow, so it adds no .shell gap or grid slot; no
+   z-index, so no stacking context: each fixed toast keeps its own place and
+   layer. No .shell rise either: its transform would hold the fixed toasts
+   for 200ms, and each toast rises on its own. */
+.toast-host {
+  position: absolute;
+  animation: none;
+}
 
 .toast {
   position: fixed;
@@ -2096,7 +2951,7 @@ a {
      like "Logged 960 kcal to Lunch" wrapped in the pill. */
   width: max-content;
   max-width: calc(100% - 32px);
-  background: #26262d;
+  background: var(--toast-bg);
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   padding: 10px 10px 10px 18px;
@@ -2143,18 +2998,28 @@ a {
   gap: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  /* half the one-line height (~38px), not 999px: a spoken phrase wraps the
+     pill, and the stack keeps one shape — capsules, rounded rectangles */
+  border-radius: 19px;
   padding: 9px 14px;
   font-size: 0.82rem;
   color: var(--muted);
 }
 
+/* the ✕ stays top-right of a wrapped phrase, not mid-edge */
 .pending-pill.failed {
   color: var(--amber);
   justify-content: space-between;
+  align-items: flex-start;
+}
+
+.pending-pill.failed > span {
+  flex: 1;
+  min-width: 0;
 }
 
 .pending-pill.failed button {
+  display: inline-flex;
   background: none;
   border: none;
   color: var(--faint);
@@ -2162,12 +3027,40 @@ a {
   padding: 2px 6px;
 }
 
-/* the demo strip under the Today header */
+/* the way out of the miss: search for the food, on the same log */
+.pending-pill.failed .pending-find {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: inherit;
+  font-weight: 600;
+}
+
+/* the demo strip under the Today header. It arrives when /api/me answers,
+   after Today has painted, so it grows into place (closing the .shell gap
+   too) rather than shoving the tracker down in one frame. */
 .pending-pill.demo-banner {
   border-radius: var(--radius-sm);
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--text);
+  /* clips the text while it grows; the ✕'s 44px tap area (8px over its
+     28px) still fits inside the 9px padding */
+  overflow: hidden;
+  animation: banner-in 220ms var(--ease);
+}
+
+/* max-height can't animate to `none`, so it ends at a cap above the strip's
+   two-line height */
+@keyframes banner-in {
+  from {
+    max-height: 0;
+    padding-block: 0;
+    opacity: 0;
+    margin-bottom: -18px; /* the .shell gap */
+  }
+  to {
+    max-height: 80px;
+  }
 }
 
 .pending-pill.demo-banner .sheet-close {
@@ -2179,12 +3072,20 @@ a {
 
 /* ---------- auth ---------- */
 
+/* a column: the sticky top bar (which takes the top inset), then the card,
+   centred in what is left by its auto margins */
 .auth-wrap {
   min-height: 100dvh;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+  padding: 0 20px calc(24px + env(safe-area-inset-bottom));
+}
+
+.auth-top {
+  align-self: stretch;
+  margin: 0 -20px;
+  padding-inline: 20px;
 }
 
 .auth-card {
@@ -2199,6 +3100,42 @@ a {
   gap: 14px;
   box-shadow: var(--shadow-card);
   animation: rise 420ms var(--ease);
+  margin-block: auto;
+}
+
+/* a phone gets an app screen, not a web-login card floating in black: the
+   fields sit on the ground, high and clear of the keyboard, under the mark;
+   the desktop keeps the card */
+@media (max-width: 899px) {
+  /* top-aligned 12px under the back bar (44px + the inset), so 56px + the
+     inset from the top; only the bottom margin stays auto. Not align-items:
+     in the column that would push the card left, not up. */
+  .auth-card {
+    margin-top: 12px;
+    background: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+}
+
+/* the app icon's mark (TallyMark): landing.css colours it there, and the
+   auth pages don't load landing.css */
+.auth-mark {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+}
+
+.auth-mark rect {
+  fill: var(--accent);
+}
+
+.auth-mark path {
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 .auth-card h1 {
@@ -2217,19 +3154,28 @@ a {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   color: var(--muted);
 }
 
+/* a field's hint under its input ("At least 8 characters"), in sentence case */
+.auth-card label .subsheet-hint {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
 .auth-card input {
+  height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 13px 14px;
+  border-radius: var(--field-radius);
+  padding: 0 14px;
   font-size: 1rem;
+  color: var(--text); /* not the label's --muted: typed text isn't a placeholder */
   outline: none;
   transition: border-color 150ms;
 }
@@ -2238,8 +3184,31 @@ a {
   border-color: var(--accent-line);
 }
 
+/* the emailed code: six digits, read and checked at a glance */
+.auth-card input.auth-otp {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+
+/* under the sign-in password; on touch the hit area is 44px (above), in
+   the card's gaps, clear of the field and the button */
+.auth-forgot {
+  align-self: flex-end;
+  color: var(--mint);
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+/* the field the error line is about; after :focus, which it is moved to */
+.auth-card input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
 .auth-card button[type="submit"] {
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border: none;
   border-radius: 14px;
@@ -2256,10 +3225,18 @@ a {
   cursor: default;
 }
 
+.auth-card button[type="submit"][aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
 .auth-error {
   color: var(--red);
   font-size: 0.85rem;
   margin: 0;
+  /* rendered empty until there is an error: one line (the body's 1.4
+     line-height) is held, so the centred card doesn't jump when one arrives */
+  min-height: 1.4em;
 }
 
 .auth-alt {
@@ -2275,16 +3252,54 @@ a {
   font-weight: 600;
 }
 
+/* sign-up's terms line: quieter than the sign-in link under it */
+.auth-legal {
+  font-size: 0.78rem;
+}
+
+/* a link wraps whole: "Privacy Policy" split over two lines reads as two */
+.auth-legal a {
+  color: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
 /* the "send a new code" button on the verify step: a link, not a second CTA */
 .auth-card button.auth-linkish {
   background: none;
   color: var(--mint);
   padding: 0;
   margin-top: 0;
-  min-height: 0;
+  /* a full finger's height; the text stays a line */
+  min-height: 44px;
   box-shadow: none;
   font-size: 0.82rem;
   font-weight: 500;
+}
+
+/* ---------- short landscape ----------
+   A phone on its side (~390px tall). iOS home-screen apps rotate whatever
+   the manifest's portrait lock says, and the sticky header plus the tab bar
+   left ~200px of content. A cheap guard, not a landscape design (owner's
+   choice, 2026-10-13): the header — .brand, or the wizard's and auth's
+   .top-bar — scrolls away with the page (relative, so .brand's ::after
+   hairline stays put), and sheets take the full height. The
+   tab bar's half is in m3.css. From 900px the rail and modals apply. */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 899px) {
+  .brand,
+  .top-bar {
+    position: relative;
+  }
+
+  .sheet {
+    height: var(--vvh, 100dvh);
+    border-radius: 0;
+  }
+
+  .subsheet {
+    max-height: min(94dvh, calc(var(--vvh, 100dvh) - 8px));
+  }
 }
 
 /* ---------- desktop ----------
@@ -2310,6 +3325,13 @@ a {
   to {
     transform: translate(-50%, -50%);
     opacity: 1;
+  }
+}
+
+@keyframes modal-out {
+  to {
+    transform: translate(-50%, -47%);
+    opacity: 0;
   }
 }
 
@@ -2372,6 +3394,12 @@ a {
     animation: modal-in 220ms ease-out;
   }
 
+  /* a closing modal fades as it drops back the 3% it rose */
+  [data-closing] .sheet,
+  [data-closing] .subsheet {
+    animation: modal-out 220ms ease-in forwards;
+  }
+
   .sheet {
     width: min(600px, calc(100vw - 48px));
     height: min(86dvh, 860px);
@@ -2388,6 +3416,11 @@ a {
     padding: 22px 22px 6px;
   }
 
+  .subsheet-foot {
+    margin: 0 -22px;
+    padding: 10px 22px 22px;
+  }
+
   .grabber {
     display: none;
   }
@@ -2400,14 +3433,17 @@ a {
     padding-bottom: 14px;
   }
 
-  /* the Search lane is a centered modal here, like every other sheet */
-  .sheet.search-sheet {
+  /* the Search and Scan barcode lanes are centered modals here, like every
+     other sheet */
+  .sheet.search-sheet,
+  .sheet.scan-sheet {
     height: min(86dvh, 860px);
     border: 1px solid var(--line);
     border-radius: 20px;
   }
 
-  .search-sheet .sheet-head {
+  .search-sheet .sheet-head,
+  .scan-sheet .sheet-head {
     padding-top: 16px;
   }
 
@@ -2433,6 +3469,7 @@ a {
 
   .shell.today > .brand,
   .shell.today > .demo-banner,
+  .shell.today > .offline-note,
   .shell.day > .brand {
     grid-column: 1 / -1;
   }
@@ -2463,7 +3500,7 @@ a {
 .agent-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 9, 0.6);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   z-index: 34;
@@ -2494,14 +3531,16 @@ a {
   overflow: hidden; /* the rounded top clips the panes' own edges */
 }
 
-/* the lane's one header: a grabber, a title, and — only while nothing is
-   staged — the ✕. Staged, the tray carries the ✕ that means anything. */
+/* the lane's one header: a grabber, a title and the ✕, which closes the lane
+   staged or not — staged, through the tray's own close first (§7.1). Staged,
+   the title steps back to a slim label; with nothing staged it is a sheet
+   title like any other. */
 .split-head {
   padding: 8px 18px 10px;
   border-bottom: none;
 }
 
-.split-head .sheet-title {
+.split-sheet[data-staged] .split-head .sheet-title {
   color: var(--muted);
   font-size: 0.9rem;
 }
@@ -2551,7 +3590,7 @@ a {
 }
 
 /* The lip: the batch's three controls on one row along the tray's bottom —
-   discard, the meal, and Commit. Commit is a PILL here, not the full-width
+   discard, the meal, and Log. Log is a PILL here, not the full-width
    band it is when the staging sheet stands alone: there it ends the flow, here
    the conversation carries on underneath it, and a band of apricot across the
    middle of the sheet spends the accent on the wrong thing. */
@@ -2567,7 +3606,8 @@ a {
   gap: 8px;
 }
 
-/* the discard ✕ is the quiet one on this row — it undoes, and it is undoable */
+/* the discard is the quiet one on this row — it undoes, and it is undoable.
+   A trash glyph, never a second ✕ under the lane's. */
 .stage-lip .sheet-close {
   width: 30px;
   height: 30px;
@@ -2575,7 +3615,10 @@ a {
   color: var(--faint);
 }
 
+/* beside the discard, Log pushed right: .meal-chip's own margin-left:auto
+   (the header's) left it centred between the two */
 .stage-lip .meal-chip {
+  margin-left: 0;
   margin-right: auto;
 }
 
@@ -2584,7 +3627,7 @@ a {
   padding: 0 16px;
   border: none;
   border-radius: 999px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-family: inherit;
   font-size: 0.94rem;
@@ -2608,6 +3651,12 @@ a {
   background: var(--surface-3);
   color: var(--faint);
   cursor: default;
+}
+
+.commit-pill[aria-busy="true"] {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  cursor: progress;
 }
 
 /* The tray's edge, not a divider component: no fill and no rules of its own,
@@ -2649,6 +3698,23 @@ a {
   outline: none;
 }
 
+/* 26px to the eye, 44 to a finger (the touch baseline's hit area): a tap
+   cycles the stops, so a near miss must not land in the chat. The z-index
+   keeps the chat pane, later in the page, from painting over the lower half
+   of the grown area. */
+@media (pointer: coarse) {
+  .split-divider {
+    position: relative;
+    z-index: 1;
+  }
+
+  .split-divider::before {
+    content: "";
+    position: absolute;
+    inset: -9px 0;
+  }
+}
+
 /* The two end stops are about chrome, not proportion: `peek` is the tray's
    lip alone, `full` is the composer. Pixels, not a fraction — so the settled
    state says which pane's body goes, and the fraction only drives the drag. */
@@ -2674,7 +3740,8 @@ a {
   flex: 0 0 auto;
 }
 
-.split-sheet[data-snap="full"] > .chat-pane > .chat-body {
+.split-sheet[data-snap="full"] > .chat-pane > .chat-body,
+.split-sheet[data-snap="full"] .chat-jump {
   display: none;
 }
 
@@ -2695,44 +3762,9 @@ a {
 }
 
 /* the safe-area inset belongs to the composer at the true bottom of the
-   sheet, not to the Commit button sitting in the middle of it */
+   sheet, not to the Log button sitting in the middle of it */
 .split-sheet > .stage-pane > .sheet-foot {
   padding-bottom: 12px;
-}
-
-.split-divider {
-  flex: none;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-  cursor: row-resize;
-  touch-action: none; /* the drag is the divider's, never the scroller's */
-}
-
-.split-grip {
-  width: 44px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line-strong);
-  transition: background 140ms var(--ease);
-}
-
-.split-divider:focus-visible .split-grip {
-  background: var(--accent);
-}
-
-@media (hover: hover) {
-  .split-divider:hover .split-grip {
-    background: var(--accent);
-  }
-}
-
-.split-divider:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 
 .chat-body {
@@ -2742,13 +3774,41 @@ a {
   padding: 12px 18px 16px;
 }
 
+/* nothing said yet: a glyph, a title and the sentence, sat just above the
+   composer (and the thumb) rather than mid-sheet */
 .chat-empty {
-  margin: auto 0;
-  padding: 24px 12px;
+  margin: auto 0 0;
+  padding: 24px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   text-align: center;
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+.chat-empty p {
+  margin: 0;
+}
+
+.chat-empty-glyph {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 1.35rem;
+}
+
+.chat-empty .chat-empty-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
 }
 
 .bubble {
@@ -2763,7 +3823,7 @@ a {
 
 .bubble.user {
   align-self: flex-end;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: var(--accent-fill);
   color: var(--on-accent);
   border-bottom-right-radius: 6px;
 }
@@ -2779,6 +3839,13 @@ a {
   padding: 4px;
   max-width: 62%;
   line-height: 0;
+}
+
+/* nor does the accent fill frame the picture; without one ("📷 Photo") the
+   bubble keeps it, or its text would sit dark on the dark ground */
+.bubble.user.photo-bubble:has(> img) {
+  padding: 0;
+  background: none;
 }
 
 .bubble.user.photo-bubble img {
@@ -2812,12 +3879,13 @@ a {
 
 .bubble.error {
   align-self: flex-start;
-  background: rgba(242, 107, 107, 0.12);
+  background: var(--red-soft);
   border: 1px solid rgba(242, 107, 107, 0.4);
   color: var(--red);
 }
 
-/* a tool call: what the agent is doing, in words, the raw call one tap away */
+/* a tool call: what the agent is doing, in words, the raw call one tap away
+   for the owner */
 .tool-line {
   align-self: flex-start;
   max-width: 92%;
@@ -2851,7 +3919,20 @@ a {
   color: var(--muted);
 }
 
-/* The disclosure is a quiet row with a chevron, not the UA triangle. Its hit
+/* a step that errored reads as one; an interrupted one as unfinished */
+.tool-line.failed {
+  border-left-color: var(--red);
+}
+
+.tool-line.failed .tool-result {
+  color: var(--red);
+}
+
+.tool-line.interrupted .tool-result {
+  color: var(--amber);
+}
+
+/* The raw call is a .disclosure (the shared row, foot of this file). Its hit
    area is the full 44px but reaches into the line's gaps (closed only — open,
    the raw blocks sit below it), so a tool line costs less than it measures. */
 .tool-line details {
@@ -2863,32 +3944,8 @@ a {
 }
 
 .tool-line summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  list-style: none;
-  cursor: pointer;
   color: var(--muted);
   font-size: 0.78rem;
-}
-
-.tool-line summary::-webkit-details-marker {
-  display: none;
-}
-
-.tool-line summary::after {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 150ms var(--ease);
-}
-
-.tool-line details[open] summary::after {
-  transform: rotate(45deg);
 }
 
 .tool-line pre {
@@ -2913,7 +3970,7 @@ a {
   justify-content: space-between;
   gap: 12px;
   background: var(--surface-2);
-  border: 1px solid var(--accent-line);
+  border: 1px solid var(--line);
   border-radius: 16px;
   padding: 12px 14px;
 }
@@ -2931,13 +3988,16 @@ a {
   font-weight: 500;
 }
 
+/* Review is the quiet way into the tray: the Log pill is the one accent
+   action in the Agent sheet (§7.4 — the accent is rationed) */
 .result-card button {
   flex-shrink: 0;
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-  color: var(--on-accent);
+  background: var(--surface-3);
+  color: var(--text);
   border: none;
   border-radius: 999px;
   padding: 8px 16px;
+  font-size: 0.88rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -2946,6 +4006,11 @@ a {
   flex-shrink: 0;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+/* "Logged ✓": the drawn check sits on the text's middle, not its baseline */
+.result-card .result-state svg {
+  vertical-align: -0.125em;
 }
 
 .chat-thinking {
@@ -2968,6 +4033,30 @@ a {
 .chat-foot .capture-error,
 .chat-foot .capture-notice {
   margin-top: 8px;
+}
+
+/* scrolled up off the newest line: the way back down, floating over the
+   conversation just above the composer, whatever the composer holds */
+.chat-foot {
+  position: relative;
+}
+
+.chat-jump {
+  position: absolute;
+  right: 14px;
+  bottom: calc(100% + 10px);
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 1.25rem;
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  animation: fade 160ms ease-out;
 }
 
 .chat-rec {
@@ -2997,8 +4086,22 @@ a {
   margin: 0 0 2px;
 }
 
+/* the clock and caption take the middle; neither it nor 'Type instead'
+   wraps (they read 'Listening — tap to / stop' and 'Type / instead' in a
+   52px capsule at 375px) */
+.chat-rec > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-rec .voice-caption {
+  white-space: nowrap;
+}
+
 .chat-rec .voice-alt {
   margin: 0 0 0 auto;
+  white-space: nowrap;
+  padding: 10px 14px;
 }
 
 /* a picked shot waiting above the composer — it sends with the next line */
@@ -3039,7 +4142,9 @@ a {
   background: var(--surface-3);
   color: var(--muted);
   font-size: 0.9rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
@@ -3058,4 +4163,115 @@ a {
 
 .agent-options {
   margin: 0 0 4px 6px;
+}
+
+/* ---------- shared primitives ----------
+   Small pieces every screen draws from, so no screen invents its own. Last
+   in the file on purpose: a utility class here outranks a component rule of
+   the same specificity above it. (Per-route CSS loads after this file.) */
+
+/* Narrow phones: `@media (max-width: 359px)` is the one breakpoint for a
+   320px-wide screen, the value landing.css already uses. Put each such rule
+   next to the rule it adjusts, not here; one value means "narrow phone" is
+   the same width everywhere. */
+
+/* Read by a screen reader, never drawn: a label a control's icon already
+   shows, or a live region's words. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A placeholder in the shape of what is loading (Skeleton.tsx): a quiet
+   block with the tracker's sweep across it. The sweep is parked off the
+   block, so reduced motion (one 0.01ms pass) leaves it plain. */
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  transform: translateX(-100%);
+  animation: sweep 1.4s ease-in-out infinite;
+}
+
+/* A disclosure chevron, drawn with two borders so its weight matches the
+   hairlines rather than a font: points right, turns down when the control
+   around it says aria-expanded="true". */
+.chev {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--faint);
+  border-bottom: 1.5px solid var(--faint);
+  transform: rotate(-45deg);
+  transition: transform 150ms var(--ease);
+}
+
+[aria-expanded="true"] .chev {
+  transform: rotate(45deg);
+}
+
+/* <details class="disclosure">: the summary is a quiet 44px row with a
+   chevron in its text colour, not the UA triangle (PR #39's agent tool
+   line, generalised). The colour and size of the text are the caller's. */
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 150ms var(--ease);
+}
+
+.disclosure[open] > summary::after {
+  transform: rotate(45deg);
+}
+
+/* The one quiet selected state: a pick among options, not an action, so it
+   takes the accent as a tint and a line, never the fill (the accent is
+   rationed, §7.4). A control whose own rule is more specific than one class
+   (`.m3-seg button.active`) joins this rule's selector list instead. */
+.quiet-selected,
+.chip.active,
+.m3-seg button.active {
+  background: var(--spruce-deep);
+  border-color: var(--accent-line);
+  color: var(--accent);
 }

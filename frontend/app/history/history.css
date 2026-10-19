@@ -1,58 +1,24 @@
-/* History page (§7.4: 3D · W · M · Y) and the day view — X5b. Builds on
-   globals.css's tokens + .shell/.brand/.kcal-bar; the tab bar and its .shell
-   padding come from app/library/m3.css via components/TabBar. */
+/* History page (§7.4: 3 days · Week · Month · Year) and the day view — X5b.
+   Builds on globals.css's tokens + .shell/.brand/.kcal-bar; the tab bar and
+   its .shell padding come from app/library/m3.css via components/TabBar. */
 
-/* streak chip */
+/* the streak: a label in the header's trailing slot, where a bordered pill
+   read as a button that did nothing; the count is the part worth reading */
 
 .streak-chip {
   font-size: 0.74rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 5px 12px;
   color: var(--muted);
-  background: var(--surface);
   white-space: nowrap;
 }
 
-.streak-chip.live {
-  color: var(--accent);
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
+.streak-chip .num {
+  color: var(--text);
 }
 
-/* segmented range control */
-
-.segmented {
-  display: flex;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px;
-  gap: 2px;
-}
-
-.segmented button {
-  flex: 1;
-  background: none;
-  border: none;
-  border-radius: 999px;
-  padding: 9px 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 160ms,
-    color 160ms;
-}
-
-.segmented button.active {
-  background: var(--accent);
-  color: var(--on-accent);
-}
+/* the range control is globals.css's .m3-seg, the app's one segmented
+   control */
 
 .range-label {
   margin: -8px 0 0;
@@ -61,9 +27,10 @@
   color: var(--muted);
 }
 
-.hist-stale {
-  opacity: 0.6;
-  transition: opacity 150ms;
+/* a range not read yet: card- or chart-sized blocks laid out as the cards
+   or charts will be (the stack steps aside, so the grid places them) */
+.hist-loading > .skeleton-stack {
+  display: contents;
 }
 
 .hcharts {
@@ -85,7 +52,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 16px 18px 18px;
+  padding: 16px var(--card-pad-x) 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -93,9 +60,7 @@
   font: inherit;
   color: inherit;
   box-shadow: var(--shadow-card);
-  transition:
-    border-color 120ms,
-    transform 120ms var(--ease);
+  transition: border-color 120ms;
 }
 
 .hcard:focus-visible {
@@ -109,12 +74,18 @@
   }
 }
 
+/* pressed: a surface step, which a finger can see — a 1% scale it couldn't
+   (the saved-meal cards, m3.css, press the same way) */
 .hcard:active {
-  transform: scale(0.99);
+  background: var(--surface-2);
 }
 
-.hcard.empty {
-  opacity: 0.7;
+/* an empty day reads quieter: its zeros in --faint (5.2:1 on the card,
+   the protein's mint included), while every label and target keeps its
+   own colour. A fade of the whole body took those under AA. */
+.hcard.empty .hcard-kcal strong,
+.hcard.empty .hcard-macro .hcard-macro-row .v {
+  color: var(--faint);
 }
 
 .hcard-head {
@@ -137,10 +108,19 @@
 .hcard-entries {
   font-size: 0.74rem;
   color: var(--faint);
+  margin-left: auto; /* the count and the chevron sit together on the right */
 }
 
+.hcard-head .chev {
+  align-self: center;
+  margin-left: 10px;
+}
+
+/* wraps only at the largest Text Size on a narrow phone, where the fiber
+   takes a line of its own rather than squeezing the total */
 .hcard-kcal {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
 }
@@ -156,6 +136,18 @@
 .hcard-kcal .of {
   color: var(--muted);
   font-size: 0.88rem;
+}
+
+/* the day's fiber, right of its total, in the meal row's type */
+.hcard-fiber {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.hcard-fiber .k {
+  color: var(--faint);
+  font-weight: 600;
 }
 
 .hcard .kcal-bar {
@@ -187,13 +179,18 @@
 .hcard-macro-row .k {
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 0.62rem;
-  font-weight: 600;
+  letter-spacing: var(--micro-track);
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
 }
 
 .hcard-macro-row .v {
   font-weight: 700;
+}
+
+/* past a carbs or fat target (the Tracker's .donut.over.warn) */
+.hcard-macro-row .v.over {
+  color: var(--amber);
 }
 
 .hcard-macro-row .of {
@@ -233,10 +230,98 @@
 
 .hcard-meals .k {
   color: var(--faint);
-  text-transform: uppercase;
-  font-size: 0.62rem;
   font-weight: 600;
-  letter-spacing: 0.06em;
+}
+
+/* the day view's header: Previous and Next step a day from the right end
+   of the back row, where iOS puts a pushed screen's actions, so the 1.6rem
+   date under it keeps the full width ("Wednesday, Sep 30" and two 44px
+   buttons don't share a 320px row). Their negative margins reach into the
+   header's padding, as .nav-back's do, so the row doesn't grow. Both rows'
+   bottom 4px overlap the title's date picker, a positioned box that would
+   paint over them and take those taps; their own z-index keeps them on
+   top. */
+.shell.day .brand .nav-back {
+  grid-column: 1;
+  position: relative;
+  z-index: 1;
+}
+
+.shell.day .brand h1 {
+  grid-column: 1 / -1;
+}
+
+.day-step {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  display: flex;
+  margin: -10px -12px -4px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.day-step button {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.day-step button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.day-step svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* the date opens a picker: a native date input over it, invisible, so the
+   tap is the input's own and the OS picker opens (owner, 2026-10-13). The
+   input reaches 8px under the title for a taller target, not above it; the
+   back link and the day steps sit over its top edge (above). */
+.day-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.day-pick svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+.day-pick input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100% + 8px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px; /* under 16px iOS zooms on focus */
+  cursor: pointer;
+}
+
+.day-pick:has(input:focus-visible) {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
 }
 
 /* ---------- desktop ----------
@@ -257,7 +342,7 @@
     grid-column: 1 / -1;
   }
 
-  .shell.history > .segmented {
+  .shell.history > .m3-seg {
     grid-column: 1;
   }
 

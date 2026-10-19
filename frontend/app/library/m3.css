@@ -1,7 +1,8 @@
 /* Tally — M3 surfaces: tab bar, Library, Settings, goal wizard, food detail.
    Imported by TabBar and WizardGate themselves so the styles ride along
    wherever they mount; globals.css stays the base layer (tokens, .shell,
-   .chip, .stepper, .subsheet, .commit-btn, .badge are reused from there). */
+   .chip, .stepper, .subsheet, .commit-btn, .badge, .m3-seg are reused from
+   there). */
 
 /* ---------- tab bar: Today · History · [+] · Library · Settings (§7.4) ---------- */
 
@@ -41,10 +42,11 @@
   padding: 0;
   color: var(--faint);
   text-decoration: none;
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  /* sentence case, like the rail and a native tab bar: spaced caps ran
+     LIBRARY into SETTINGS at 320. In px, not rem: like iOS's own tab labels,
+     these don't follow Text Size (layout.tsx), and the bar has no room to. */
+  font-size: 11px;
+  font-weight: 500;
   border-radius: 14px;
   transition: color 150ms;
 }
@@ -83,7 +85,7 @@
   height: 58px;
   margin-top: -24px;
   border-radius: 50%;
-  background: linear-gradient(160deg, var(--spruce-soft), var(--accent) 45%, var(--accent-strong));
+  background: var(--accent-fill); /* the one primary fill (Log, send, auth) */
   border: none;
   outline: 5px solid var(--bg);
   color: var(--on-accent);
@@ -121,9 +123,37 @@
   height: 26px;
 }
 
+/* Short landscape (globals.css says why): icons only, and a smaller + that
+   rises less, so it stops covering the tracker. The labels stay the links'
+   accessible names; font-size 0 only stops drawing them. */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 899px) {
+  .tabbar a {
+    min-height: 40px;
+    gap: 0;
+    font-size: 0;
+  }
+
+  .tabbar .fab {
+    width: 46px;
+    height: 46px;
+    margin-top: -10px;
+  }
+
+  .tabbar .fab svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+
 /* pages keep their content above the bar (and its raised +) */
 body:has(.tabbar) .shell {
   padding-bottom: calc(100px + env(safe-area-inset-bottom));
+}
+
+/* and so does keyboard focus: a control tabbed to under the bar scrolls up
+   clear of it, not just into the viewport behind it */
+html:has(.tabbar) {
+  scroll-padding-bottom: calc(100px + env(safe-area-inset-bottom));
 }
 
 /* ---------- + sheet (AddSheet): four rows, icon + label, big targets ---------- */
@@ -159,7 +189,7 @@ body:has(.tabbar) .shell {
 }
 
 @media (hover: hover) {
-  .add-row:hover {
+  .add-row:hover:not(:disabled) {
     border-color: var(--line-strong);
     background: var(--surface-3);
   }
@@ -167,6 +197,13 @@ body:has(.tabbar) .shell {
 
 .add-row:active {
   transform: scale(0.985);
+}
+
+/* offline (§8.6): the lanes stay in view, the note above says why */
+.add-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
 }
 
 .add-row-icon {
@@ -199,10 +236,28 @@ body:has(.tabbar) .shell {
   color: var(--muted);
 }
 
+/* flex: the drawn chevron centres on the row, not on a text baseline */
 .add-row-chev {
   margin-left: auto;
+  display: flex;
   color: var(--faint);
   font-size: 1.1rem;
+}
+
+/* Cancel (Bill, 2026-10-13): iOS's action-sheet exit, not a fifth lane —
+   quiet, centred, no icon, the rows' height. It lies where the + was, so a
+   second tap on the + lands here and not on Agent, which starts the mic. */
+.add-cancel {
+  width: 100%;
+  min-height: 64px;
+  margin-top: 4px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
 }
 
 /* ---------- page furniture ---------- */
@@ -213,7 +268,9 @@ body:has(.tabbar) .shell {
   gap: 10px;
 }
 
-.m3-section h2 {
+/* the section's own head only: a sheet inside a section (the API-key sheet)
+   titles itself with an h2 too */
+.m3-section > h2 {
   margin: 0;
   padding: 0 2px;
   font-size: 0.7rem;
@@ -222,8 +279,16 @@ body:has(.tabbar) .shell {
   letter-spacing: 0.12em;
   color: var(--muted);
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   justify-content: space-between;
   align-items: baseline;
+}
+
+/* it takes focus only to hold a screen reader's place when its Retry goes
+   (Library.tsx); a heading is not a control, so it draws no ring */
+.m3-section > h2:focus {
+  outline: none;
 }
 
 .m3-section h2 .count {
@@ -231,13 +296,17 @@ body:has(.tabbar) .shell {
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
+  /* a long one (Nutrients' "per 1 package (makes about…)") wraps to its own
+     line at the right, rather than running into the heading */
+  margin-left: auto;
+  text-align: right;
 }
 
 .m3-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 14px var(--card-pad-x);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -250,24 +319,55 @@ body:has(.tabbar) .shell {
 
 .m3-card-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 
+/* The name wraps, as a diary row's does (owner, 2026-09-06): the tail an
+   ellipsis cut is the part that tells two similar foods apart. The stat
+   pill stays top-right (flex-start above). */
 .m3-card-title {
   font-weight: 600;
   font-size: 0.98rem;
+  line-height: 1.25;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   letter-spacing: -0.01em;
 }
 
-.m3-card-title a {
+/* A food card's drill-in: the head and the brand line are one link, grown
+   over the card's top and side padding (.m3-card's, mirrored) so the whole
+   upper card takes the tap. The phrase chips under it stay buttons of their
+   own. Its bottom reaches 12px into the 16px above the chips (card gap +
+   .chips margin) and gives them back, so a one-line name is a 45.6px target
+   with no min-height band under it, and every card keeps 16px to its chips. */
+.m3-card-link {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: -14px calc(-1 * var(--card-pad-x)) -12px;
+  padding: 14px var(--card-pad-x) 12px;
+  border-radius: var(--radius) var(--radius) 0 0;
   color: inherit;
   text-decoration: none;
+}
+
+/* its bottom edge is 4px above the chips, so the keyboard ring is drawn
+   inside the link: outside, it lay on the chips' top border */
+.m3-card-link:focus-visible {
+  outline-offset: -2px;
+}
+
+.m3-card-link .m3-card-stat {
+  margin-left: auto; /* the count and the chevron sit together on the right */
+}
+
+/* centred on the name's first line (half its line box less the 7px glyph),
+   not on the whole block: the head is flex-start, so a wrapped name keeps
+   the count and the chevron on line 1 */
+.m3-card-link .chev {
+  margin-top: calc((0.98rem * 1.25 - 7px) / 2);
 }
 
 .m3-card-sub {
@@ -290,16 +390,14 @@ body:has(.tabbar) .shell {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 14px var(--card-pad-x);
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 4px;
   width: 100%;
   box-shadow: var(--shadow-card);
-  transition:
-    border-color 120ms,
-    transform 120ms var(--ease);
+  transition: border-color 120ms;
 }
 
 @media (hover: hover) {
@@ -308,8 +406,9 @@ body:has(.tabbar) .shell {
   }
 }
 
+/* pressed like History's day cards: a surface step a finger can see */
 .m3-card-btn:active {
-  transform: scale(0.99);
+  background: var(--surface-2);
 }
 
 .m3-card-btn.inactive {
@@ -322,7 +421,9 @@ body:has(.tabbar) .shell {
   margin: 0;
   padding: 14px 16px;
   line-height: 1.5;
-  border: 1px dashed var(--line-strong);
+  /* solid and filled like a card: a dashed box reads as a drop zone */
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: var(--radius);
   text-align: center;
 }
@@ -355,7 +456,13 @@ body:has(.tabbar) .shell {
   color: var(--red);
 }
 
-.m3-link-btn:disabled {
+/* offered, not pushed (Oura's Reconnect while nothing is missing) */
+.m3-link-btn.quiet {
+  color: var(--muted);
+}
+
+/* aria-disabled: a button waiting on its own request keeps focus */
+.m3-link-btn:is(:disabled, [aria-disabled="true"]) {
   color: var(--faint);
   cursor: default;
 }
@@ -371,12 +478,108 @@ body:has(.tabbar) .shell {
   color: var(--sage);
 }
 
+/* a number to look at again: the wizard's clamps, macros off the calorie target */
+.m3-note.warn {
+  color: var(--amber);
+}
+
 .m3-status {
   font-size: 0.84rem;
   font-weight: 600;
   color: var(--green);
   margin: 0;
   text-align: center;
+}
+
+/* Settings' one Save (targets, meal windows, time zone, notes), shown only
+   while one of them differs from what was last read or saved. It floats
+   where the toast does — above the tab bar and its raised + — so it is in
+   reach from any section; the "Saved." toast takes its place after. */
+.m3-savebar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100px + env(safe-area-inset-bottom));
+  z-index: 36; /* over the tab bar, under any sheet */
+  max-width: 448px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 6px 16px;
+  background: var(--toast-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  box-shadow: var(--shadow-float);
+  animation: rise 240ms var(--ease);
+}
+
+.m3-savebar-note {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.m3-savebar-note.error {
+  color: var(--red);
+}
+
+.m3-savebar button {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.m3-savebar .m3-savebar-discard {
+  background: none;
+  color: var(--muted);
+}
+
+.m3-savebar .m3-savebar-save {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.m3-savebar button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* busy is not unavailable: Save keeps its fill while it saves */
+.m3-savebar .m3-savebar-save[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
+/* narrow phone: "Unsaved changes" keeps one line */
+@media (max-width: 359px) {
+  .m3-savebar button {
+    padding: 0 12px;
+  }
+}
+
+/* the page's end scrolls clear of the bar, and so does keyboard focus */
+body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
+  padding-bottom: calc(172px + env(safe-area-inset-bottom));
+}
+
+html:has(.tabbar):has(.shell.settings > .m3-savebar) {
+  scroll-padding-bottom: calc(172px + env(safe-area-inset-bottom));
+}
+
+/* A toast that lands while the bar is up ("Targets saved." from the
+   wizard, other edits still unsaved) stacks above the bar (58px tall)
+   rather than covering it. (The toast sits in the page's .toast-host, its
+   live region.) */
+.shell.settings:has(> .m3-savebar) > .toast-host > .toast {
+  bottom: calc(168px + env(safe-area-inset-bottom));
 }
 
 .m3-row {
@@ -391,11 +594,44 @@ body:has(.tabbar) .shell {
   color: var(--muted);
 }
 
+/* Oura's day rows: the date never splits ('Sat, Oct / 10') and the figures
+   wrap flush right. Scoped: other .m3-row labels are food names that wrap. */
+.oura-day .k {
+  white-space: nowrap;
+}
+
+.oura-day > :last-child {
+  text-align: right;
+}
+
 .m3-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+}
+
+/* A text button beside a note never wraps ('Connect / Oura', 'Re-run the
+   goal / wizard'): the note beside it wraps, and in .m3-actions it drops
+   below the button when the two can't share a line. */
+.m3-row > .m3-link-btn,
+.m3-actions .m3-link-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* the inline confirm for an irreversible action (a phrase's delete, sign
+   out), as an API key's revoke: the question on a line of its own, then
+   Cancel and the red yes where the first tap was */
+.m3-actions.confirm {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px 18px;
+}
+
+.m3-actions.confirm .m3-note {
+  flex-basis: 100%;
 }
 
 /* ---------- forms ---------- */
@@ -417,9 +653,10 @@ body:has(.tabbar) .shell {
 .m3-field textarea,
 .m3-window input,
 .m3-window select {
+  min-height: var(--field-h);
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--field-radius);
   padding: 12px 13px;
   font-size: 1rem;
   font-weight: 400;
@@ -441,16 +678,30 @@ body:has(.tabbar) .shell {
   border-color: var(--accent-line);
 }
 
+/* a field Save refused (Settings' half-filled targets); after :focus, so it
+   stays red while being fixed */
+.m3-field input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
 .m3-field input.num {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 1.05rem;
 }
 
+/* Every textarea here grows with its text (useAutoGrow) rather than
+   scrolling inside the page; the profile notes start at 120px. */
 .m3-field textarea {
   min-height: 120px;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
   line-height: 1.45;
+}
+
+/* a saved meal's trigger phrases: two lines, not the notes field's 120px */
+.m3-field textarea.m3-phrases {
+  min-height: 0;
 }
 
 .m3-field select option,
@@ -466,14 +717,68 @@ body:has(.tabbar) .shell {
 
 .m3-grid-4 {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+/* 320px phones: four ~57px cells ran 'CALORIES' into 'PROTEIN' and clipped
+   '2400'; two by two gives each box ~120px. */
+@media (max-width: 359px) {
+  .m3-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .m3-grid-4 .m3-field input {
   padding-left: 8px;
   padding-right: 8px;
   text-align: center;
+}
+
+/* A number field with its unit inside the box ("180 lb"), so the unit is
+   read with the number and the caps label stays one word. The unit lets
+   taps through to the field; it is aria-hidden, and the label or the
+   field's aria-label carries it. */
+.m3-unit-wrap {
+  position: relative;
+  display: block;
+}
+
+.m3-unit-wrap input {
+  padding-right: 40px;
+}
+
+.m3-unit {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* Four across, a box is ~70px wide on a 375-390px phone (two by two under
+   360px, above): no room for "2400" and "kcal" side by side, so the unit
+   sits under the number, still in the box. The value stays raw while it is
+   edited (no "2,400"). */
+.m3-grid-4 .m3-unit-wrap input {
+  padding-right: 8px;
+  padding-bottom: 22px;
+}
+
+.m3-grid-4 .m3-unit {
+  top: auto;
+  bottom: 9px;
+  left: 0;
+  right: 0;
+  transform: none;
+  text-align: center;
+  font-size: 0.7rem;
 }
 
 /* meal window row (§7.2 clock windows): the name on its own line, start and
@@ -487,7 +792,6 @@ body:has(.tabbar) .shell {
   align-items: center;
   font-size: 0.88rem;
   color: var(--muted);
-  text-transform: capitalize;
 }
 
 .m3-window > span,
@@ -506,7 +810,7 @@ body:has(.tabbar) .shell {
 .m3-window input[type="time"] {
   -webkit-appearance: none;
   appearance: none;
-  min-height: 42px;
+  min-height: var(--field-h);
   /* at 16px (no iOS focus zoom) "05:00 PM" and Chromium's clock only fit
      a 320px phone's half-row with the padding trimmed */
   padding-inline: 8px 6px;
@@ -520,33 +824,33 @@ body:has(.tabbar) .shell {
   margin-inline-start: 2px;
 }
 
-.m3-seg {
-  display: flex;
-  gap: 4px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px;
-}
-
-.m3-seg button {
-  flex: 1;
-  background: none;
-  border: none;
-  border-radius: 999px;
-  padding: 9px 0;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 150ms,
-    color 150ms;
-}
-
-.m3-seg button.active {
-  background: var(--accent);
-  color: var(--on-accent);
+/* A select drops the platform's chrome too: the fields' box, and a chevron
+   stroked like the app's .chev, as two 1.5px diagonal bands (one per 6px
+   tile) so it takes the token colour (a data-URI arrow would hard-code
+   one). */
+.m3-field select,
+.m3-window select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 34px;
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.75px),
+      var(--muted) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    ),
+    linear-gradient(
+      135deg,
+      transparent calc(50% - 0.75px),
+      var(--muted) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    );
+  background-position:
+    right 18px center,
+    right 12px center;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
 }
 
 /* saved-meal item row: name + compact qty stepper + remove */
@@ -562,17 +866,25 @@ body:has(.tabbar) .shell {
   border-bottom: none;
 }
 
+/* items listed in a card (Save as meal): the rows' own padding and
+   hairlines space them, as in a diary meal card, not the card's gap */
+.m3-card:has(> .m3-item) {
+  gap: 0;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
 .m3-item .info {
   flex: 1;
   min-width: 0;
 }
 
+/* wraps like .m3-card-title, never an ellipsis */
 .m3-item .name {
   font-size: 0.92rem;
   font-weight: 550;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .m3-item .sub {
@@ -599,11 +911,37 @@ body:has(.tabbar) .shell {
 }
 
 .m3-item-qty .q {
-  min-width: 36px;
+  width: 44px;
+  min-width: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 6px 0;
   text-align: center;
   font-family: var(--font-display);
-  font-size: 0.95rem;
+  font-size: 1rem; /* under 16px iOS zooms the page on focus */
   font-weight: 800;
+  outline: none;
+}
+
+.m3-item-qty .q:focus {
+  border-color: var(--accent-line);
+}
+
+/* 320px phones: the stepper and ✕ left the name and serving select ~132px,
+   so the select read '1 container ('. They take a line of their own,
+   right-aligned under the full-width name. */
+@media (max-width: 359px) {
+  .m3-item {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .m3-item .info {
+    flex: 1 0 100%;
+  }
+  .m3-item-qty {
+    margin-left: auto;
+  }
 }
 
 /* ---------- goal wizard (§7.4 first run) ---------- */
@@ -614,6 +952,10 @@ body:has(.tabbar) .shell {
   z-index: 90;
   background: var(--bg);
   overflow-y: auto;
+  /* Settings stays mounted beneath it: a short step must not scroll that page */
+  overscroll-behavior: contain;
+  /* the first-run takeover lands over a Today that has already painted */
+  animation: fade 200ms ease-out;
 }
 
 .wizard-inner {
@@ -627,7 +969,38 @@ body:has(.tabbar) .shell {
   gap: 18px;
 }
 
+/* the wizard's top bar (globals.css .top-bar), sticky inside the .wizard
+   scroller. It takes over .wizard-inner's top padding, inset included, and
+   gives back the gap under it, so at rest the steps and the title sit about
+   where they did. */
+.wizard-top {
+  margin: calc(-22px - env(safe-area-inset-top)) -18px -18px;
+  padding-inline: 18px;
+}
+
+/* a re-run's way out (Settings), left of the progress bar on every step:
+   a text button the full 44px tall, its label flush with the gutter */
+.wizard-cancel {
+  flex: none;
+  min-height: 44px;
+  margin-left: -10px;
+  padding: 0 10px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* while Save is out (a save can't be called back) */
+.wizard-cancel:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 .wizard-steps {
+  flex: 1;
   display: flex;
   gap: 6px;
 }
@@ -653,6 +1026,12 @@ body:has(.tabbar) .shell {
   line-height: 1.05;
 }
 
+/* a step's title takes focus as the step opens (WizardGoal), so a screen
+   reader starts there; it is not a control, so it draws no ring */
+.wizard h1:focus {
+  outline: none;
+}
+
 .wizard-lead {
   color: var(--muted);
   font-size: 0.92rem;
@@ -663,7 +1042,7 @@ body:has(.tabbar) .shell {
 /* the one loud element on the last step: the computed number */
 .wizard-hero {
   position: relative;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 22px 16px;
@@ -712,7 +1091,8 @@ body:has(.tabbar) .shell {
   gap: 10px;
 }
 
-.wizard-ghost {
+.wizard-ghost,
+.m3-ghost-btn {
   background: none;
   border: 1px solid var(--line-strong);
   border-radius: 16px;
@@ -724,9 +1104,22 @@ body:has(.tabbar) .shell {
 }
 
 @media (hover: hover) {
-  .wizard-ghost:hover {
+  .wizard-ghost:hover,
+  .m3-ghost-btn:hover {
     color: var(--text);
   }
+}
+
+/* Back, while Computing… or Saving… is out */
+.wizard-ghost:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* the wizard's sits in a short footer; this one carries a sentence that can
+   wrap at phone width (Settings › Time zone) */
+.m3-ghost-btn {
+  padding: 8px 16px;
 }
 
 /* ---------- food detail (§7.1 "everything the database returned") ---------- */
@@ -762,8 +1155,18 @@ body:has(.tabbar) .shell {
 
 .fd-kcal {
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   align-items: baseline;
   justify-content: space-between;
+}
+
+/* a basis too long to sit beside the figure drops to its own line, at the
+   right, rather than shrinking against "kcal" ("284 kcalper 1 breast…") */
+.fd-kcal .m3-card-sub {
+  margin-left: auto;
+  text-align: right;
+  min-width: 0;
 }
 
 .fd-kcal .n {
@@ -834,8 +1237,8 @@ body:has(.tabbar) .shell {
 }
 
 .badge.off {
-  background: rgba(224, 181, 138, 0.16);
-  color: #e0b58a;
+  background: var(--off-soft);
+  color: var(--off);
 }
 
 .badge.state {
@@ -858,11 +1261,11 @@ body:has(.tabbar) .shell {
 }
 
 .account-label {
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--micro-track);
   color: var(--muted);
-  font-weight: 600;
+  font-weight: var(--micro-weight);
 }
 
 .account-email {
@@ -884,15 +1287,15 @@ body:has(.tabbar) .shell {
   align-self: flex-start;
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
 }
 
 .account-badge.owner {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--spruce-deep);
+  color: var(--accent);
 }
 
 .account-badge.demo {
@@ -907,21 +1310,17 @@ body:has(.tabbar) .shell {
   margin: 0;
 }
 
-.account-note code {
-  font-size: 0.78rem;
-  color: var(--sage);
-}
-
+/* the secondary pill (.keys-btn's values) */
 .account-signout {
   align-self: flex-start;
-  min-height: 42px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  padding: 0 18px;
+  padding: 0 16px;
   cursor: pointer;
 }
 
@@ -932,9 +1331,53 @@ body:has(.tabbar) .shell {
   }
 }
 
-.account-signout:disabled {
+/* ---------- Oura card (Settings § Oura, OuraCard.tsx) ---------- */
+
+/* the week behind the latest day, as one quiet row in the .k colour. The
+   summary keeps its 44px for the finger and gives back the card's 8px gaps,
+   so it sits on the day rows' rhythm. */
+.oura-week > summary {
+  margin-block: -8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.oura-days {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.oura-reconnect {
   color: var(--faint);
-  cursor: default;
+  font-size: 0.8rem;
+}
+
+/* ---------- About (Settings) ----------
+   Rows that open another page, in place of "→" text links: full-width 44px
+   lines with a trailing .chev and hairlines between. The notes under the
+   card are the group's footer. */
+
+.m3-card.m3-links {
+  padding-block: 0;
+  gap: 0;
+}
+
+.m3-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.m3-nav-row + .m3-nav-row {
+  border-top: 1px solid var(--line);
 }
 
 /* ---------- desktop: the tab bar stands up as a navigation rail ----------
@@ -966,7 +1409,8 @@ body:has(.tabbar) .shell {
     gap: 4px;
     border-top: none;
     border-right: 1px solid var(--line);
-    padding: calc(28px + env(safe-area-inset-top)) 16px 24px;
+    /* left: clear a landscape notch (BACKLOG 158) */
+    padding: calc(28px + env(safe-area-inset-top)) 16px 24px max(16px, env(safe-area-inset-left));
   }
 
   .tabbar .rail-only {
@@ -1061,8 +1505,30 @@ body:has(.tabbar) .shell {
     padding-bottom: 64px;
   }
 
+  html:has(.tabbar) {
+    scroll-padding-bottom: 0;
+  }
+
   body:has(.tabbar) .toast {
     left: calc(50% + var(--rail-w) / 2);
+  }
+
+  /* Settings' save bar: where the toast is, beside the rail */
+  body:has(.tabbar) .m3-savebar {
+    left: calc(var(--rail-w) + 16px);
+    bottom: 32px;
+  }
+
+  body:has(.tabbar) .shell.settings:has(> .m3-savebar) {
+    padding-bottom: 112px;
+  }
+
+  html:has(.tabbar):has(.shell.settings > .m3-savebar) {
+    scroll-padding-bottom: 112px;
+  }
+
+  body:has(.tabbar) .shell.settings:has(> .m3-savebar) > .toast-host > .toast {
+    bottom: 100px;
   }
 
   /* the + sheet: four lanes as a 2 × 2 of tiles */
@@ -1072,7 +1538,9 @@ body:has(.tabbar) .shell {
     gap: 10px;
   }
 
-  .add-sheet .subsheet-head {
+  .add-sheet .subsheet-head,
+  .add-sheet > .notice,
+  .add-cancel {
     grid-column: 1 / -1;
   }
 
@@ -1088,6 +1556,24 @@ body:has(.tabbar) .shell {
     display: none;
   }
 
+  /* the rail's Log food is nowhere near the tiles: nothing to land on. Out
+     of sight as .sr-only is, not display: none, so a screen reader keeps
+     the sheet's way out (AddSheet). Back in sight while the keyboard is on
+     it, as a skip link is: its full row under the tiles, never a Tab stop
+     with nothing to see. */
+  .add-cancel:not(:focus-visible) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-height: 0;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .wizard-inner {
     max-width: 560px;
     padding-top: calc(56px + env(safe-area-inset-top));
@@ -1095,7 +1581,7 @@ body:has(.tabbar) .shell {
 }
 
 @media (min-width: 1140px) {
-  /* Library: the search across the top, saved meals beside your foods */
+  /* Library: the search across the top, saved meals beside your phrases */
   .shell.library {
     max-width: 1200px;
     display: grid;
@@ -1108,7 +1594,7 @@ body:has(.tabbar) .shell {
 
   .shell.library > .brand,
   .shell.library > .sheet-error,
-  .shell.library > .notice,
+  .shell.library > .offline-note,
   .shell.library > .lib-search {
     grid-column: 1 / -1;
   }
@@ -1126,7 +1612,7 @@ body:has(.tabbar) .shell {
   }
 
   /* Settings: cards in pairs (equal height per row), the free-text notes
-     across both columns, Save and its status last */
+     across both columns (Save floats in its bar, .m3-savebar) */
   .shell.settings {
     max-width: 1200px;
     display: grid;
@@ -1137,38 +1623,23 @@ body:has(.tabbar) .shell {
   }
 
   .shell.settings > .brand,
-  .shell.settings > .sheet-error,
   .shell.settings > .notice,
-  .shell.settings > .m3-empty,
-  .shell.settings > .m3-wide,
-  .shell.settings > .commit-btn,
-  .shell.settings > .m3-status {
+  .shell.settings > .m3-wide {
     grid-column: 1 / -1;
   }
 
   .shell.settings > .m3-section > .m3-card {
     flex: 1;
   }
-
-  .shell.settings > .commit-btn {
-    order: 2;
-    width: auto;
-    justify-self: start;
-    padding: 14px 36px;
-  }
-
-  .shell.settings > .m3-status {
-    order: 3;
-    text-align: left;
-  }
 }
 
 /* ---------- API keys (Settings § API keys, ApiKeysCard.tsx) ----------
-   A list, not a table: a phone-width card cannot hold seven columns, so each
-   key is a block (label and status, the redacted key, four facts, Revoke)
-   that becomes one line per key once the section spans both desktop
-   columns. Revoked and expired keys stay listed, dimmed. The reveal banner
-   holds the only copy of a new key the browser ever gets. */
+   A list, not a table: each key is one line (label, access, last used, a
+   status only when it is not active) that opens in place onto the redacted
+   key, four facts and Revoke (Bill, 2026-10-13: the block per key it
+   replaces filled a screen with two keys). On the desktop the open facts sit
+   in one line. Revoked and expired keys stay listed, dimmed. The reveal
+   banner holds the only copy of a new key the browser ever gets. */
 
 .keys-btn {
   min-height: 40px;
@@ -1206,11 +1677,8 @@ body:has(.tabbar) .shell {
 
 .keys-reveal-title {
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--accent);
 }
 
@@ -1255,16 +1723,14 @@ body:has(.tabbar) .shell {
   padding: 0;
 }
 
-.keys-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 0;
-  border-top: 1px solid var(--line);
+/* the last row's own 48px line spaces the card's foot, as the About rows
+   do theirs: the card's padding under it as well left twice the top's */
+.m3-card:has(> .keys-list:last-child) {
+  padding-bottom: 0;
 }
 
-.keys-row:last-child {
-  padding-bottom: 0;
+.keys-row {
+  border-top: 1px solid var(--line);
 }
 
 .keys-row.revoked,
@@ -1272,39 +1738,64 @@ body:has(.tabbar) .shell {
   opacity: 0.55;
 }
 
+/* the whole line opens the key; a long label wraps rather than hides */
 .keys-row-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
 }
 
-.keys-label {
+.keys-gist {
+  flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* "· used 1 day ago" goes to the next line whole, dot first, rather than
+   split after its number or leaving the dot at a line's end. A line too
+   narrow for all of it (320px, large text, a status) breaks it inside,
+   between its words, never mid-word. */
+.keys-used {
+  display: inline-block;
+}
+
+/* The whole label, wrapped (up to 80 characters): it is the only way to tell
+   two keys apart before Revoke, and an ellipsis kept ~28. */
+.keys-label {
+  overflow-wrap: anywhere;
   font-size: 0.95rem;
   font-weight: 600;
+  color: var(--text);
+}
+
+.keys-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
 }
 
 .keys-status {
   flex-shrink: 0;
   border-radius: 999px;
   padding: 3px 9px;
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
 }
 
-.keys-status.active {
-  background: rgba(116, 207, 156, 0.14);
-  color: var(--green);
-}
-
 .keys-status.expired {
-  background: rgba(242, 107, 107, 0.14);
+  background: var(--red-soft);
   color: var(--red);
 }
 
@@ -1335,9 +1826,9 @@ body:has(.tabbar) .shell {
 }
 
 .keys-meta dt {
-  font-size: 0.64rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-size: var(--micro-size);
+  font-weight: var(--micro-weight);
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   color: var(--faint);
 }
@@ -1376,28 +1867,15 @@ body:has(.tabbar) .shell {
 }
 
 @media (min-width: 1140px) {
-  /* one line per key: who it is | four facts | its action */
-  .keys-row {
+  /* an open key in one line: the key | four facts | its action */
+  .keys-detail {
     display: grid;
     grid-template-columns: minmax(0, 4fr) minmax(0, 7fr) minmax(0, 3fr);
     column-gap: 24px;
-    row-gap: 4px;
     align-items: center;
   }
 
-  .keys-row-head,
-  .keys-redacted {
-    grid-column: 1;
-  }
-
   .keys-meta {
-    grid-column: 2;
-    grid-row: 1 / span 2;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .keys-row-actions {
-    grid-column: 3;
-    grid-row: 1 / span 2;
   }
 }

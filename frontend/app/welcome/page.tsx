@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import TallyMark from "@/components/TallyMark";
+import { CopyButton } from "@/components/docs/CopyButton";
 import { GITHUB_URL, SITE_URL } from "@/lib/site";
 import "./landing.css";
 
@@ -8,6 +9,11 @@ import "./landing.css";
  *  instead of straight to the sign-in form, so someone arriving from the
  *  repo or a link learns what Tally is before being asked for an email.
  *  Signed-in visitors never see it — `/` renders Today for them.
+ *
+ *  It is also the installed app's signed-out screen (a cold launch, or where
+ *  Sign out lands). There, landing.css's display-mode: standalone block
+ *  trims it to the pitch and the preview, with the two ways in pinned at the
+ *  foot (Bill, 2026-10-13); the website's parts stay with the browser.
  *
  *  The structure is FireTrace's landing (header, mono eyebrow, display
  *  headline, framed preview, numbered claims); the brand is Tally's. The
@@ -56,7 +62,7 @@ const LANES = [
   },
   {
     name: "Search",
-    body: "The boring escape hatch, on purpose. Your own foods first, then the USDA database.",
+    body: "For when you’d rather pick it yourself. Your own foods first, then the USDA database.",
     Icon: () => (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="11" cy="11" r="6.5" />
@@ -97,8 +103,8 @@ const CLAIMS = [
       <>
         Every meal you log teaches it the phrases you use, the foods they mean and the portions you
         take. A meal you have logged before resolves from your own history with{" "}
-        <strong>no AI call at all</strong> — one database round-trip. Only a food you have never
-        logged touches the network, once.
+        <strong>no AI call at all</strong>. Only a food you have never logged touches the
+        network, once.
       </>
     ),
   },
@@ -118,8 +124,9 @@ const CLAIMS = [
     title: "Your diary is yours",
     body: (
       <>
-        Accounts are kept apart by Postgres row-level security, not by application code — the
-        app runs as a database role that cannot bypass it. Photos are never stored.
+        Only you can see your diary. The database itself keeps accounts apart (Postgres
+        row-level security), not app code — see how in the{" "}
+        <Link href="/docs/security">security docs</Link>. Photos are never stored.
       </>
     ),
   },
@@ -134,6 +141,9 @@ const TOOLS = [
 ];
 
 const KEY = "tally_live_...";
+// The two commands the terminal panel shows, as its Copy buttons copy them.
+const MCP_CMD = `claude mcp add --transport http tally ${SITE_URL}/api/mcp --header "Authorization: Bearer ${KEY}"`;
+const CURL_CMD = `curl ${SITE_URL}/api/diary -H "Authorization: Bearer ${KEY}"`;
 
 function Preview() {
   return (
@@ -184,7 +194,7 @@ function Preview() {
             </span>
           </div>
           {/* looks like the app's commit button; deliberately not a <button> */}
-          <div className="land-commit">Log {PREVIEW_ROWS.length} items</div>
+          <div className="land-commit">Log · {PREVIEW_KCAL} kcal</div>
         </div>
       </div>
 
@@ -237,11 +247,11 @@ export default function Welcome() {
             <Link href="/auth/sign-up" className="land-btn">
               Try a demo
             </Link>
-            <Link href="/docs" className="land-btn ghost">
-              Read the docs
-            </Link>
-            <Link href="/auth/sign-in" className="land-textlink">
+            <Link href="/auth/sign-in" className="land-btn ghost">
               Sign in
+            </Link>
+            <Link href="/docs" className="land-textlink">
+              Read the docs
             </Link>
           </div>
           <p className="land-fine">One log a day on a demo account. No card, no trial timer.</p>
@@ -306,11 +316,15 @@ export default function Welcome() {
 
           <div className="land-dev-side">
             <div className="land-term">
-              <div className="land-term-bar" aria-hidden="true">
+              <div className="land-term-bar">
                 <i />
                 <i />
                 <i />
-                <span>terminal</span>
+                <span aria-hidden="true">terminal</span>
+                <div className="land-term-copy">
+                  <CopyButton text={MCP_CMD} label="MCP command" idleText="Copy MCP" />
+                  <CopyButton text={CURL_CMD} label="curl command" idleText="Copy curl" />
+                </div>
               </div>
               {/* focusable so a keyboard can scroll the long lines */}
               <pre className="land-code" tabIndex={0}>
@@ -318,13 +332,13 @@ export default function Welcome() {
                   <span className="c"># Add Tally to Claude Code over MCP</span>
                   {"\n"}
                   <span className="pr">$ </span>claude mcp add --transport http tally{" "}
-                  <span className="u">{SITE_URL}/api/mcp</span>{" "}
+                  <span className="u">{SITE_URL}/api/<wbr />mcp</span>{" "}
                   <span className="f">--header</span>{" "}
                   <span className="s">&quot;Authorization: Bearer {KEY}&quot;</span>
                   {"\n\n"}
                   <span className="c"># Or call the REST API</span>
                   {"\n"}
-                  <span className="pr">$ </span>curl <span className="u">{SITE_URL}/api/diary</span>{" "}
+                  <span className="pr">$ </span>curl <span className="u">{SITE_URL}/api/<wbr />diary</span>{" "}
                   <span className="f">-H</span>{" "}
                   <span className="s">&quot;Authorization: Bearer {KEY}&quot;</span>
                 </code>
@@ -364,12 +378,12 @@ export default function Welcome() {
             </p>
           </div>
           <div className="land-cta">
-            <a className="land-btn ghost" href={GITHUB_URL}>
-              Read the source
-            </a>
             <Link href="/auth/sign-up" className="land-btn">
               Try a demo
             </Link>
+            <a className="land-btn ghost" href={GITHUB_URL}>
+              Read the source
+            </a>
           </div>
         </section>
       </main>
@@ -381,10 +395,14 @@ export default function Welcome() {
             <span>Tally</span>
           </Link>
           <nav className="land-foot-links" aria-label="Footer">
-            <Link href="/docs">Docs</Link>
+            <Link href="/docs" className="land-web">
+              Docs
+            </Link>
             <Link href="/privacy">Privacy</Link>
             <Link href="/terms">Terms</Link>
-            <a href={GITHUB_URL}>GitHub</a>
+            <a href={GITHUB_URL} className="land-web">
+              GitHub
+            </a>
           </nav>
           <p className="land-foot-credit">
             Nutrition data from <a href="https://fdc.nal.usda.gov/">USDA FoodData Central</a>

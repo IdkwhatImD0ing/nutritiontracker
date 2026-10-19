@@ -14,11 +14,12 @@ export default function SignInPage() {
     <AuthForm
       title="Sign in to Tally"
       submitLabel="Sign in"
+      pendingLabel="Signing in…"
       action={signInAction}
       alt={{
         text: "No account?",
         href: "/auth/sign-up",
-        label: "Sign up for a demo",
+        label: "Create a demo account",
       }}
     />
   );

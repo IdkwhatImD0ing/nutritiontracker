@@ -7,7 +7,16 @@ import {
   searchFoods,
   type FoodSearchResult,
 } from "@/lib/api";
+import { fmt0, withUnit } from "@/lib/format";
+import { foodName } from "@/lib/labels";
+import { hitSub } from "@/lib/sources";
+import ErrorNotice from "./ErrorNotice";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
+import { ArrowRight, Close } from "./icons";
 import SheetHeader, { SheetClose } from "./SheetHeader";
+import Skeleton from "./Skeleton";
+import { useSheetBack } from "./sheetBack";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   /** the row's phrase (pre-searched); "" = the + sheet's standalone Search
@@ -17,6 +26,9 @@ type Props = {
   busy: boolean;
   /** the parent's select failure, rendered above the results */
   error?: string | null;
+  /** a pick met the demo quota's 429: every result would meet it again, so
+   *  none takes a tap (searching itself is free) */
+  refused?: boolean;
   /** the + sheet's Search lane: the whole screen (owner ruling, 2026-09-06),
    *  not the sub-sheet a staged row opens over the staging sheet */
   fullScreen?: boolean;
@@ -24,8 +36,22 @@ type Props = {
   onClose: () => void;
 };
 
+/** " · 120 kcal · 10 g protein / 100 g" (per 100 ml for a drink): what tells
+ *  look-alike rows apart. Calories are a row's headline (§7.1), so protein
+ *  shows only beside them; "" when the source gave no per-100 figures. */
+function per100(r: FoodSearchResult): string {
+  if (r.kcal_per_100g == null) return "";
+  const protein =
+    r.protein_per_100g == null
+      ? ""
+      : ` · ${withUnit(fmt0.format(r.protein_per_100g), "g")} protein`;
+  const basis = withUnit("100", r.per_100ml ? "ml" : "g");
+  return ` · ${withUnit(fmt0.format(r.kcal_per_100g), "kcal")}${protein} / ${basis}`;
+}
+
 /** BACKLOG 3 / §3.4: `not_found` flips the row to a manual search box — a
- *  plain search UI over GET /api/foods/search, deliberately boring. The same
+ *  plain search UI over GET /api/foods/search, each row naming its calories
+ *  and protein per 100 g (owner ruling, 2026-10-13). The same
  *  component is the + sheet's Search lane (owner ruling, 2026-09-02) — full
  *  screen since 2026-09-06, with the foods you have logged before listed
  *  under the bar until a search runs (GET /api/foods/recent, newest first,
@@ -34,17 +60,32 @@ export default function ManualSearchSheet({
   phrase,
   busy,
   error,
+  refused = false,
   fullScreen = false,
   onSelect,
   onClose,
 }: Props) {
+  // focus in and back out; also what useSheetBack ranks (full screen)
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [query, setQuery] = useState(phrase);
   const [results, setResults] = useState<FoodSearchResult[] | null>(null);
   const [recent, setRecent] = useState<FoodSearchResult[] | null>(null);
+  const [recentFailed, setRecentFailed] = useState(false);
   const [fdcDown, setFdcDown] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  // A row's phrase is searched on mount: searching from the first paint, so
+  // the recent list's skeleton never flashes before the results' one.
+  const [searching, setSearching] = useState(() => phrase.trim() !== "");
+  // `retry` is false for a demo 429: a second try meets the same refusal
+  const [searchError, setSearchError] = useState<{
+    text: string;
+    retry: boolean;
+  } | null>(null);
   const seq = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // The tapped row (`source:source_id`): it keeps a spinner while the
+  // parent's select runs; the rest stay readable but can't be tapped.
+  const [picked, setPicked] = useState<string | null>(null);
+  const pickedKey = busy ? picked : null;
 
   const run = async (q: string) => {
     const trimmed = q.trim();
@@ -61,10 +102,26 @@ export default function ManualSearchSheet({
       if (seq.current !== id) return;
       setResults([]);
       // a demo 429 says why in its own words — show those, not the generic line
-      setSearchError(quotaRefusal(e)?.detail ?? "Search failed. Try again.");
+      const quota = quotaRefusal(e);
+      setSearchError(
+        quota
+          ? { text: quota.detail, retry: false }
+          : { text: "Search failed.", retry: true },
+      );
     } finally {
       if (seq.current === id) setSearching(false);
     }
+  };
+
+  // The field emptied — by its ✕ or by hand: the search is over, so an answer
+  // still in flight and the last one's notices go with it, and "Previously
+  // added" comes back.
+  const reset = () => {
+    seq.current++;
+    setResults(null);
+    setSearching(false);
+    setSearchError(null);
+    setFdcDown(false);
   };
 
   // Pre-run the search with the row's phrase — one fewer tap.
@@ -73,8 +130,9 @@ export default function ManualSearchSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The previously logged foods, once per open. A failed read shows nothing
-  // in their place — the list is a convenience, search still works.
+  // The previously logged foods, once per open. A failed read says so in one
+  // quiet line, never the first-run copy — the list is a convenience, search
+  // still works.
   useEffect(() => {
     let cancelled = false;
     recentFoods()
@@ -82,20 +140,15 @@ export default function ManualSearchSheet({
         if (!cancelled) setRecent(r);
       })
       .catch(() => {
-        if (!cancelled) setRecent([]);
+        if (!cancelled) setRecentFailed(true);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Escape and Back: the sub-sheet's come through its SheetHeader
+  useSheetBack(sheetRef, onClose, fullScreen);
 
   // Until a search has run — or once the field is cleared again — the
   // previously logged foods take the results' place. A pre-searched row
@@ -103,22 +156,27 @@ export default function ManualSearchSheet({
   // unrelated foods.
   const showRecent = !query.trim() || (results == null && !searching);
 
-  // Cached foods (food_id set) carry the adapters' lowercase display names;
-  // .food-name capitalizes those. A raw FDC description is shown as-is.
+  // Cached foods (food_id set) carry the adapters' lowercase display names and
+  // a raw FDC description can be ALL CAPS; foodName() gives both one casing,
+  // the text itself unchanged.
   const hit = (r: FoodSearchResult, i: number) => (
     <button
       key={`${r.source}:${r.source_id}:${i}`}
       type="button"
-      disabled={busy}
-      onClick={() => onSelect(r)}
+      className={refused ? "refused" : undefined}
+      disabled={busy || refused}
+      aria-busy={pickedKey === `${r.source}:${r.source_id}` || undefined}
+      onClick={() => {
+        setPicked(`${r.source}:${r.source_id}`);
+        onSelect(r);
+      }}
     >
-      <span className={`result-name${r.food_id ? " food-name" : ""}`}>
-        {r.label}
-      </span>
+      <span className="result-name">{foodName(r.label)}</span>
       <span className="result-sub">
-        {r.brand ? `${r.brand} · ` : ""}
-        {r.food_id ? "my foods" : (r.data_type ?? r.source)}
+        {hitSub(r)}
+        {per100(r)}
       </span>
+      {pickedKey === `${r.source}:${r.source_id}` ? <span className="spinner" /> : null}
     </button>
   );
 
@@ -131,24 +189,58 @@ export default function ManualSearchSheet({
           void run(query);
         }}
       >
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search foods"
-          aria-label="Search foods"
-          autoComplete="off"
-          autoFocus={!phrase}
-        />
+        <div className="capture-field">
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (!e.target.value.trim()) reset();
+            }}
+            placeholder="Search foods"
+            aria-label="Search foods"
+            autoComplete="off"
+            autoFocus={!phrase}
+            {...FOOD_FIELD_PROPS}
+            enterKeyHint="search"
+          />
+          {query ? (
+            <button
+              type="button"
+              className="field-clear"
+              aria-label="Clear search"
+              // keep the field focused, so the keyboard doesn't drop and rise
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setQuery("");
+                reset();
+                inputRef.current?.focus();
+              }}
+            >
+              <Close />
+            </button>
+          ) : null}
+        </div>
         <button type="submit" disabled={searching || !query.trim()} aria-label="Search">
-          {searching ? <span className="spinner" /> : "→"}
+          {searching ? (
+            <span className="spinner" />
+          ) : (
+            <ArrowRight strokeWidth={2.4} />
+          )}
         </button>
       </form>
 
-      {error ? <p className="sheet-error">{error}</p> : null}
-      {searchError ? <p className="sheet-error">{searchError}</p> : null}
+      {error ? <ErrorNotice message={error} /> : null}
+      {searchError ? (
+        <ErrorNotice
+          message={searchError.text}
+          onRetry={searchError.retry ? () => void run(query) : undefined}
+        />
+      ) : null}
       {fdcDown ? (
         <p className="subsheet-hint">
-          Food database unreachable — showing your foods only.
+          USDA search didn&rsquo;t answer — showing foods already saved in
+          Tally.
         </p>
       ) : null}
 
@@ -163,10 +255,23 @@ export default function ManualSearchSheet({
             <p className="subsheet-hint">
               Foods you log show up here, newest first.
             </p>
-          ) : null}
+          ) : recentFailed ? (
+            <p className="subsheet-hint">
+              Couldn&rsquo;t load your recent foods. Search still works.
+            </p>
+          ) : (
+            <>
+              <p className="search-label">Previously added</p>
+              <Skeleton rows={5} height={55} />
+            </>
+          )}
         </div>
       ) : (
         <div className="search-results">
+          {/* nothing to keep on screen — the first search, a Retry, a
+              re-search after "No matches" — so the rows' shape holds it;
+              a re-search over hits keeps them */}
+          {searching && !results?.length ? <Skeleton rows={4} height={55} /> : null}
           {(results ?? []).map(hit)}
           {results != null && results.length === 0 && !searching && !searchError ? (
             <p className="subsheet-hint">No matches — try fewer words.</p>
@@ -180,10 +285,17 @@ export default function ManualSearchSheet({
     return (
       <>
         <div className="sheet-backdrop" onClick={onClose} />
-        <div className="sheet search-sheet" role="dialog" aria-label="Search foods">
+        <div
+          ref={sheetRef}
+          className="sheet search-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Search foods"
+          tabIndex={-1}
+        >
           <div className="sheet-head">
             <div className="sheet-head-row">
-              <span className="sheet-title">Search</span>
+              <h2 className="sheet-title">Search</h2>
               <SheetClose onClick={onClose} />
             </div>
           </div>
@@ -196,8 +308,15 @@ export default function ManualSearchSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Manual food search">
-        <SheetHeader title="Find a food" onClose={onClose} />
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search foods"
+        tabIndex={-1}
+      >
+        <SheetHeader title="Search" onClose={onClose} />
         {body}
       </div>
     </>

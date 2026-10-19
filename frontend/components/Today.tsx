@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   discardLog,
   getDiary,
   patchTimings,
@@ -16,7 +17,14 @@ import {
   type LogResponse,
   type StagedItem,
 } from "@/lib/api";
-import { ADD_EVENT, ADD_HANDOFF_KEY, isAddLane, type AddLane } from "./AddSheet";
+import { mealLabel } from "@/lib/labels";
+import {
+  ADD_EVENT,
+  ADD_HANDOFF_FROM_KEY,
+  ADD_HANDOFF_KEY,
+  isAddLane,
+  type AddLane,
+} from "./AddSheet";
 import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
@@ -25,18 +33,24 @@ import DiaryList from "./DiaryList";
 import { parseISO } from "./HistoryApi";
 import { cacheFood } from "./LibraryApi";
 import ManualSearchSheet from "./ManualSearchSheet";
-import { getMe, type Me } from "./MeApi";
+import { getMe, peekMe, type Me } from "./MeApi";
 import { syncOura } from "./OuraApi";
 import PendingItems from "./PendingItems";
 import { photoErrorMessage } from "./PhotoApi";
 import type { PhotoShot } from "./PhotoCapture";
 import { createLogFromFood, lookupBarcode } from "./QuickAddApi";
+import { dayKey, peek, put } from "./readCache";
+import { releaseForNavigation } from "./sheetBack";
 import SplitSheet from "./SplitSheet";
-import StagingSheet, { type StagingSnapshot } from "./StagingSheet";
+import StagingSheet, { amountKey, type StagingSnapshot } from "./StagingSheet";
 import Tracker from "./Tracker";
-import { useOnForeground } from "./useOnForeground";
+import { RESUME_STALE_MS, useOnForeground } from "./useOnForeground";
+import { OFFLINE_NOTE, useOnline } from "./useOnline";
+import { useScrollMemory } from "./useScrollMemory";
+import SheetPresence from "./useSheetPresence";
 import type { VoiceClip } from "./useVoiceCapture";
 import WeightCard from "./WeightCard";
+import { TARGETS_EVENT } from "./WizardGate";
 
 const UNDO_MS = 6_000;
 /** BACKLOG 31: pending stragglers survive an app close so PendingItems can
@@ -44,12 +58,6 @@ const UNDO_MS = 6_000;
  *  Holds a QUEUE, one entry per committed log: two logs committed inside the
  *  same ~90s tier-3 window each need their own poll. */
 const PENDING_KEY = "usual.pending.v1";
-
-/** How long Today may sit in the background before a return to the foreground
- *  re-reads the server. Short enough that a meal logged on another device is
- *  there when you look, long enough that flicking to the camera roll and back
- *  costs nothing. A local-date rollover re-reads regardless of this. */
-const RESUME_STALE_MS = 60_000;
 
 type PendingState = { logId: string; items: StagedItem[] };
 
@@ -65,10 +73,18 @@ function localDateISO(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** readCache: the day's diary as last shown, keyed by its date, so a return
+ *  to Today paints it at once and yesterday's is never read for today. */
+type CachedDay = { totals: DayTotals; meals: DiaryMeals };
+
 export default function Today() {
-  const [totals, setTotals] = useState<DayTotals | null>(null);
+  const [totals, setTotals] = useState<DayTotals | null>(
+    () => peek<CachedDay>(dayKey(localDateISO()))?.totals ?? null,
+  );
   // §7.4 Today: the diary grouped by meal renders under the tracker.
-  const [meals, setMeals] = useState<DiaryMeals | null>(null);
+  const [meals, setMeals] = useState<DiaryMeals | null>(
+    () => peek<CachedDay>(dayKey(localDateISO()))?.meals ?? null,
+  );
   // The diary read failed. While no diary is on screen the tracker gives way
   // to an error with a Retry: a day we couldn't read must not look like an
   // empty one (BACKLOG 131's outage read as a wiped diary). A failed RE-read
@@ -78,6 +94,9 @@ export default function Today() {
     log: LogResponse;
     restore: StagingSnapshot | null;
   } | null>(null);
+  // Bumped by a chat card's Review on the log already in the tray: the
+  // split sheet grows the tray a stop on each change (expandSignal).
+  const [reviewTick, setReviewTick] = useState(0);
   // §3.5 stragglers, one entry per committed log. A single slot meant the
   // second of two commits inside the tier-3 window overwrote the first, and
   // remounting <PendingItems> under the new key cancelled the first log's
@@ -111,20 +130,41 @@ export default function Today() {
   // the whole commit (§3.5). Remembered here, where the log outlives the
   // sheet, for as long as a card can be reviewed.
   const removedIndexesRef = useRef<Map<string, number[]>>(new Map());
+  // ...and the portions its tray set, which closeStaging leaves on the card
+  // (§3.4b): per row, the server's row each was set on (StagingSheet's
+  // portionsRef), so a correction to another row keeps them on the card and
+  // a later Review keeps them through the next one.
+  const portionsRef = useRef<Map<string, Record<number, string>>>(new Map());
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  // the digits of a barcode neither database knows — an ordinary miss, shown
+  // apart from captureError's failures
+  const [scanMiss, setScanMiss] = useState<string | null>(null);
+  // A Search pick the demo quota refused: every other result would meet the
+  // same 429, so the rows stop taking taps until the lane is opened again
+  // (Bill, 2026-10-13).
+  const [searchRefused, setSearchRefused] = useState(false);
   // Demo accounts (GET /api/me): the banner's quota, re-read after every
   // log attempt so "next log at …" shows the moment the day's log is spent.
   // Owner → demo null → no banner. A failed read renders nothing: the
   // server enforces the quota; the banner only explains it.
-  const [me, setMe] = useState<Me | null>(null);
+  // Seeded with the visit's last read, so a return to Today keeps the banner.
+  const [me, setMe] = useState<Me | null>(peekMe);
   const demo = me?.demo ?? null;
   const quotaSpent = demo != null && demo.used_today >= demo.limit;
+  // §8.6: no network, no logging — said under the header
+  const online = useOnline();
   // Owner ruling (2026-09-02): the capture bar left the Today screen; every
   // way to log opens from the tab bar's + sheet. `lane` is which lane's sheet
   // is up. The pick arrives from TabBar as a window event (Today mounted) or
   // a sessionStorage handoff (navigated here from another tab).
   const [lane, setLane] = useState<AddLane | null>(null);
+  // A lane handed over from another tab remembers that tab (`originRef`), so
+  // closing it before anything was sent (`sentRef`) goes back there rather
+  // than stranding the user on Today. Once something is sent, landing here
+  // on the diary is the point, and the lane closes in place.
+  const originRef = useRef<string | null>(null);
+  const sentRef = useRef(false);
   // §3.4b (2026-09-08): the photo lane IS the agent lane now — "Take photo"
   // opens the chat with the picker up, so the plate lands in the conversation
   // that is going to correct it. This is which of the two the lane opened for.
@@ -134,8 +174,19 @@ export default function Today() {
   const quickRef = useRef<{ id: string; foodId: string } | null>(null);
   // §8.4: "save this as my usual breakfast" said after logging resolves to
   // zero items — the server saved (or explained) it, so confirm that instead
-  // of opening an empty staging sheet.
-  const [savedNote, setSavedNote] = useState<string | null>(null);
+  // of opening an empty staging sheet. `auto`: the "Saved as" confirmation
+  // clears itself (UNDO_MS, below); a failure or the server's own note waits
+  // for its OK.
+  const [savedNote, setSavedNote] = useState<{
+    text: string;
+    auto: boolean;
+  } | null>(null);
+  // the clock restarts with each new note and stops with the page
+  useEffect(() => {
+    if (!savedNote?.auto) return;
+    const timer = setTimeout(() => setSavedNote(null), UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [savedNote]);
   // §6.4 the Agent chat (2026-09-06): the conversation lives here, not in
   // the sheet, so the staging sheet stacked over the chat leaves it intact;
   // the POST /api/agent stream appends to it as events land. Every opening
@@ -199,13 +250,20 @@ export default function Today() {
   // on the outcome rather than as this turn's own (empty) log. The card that
   // owns that log shows the new list — a second card would be a lie, and
   // StagingSheet reads its rows from these props when Review mounts it.
-  const patchResult = (updated: LogResponse) =>
+  // `portions` (portionsRef's for that log): a card row whose server copy
+  // still reads as when its portion was set keeps that portion.
+  const patchResult = (updated: LogResponse, portions?: Record<number, string>) =>
     setChat((cur) =>
-      cur.map((m) =>
-        m.kind === "result" && m.log.log_id === updated.log_id
-          ? { ...m, log: { ...m.log, ...updated } }
-          : m,
-      ),
+      cur.map((m) => {
+        if (m.kind !== "result" || m.log.log_id !== updated.log_id) return m;
+        const items = updated.items.map((s) => {
+          const c = m.log.items.find((i) => i.item_index === s.item_index);
+          return c && portions?.[s.item_index] === amountKey(s)
+            ? { ...s, serving: c.serving, qty: c.qty, macros: c.macros }
+            : s;
+        });
+        return { ...m, log: { ...m.log, ...updated, items } };
+      }),
     );
   // a run that ended in an error leaves no tool line spinning
   const settleRunning = () =>
@@ -344,6 +402,8 @@ export default function Today() {
 
   const pickLane = (next: AddLane) => {
     setCaptureError(null);
+    setScanMiss(null);
+    setSearchRefused(false);
     // §3.4b (2026-09-08): "Take photo" opens the same chat, with the picker
     // up instead of the mic — so it is the Agent lane, and everything below
     // applies to it. The still-undoable discard is settled by the send
@@ -368,6 +428,37 @@ export default function Today() {
     }
     setOpenWith(next === "photo" ? "photo" : "mic");
     setLane(target);
+    sentRef.current = false; // a new lane (or Search instead) starts unused
+  };
+  // Every way a lane closes. TabBar pushed Today over the origin, so the
+  // entry behind this one is that page.
+  //
+  // §7.1 (Bill, 2026-10-13): the Agent lane's ✕, scrim, pull, Escape and
+  // Back put the whole lane away in one tap. With rows staged that goes
+  // through the tray's own close first — closeStaging with the tray's
+  // snapshot: the §5 discard with its Undo, or §3.4b's back-to-chat patch for
+  // a photo log — and an Undo after the lane is gone brings the rows back in
+  // the standalone sheet, since reopening Agent starts a new conversation.
+  // Only the docked tray: another lane's close leaves a standalone sheet be.
+  // A tray whose Log is in flight refuses (false), and the lane stays up
+  // around it: put away, the rows would remount as the standalone sheet and
+  // offer Log a second time while the first is still landing.
+  const closeTrayRef = useRef<(() => boolean | void) | null>(null);
+  // ...and the lane's ✕ and pull say so up front (SplitSheet `busy`)
+  const [trayBusy, setTrayBusy] = useState(false);
+  const closeLane = () => {
+    if (lane === "agent" && staging && closeTrayRef.current?.() === false) return;
+    setLane(null);
+    const from = originRef.current;
+    originRef.current = null;
+    if (from && !sentRef.current) {
+      // The open lane holds a history entry over Today's (sheetBack), and a
+      // plain back() would pop only that, landing on Today again. Closed by
+      // its ✕ or scrim the entry is still current: take it from sheetBack and
+      // step back over both. Closed by system Back it is already gone.
+      if (releaseForNavigation()) window.history.go(-2);
+      else router.back();
+    }
   };
   // The + listener is bound once; the ref keeps it on the current closure.
   const pickRef = useRef(pickLane);
@@ -380,9 +471,14 @@ export default function Today() {
     // Picked on another tab: TabBar stashed the lane and navigated here.
     try {
       const stashed = sessionStorage.getItem(ADD_HANDOFF_KEY);
+      const from = sessionStorage.getItem(ADD_HANDOFF_FROM_KEY);
+      sessionStorage.removeItem(ADD_HANDOFF_FROM_KEY);
       if (stashed != null) {
         sessionStorage.removeItem(ADD_HANDOFF_KEY);
-        if (isAddLane(stashed)) pickRef.current(stashed);
+        if (isAddLane(stashed)) {
+          originRef.current = from;
+          pickRef.current(stashed);
+        }
       }
     } catch {
       /* storage unavailable — the + is one tap away again */
@@ -406,6 +502,19 @@ export default function Today() {
         setDiaryError(true);
       });
   };
+
+  // The goal wizard saved targets; the tracker's come from the diary totals.
+  // Back online (§8.6), a diary read that failed offline is made again.
+  // reloadDiary only touches state setters, so the first render's copy is fine.
+  useEffect(() => {
+    const reload = () => reloadDiary();
+    window.addEventListener(TARGETS_EVENT, reload);
+    window.addEventListener("online", reload);
+    return () => {
+      window.removeEventListener(TARGETS_EVENT, reload);
+      window.removeEventListener("online", reload);
+    };
+  }, []);
 
   // The queue is written through the ref, not through a functional setState:
   // it is persisted in the same breath, and a state updater has to stay pure
@@ -488,6 +597,14 @@ export default function Today() {
     setWeightsKey((k) => k + 1);
   });
 
+  // Whatever the diary now says (a read, a commit's totals, an inline edit)
+  // is what the next return to Today paints first (readCache), under the day
+  // this screen shows.
+  useEffect(() => {
+    if (totals && meals) put(dayKey(dayRef.current!), { totals, meals });
+  }, [totals, meals]);
+  useScrollMemory(meals !== null);
+
   // A demo 429 carries the server's own sentence and the reset instant: the
   // sentence goes in the lane's error surface verbatim (never the generic
   // line), the instant into the banner — no round trip. Returns whether the
@@ -540,13 +657,16 @@ export default function Today() {
     if (log.items.length === 0 && (log.saved_meal || log.note)) {
       setSavedNote(
         log.saved_meal
-          ? `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} item${log.saved_meal.item_count === 1 ? "" : "s"}`
-          : (log.note as string),
+          ? {
+              text: `Saved as "${log.saved_meal.name}" · ${log.saved_meal.item_count} item${log.saved_meal.item_count === 1 ? "" : "s"}`,
+              auto: true,
+            }
+          : { text: log.note as string, auto: false },
       );
       return;
     }
     if (log.items.length === 0) {
-      setSavedNote("Nothing was logged — try again.");
+      setSavedNote({ text: "Nothing was logged — try again.", auto: false });
       return;
     }
     setSavedNote(null);
@@ -630,7 +750,39 @@ export default function Today() {
     // a correction: the earlier turn's log this one replaces
     if (mine) for (const id of log.agent?.discarded ?? []) markResult(id, "replaced");
     // §3.4b: adjust_photo edited the plate — patch its card, never add one
-    if (mine && log.agent?.updated) patchResult(log.agent.updated);
+    const updated = log.agent?.updated;
+    const portions = updated ? portionsRef.current.get(updated.log_id) : undefined;
+    if (mine && updated) patchResult(updated, portions);
+    // ...and the tray, when the plate is open in it: its rows are what Log
+    // sends, and what closing it writes back over the card
+    if (updated) {
+      // a row the correction changed takes the server's amount from now on
+      if (portions) {
+        for (const s of updated.items) {
+          if (portions[s.item_index] !== amountKey(s)) delete portions[s.item_index];
+        }
+      }
+      // A row the correction removed is just missing from `updated`, and the
+      // server keeps its index: remembered as the tray's own removals are
+      // (removedIndexesRef), or a later sheet's "Add another food" reuses it.
+      // Read off the plate as this turn found it, the card's and the tray's.
+      const gone = [
+        ...chat.flatMap((m) =>
+          m.kind === "result" && m.log.log_id === updated.log_id ? m.log.items : [],
+        ),
+        ...(staging?.log.log_id === updated.log_id ? staging.log.items : []),
+      ]
+        .map((i) => i.item_index)
+        .filter((i) => !updated.items.some((s) => s.item_index === i));
+      const prior = removedIndexesRef.current.get(updated.log_id) ?? [];
+      const fresh = [...new Set(gone)].filter((i) => !prior.includes(i));
+      if (fresh.length) removedIndexesRef.current.set(updated.log_id, [...prior, ...fresh]);
+      setStaging((cur) =>
+        cur?.log.log_id === updated.log_id
+          ? { ...cur, log: { ...cur.log, ...updated } }
+          : cur,
+      );
+    }
     if (replay && mine) {
       // a voice bubble the replay carried no transcript for stays honest
       setChat((cur) =>
@@ -682,6 +834,7 @@ export default function Today() {
   };
 
   const submit = async (text: string): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -734,6 +887,7 @@ export default function Today() {
           text: quota
             ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
             : "Couldn't log that — check your connection and retry.",
+          retryable: !quota,
         });
       }
       return false;
@@ -746,6 +900,7 @@ export default function Today() {
   // chat as soon as the server has it, then the same stream as text.
   // staged_ms measures stop-tap → rendered (§11: "capture stop → staged").
   const submitAudio = async (clip: VoiceClip): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -837,6 +992,7 @@ export default function Today() {
   // turn — the model sees the image and answers what was asked — where the
   // bare shot stays the deterministic vision parse.
   const submitPhoto = async (shot: PhotoShot, said = ""): Promise<boolean> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     const convo = convoRef.current; // the conversation this turn belongs to
@@ -893,6 +1049,8 @@ export default function Today() {
           text: quota
             ? (quotaRefusal(e)?.detail ?? "Demo limit reached.")
             : photoErrorMessage(e),
+          // a refused image (too large, wrong type) fails the same way again
+          retryable: !quota && !(e instanceof ApiError && e.status < 500),
         });
       }
       return false;
@@ -929,11 +1087,15 @@ export default function Today() {
         captured_at: new Date().toISOString(),
       });
       quickRef.current = null;
-      setLane(null);
+      closeLane();
       enterStaging(log);
     } catch (e) {
       t0Ref.current = null;
-      failCapture(e, "Couldn't log that — check your connection and retry.");
+      const quota = failCapture(
+        e,
+        "Couldn't log that — check your connection and retry.",
+      );
+      if (quota && inputMode === "search") setSearchRefused(true);
     } finally {
       setCaptureBusy(false);
     }
@@ -942,6 +1104,7 @@ export default function Today() {
   // Search lane: an FDC hit is cached first (POST /api/foods/select, the
   // library path) — from-food takes a foods.id, never a raw source id.
   const searchSelect = async (hit: FoodSearchResult): Promise<void> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
     let foodId: string;
@@ -956,8 +1119,10 @@ export default function Today() {
   };
 
   const scanCode = async (code: string): Promise<void> => {
+    sentRef.current = true;
     setCaptureBusy(true);
     setCaptureError(null);
+    setScanMiss(null);
     let hit: Awaited<ReturnType<typeof lookupBarcode>>;
     try {
       hit = await lookupBarcode(code);
@@ -968,12 +1133,10 @@ export default function Today() {
     }
     if (!hit.found) {
       // An honest miss (§13: never fail silently): neither FDC Branded nor
-      // Open Food Facts knows this code. Say where we looked; the scanner
-      // offers search.
+      // Open Food Facts knows this code. The scanner says where we looked —
+      // as a miss, not an error — and offers search.
       setCaptureBusy(false);
-      setCaptureError(
-        `${code.replace(/\D/g, "")} isn't in USDA FoodData Central or Open Food Facts.`,
-      );
+      setScanMiss(code.replace(/\D/g, ""));
       return;
     }
     await quickAdd(hit.food.id, "barcode");
@@ -1022,9 +1185,13 @@ export default function Today() {
       // — is what makes this correct rather than merely fresher: there is no
       // window in which the next utterance reads the pre-sheet rows, and no
       // in-flight response that can land after an adjust_photo outcome and
-      // overwrite a newer list with an older one. It also keeps the local
-      // portion edits, which is how the sheet has always worked — they are
-      // what a commit from this card would send.
+      // overwrite a newer list with an older one. That holds because
+      // agentDone hands an adjust_photo outcome to the open tray as well as
+      // to the card: a tray that kept its pre-correction rows would put
+      // them back here. It also keeps the local portion edits, which is how
+      // the sheet has always worked — they are what a commit from this card
+      // would send — and what each was set on, for the next correction.
+      portionsRef.current.set(current.log.log_id, snap.portions);
       patchResult({
         log_id: current.log.log_id,
         meal: snap.meal,
@@ -1053,6 +1220,12 @@ export default function Today() {
     }
     const d = discardRef.current;
     if (!d) return;
+    // The toast's Undo leaves with the toast, so the sheet it brings back
+    // would record nothing to return focus to: the + it was opened from
+    // stands in. With a lane up its own sheet keeps the focus (the split).
+    if (lane === null) {
+      document.querySelector<HTMLElement>(".fab")?.focus({ preventScroll: true });
+    }
     setDiscard(null);
     setStaging({ log: d.log, restore: d.snap }); // local edits intact
   };
@@ -1075,7 +1248,7 @@ export default function Today() {
               month: "short",
               day: "numeric",
             })}`
-          : `Logged ${kcal} kcal${meal ? ` to ${meal[0].toUpperCase()}${meal.slice(1)}` : ""}`;
+          : `Logged ${kcal} kcal${meal ? ` to ${mealLabel(meal)}` : ""}`;
     if (committedTimer.current) clearTimeout(committedTimer.current);
     setCommittedNote({ text, day: other });
     committedTimer.current = setTimeout(() => {
@@ -1096,10 +1269,20 @@ export default function Today() {
   // closes over.
   const stageEl = staging ? (
     <StagingSheet
+      // another log is another sheet: its rows, Undo windows and polls are
+      // all state, and none of it may carry over to the next log's commit
+      key={staging.log.log_id}
       log={staging.log}
       restore={staging.restore}
       docked={lane === "agent"}
       removedIndexes={removedIndexesRef.current.get(staging.log.log_id)}
+      onRemoved={(logId, itemIndex) => {
+        const prior = removedIndexesRef.current.get(logId) ?? [];
+        if (!prior.includes(itemIndex)) {
+          removedIndexesRef.current.set(logId, [...prior, itemIndex]);
+        }
+      }}
+      portions={portionsRef.current.get(staging.log.log_id)}
       onRendered={() => stagedRendered(staging.log.log_id)}
       onCommitted={(t, stragglers, landed) => {
         // The commit's totals are for the day the entries landed on (§7.2
@@ -1117,6 +1300,8 @@ export default function Today() {
         noteCommitted(t.totals_day, landed);
       }}
       onClose={closeStaging}
+      closeRef={closeTrayRef}
+      onCommitting={setTrayBusy}
     />
   ) : null;
 
@@ -1129,6 +1314,15 @@ export default function Today() {
         </h1>
         <span className="date">{today}</span>
       </header>
+
+      {/* mounted online too, empty and out of the flow ([role=status]:empty),
+          so the note is announced as it arrives, like the toast host's */}
+      <div
+        className={online ? undefined : "notice warn offline-note"}
+        role="status"
+      >
+        {online ? null : <span>{OFFLINE_NOTE}</span>}
+      </div>
 
       {demo ? <DemoBanner demo={demo} /> : null}
 
@@ -1150,7 +1344,12 @@ export default function Today() {
         <Tracker totals={totals} />
       )}
 
-      <WeightCard refreshKey={weightsKey} />
+      {/* offline, logging is off (§8.6) as it is in the + sheet: no button
+          that opens the mic only for the upload to fail */}
+      <WeightCard
+        refreshKey={weightsKey}
+        onLog={online ? () => pickLane("agent") : undefined}
+      />
 
       {pending.map((p) => (
         <PendingItems
@@ -1168,6 +1367,10 @@ export default function Today() {
       {meals ? (
         <DiaryList
           meals={meals}
+          // logging is only the tab bar's + (a button here dispatching the
+          // agent lane would start the mic from an empty-state tap). Not
+          // "below": from 900px the + sits in the left rail.
+          emptyText={"Nothing logged yet. Log a meal with the +\u00a0button."}
           onPatched={(entry, t) => {
             setTotals(t);
             setMeals((cur) => (cur ? placeEntry(cur, entry) : cur));
@@ -1191,107 +1394,132 @@ export default function Today() {
           whether or not anything is staged: taking it in and out of the split
           as rows come and go would remount it, blanking the composer and
           re-running the mount effect that picks the mic or the photo picker. */}
-      {lane === "agent" ? (
-        <SplitSheet
-          stage={stageEl}
-          // Escape reaches every window listener: while a sub-sheet is stacked
-          // above the split it is theirs, and while rows are staged the staged
-          // list's own × is what acts (SplitSheet hides this one then).
-          onDismiss={() => {
-            if (!staging) setLane(null);
-          }}
-          chat={
-            <AgentChat
-              key={convoKey}
-              docked
-              messages={chat}
-              busy={captureBusy}
-              error={captureError}
-              openWith={openWith}
-              locate={me?.is_owner === true}
-              onSubmit={submit}
-              onSubmitAudio={submitAudio}
-              onSubmitPhoto={submitPhoto}
-              onVoiceFailure={(e) => {
-                voiceFailRef.current = e;
-              }}
-              onReview={(log) => {
-                // Inside the 6 s undo window the sheet's log is about to be
-                // discarded: Review is the undo — the timer is cancelled and
-                // the rows come back with their local edits, exactly as the
-                // toast's Undo does. Otherwise bring the staged log back up.
-                if (discardRef.current?.log.log_id === log.log_id) {
-                  undoDiscard();
-                  return;
-                }
-                if (staging?.log.log_id === log.log_id) return; // already up
-                setSavedNote(null);
-                setStaging({ log, restore: null });
-              }}
-              onClose={() => {
-                if (!staging) setLane(null);
-              }}
-            />
-          }
-        />
-      ) : null}
+      <SheetPresence>
+        {lane === "agent" ? (
+          <SplitSheet
+            stage={stageEl}
+            expandSignal={reviewTick}
+            busy={trayBusy}
+            // Escape and Back go to the topmost sheet (sheetBack): a sub-sheet
+            // stacked above the split takes them before this does.
+            onDismiss={closeLane}
+            chat={
+              <AgentChat
+                key={convoKey}
+                docked
+                messages={chat}
+                busy={captureBusy}
+                error={captureError}
+                openWith={openWith}
+                locate={me?.is_owner === true}
+                raw={me?.is_owner === true}
+                onSubmit={submit}
+                onSubmitAudio={submitAudio}
+                onSubmitPhoto={submitPhoto}
+                onVoiceFailure={(e) => {
+                  voiceFailRef.current = e;
+                }}
+                onReview={(log) => {
+                  // Inside the 6 s undo window the sheet's log is about to be
+                  // discarded: Review is the undo — the timer is cancelled and
+                  // the rows come back with their local edits, exactly as the
+                  // toast's Undo does. Otherwise bring the staged log back up.
+                  if (discardRef.current?.log.log_id === log.log_id) {
+                    undoDiscard();
+                    return;
+                  }
+                  // Already up: Review still visibly opens it — the tray
+                  // grows a stop, so a tap at peek is never a no-op.
+                  if (staging?.log.log_id === log.log_id) {
+                    setReviewTick((n) => n + 1);
+                    return;
+                  }
+                  setSavedNote(null);
+                  setStaging({ log, restore: null });
+                }}
+                onClose={closeLane}
+              />
+            }
+          />
+        ) : null}
+      </SheetPresence>
 
-      {lane === "search" ? (
-        <ManualSearchSheet
-          phrase=""
-          fullScreen
-          busy={captureBusy}
-          error={captureError}
-          onSelect={searchSelect}
-          onClose={() => setLane(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {lane === "search" ? (
+          <ManualSearchSheet
+            phrase=""
+            fullScreen
+            busy={captureBusy}
+            error={captureError}
+            refused={searchRefused}
+            onSelect={searchSelect}
+            onClose={closeLane}
+          />
+        ) : null}
+      </SheetPresence>
 
-      {lane === "barcode" ? (
-        <BarcodeScanner
-          busy={captureBusy}
-          notice={captureError}
-          onCode={scanCode}
-          // a spent quota meets the same 429 in the search lane — don't offer it
-          onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}
-          onClose={() => setLane(null)}
-        />
-      ) : null}
+      <SheetPresence>
+        {lane === "barcode" ? (
+          <BarcodeScanner
+            busy={captureBusy}
+            notice={captureError}
+            miss={scanMiss}
+            onCode={scanCode}
+            // a spent quota meets the same 429 in the search lane — don't offer it
+            onSearchInstead={quotaSpent ? undefined : () => pickLane("search")}
+            onClose={closeLane}
+          />
+        ) : null}
+      </SheetPresence>
 
-      {lane === "agent" ? null : stageEl}
+      <SheetPresence>{lane === "agent" ? null : stageEl}</SheetPresence>
 
-      {discard ? (
-        <div className="toast" role="status">
-          <span>Log discarded</span>
-          <button type="button" onClick={undoDiscard}>
-            Undo
-          </button>
-        </div>
-      ) : null}
-
-      {savedNote ? (
-        <div className="toast" role="status">
-          <span>{savedNote}</span>
-          <button type="button" onClick={() => setSavedNote(null)}>
-            OK
-          </button>
-        </div>
-      ) : null}
-
-      {/* one toast at a time: the undo and the saved-meal note outrank it */}
-      {committedNote && !discard && !savedNote ? (
-        <div className="toast under-sheets" role="status">
-          <span>{committedNote.text}</span>
-          {committedNote.day ? (
-            <button
-              type="button"
-              onClick={() => router.push(`/history/${committedNote.day}`)}
-            >
-              View
+      {/* One live region for every toast, mounted with the page: a region
+          inserted together with its text is often skipped by VoiceOver, and
+          "Log discarded" has an undo clock running. */}
+      <div className="toast-host" role="status">
+        {discard ? (
+          <div className="toast">
+            <span>Log discarded</span>
+            <button type="button" onClick={undoDiscard}>
+              Undo
             </button>
-          ) : null}
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+
+        {savedNote ? (
+          <div className="toast">
+            <span>{savedNote.text}</span>
+            {savedNote.auto ? null : (
+              <button type="button" onClick={() => setSavedNote(null)}>
+                OK
+              </button>
+            )}
+          </div>
+        ) : null}
+
+        {/* one toast at a time: the undo and the saved-meal note outrank it */}
+        {committedNote && !discard && !savedNote ? (
+          <div className="toast under-sheets">
+            <span>{committedNote.text}</span>
+            {committedNote.day ? (
+              <button
+                type="button"
+                onClick={() => {
+                  // the Agent lane stays up after its Log, and its history
+                  // entry is the current one: the day view takes it over,
+                  // as TabBar's pick does, rather than leave it behind Back
+                  const url = `/history/${committedNote.day}`;
+                  if (releaseForNavigation()) router.replace(url);
+                  else router.push(url);
+                }}
+              >
+                View
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </main>
   );
 }

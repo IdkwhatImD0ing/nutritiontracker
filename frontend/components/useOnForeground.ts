@@ -6,6 +6,12 @@ import { useEffect, useRef } from "react";
  *  second is a duplicate, not a second resume. */
 const COALESCE_MS = 500;
 
+/** How long a screen may sit in the background before a return to the
+ *  foreground re-reads the server. Short enough that a meal logged on another
+ *  device is there when you look, long enough that flicking to the camera
+ *  roll and back costs nothing. A local-date rollover re-reads regardless. */
+export const RESUME_STALE_MS = 60_000;
+
 /**
  * Fires when the app comes back to the foreground, with how long it was away.
  *

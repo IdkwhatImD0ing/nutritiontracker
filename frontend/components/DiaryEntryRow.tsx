@@ -1,80 +1,90 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Meal, StagedServing } from "@/lib/api";
+import { nutrientParts, portionText, statesGrams, withUnit } from "@/lib/format";
+import { foodName, MEAL_LABEL } from "@/lib/labels";
+import { sourceName } from "@/lib/sources";
 import type { DiaryEntry } from "./DiaryApi";
 import { getFood } from "./LibraryApi";
+import PortionSheet, { type PortionChoice } from "./PortionSheet";
+import SheetPresence from "./useSheetPresence";
 import "@/app/photo.css"; // .badge.estimate
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
-const fmt2 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
 const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
-const UNITS = new Set(["g", "mg", "mcg", "ug", "iu", "kcal"]);
-
-/** Same key→label rule as StagedRow: "vitamin_c_mg" → "Vitamin C (mg)". */
-function humanizeKey(key: string): string {
-  const parts = key.split("_");
-  const last = parts[parts.length - 1]?.toLowerCase();
-  const unit = last && UNITS.has(last) ? parts.pop() : null;
-  const name = parts
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(" ");
-  return unit ? `${name} (${unit})` : name;
-}
 
 type Props = {
   entry: DiaryEntry;
   expanded: boolean;
-  busy: boolean;
+  /** a save, delete or meal move in flight: every control waits, the
+   *  tapped one spins */
+  busy: "save" | "delete" | "move" | null;
+  /** this row's failed delete or meal move, shown by the control that failed
+   *  (a failed save is onSave's answer, shown in the portion sheet) */
+  error?: { kind: "delete" | "move"; text: string } | null;
   onToggle: () => void;
   /** portion edit → PATCH /api/entries/:id {qty, serving_id?} (parent owns
    *  the request); `serving_id` is sent only when the serving itself moved.
-   *  A meal chip sends `{meal}` alone, at once — the clock filed it wrong,
-   *  there is no draft to weigh. Resolves true when the PATCH landed — the
-   *  draft is kept on a refusal so the server's reason ("pick another
-   *  serving") still has a draft to act on */
+   *  Resolves null when the PATCH landed, else the sentence to show — the
+   *  portion sheet stays open on a refusal, so the server's reason ("pick
+   *  another serving") sits beside the choice it asks to change */
   onSave: (patch: {
-    qty?: number;
+    qty: number;
     serving_id?: string;
-    meal?: Meal;
-  }) => Promise<boolean>;
+  }) => Promise<string | null>;
+  /** a meal segment → PATCH /api/entries/:id {meal} alone, at once: the
+   *  clock filed it wrong, there is no draft to weigh */
+  onMove: (meal: Meal) => void;
   onDelete: () => void;
 };
 
 /** One committed diary row (§7.1 row display rule applied to the diary):
  *  the headline number is calories; tapping expands to protein/carbs/fat,
- *  then every micro the snapshot carries; web-sourced rows show the
- *  citation as a visible, clickable link (§3.4a); photo-portion rows carry
- *  an "estimate" badge (M4); the portion — qty, and which serving it counts,
- *  behind "Change serving" — is editable and the row is deletable (§5
- *  `/api/entries/:id`). The serving list costs a GET /api/foods/:id whose
- *  FoodDetail carries the whole provider payload, so it is fetched on that
- *  tap and not on the expand: expanding a row is how the micros are read,
- *  and most rows are read rather than corrected. */
+ *  then every micro the snapshot carries, and a "Food details" row (§7.4's
+ *  drill-in); web-sourced rows show the citation as a visible, clickable
+ *  link (§3.4a); photo-portion rows carry an "estimate" badge (M4); the
+ *  portion pill opens the same portion sheet a staged row does (§7.1), the
+ *  meal picker moves the entry to another meal, and the row is deletable
+ *  (§5 `/api/entries/:id`).
+ *  The serving list costs a GET /api/foods/:id whose FoodDetail carries the
+ *  whole provider payload, so it is fetched on the pill's tap and not on the
+ *  expand: expanding a row is how the micros are read, and most rows are
+ *  read rather than corrected. */
 export default function DiaryEntryRow({
   entry,
   expanded,
   busy,
+  error,
   onToggle,
   onSave,
+  onMove,
   onDelete,
 }: Props) {
-  const [qtyText, setQtyText] = useState<string | null>(null);
-  const [servingId, setServingId] = useState<string | null>(null);
-  const [picking, setPicking] = useState(false);
+  const [portionOpen, setPortionOpen] = useState(false);
   const [servings, setServings] = useState<StagedServing[] | null>(null);
   const [servingsFailed, setServingsFailed] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteBtn = useRef<HTMLButtonElement>(null);
+  // the meal a move is waiting on takes the thumb at once; a refusal hands
+  // it back to the entry's own meal
+  const [moveTo, setMoveTo] = useState<Meal | null>(null);
+  const shownMeal = busy === "move" && moveTo ? moveTo : entry.meal;
+  const mealId = useId();
+  // A row that mounts open (DiaryList's memory, on Back or a return to the
+  // tab) cuts in with the rest of the page; only a tap plays the panel's rise.
+  const [settled, setSettled] = useState(expanded);
 
-  // The food's servings, fetched on the first "Change serving" and never
+  // The food's servings, fetched when the portion sheet first opens and never
   // again for this row (a foods row's serving list does not change under us).
   const foodId = entry.food.id;
   useEffect(() => {
-    if (!picking || servings || servingsFailed) return;
+    if (!portionOpen || servings || servingsFailed) return;
     let cancelled = false;
     getFood(foodId)
       .then((f) => {
@@ -86,18 +96,18 @@ export default function DiaryEntryRow({
     return () => {
       cancelled = true;
     };
-  }, [picking, foodId, servings, servingsFailed]);
+  }, [portionOpen, foodId, servings, servingsFailed]);
 
-  // A collapsed row drops the draft: an abandoned qty or serving must not sit
-  // there armed behind a closed row. The fetched list survives — it is this
-  // food's, not this draft's.
+  // A collapsed row drops a delete confirm: it must not sit there armed
+  // behind a closed row. Its next open is a tap's.
   useEffect(() => {
-    if (expanded) return;
-    setQtyText(null);
-    setServingId(null);
-    setPicking(false);
+    if (!expanded) {
+      setConfirmDelete(false);
+      setSettled(false);
+    }
   }, [expanded]);
 
+  const name = foodName(entry.food.name);
   const m = entry.macros;
   // BACKLOG 28: the macros jsonb carries a `base_*` sidecar on qty-edited
   // rows — diary.py passes it through as extra float keys; never render it.
@@ -105,58 +115,80 @@ export default function DiaryEntryRow({
     ([k, v]) =>
       !CORE_KEYS.has(k) && !k.startsWith("base_") && typeof v === "number",
   );
-  const portion = `${entry.qty !== 1 ? `${fmt2.format(entry.qty)} × ` : ""}${
-    entry.serving.description
-  }`;
+  // "0.5 × 1 cup · 74 g": the grams eaten, not the per-serving "(148 g)"
+  const portion = portionText(entry.qty, entry.serving.description, entry.grams);
 
-  const draft = qtyText ?? fmt2.format(entry.qty);
-  const draftNum = Number(draft);
-  const draftValid = Number.isFinite(draftNum) && draftNum > 0;
-  // Only list servings when there is something to pick between; an empty list
-  // is its own case, not "only the one".
-  const choices = servings && servings.length > 1 ? servings : null;
-  const chosenId = servingId ?? entry.serving.id;
-  const chosenDesc =
-    choices?.find((s) => s.serving_id === chosenId)?.description ??
-    entry.serving.description;
+  // The sheet's list: the food's servings once fetched, with this entry's
+  // own serving always in it, so nothing but a tap moves the serving. A
+  // failed fetch leaves the entry's serving alone — the amount still changes.
+  const own: PortionChoice = {
+    id: entry.serving.id,
+    description: entry.serving.description,
+    // one serving's weight, off the entry (its grams are the serving's × qty),
+    // so the sheet can convert the qty when another serving is picked
+    grams:
+      entry.grams != null && entry.qty > 0 ? entry.grams / entry.qty : null,
+  };
+  const choices: PortionChoice[] | null = servingsFailed
+    ? [own]
+    : servings && [
+        ...(servings.some((sv) => sv.serving_id === own.id) ? [] : [own]),
+        ...servings.map((sv) => ({
+          id: sv.serving_id,
+          description: sv.description,
+          macros: sv.macros,
+          grams: sv.grams,
+        })),
+      ];
   // The §4 snapshot invariant: the server refuses a serving whose macros are
   // partial. The same macros it checks are on this payload, so an unpickable
-  // serving is shown disabled rather than round-tripped into a 422.
-  const committable = (sv: StagedServing) =>
-    [...CORE_KEYS].every((k) => typeof sv.macros?.[k] === "number");
-  const servingMoved = chosenId !== entry.serving.id;
-  const dirty =
-    draftValid && (Math.abs(draftNum - entry.qty) > 1e-9 || servingMoved);
+  // serving is shown disabled rather than round-tripped into a 422. The
+  // entry's own serving is the one already logged, never disabled.
+  const unpickable = (sv: PortionChoice) =>
+    sv.id !== own.id &&
+    ![...CORE_KEYS].every((k) => typeof sv.macros?.[k] === "number");
 
-  const step = (delta: number) => {
-    const next = Math.max(0.25, Math.round((draftNum + delta) * 100) / 100);
-    setQtyText(fmt2.format(next));
+  const locked = busy !== null;
+
+  const openPortion = () => {
+    setSaveError(null);
+    setServingsFailed(false); // a failed fetch retries on the next open
+    setPortionOpen(true);
+  };
+
+  const applyPortion = (serving: PortionChoice, qty: number) => {
+    const moved = serving.id !== own.id;
+    // nothing changed (the sheet shows qty to 2 places): Done just closes
+    if (!moved && Math.abs(qty - Math.round(entry.qty * 100) / 100) < 1e-9) {
+      setPortionOpen(false);
+      return;
+    }
+    setSaveError(null);
+    void onSave({ qty, ...(moved ? { serving_id: serving.id } : {}) }).then(
+      (refusal) => {
+        // Only a landed PATCH closes the sheet; a refusal keeps the choice
+        // on screen next to the server's reason to change it.
+        if (refusal) setSaveError(refusal);
+        else setPortionOpen(false);
+      },
+    );
   };
 
   return (
-    <div className={`row diary-row${entry.web_source ? " web" : ""}`}>
-      <div
-        className="row-main"
-        onClick={onToggle}
-        role="button"
-        aria-expanded={expanded}
-      >
+    <div className="row diary-row" data-entry-id={entry.id}>
+      {/* One target (owner, 2026-10-13): a tap anywhere on the row expands
+          it, and the chevron says so. The name used to be a link into food
+          detail inside this toggle, and a long name covered most of the
+          row, so a tap meant to expand drilled in instead; the drill-in is
+          now the expanded panel's "Food details" row. The row is a tap
+          target, not a button: the kcal figure is the expander's button for
+          keyboard and VoiceOver, and its click bubbles to this handler. The
+          row's vertical padding is this target's (diary.css), so its edges
+          expand it too. */}
+      <div className="row-main" onClick={onToggle}>
         <div className="row-info">
           <div className="row-name">
-            {/* §7.4: food detail is a drill-in from any diary row. The row's
-                own tap still toggles the expander. prefetch off: this renders
-                once per diary row, and /library/food/[id] is a dynamic
-                auth-gated route, so the default viewport prefetch costs a
-                middleware invocation per row on screen for a page the user
-                only reaches by deliberately tapping the name. */}
-            <Link
-              className="name-btn food-name"
-              href={`/library/food/${encodeURIComponent(entry.food.id)}`}
-              prefetch={false}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {entry.food.name}
-            </Link>
+            <span>{name}</span>
             {entry.web_source ? <span className="badge web">web</span> : null}
             {/* M4: the portion was read off a photo (and confirmed before
                 commit) — flagged the way the staged row was. */}
@@ -169,15 +201,23 @@ export default function DiaryEntryRow({
             {portion}
           </div>
         </div>
-        <div className="row-kcal num">
+        <button
+          type="button"
+          className="row-kcal num"
+          aria-expanded={expanded}
+          aria-label={`${name}, ${fmt.format(m.kcal)} kcal, details`}
+        >
           <span className="n">{fmt.format(m.kcal)}</span>
           <span className="u">kcal</span>
-        </div>
+          {/* inside the button, so it turns with the button's aria-expanded */}
+          <span className="chev" aria-hidden="true" />
+        </button>
       </div>
 
-      {/* §3.4a: visible, clickable citation — collapsed or expanded. */}
+      {/* §3.4a: visible, clickable citation — collapsed or expanded. The
+          line is part of the row's tap target; its link stops the tap. */}
       {entry.web_source ? (
-        <p className="web-cite">
+        <p className="web-cite" onClick={onToggle}>
           Source:{" "}
           <a
             href={entry.web_source.url}
@@ -191,7 +231,7 @@ export default function DiaryEntryRow({
       ) : null}
 
       {expanded ? (
-        <div className="row-detail">
+        <div className={`row-detail${settled ? " settled" : ""}`}>
           <div className="macro-grid num">
             <div className="macro-cell protein">
               <div className="v">{fmt1.format(m.protein_g)}g</div>
@@ -208,180 +248,152 @@ export default function DiaryEntryRow({
           </div>
           {microEntries.length ? (
             <div className="micro-list num">
-              {microEntries.map(([k, v]) => (
-                <div className="micro-line" key={k}>
-                  <span className="k">{humanizeKey(k)}</span>
-                  <span>{fmt1.format(v as number)}</span>
-                </div>
-              ))}
+              <div className="k">Nutrients</div>
+              {microEntries.map(([k, v]) => {
+                const { name: label, unit } = nutrientParts(k);
+                return (
+                  <div className="micro-line" key={k}>
+                    <span className="k">{label}</span>
+                    <span>{withUnit(v as number, unit)}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 
+          {/* The clock can file an entry under the wrong meal: a tap moves it
+              to that meal's group at once (§3.5; logs.meal_inferred keeps
+              the clock's guess). The staged row's picker, in the staged
+              row's place above the portion, read as one labelled group. The
+              segments wait as aria-disabled, not disabled, so the tapped one
+              keeps focus through a refusal, and the move's spinner sits by
+              the label (a segment has no room for one at 320); a landed
+              move remounts the row under its new meal, and DiaryList puts
+              focus back on the picker. */}
+          <div
+            className="detail-meal"
+            role="group"
+            aria-labelledby={mealId}
+            aria-busy={busy === "move" || undefined}
+          >
+            <span className="k" id={mealId}>
+              {busy === "move" ? <span className="spinner" /> : null}
+              Meal
+            </span>
+            <div className="meal-picker m3-seg">
+              {MEALS.map((meal) => (
+                <button
+                  key={meal}
+                  type="button"
+                  className={shownMeal === meal ? "active" : undefined}
+                  aria-pressed={shownMeal === meal}
+                  aria-disabled={locked || undefined}
+                  onClick={
+                    locked || meal === entry.meal
+                      ? undefined
+                      : () => {
+                          setMoveTo(meal);
+                          onMove(meal);
+                        }
+                  }
+                >
+                  {MEAL_LABEL[meal]}
+                </button>
+              ))}
+            </div>
+            {error?.kind === "move" ? (
+              <p className="sheet-error diary-error" role="alert">
+                {error.text}
+              </p>
+            ) : null}
+          </div>
+
           <div className="detail-serving">
-            Portion: {portion}
-            {entry.grams != null ? ` · ${fmt.format(entry.grams)} g` : ""}
-            {entry.source ? (
+            Portion:{" "}
+            <button
+              type="button"
+              className="portion-btn"
+              aria-label={`Change portion for ${name}`}
+              disabled={locked}
+              onClick={openPortion}
+            >
+              {portion}
+            </button>
+            {/* portionText names the grams for any other qty; one serving
+                whose description doesn't state them still gets them here */}
+            {entry.qty === 1 && entry.grams != null && !statesGrams(entry.serving.description)
+              ? ` · ${withUnit(fmt.format(entry.grams), "g")}`
+              : ""}
+            {/* a web row's badge and citation are on its name line already */}
+            {entry.source && !entry.web_source ? (
               <span className={`badge${entry.source === "web" ? " web" : ""}`}>
-                {entry.source}
+                {sourceName(entry.source)}
               </span>
             ) : null}
           </div>
 
-          {/* the same 4-option picker as the staged row's; a tap moves the
-              entry to that meal's group (logs.meal_inferred keeps the
-              clock's guess) */}
-          <div className="detail-meal">
-            <span className="k">Meal</span>
-            <div className="chips">
-              {MEALS.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className={`chip${entry.meal === m ? " active" : ""}`}
-                  disabled={busy}
-                  onClick={() => {
-                    if (m !== entry.meal) void onSave({ meal: m });
-                  }}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* §7.4: food detail is a drill-in from any diary row — from here,
+              one row down, so the row's own tap only ever expands it.
+              prefetch off: /library/food/[id] is a dynamic auth-gated route,
+              so a prefetch costs a middleware invocation for a page the user
+              only reaches by deliberately tapping this. */}
+          <Link
+            className="diary-food-link"
+            href={`/library/food/${encodeURIComponent(entry.food.id)}`}
+            prefetch={false}
+          >
+            Food details
+            <span className="chev" aria-hidden="true" />
+          </Link>
 
           <div className="diary-edit">
-            {/* a disclosure, not a one-way door: the same button closes the
-                list again, which is the only way out on a food that turns out
-                to have nothing to pick */}
-            <button
-              type="button"
-              className="m3-link-btn diary-change-serving"
-              aria-expanded={picking}
-              onClick={() => setPicking((p) => !p)}
-            >
-              {picking ? "Hide servings" : "Change serving"}
-            </button>
-            {picking ? (
-              choices ? (
-                <div className="serving-list diary-servings">
-                  {choices.map((sv) => {
-                    const ok = committable(sv);
-                    return (
-                      <button
-                        key={sv.serving_id}
-                        type="button"
-                        className={
-                          sv.serving_id === chosenId ? "active" : undefined
-                        }
-                        disabled={busy || !ok}
-                        title={
-                          ok
-                            ? undefined
-                            : "This serving is missing macros, so it can't be logged."
-                        }
-                        onClick={() => setServingId(sv.serving_id)}
-                      >
-                        {sv.description}
-                        {ok ? "" : " · no macros"}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : servingsFailed ? (
-                // the retry re-arms the fetch: `picking` is still true, so
-                // clearing the flag is all the effect needs
-                <button
-                  type="button"
-                  className="m3-link-btn diary-change-serving"
-                  onClick={() => setServingsFailed(false)}
-                >
-                  Couldn’t load this food’s servings — retry
-                </button>
-              ) : (
-                <p className="diary-note">
-                  {!servings
-                    ? "Loading servings…"
-                    : servings.length === 1
-                      ? "This food has only the one serving."
-                      : "This food has no serving data."}
-                </p>
-              )
+            {/* a failed delete, over the buttons that failed (a failed
+                portion save shows in the portion sheet) */}
+            {error?.kind === "delete" ? (
+              <p className="sheet-error diary-error" role="alert">
+                {error.text}
+              </p>
             ) : null}
-            <span className="k">Qty · {chosenDesc}</span>
-            <div className="stepper diary-stepper">
-              <button
-                type="button"
-                aria-label="Less"
-                disabled={busy || !draftValid}
-                onClick={() => step(-1)}
-              >
-                −
-              </button>
-              <input
-                className="num"
-                inputMode="decimal"
-                value={draft}
-                aria-label="Quantity"
-                disabled={busy}
-                onChange={(e) => setQtyText(e.target.value)}
-              />
-              <button
-                type="button"
-                aria-label="More"
-                disabled={busy || !draftValid}
-                onClick={() => step(1)}
-              >
-                +
-              </button>
-            </div>
-            <div className="diary-actions">
-              <button
-                type="button"
-                className="diary-save"
-                disabled={busy || !dirty}
-                onClick={() => {
-                  void onSave({
-                    qty: draftNum,
-                    ...(servingMoved ? { serving_id: chosenId } : {}),
-                  }).then((saved) => {
-                    // Only a landed PATCH hands the row back to the entry.
-                    // Clearing eagerly flashed the old portion back for the
-                    // length of the round trip, and threw the user's choice
-                    // away exactly when a refusal asked them to change it.
-                    if (!saved) return;
-                    setQtyText(null);
-                    setServingId(null);
-                    setPicking(false);
-                  });
-                }}
-              >
-                {busy ? <span className="spinner" /> : null}
-                Save portion
-              </button>
+            {/* While a delete is being confirmed the two choices share the
+                row equally, one line each even at 320 (diary.css). */}
+            <div
+              className={`diary-actions${confirmDelete ? " confirming" : ""}`}
+            >
               {confirmDelete ? (
                 <>
+                  {/* the app's one wording for an irreversible delete
+                      (ApiKeysCard's revoke): a red yes and a focused Cancel.
+                      The yes waits as aria-disabled, not disabled: a
+                      disabled button drops focus to the page, and a failed
+                      delete's alert appears right above it. */}
                   <button
                     type="button"
                     className="diary-delete confirm"
-                    disabled={busy}
-                    onClick={onDelete}
+                    aria-disabled={locked || undefined}
+                    onClick={locked ? undefined : onDelete}
                   >
-                    Really delete
+                    {busy === "delete" ? <span className="spinner" /> : null}
+                    Yes, delete
                   </button>
                   <button
                     type="button"
                     className="diary-cancel"
-                    disabled={busy}
-                    onClick={() => setConfirmDelete(false)}
+                    disabled={locked}
+                    onClick={() => {
+                      setConfirmDelete(false);
+                      requestAnimationFrame(() => deleteBtn.current?.focus());
+                    }}
+                    autoFocus
                   >
-                    Keep
+                    Cancel
                   </button>
                 </>
               ) : (
                 <button
+                  ref={deleteBtn}
                   type="button"
                   className="diary-delete"
-                  disabled={busy}
+                  disabled={locked}
                   onClick={() => setConfirmDelete(true)}
                 >
                   Delete
@@ -391,6 +403,28 @@ export default function DiaryEntryRow({
           </div>
         </div>
       ) : null}
+
+      <SheetPresence>
+        {portionOpen ? (
+          <PortionSheet
+            title={name}
+            servings={choices}
+            initialServingId={own.id}
+            initialQty={entry.qty}
+            initialKcal={m.kcal}
+            isDisabled={unpickable}
+            error={
+              saveError ??
+              (servingsFailed
+                ? "Couldn’t load this food’s other servings — reopen to try again."
+                : null)
+            }
+            busy={busy === "save"}
+            onApply={applyPortion}
+            onClose={() => setPortionOpen(false)}
+          />
+        ) : null}
+      </SheetPresence>
     </div>
   );
 }

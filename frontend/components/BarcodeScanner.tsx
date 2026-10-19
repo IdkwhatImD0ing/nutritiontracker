@@ -2,19 +2,25 @@
 
 import { useEffect, useRef, useState } from "react";
 import { loadDetector } from "./barcodeDetector";
-import SheetHeader from "./SheetHeader";
+import { ArrowRight } from "./icons";
+import { SheetClose } from "./SheetHeader";
+import { useSheetBack } from "./sheetBack";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   /** true while the parent's lookup / from-food round trip is in flight —
    *  the detection loop pauses so one read can't fire twice, and a loading
    *  cover hides the camera so the read is visibly taken */
   busy: boolean;
-  /** the parent's outcome for the last code (not found, lookup failed); the
-   *  camera stays live so the user can try again, and search is offered */
+  /** the parent's failure for the last code (lookup failed, a demo 429);
+   *  the camera stays live so the user can try again, and search is offered */
   notice: string | null;
+  /** the last code's digits when neither database knows it — an ordinary
+   *  miss, said plainly (where we looked) with search as the way on */
+  miss: string | null;
   onCode: (code: string) => void;
   /** absent when search would meet the same wall (a demo account's day's
-   *  log is spent — the notice is the server's 429) — no chip is offered */
+   *  log is spent — the notice is the server's 429) — no search is offered */
   onSearchInstead?: () => void;
   onClose: () => void;
 };
@@ -34,8 +40,10 @@ const MIN_DIGITS = 6; // UPC-E prints as six
 const CAMERA_TEXT: Record<Camera, string> = {
   starting: "Starting camera…",
   live: "Point the camera at the barcode.",
-  denied: "Camera permission denied — type the number instead.",
-  unavailable: "No camera available — type the number instead.",
+  denied: "Camera access is off. Turn it on in Settings, or type the number.",
+  // also a camera that is busy elsewhere or refused the constraints, which
+  // "Try the camera again" can fix
+  unavailable: "Couldn't start the camera — type the number instead.",
 };
 
 /** The + sheet's Scan barcode lane. iOS Safari ships no BarcodeDetector, so
@@ -45,14 +53,21 @@ const CAMERA_TEXT: Record<Camera, string> = {
  *  the + sheet opens — `loadDetector`). Camera via getUserMedia, rear-facing,
  *  720p requested, tracks stopped on close;
  *  a torch toggle where the track advertises one; a typed-number fallback
- *  when the camera is denied or the code won't read. */
+ *  when the camera is denied or the code won't read. Full screen, like the
+ *  Search lane (BACKLOG 142): the camera is the whole sheet, with the head and
+ *  a panel of the rest laid over it, so a miss grows the panel upward rather
+ *  than moving the picture (the aiming box re-centres in what is left). With
+ *  no camera there is no picture: the panel sits under the head instead. */
 export default function BarcodeScanner({
   busy,
   notice,
+  miss,
   onCode,
   onSearchInstead,
   onClose,
 }: Props) {
+  // focus in on open, back to the opener on close; also what useSheetBack ranks
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,13 +81,7 @@ export default function BarcodeScanner({
   const onCodeRef = useRef(onCode);
   onCodeRef.current = onCode;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useSheetBack(sheetRef, onClose);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -137,7 +146,9 @@ export default function BarcodeScanner({
       // (no attempts run while busy), so a "not found" that took a second
       // cannot re-submit the code still in frame on the first dropped frame.
       const tick = async () => {
-        if (cancelled) return;
+        // closed but still sliding out (useSheetPresence): a code that comes
+        // into view now must not log anything
+        if (cancelled || video.closest("[data-closing]")) return;
         // readyState ≥ HAVE_CURRENT_DATA: detect() throws on a frameless video
         if (!busyRef.current && video.readyState >= 2) {
           let code: string | undefined;
@@ -150,7 +161,9 @@ export default function BarcodeScanner({
             missingSince = null;
             if (code !== last) {
               last = code;
-              if (!cancelled) onCodeRef.current(code);
+              if (!cancelled && !video.closest("[data-closing]")) {
+                onCodeRef.current(code);
+              }
             }
           } else if (last) {
             missingSince ??= performance.now();
@@ -191,88 +204,173 @@ export default function BarcodeScanner({
 
   return (
     <>
-      <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Scan barcode">
-        <SheetHeader title="Scan barcode" onClose={onClose} />
+      <div className="sheet-backdrop" onClick={onClose} />
+      <div
+        ref={sheetRef}
+        className={`sheet scan-sheet${hideView ? " no-camera" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Scan barcode"
+        tabIndex={-1}
+      >
+        <div className="sheet-head">
+          <div className="sheet-head-row">
+            <h2 className="sheet-title">Scan barcode</h2>
+            <SheetClose onClick={onClose} />
+          </div>
+        </div>
 
         <div className={`scan-view${busy ? " busy" : ""}`} hidden={hideView}>
           <video ref={videoRef} playsInline muted autoPlay />
-          <div className="scan-frame" aria-hidden="true" />
           {torch != null ? (
             <button
               type="button"
               className={`scan-torch${torch ? " on" : ""}`}
+              aria-label="Torch"
               aria-pressed={torch}
               onClick={toggleTorch}
             >
-              {torch ? "Torch off" : "Torch on"}
+              {/* a flashlight */}
+              <svg
+                viewBox="0 0 24 24"
+                width="20"
+                height="20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M6 2h12v4l-2 4v10a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V10L6 6z" />
+                <path d="M6 6h12M12 13v2" />
+              </svg>
             </button>
           ) : null}
+          {/* a typed number takes this path too, so it says what is
+              happening rather than what was seen; the status line below
+              carries the words for a screen reader */}
           {busy ? (
-            <div className="scan-loading">
+            <div className="scan-loading" aria-hidden="true">
               <span className="spinner" />
-              Barcode found
+              Looking it up…
             </div>
           ) : null}
         </div>
 
-        <p className="scan-status" aria-live="polite">
-          {busy ? "Looking it up…" : CAMERA_TEXT[camera]}
-        </p>
-        {hideView ? (
-          <div className="chips">
-            <button
-              type="button"
-              className="chip"
-              onClick={() => setAttempt((n) => n + 1)}
-            >
-              Try the camera again
-            </button>
+        {/* the band between the head and the panel, so the aiming box is
+            centred in the picture the user can see, however tall the panel
+            grows; the loading cover hides the picture, so the box goes too */}
+        {hideView ? null : (
+          <div className="scan-aim" aria-hidden="true">
+            {busy ? null : <div className="scan-frame" />}
           </div>
-        ) : null}
+        )}
 
-        {notice ? (
-          <>
-            <p className="sheet-error">{notice}</p>
-            {onSearchInstead ? (
-              <div className="chips">
+        <div className="scan-panel">
+          {/* one "Looking it up…" on screen: the cover says it while the
+              camera shows, this line when there is no camera view */}
+          <p className="scan-status" aria-live="polite">
+            {busy && !hideView ? (
+              <>
+                {"\u00a0"}
+                <span className="sr-only">Looking it up…</span>
+              </>
+            ) : busy ? (
+              "Looking it up…"
+            ) : (
+              <>
+                {/* the lookup's outcome is the change worth saying; the
+                    miss block below has no live region of its own */}
+                {miss ? (
+                  <span className="sr-only">No match for this barcode. </span>
+                ) : null}
+                {CAMERA_TEXT[camera]}
+              </>
+            )}
+          </p>
+          {hideView ? (
+            <div className="chips">
+              <button
+                type="button"
+                className="chip"
+                onClick={() => setAttempt((n) => n + 1)}
+              >
+                Try the camera again
+              </button>
+            </div>
+          ) : null}
+
+          {miss ? (
+            <div className="scan-miss">
+              <p className="scan-miss-title">No match for this barcode</p>
+              <p className="subsheet-hint">
+                Not in USDA FoodData Central or Open Food Facts ·{"\u00a0"}
+                <span className="num">{miss}</span>
+              </p>
+              {onSearchInstead ? (
                 <button
                   type="button"
-                  className="chip search-instead"
+                  className="edit-manual-btn"
                   onClick={onSearchInstead}
                 >
                   Search instead
                 </button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
+              ) : null}
+            </div>
+          ) : null}
 
-        <form
-          className="capture"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (busy || digits.length < MIN_DIGITS) return;
-            onCode(digits);
-          }}
-        >
-          <input
-            ref={inputRef}
-            value={manual}
-            onChange={(e) => setManual(e.target.value)}
-            inputMode="numeric"
-            placeholder="Or type the number under the bars"
-            aria-label="Barcode number"
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            disabled={busy || digits.length < MIN_DIGITS}
-            aria-label="Look up"
+          {notice ? (
+            <>
+              <p className="sheet-error" role="alert">
+                {notice}
+              </p>
+              {onSearchInstead ? (
+                <div className="chips">
+                  <button
+                    type="button"
+                    className="chip search-instead"
+                    onClick={onSearchInstead}
+                  >
+                    Search instead
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          <form
+            className="capture"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (busy || digits.length < MIN_DIGITS) return;
+              onCode(digits);
+            }}
           >
-            {busy ? <span className="spinner" /> : "→"}
-          </button>
-        </form>
+            <input
+              ref={inputRef}
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              inputMode="numeric"
+              placeholder={hideView ? "Type the number" : "Or type the number"}
+              aria-label="Barcode number"
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              disabled={busy || digits.length < MIN_DIGITS}
+              aria-label="Look up"
+            >
+              {/* the cover spins while the camera shows; with no camera
+                  view this is the lookup's one moving sign */}
+              {busy && hideView ? (
+                <span className="spinner" />
+              ) : (
+                <ArrowRight strokeWidth={2.4} />
+              )}
+            </button>
+          </form>
+        </div>
       </div>
     </>
   );

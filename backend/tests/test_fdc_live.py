@@ -40,8 +40,11 @@ def test_search_generic_returns_hits():
     hits = asyncio.run(fdc.search_generic("chicken breast cooked"))
     assert hits, "expected hits for 'chicken breast cooked'"
     for h in hits:
-        assert set(h) == {"fdc_id", "description", "data_type", "protein_per_100g"}
+        assert set(h) == {
+            "fdc_id", "description", "data_type", "protein_per_100g", "kcal_per_100g"
+        }
         assert h["data_type"] in ("SR Legacy", "Foundation")
+        assert h["kcal_per_100g"] is not None  # loggable hits all carry energy
     assert any("breast" in h["description"].lower() for h in hits)
     assert any(h["protein_per_100g"] is not None for h in hits)
 
@@ -116,3 +119,6 @@ def test_search_branded_carries_brand_owner():
     assert any((h["brand_owner"] or "").lower().startswith("coca-cola") for h in hits)
     top = hits[0]
     assert {"fdc_id", "description", "brand_owner", "published_date"} <= set(top)
+    # the Search lane's per-100 figures (per 100 ml for a beverage)
+    assert {"kcal_per_100g", "protein_per_100g", "per_100ml"} <= set(top)
+    assert all(h["kcal_per_100g"] is not None for h in hits)

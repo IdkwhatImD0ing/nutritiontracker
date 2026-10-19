@@ -7,6 +7,9 @@ import "@/app/library/m3.css";
 
 const SKIP_KEY = "usual.wizard.skipped.v1";
 
+/** Fired on window when the wizard saves targets; Today re-reads its diary. */
+export const TARGETS_EVENT = "tally:targets-changed";
+
 /** §7.4 first run: after sign-in, while settings.targets is empty, the goal
  *  wizard takes over the screen. No props — mount it once under the
  *  signed-in shell (Today is the natural host); it renders nothing when
@@ -41,10 +44,10 @@ export default function WizardGate() {
       initial={settings.body}
       onDone={() => {
         setSettings(null);
-        // The tracker read its targets from /api/diary on mount (X5b's
-        // state, not ours) — a reload is the one honest way to refresh it
-        // from here, and this path runs once per install.
-        window.location.reload();
+        // The tracker reads its targets from /api/diary's totals (Today's
+        // state, not ours), so tell Today to re-read the diary rather than
+        // reloading the whole app.
+        window.dispatchEvent(new Event(TARGETS_EVENT));
       }}
       onSkip={() => {
         try {

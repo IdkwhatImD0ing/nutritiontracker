@@ -27,7 +27,7 @@ type Props = {
 };
 
 const W = 360;
-const PAD = { l: 40, r: 10, t: 12, b: 20 };
+const PAD = { l: 46, r: 10, t: 12, b: 20 };
 const fmt0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 /** Hand-rolled SVG multi-series line chart (§9 weekly series). Null points
@@ -73,7 +73,10 @@ export default function ChartLines({
 
   return (
     <figure className="chart">
-      <figcaption className="chart-title">{title}</figcaption>
+      {/* an h3: Experiment, its one page, groups its charts under h2s */}
+      <figcaption>
+        <h3 className="chart-title">{title}</h3>
+      </figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={title} className="chart-svg">
         <g className="chart-grid">
           {ticks.map((t) => (
@@ -139,16 +142,17 @@ export default function ChartLines({
       <div className="chart-legend">
         {series.map((s) => (
           <span key={s.name} className="chart-legend-item">
+            {/* a dashed swatch draws its dashes in currentColor */}
             <span
               className={`chart-legend-swatch${s.dashed ? " dashed" : ""}`}
-              style={{ background: s.color }}
+              style={s.dashed ? { color: s.color } : { background: s.color }}
             />
             {s.name}
           </span>
         ))}
         {baseline && baseline.value > 0 ? (
           <span className="chart-legend-item">
-            <span className="chart-legend-swatch dashed" style={{ background: "var(--amber)" }} />
+            <span className="chart-legend-swatch dashed" style={{ color: "var(--amber)" }} />
             {baseline.label}
           </span>
         ) : null}

@@ -28,6 +28,8 @@ export default function manifest(): MetadataRoute.Manifest {
     display: "standalone",
     // Portrait only: §7's bottom tab bar and the thumb-zone + are laid out for
     // a phone held upright, and nothing in the app rewards a landscape column.
+    // iOS home-screen apps ignore this and rotate anyway, so globals.css and
+    // m3.css carry a short-landscape guard (BACKLOG 158).
     orientation: "portrait",
     background_color: "#111113",
     theme_color: "#111113",

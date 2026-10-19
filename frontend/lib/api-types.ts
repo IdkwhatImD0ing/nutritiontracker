@@ -1376,6 +1376,13 @@ export interface components {
             data_type?: string | null;
             /** Protein Per 100G */
             protein_per_100g?: number | null;
+            /** Kcal Per 100G */
+            kcal_per_100g?: number | null;
+            /**
+             * Per 100Ml
+             * @default false
+             */
+            per_100ml: boolean;
         };
         /** FoodRef */
         FoodRef: {

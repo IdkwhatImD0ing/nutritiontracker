@@ -170,9 +170,9 @@ export default function ApiKeysDoc() {
 
       <h2 id="revoke">Revoke a key</h2>
       <p>
-        In <strong>Settings → API keys</strong>, choose <strong>Revoke</strong> and confirm. The
-        key stops working on its next request; nothing caches it. The row stays in the list,
-        dimmed, so you can still see what it was and when it was last used.
+        In <strong>Settings → API keys</strong>, open the key, choose <strong>Revoke</strong> and
+        confirm. The key stops working on its next request; nothing caches it. The row stays in
+        the list, dimmed, so you can still see what it was and when it was last used.
       </p>
       <p>
         An account keeps at most <strong>50 keys</strong> in all: active, revoked and expired.

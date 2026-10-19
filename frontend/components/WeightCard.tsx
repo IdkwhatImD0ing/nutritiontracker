@@ -2,11 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { getWeights, type WeightEntry } from "@/lib/api";
+import Skeleton from "./Skeleton";
 
 const LB_PER_KG = 2.2046226; // WizardMath's constant; the card shows the unit the weigh-in was said in
 const DAYS = 30;
 const W = 96;
 const H = 34;
+/** the sparkline's least y range (~2.2 lb; the series is kg in either unit),
+ *  so a few tenths of scale noise don't draw a cliff across the full height */
+const MIN_SPAN_KG = 1;
 
 type Unit = WeightEntry["unit"];
 
@@ -29,16 +33,19 @@ function daysBetween(a: string, b: string): number {
   return Math.round((parseISO(b).getTime() - parseISO(a).getTime()) / 86_400_000);
 }
 
-/** "today", "yesterday", else "Tue, Sep 2". */
+/** "today", "yesterday", else "Tue, Sep 2" — with no-break spaces, so a
+ *  wrapping line never strands the day number ("Sep / 14"). */
 function when(day: string, today: string): string {
   const ago = daysBetween(day, today);
   if (ago === 0) return "today";
   if (ago === 1) return "yesterday";
-  return parseISO(day).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  return parseISO(day)
+    .toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    })
+    .replace(/ /g, "\u00a0");
 }
 
 type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
@@ -46,9 +53,20 @@ type Data = { latest: WeightEntry | null; entries: WeightEntry[] };
 /** §6.4 weight tracking: the latest weigh-in, the change since the one
  *  before it, and a 30-day sparkline. Reads GET /api/weights; `refreshKey`
  *  re-reads it (Today bumps it when an agent log recorded a weigh-in). A
- *  read that fails renders nothing — never a stale or invented number. */
-export default function WeightCard({ refreshKey }: { refreshKey: number }) {
-  const [data, setData] = useState<Data | null>(null);
+ *  read that fails shows no number — never a stale or invented one — only
+ *  that it couldn't load, in the card's own slot.
+ *  `onLog` is the empty card's way in: Today opens the Agent lane, the one
+ *  place a weigh-in is logged. The card with data stays static — there is no
+ *  history screen to open, and a tap that starts the mic would be a trap. */
+export default function WeightCard({
+  refreshKey,
+  onLog,
+}: {
+  refreshKey: number;
+  onLog?: () => void;
+}) {
+  // undefined = the first read is in flight, null = it failed
+  const [data, setData] = useState<Data | null | undefined>(undefined);
   // Derived per render, not frozen in state: an installed PWA lives across
   // midnight, and a `useState` initialiser would have gone on calling
   // yesterday's weigh-in today's for as long as the app stayed open. Today
@@ -69,15 +87,45 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
     };
   }, [refreshKey]);
 
-  if (!data) return null;
+  // Held at the card's height while the first read is out: the diary below
+  // usually lands first, and must not drop ~100px under a thumb when this
+  // does. A refetch keeps the old data until the new arrives.
+  if (data === undefined) {
+    return (
+      <section className="weight-card is-loading" aria-label="Weight" aria-busy="true">
+        <div className="weight-main">
+          <h2 className="label">Weight</h2>
+          <Skeleton height={24} width={96} />
+          <div className="weight-sub">&nbsp;</div>
+        </div>
+      </section>
+    );
+  }
+  // The card, not nothing: its reserved slot collapsing would jump the diary,
+  // and an absent card reads as "never logged" rather than "missing".
+  if (!data) {
+    return (
+      <section className="weight-card" aria-label="Weight">
+        <div className="weight-main">
+          <h2 className="label">Weight</h2>
+          <p className="weight-empty">Couldn&rsquo;t load your weight.</p>
+        </div>
+      </section>
+    );
+  }
   const latest = data.latest;
   if (!latest) {
     return (
       <section className="weight-card" aria-label="Weight">
         <div className="weight-main">
-          <span className="label">Weight</span>
-          <p className="weight-empty">No weigh-ins yet — tell the agent your weight.</p>
+          <h2 className="label">Weight</h2>
+          <p className="weight-empty">No weigh-ins yet.</p>
         </div>
+        {onLog ? (
+          <button type="button" className="weight-log" onClick={onLog}>
+            Log a weigh-in
+          </button>
+        ) : null}
       </section>
     );
   }
@@ -95,16 +143,19 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
     prev && delta != null
       ? delta === 0
         ? `same as ${when(prev.day, today)}`
-        : `${delta > 0 ? "up" : "down"} ${Math.abs(delta).toFixed(1)} ${unit} since ${when(prev.day, today)}`
+        : `${delta > 0 ? "up" : "down"} ${Math.abs(delta).toFixed(1)}\u00a0${unit} since ${when(prev.day, today)}`
       : null;
 
-  // sparkline: x by day within the 30-day window, y by the window's range
+  // sparkline: x by day within the 30-day window, y by the window's range,
+  // widened about its middle to at least MIN_SPAN_KG (a flat series sits
+  // mid-height)
   const start = isoDate(new Date(parseISO(today).getTime() - (DAYS - 1) * 86_400_000));
   const kgs = series.map((e) => e.weight_kg);
-  const lo = Math.min(...kgs);
-  const hi = Math.max(...kgs);
+  const mid = (Math.min(...kgs) + Math.max(...kgs)) / 2;
+  const lo = Math.min(...kgs, mid - MIN_SPAN_KG / 2);
+  const hi = Math.max(...kgs, mid + MIN_SPAN_KG / 2);
   const x = (day: string) => 3 + (Math.max(0, daysBetween(start, day)) / (DAYS - 1)) * (W - 6);
-  const y = (kg: number) => 3 + (hi === lo ? 0.5 : 1 - (kg - lo) / (hi - lo)) * (H - 6);
+  const y = (kg: number) => 3 + (1 - (kg - lo) / (hi - lo)) * (H - 6);
   const path = series
     .map((e, i) => `${i === 0 ? "M" : "L"}${x(e.day).toFixed(1)},${y(e.weight_kg).toFixed(1)}`)
     .join(" ");
@@ -112,7 +163,7 @@ export default function WeightCard({ refreshKey }: { refreshKey: number }) {
   return (
     <section className="weight-card" aria-label="Weight">
       <div className="weight-main">
-        <span className="label">Weight</span>
+        <h2 className="label">Weight</h2>
         <div className="weight-num num">
           <strong>{value.toFixed(1)}</strong>
           <span className="unit">{unit}</span>

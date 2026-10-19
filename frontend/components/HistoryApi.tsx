@@ -95,11 +95,14 @@ export function monthShort(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short" });
 }
 
-export function longDate(d: Date): string {
+/** "Thursday, Oct 10", or with `year` "Thu, Oct 10, 2024": the short
+ *  weekday keeps the day view's title on one line at 320px. */
+export function longDate(d: Date, year = false): string {
   return d.toLocaleDateString("en-US", {
-    weekday: "long",
+    weekday: year ? "short" : "long",
     month: "short",
     day: "numeric",
+    ...(year ? { year: "numeric" } : {}),
   });
 }
 

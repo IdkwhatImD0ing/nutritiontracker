@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authClient } from "@/lib/auth/client";
-import { getMe, type Me } from "./MeApi";
+import { GITHUB_URL } from "@/lib/site";
+import { getMe, peekMe, type Me } from "./MeApi";
+import Skeleton from "./Skeleton";
 
 /**
  * The account section of Settings: who you are signed in as, whether this
@@ -16,9 +18,14 @@ import { getMe, type Me } from "./MeApi";
  * survive on screen.
  */
 export default function AccountCard() {
-  const [me, setMe] = useState<Me | null>(null);
+  // what this visit already read paints at once; the read below refreshes
+  // the quota
+  const [me, setMe] = useState<Me | null>(peekMe);
   const [failed, setFailed] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  // Sign out is two taps: getting back in means signing in again
+  const [confirming, setConfirming] = useState(false);
+  const signOutBtn = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -52,7 +59,16 @@ export default function AccountCard() {
         <div className="account-who">
           <span className="account-label">Signed in as</span>
           <span className="account-email">
-            {me?.email ?? (failed ? "—" : "…")}
+            {me?.email ??
+              (failed ? (
+                // a dash to the eye, words to a screen reader
+                <>
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">not available</span>
+                </>
+              ) : (
+                <Skeleton height={14} width={160} />
+              ))}
           </span>
         </div>
 
@@ -61,10 +77,7 @@ export default function AccountCard() {
             {me.is_owner ? (
               <>
                 <span className="account-badge owner">Owner</span>
-                <span className="account-note">
-                  No daily limit. This is the account <code>ALLOWED_EMAIL</code>{" "}
-                  names on this instance.
-                </span>
+                <span className="account-note">No daily limit.</span>
               </>
             ) : (
               <>
@@ -75,7 +88,8 @@ export default function AccountCard() {
                       ? `Today's log is used. The next one is available at ${localReset(quota.resets_at)}.`
                       : `${quota.limit - quota.used_today} of ${quota.limit} log${quota.limit === 1 ? "" : "s"} left today.`
                     : "One log a day."}{" "}
-                  Run your own instance to keep a real diary.
+                  To keep a real diary, run your own copy of Tally — it’s{" "}
+                  <a href={GITHUB_URL}>open source</a>.
                 </span>
               </>
             )}
@@ -88,14 +102,40 @@ export default function AccountCard() {
           </p>
         ) : null}
 
-        <button
-          type="button"
-          className="account-signout"
-          onClick={signOut}
-          disabled={leaving}
-        >
-          {leaving ? "Signing out…" : "Sign out"}
-        </button>
+        {confirming ? (
+          <div className="m3-actions confirm">
+            <span className="m3-note">Sign out of this device?</span>
+            <button
+              type="button"
+              className="m3-link-btn"
+              disabled={leaving}
+              onClick={() => {
+                setConfirming(false);
+                requestAnimationFrame(() => signOutBtn.current?.focus());
+              }}
+              autoFocus
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="m3-link-btn danger"
+              disabled={leaving}
+              onClick={signOut}
+            >
+              {leaving ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        ) : (
+          <button
+            ref={signOutBtn}
+            type="button"
+            className="account-signout"
+            onClick={() => setConfirming(true)}
+          >
+            Sign out
+          </button>
+        )}
       </div>
     </section>
   );

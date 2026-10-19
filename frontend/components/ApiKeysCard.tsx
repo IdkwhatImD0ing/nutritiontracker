@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "@/lib/api";
 import { writeClipboard } from "@/lib/clipboard";
@@ -12,6 +11,9 @@ import {
   type ApiKeyCreate,
 } from "./ApiKeysApi";
 import SheetHeader from "./SheetHeader";
+import Skeleton from "./Skeleton";
+import { useSheetFocus } from "./useSheetFocus";
+import { SheetFrame, usePresence } from "./useSheetPresence";
 
 type Access = ApiKeyCreate["scopes"];
 type Expiry = NonNullable<ApiKeyCreate["expires_in_days"]> | null;
@@ -99,9 +101,11 @@ function detailOr(e: unknown, fallback: string): string {
  *
  * The secret exists in the browser only between the create response and
  * Done: the server keeps a hash, so the banner is the one chance to copy it.
- * Revoking keeps the row (dimmed) so the list still says what a key was and
- * when it last worked. Access and expiry are fixed at creation; changing
- * either means a new key.
+ * Each key is one line (label, access, when it was last used) that opens in
+ * place onto its facts and Revoke (Bill, 2026-10-13: two keys used to fill a
+ * screen of Settings). Revoking keeps the row (dimmed) so the list still says
+ * what a key was and when it last worked. Access and expiry are fixed at
+ * creation; changing either means a new key.
  */
 export default function ApiKeysCard() {
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
@@ -110,6 +114,8 @@ export default function ApiKeysCard() {
   const [error, setError] = useState<string | null>(null);
 
   const [sheet, setSheet] = useState(false);
+  // the new-key sheet stays up through its exit animation
+  const { mounted: sheetUp, closing: sheetClosing } = usePresence(sheet);
   const [label, setLabel] = useState("");
   const [access, setAccess] = useState<Access>("read_write");
   const [expiry, setExpiry] = useState<Expiry>(null);
@@ -120,12 +126,15 @@ export default function ApiKeysCard() {
   const [copied, setCopied] = useState<Copy>("idle");
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [revoking, setRevoking] = useState(false);
+  /** the one key whose facts are open */
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const newBtn = useRef<HTMLButtonElement>(null);
   const copyBtn = useRef<HTMLButtonElement>(null);
   const secretEl = useRef<HTMLElement>(null);
   const timer = useRef<number | undefined>(undefined);
   const refocusRevoke = useRef<string | null>(null);
+  const sheetRef = useSheetFocus<HTMLDivElement>(sheet);
 
   useEffect(() => {
     let live = true;
@@ -159,15 +168,6 @@ export default function ApiKeysCard() {
     setSheet(false);
     newBtn.current?.focus();
   }, []);
-
-  useEffect(() => {
-    if (!sheet) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeSheet();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [sheet, closeSheet]);
 
   // A fresh sheet every time. It opens on Read & write, the API's own
   // default: logging food is what most agents are for.
@@ -236,6 +236,8 @@ export default function ApiKeysCard() {
       const row = await revokeKey(id);
       setKeys((ks) => ks && ks.map((k) => (k.id === row.id ? row : k)));
       setConfirmId(null);
+      // it sorts down among the dead keys: closed, not left open there
+      setOpenId(null);
       // The row's buttons go with its active status; New key is always there.
       newBtn.current?.focus();
     } catch (err) {
@@ -243,6 +245,12 @@ export default function ApiKeysCard() {
     } finally {
       setRevoking(false);
     }
+  };
+
+  // one key open at a time; a revoke confirm left half-made closes with it
+  const toggle = (id: string) => {
+    setOpenId((o) => (o === id ? null : id));
+    setConfirmId(null);
   };
 
   const now = Date.now();
@@ -272,15 +280,12 @@ export default function ApiKeysCard() {
           >
             New key
           </button>
-          <Link href="/docs/api-keys" className="m3-link-btn">
-            How to use keys →
-          </Link>
         </div>
 
         {reveal ? (
           <div className="keys-reveal">
             <p className="keys-reveal-title" id="keys-reveal-warn">
-              Copy it now, it will not be shown again
+              Copy your key now — you won&rsquo;t be able to see it again.
             </p>
             <p className="m3-note">
               &ldquo;{reveal.label}&rdquo; is ready. Tally keeps only a hash of
@@ -332,106 +337,140 @@ export default function ApiKeysCard() {
               </button>
             </div>
           ) : (
-            <p className="m3-note">Loading…</p>
+            <Skeleton rows={2} height={56} />
           )
         ) : rows.length === 0 ? (
           <p className="m3-note">No keys yet.</p>
         ) : (
           <ul className="keys-list">
-            {rows.map(({ k, st }) => (
-              <li key={k.id} className={`keys-row ${st}`}>
-                <div className="keys-row-head">
-                  <span className="keys-label">{k.label}</span>
-                  <span className={`keys-status ${st}`}>{STATUS_TEXT[st]}</span>
-                </div>
-                <code className="keys-redacted">{k.redacted}</code>
-                <dl className="keys-meta">
-                  <div>
-                    <dt>Access</dt>
-                    <dd>{k.scopes.includes("write") ? "Read & write" : "Read only"}</dd>
-                  </div>
-                  <div>
-                    <dt>Created</dt>
-                    <dd>
-                      <When iso={k.created_at} text={ago(k.created_at, now)} />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Last used</dt>
-                    <dd>
-                      {k.last_used_at ? (
-                        <When iso={k.last_used_at} text={ago(k.last_used_at, now)} />
-                      ) : (
-                        "Never"
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{st === "expired" ? "Expired" : "Expires"}</dt>
-                    <dd>
-                      {k.expires_at ? (
-                        <When iso={k.expires_at} text={shortDate(k.expires_at, now)} />
-                      ) : (
-                        "Never"
-                      )}
-                    </dd>
-                  </div>
-                </dl>
-                {st === "active" ? (
-                  <div className="keys-row-actions">
-                    {confirmId === k.id ? (
-                      <>
-                        <span className="m3-note">
-                          Anything using it stops working on its next request.
-                        </span>
-                        <button
-                          type="button"
-                          className="m3-link-btn"
-                          disabled={revoking}
-                          onClick={() => {
-                            refocusRevoke.current = k.id;
-                            setConfirmId(null);
-                          }}
-                          autoFocus
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          className="m3-link-btn danger"
-                          disabled={revoking}
-                          onClick={() => revoke(k.id)}
-                          aria-label={`Yes, revoke ${k.label}`}
-                        >
-                          {revoking ? "Revoking…" : "Yes, revoke"}
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        className="m3-link-btn danger"
-                        onClick={() => {
-                          setError(null);
-                          setConfirmId(k.id);
-                        }}
-                        aria-label={`Revoke ${k.label}`}
-                        data-revoke={k.id}
-                      >
-                        Revoke
-                      </button>
+            {rows.map(({ k, st }) => {
+              const open = openId === k.id;
+              const access = k.scopes.includes("write") ? "Read & write" : "Read only";
+              return (
+                <li key={k.id} className={`keys-row ${st}`}>
+                  <button
+                    type="button"
+                    className="keys-row-head"
+                    aria-expanded={open}
+                    aria-controls={open ? `key-${k.id}` : undefined}
+                    onClick={() => toggle(k.id)}
+                  >
+                    {/* "· used 1 day ago" wraps as one piece, so a wrap never
+                        splits a number from its unit ('used 1' / 'day ago')
+                        or leaves the dot at the end of a line, as Oura's day
+                        row */}
+                    <span className="keys-gist">
+                      <span className="keys-label">{k.label}</span> — {access}{" "}
+                      <span className="keys-used">
+                        ·&nbsp;
+                        {k.last_used_at ? `used ${ago(k.last_used_at, now)}` : "never used"}
+                      </span>
+                    </span>
+                    {st === "active" ? null : (
+                      <span className={`keys-status ${st}`}>{STATUS_TEXT[st]}</span>
                     )}
-                  </div>
-                ) : null}
-              </li>
-            ))}
+                    <span className="chev" aria-hidden="true" />
+                  </button>
+                  {open ? (
+                    <div className="keys-detail" id={`key-${k.id}`}>
+                      <code className="keys-redacted">{k.redacted}</code>
+                      <dl className="keys-meta">
+                        <div>
+                          <dt>Access</dt>
+                          <dd>{access}</dd>
+                        </div>
+                        <div>
+                          <dt>Created</dt>
+                          <dd>
+                            <When iso={k.created_at} text={ago(k.created_at, now)} />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Last used</dt>
+                          <dd>
+                            {k.last_used_at ? (
+                              <When iso={k.last_used_at} text={ago(k.last_used_at, now)} />
+                            ) : (
+                              "Never"
+                            )}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>{st === "expired" ? "Expired" : "Expires"}</dt>
+                          <dd>
+                            {k.expires_at ? (
+                              <When iso={k.expires_at} text={shortDate(k.expires_at, now)} />
+                            ) : (
+                              "Never"
+                            )}
+                          </dd>
+                        </div>
+                      </dl>
+                      {st === "active" ? (
+                        <div className="keys-row-actions">
+                          {confirmId === k.id ? (
+                            <>
+                              <span className="m3-note">
+                                Anything using it stops working on its next request.
+                              </span>
+                              <button
+                                type="button"
+                                className="m3-link-btn"
+                                disabled={revoking}
+                                onClick={() => {
+                                  refocusRevoke.current = k.id;
+                                  setConfirmId(null);
+                                }}
+                                autoFocus
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                className="m3-link-btn danger"
+                                disabled={revoking}
+                                onClick={() => revoke(k.id)}
+                                aria-label={`Yes, revoke ${k.label}`}
+                              >
+                                {revoking ? "Revoking…" : "Yes, revoke"}
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="m3-link-btn danger"
+                              onClick={() => {
+                                setError(null);
+                                setConfirmId(k.id);
+                              }}
+                              aria-label={`Revoke ${k.label}`}
+                              data-revoke={k.id}
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
 
-      {sheet ? (
-        <>
+      {sheetUp ? (
+        <SheetFrame closing={sheetClosing}>
           <div className="subsheet-backdrop" onClick={closeSheet} />
-          <div className="subsheet" role="dialog" aria-labelledby="keys-sheet-title">
+          <div
+            ref={sheetRef}
+            className="subsheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="keys-sheet-title"
+            tabIndex={-1}
+          >
             <SheetHeader
               title="New API key"
               titleId="keys-sheet-title"
@@ -496,22 +535,32 @@ export default function ApiKeysCard() {
                 </div>
               </div>
 
-              {createError ? (
-                <p className="sheet-error" role="alert">
-                  {createError}
-                </p>
-              ) : null}
+              <div className="subsheet-foot">
+                {createError ? (
+                  <p className="sheet-error" role="alert">
+                    {createError}
+                  </p>
+                ) : null}
 
-              <button
-                type="submit"
-                className="commit-btn"
-                disabled={creating || !label.trim()}
-              >
-                {creating ? "Creating…" : "Create key"}
-              </button>
+                <button
+                  type="submit"
+                  className="commit-btn"
+                  disabled={creating || !label.trim()}
+                  aria-busy={creating}
+                >
+                  {creating ? (
+                    <>
+                      <span className="spinner on-accent" />
+                      Creating…
+                    </>
+                  ) : (
+                    "Create key"
+                  )}
+                </button>
+              </div>
             </form>
           </div>
-        </>
+        </SheetFrame>
       ) : null}
     </section>
   );

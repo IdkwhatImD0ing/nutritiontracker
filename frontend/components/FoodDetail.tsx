@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { fmtDate, nutrientParts, statesGrams, withUnit } from "@/lib/format";
+import { foodName } from "@/lib/labels";
+import { sourceName } from "@/lib/sources";
 import BackBar from "./BackBar";
+import ErrorNotice from "./ErrorNotice";
 import {
   getFood,
   type AliasRow,
@@ -10,6 +14,10 @@ import {
   type NutrientRow,
 } from "./LibraryApi";
 import LibraryAliasSheet from "./LibraryAliasSheet";
+import { useMe } from "./MeApi";
+import { peek, put } from "./readCache";
+import Skeleton from "./Skeleton";
+import SheetPresence from "./useSheetPresence";
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
@@ -18,8 +26,17 @@ const fmt3 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
 
 const CORE = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
 
+/** a missing figure: a dash to the eye, words to a screen reader */
+const none = (
+  <>
+    <span aria-hidden="true">—</span>
+    <span className="sr-only">not available</span>
+  </>
+);
+
 /** The nutrients the adapters know how to read (sources/fdc.py's id map).
- *  Listed in full so an absent one renders "not measured" — never zero. */
+ *  The ones the serving has are listed; the rest are named on one "not
+ *  measured" line under them — an absent one is never zero. */
 const NUTRIENTS: [string, string][] = [
   ["fiber_g", "Fiber"],
   ["sugar_g", "Sugar"],
@@ -44,25 +61,10 @@ const NUTRIENTS: [string, string][] = [
   ["vitamin_b6_mg", "Vitamin B6"],
 ];
 const KNOWN = new Set(NUTRIENTS.map(([k]) => k));
-const UNITS = new Set(["g", "mg", "mcg", "ug", "iu"]);
-
-function unitOf(key: string): string {
-  const last = key.split("_").pop() ?? "";
-  if (!UNITS.has(last)) return "";
-  return last === "ug" ? "mcg" : last === "iu" ? "IU" : last;
-}
-
-function humanize(key: string): string {
-  const parts = key.split("_");
-  if (UNITS.has(parts[parts.length - 1] ?? "")) parts.pop();
-  return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
-}
 
 function sourceBadge(source: string): { cls: string; label: string } {
-  if (source === "fdc") return { cls: "fdc", label: "USDA FDC" };
-  if (source === "off") return { cls: "off", label: "Open Food Facts" };
-  if (source === "web") return { cls: "web", label: "web" };
-  return { cls: "state", label: source };
+  const cls = source === "fdc" || source === "off" || source === "web" ? source : "state";
+  return { cls, label: sourceName(source) };
 }
 
 /** The citation link (§3.4a for web foods; the record page for databases). */
@@ -110,9 +112,7 @@ function NutrientLine({ k, label, v }: { k: string; label: string; v: unknown })
     <div className="nutrient-line">
       <span className="k">{label}</span>
       {typeof v === "number" ? (
-        <span>
-          {fmt1.format(v)} {unitOf(k)}
-        </span>
+        <span>{withUnit(fmt1.format(v), nutrientParts(k).unit)}</span>
       ) : (
         <span className="nm">not measured</span>
       )}
@@ -126,9 +126,14 @@ function NutrientLine({ k, label, v }: { k: string; label: string; v: unknown })
  *  badge with date + citation link. */
 export default function FoodDetail({ id }: { id: string }) {
   const [food, setFood] = useState<Food | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // A 404 is final; any other failure carries a Retry (`attempt`).
+  const [error, setError] = useState<"not-found" | "failed" | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [servingId, setServingId] = useState("");
   const [aliasSheet, setAliasSheet] = useState<AliasRow | null>(null);
+  // where focus waits once a forgotten phrase's chip is gone
+  const phrasesHead = useRef<HTMLHeadingElement>(null);
+  const me = useMe();
 
   useEffect(() => {
     let cancelled = false;
@@ -140,16 +145,12 @@ export default function FoodDetail({ id }: { id: string }) {
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setError(
-          e instanceof ApiError && e.status === 404
-            ? "Food not found."
-            : "Couldn't load this food.",
-        );
+        setError(e instanceof ApiError && e.status === 404 ? "not-found" : "failed");
       });
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, attempt]);
 
   if (!food) {
     return (
@@ -157,7 +158,25 @@ export default function FoodDetail({ id }: { id: string }) {
         <header className="brand">
           <BackBar parent="/library" label="Library" />
         </header>
-        <p className="m3-empty">{error ?? "Loading…"}</p>
+        {error === "not-found" ? (
+          <div className="notice">
+            <span>Food not found.</span>
+          </div>
+        ) : error ? (
+          <ErrorNotice
+            message="Couldn't load this food."
+            onRetry={() => {
+              setError(null);
+              setAttempt((n) => n + 1);
+            }}
+          />
+        ) : (
+          // the page's shape while it loads: the name, then the two cards
+          <>
+            <Skeleton height={28} width="60%" />
+            <Skeleton rows={2} height={160} />
+          </>
+        )}
       </main>
     );
   }
@@ -175,6 +194,10 @@ export default function FoodDetail({ id }: { id: string }) {
   const citations = (food.provenance?.citations ?? []).filter(
     (c) => c.url && c.url !== food.source_url,
   );
+  const measured = NUTRIENTS.filter(([k]) => typeof macros[k] === "number");
+  const missing = NUTRIENTS.filter(([k]) => typeof macros[k] !== "number").map(
+    ([, label]) => label.charAt(0).toLowerCase() + label.slice(1),
+  );
   const extras = Object.entries(macros).filter(
     ([k, v]) => !CORE.has(k) && !KNOWN.has(k) && typeof v === "number",
   );
@@ -190,16 +213,15 @@ export default function FoodDetail({ id }: { id: string }) {
       </header>
 
       <header className="fd-head">
-        <h1 className="food-name">{food.display_name}</h1>
+        <h1>{foodName(food.display_name)}</h1>
         <div className="fd-meta">
           {food.brand ? <span>{food.brand}</span> : null}
           <span className={`badge ${badge.cls}`}>{badge.label}</span>
-          {dataType ? <span>{dataType}</span> : null}
           {food.state ? <span className="badge state">{food.state}</span> : null}
-          {published ? <span>published {published}</span> : null}
         </div>
+        {/* the provider's full description: what tells one record from the next */}
         {food.name && food.name !== food.display_name ? (
-          <p className="m3-note">Provider name: {food.name}</p>
+          <p className="m3-note">{food.name}</p>
         ) : null}
       </header>
 
@@ -207,7 +229,7 @@ export default function FoodDetail({ id }: { id: string }) {
         <div className="fd-kcal num">
           <span>
             <span className="n">
-              {typeof macros.kcal === "number" ? fmt.format(macros.kcal) : "—"}
+              {typeof macros.kcal === "number" ? fmt.format(macros.kcal) : none}
             </span>
             <span className="u">kcal</span>
           </span>
@@ -216,19 +238,19 @@ export default function FoodDetail({ id }: { id: string }) {
         <div className="macro-grid num" style={{ marginBottom: 0 }}>
           <div className="macro-cell protein">
             <div className="v">
-              {typeof macros.protein_g === "number" ? `${fmt1.format(macros.protein_g)}g` : "—"}
+              {typeof macros.protein_g === "number" ? `${fmt1.format(macros.protein_g)}g` : none}
             </div>
             <div className="k">Protein</div>
           </div>
           <div className="macro-cell">
             <div className="v">
-              {typeof macros.carb_g === "number" ? `${fmt1.format(macros.carb_g)}g` : "—"}
+              {typeof macros.carb_g === "number" ? `${fmt1.format(macros.carb_g)}g` : none}
             </div>
             <div className="k">Carbs</div>
           </div>
           <div className="macro-cell">
             <div className="v">
-              {typeof macros.fat_g === "number" ? `${fmt1.format(macros.fat_g)}g` : "—"}
+              {typeof macros.fat_g === "number" ? `${fmt1.format(macros.fat_g)}g` : none}
             </div>
             <div className="k">Fat</div>
           </div>
@@ -240,6 +262,7 @@ export default function FoodDetail({ id }: { id: string }) {
                 key={s.serving_id}
                 type="button"
                 className={`chip${s.serving_id === chosen?.serving_id ? " active" : ""}`}
+                aria-pressed={s.serving_id === chosen?.serving_id}
                 onClick={() => setServingId(s.serving_id)}
               >
                 {s.description}
@@ -252,24 +275,29 @@ export default function FoodDetail({ id }: { id: string }) {
       <section className="m3-section" aria-label="Nutrients">
         <h2>
           Nutrients
-          <span className="count">per {chosen?.description ?? "serving"}</span>
+          {/* the basis of the rows below; over only the "not measured" line
+              it would qualify nothing */}
+          {measured.length || extras.length ? (
+            <span className="count">per {chosen?.description ?? "serving"}</span>
+          ) : null}
         </h2>
-        <div className="m3-card nutrient-list num">
-          {NUTRIENTS.map(([k, label]) => (
-            <NutrientLine key={k} k={k} label={label} v={macros[k]} />
-          ))}
-          {extras.map(([k, v]) => (
-            <NutrientLine key={k} k={k} label={humanize(k)} v={v} />
-          ))}
-        </div>
-        <p className="m3-note">
-          “Not measured” means the source record has no value for it — never
-          zero.
-        </p>
+        {measured.length || extras.length ? (
+          <div className="m3-card nutrient-list num">
+            {measured.map(([k, label]) => (
+              <NutrientLine key={k} k={k} label={label} v={macros[k]} />
+            ))}
+            {extras.map(([k, v]) => (
+              <NutrientLine key={k} k={k} label={nutrientParts(k).name} v={v} />
+            ))}
+          </div>
+        ) : null}
+        {missing.length ? (
+          <p className="m3-note">Not measured by the source: {missing.join(", ")}.</p>
+        ) : null}
         {/* §7.1: the grid above is the readable view; this is literally every
             row the source returned, names and units untouched. */}
         {nutrients.length ? (
-          <details className="fd-raw">
+          <details className="fd-raw disclosure">
             <summary>
               All {nutrients.length} nutrients as the source reported them
             </summary>
@@ -293,17 +321,14 @@ export default function FoodDetail({ id }: { id: string }) {
         ) : null}
       </section>
 
-      {food.per_100g ? (
+      {/* the FDC adapter adds a "100 g" serving, which is this table as a
+          chip above — so it shows only for a record without one */}
+      {food.per_100g && !servings.some((s) => s.grams === 100) ? (
         <section className="m3-section" aria-label="Per 100 g">
           <h2>Per 100 g</h2>
           <div className="m3-card nutrient-list num">
             {Object.entries(food.per_100g).map(([k, v]) => (
-              <NutrientLine
-                key={k}
-                k={k}
-                label={k === "kcal" ? "Calories" : humanize(k)}
-                v={v}
-              />
+              <NutrientLine key={k} k={k} label={nutrientParts(k).name} v={v} />
             ))}
           </div>
         </section>
@@ -321,10 +346,13 @@ export default function FoodDetail({ id }: { id: string }) {
                 {s.serving_id === food.default_serving_id ? " · default" : ""}
               </span>
               <span>
-                {s.grams != null ? `${fmt.format(s.grams)} g` : ""}
-                {typeof s.macros?.kcal === "number"
-                  ? `${s.grams != null ? " · " : ""}${fmt.format(s.macros.kcal)} kcal`
-                  : ""}
+                {/* no grams beside a description that states them */}
+                {[
+                  s.grams != null && !statesGrams(s.description) ? `${fmt.format(s.grams)}\u00a0g` : null,
+                  typeof s.macros?.kcal === "number" ? `${fmt.format(s.macros.kcal)}\u00a0kcal` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
             </div>
           ))}
@@ -335,7 +363,7 @@ export default function FoodDetail({ id }: { id: string }) {
       </section>
 
       <section className="m3-section" aria-label="Your phrases">
-        <h2>
+        <h2 ref={phrasesHead} tabIndex={-1}>
           Your phrases<span className="count num">{aliases.length}</span>
         </h2>
         {aliases.length === 0 ? (
@@ -350,9 +378,14 @@ export default function FoodDetail({ id }: { id: string }) {
                   className="chip"
                   onClick={() => setAliasSheet(a)}
                 >
-                  {a.pinned ? <span className="usual-dot" /> : null}
+                  {a.pinned ? (
+                    <>
+                      <span className="usual-dot" aria-hidden="true" />
+                      <span className="sr-only">Pinned: </span>
+                    </>
+                  ) : null}
                   {a.alias_norm}
-                  <span className="alias-count num"> {a.use_count}×</span>
+                  <span className="alias-count num"> {fmt.format(a.use_count)}×</span>
                 </button>
               ))}
             </div>
@@ -369,29 +402,14 @@ export default function FoodDetail({ id }: { id: string }) {
           <div className="m3-row">
             <span className="k">Database</span>
             <span>
-              {badge.label}
+              {sourceName(food.source, true)}
               {dataType ? ` · ${dataType}` : ""}
-              {food.food_type ? ` · ${food.food_type}` : ""}
-            </span>
-          </div>
-          <div className="m3-row">
-            <span className="k">Record id</span>
-            <span className="num" style={{ wordBreak: "break-all", textAlign: "right" }}>
-              {food.source_id}
             </span>
           </div>
           {published ? (
             <div className="m3-row">
               <span className="k">Published</span>
-              <span className="num">{published}</span>
-            </div>
-          ) : null}
-          {food.refreshed_at ? (
-            <div className="m3-row">
-              <span className="k">Cached</span>
-              <span className="num">
-                {new Date(food.refreshed_at).toLocaleDateString()}
-              </span>
+              <span className="num">{fmtDate(published)}</span>
             </div>
           ) : null}
           {link ? (
@@ -411,35 +429,50 @@ export default function FoodDetail({ id }: { id: string }) {
             </p>
           ))}
         </div>
-        {/* no record from the source, no disclosure: it would open onto "null" */}
-        {Object.keys(payload).length ? (
-          <details className="fd-raw">
+        {/* the owner's only (Bill, 2026-10-13, as the agent's raw calls); no
+            record from the source, no disclosure: it would open onto "null" */}
+        {me?.is_owner && Object.keys(payload).length ? (
+          <details className="fd-raw disclosure">
             <summary>Raw record from the source</summary>
             <pre>{JSON.stringify(payload, null, 2)}</pre>
           </details>
         ) : null}
       </section>
 
-      {aliasSheet ? (
-        <LibraryAliasSheet
-          alias={aliasSheet}
-          onSaved={(u) => {
-            setFood((f) =>
-              f
-                ? { ...f, aliases: (f.aliases ?? []).map((a) => (a.id === u.id ? u : a)) }
-                : f,
-            );
-            setAliasSheet(null);
-          }}
-          onDeleted={(aid) => {
-            setFood((f) =>
-              f ? { ...f, aliases: (f.aliases ?? []).filter((a) => a.id !== aid) } : f,
-            );
-            setAliasSheet(null);
-          }}
-          onClose={() => setAliasSheet(null)}
-        />
-      ) : null}
+      {/* An edit here goes into Library's cached list as well (readCache), so
+          "‹ Library" doesn't paint the phrase as it was before it. */}
+      <SheetPresence>
+        {aliasSheet ? (
+          <LibraryAliasSheet
+            alias={aliasSheet}
+            onSaved={(u) => {
+              setFood((f) =>
+                f
+                  ? { ...f, aliases: (f.aliases ?? []).map((a) => (a.id === u.id ? u : a)) }
+                  : f,
+              );
+              const c = peek<AliasRow[]>("library:aliases");
+              if (c) put("library:aliases", c.map((a) => (a.id === u.id ? { ...a, ...u } : a)));
+              setAliasSheet(null);
+            }}
+            onDeleted={(aid) => {
+              // not if focus has moved on (the sheet closed while the delete
+              // was out)
+              const at = document.activeElement;
+              if (!at || at === document.body || at.closest('[aria-modal="true"]')) {
+                phrasesHead.current?.focus({ preventScroll: true });
+              }
+              setFood((f) =>
+                f ? { ...f, aliases: (f.aliases ?? []).filter((a) => a.id !== aid) } : f,
+              );
+              const c = peek<AliasRow[]>("library:aliases");
+              if (c) put("library:aliases", c.filter((a) => a.id !== aid));
+              setAliasSheet(null);
+            }}
+            onClose={() => setAliasSheet(null)}
+          />
+        ) : null}
+      </SheetPresence>
     </main>
   );
 }

@@ -16,23 +16,11 @@
   flex-direction: column;
 }
 
-.docs-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* the small mono uppercase label: sidebar groups, eyebrows, code bars */
 .docs-label,
 .docs-eyebrow {
   font-family: var(--docs-mono);
-  font-size: 0.6875rem;
+  font-size: var(--micro-size);
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -158,6 +146,20 @@
   min-height: 46px;
   padding: 0 22px;
   font-size: 0.95rem;
+}
+
+/* 320px phones: the header row needs ~342px. The Docs chip goes (the
+   "Browse docs" fold still reaches /docs) and the rest tightens. */
+@media (max-width: 359px) {
+  .docs-header-label {
+    display: none;
+  }
+  .docs-header-in {
+    gap: 8px;
+  }
+  .docs-btn {
+    padding: 0 10px;
+  }
 }
 
 /* ---------- body grid + sidebar ---------- */
@@ -517,7 +519,7 @@
 
 .docs-code-lang {
   font-family: var(--docs-mono);
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
@@ -622,7 +624,7 @@
   padding: 18px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 60%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 60%);
   box-shadow: var(--shadow-card);
 }
 
@@ -752,14 +754,17 @@
   border-top: 1px solid var(--line);
 }
 
+/* One row: a long path wraps (overflow-wrap from .docs code) and the
+   method and scope chips stay put, the scope top-right. */
 .docs-ep-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px 10px;
 }
 
 .docs .docs-ep-path {
+  flex: 1;
+  min-width: 0;
   background: none;
   border: 0;
   padding: 0;
@@ -783,13 +788,16 @@
 
 .docs-method,
 .docs-scope {
+  flex-shrink: 0;
   font-family: var(--docs-mono);
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   border-radius: 5px;
-  padding: 2px 6px;
+  /* 5px, not 6: at the 11px label floor the chips keep about their old width,
+     so "DELETE /api/keys/{key_id} SESSION ONLY" stays one line at 390 */
+  padding: 2px 5px;
   line-height: 1.4;
 }
 
@@ -843,7 +851,7 @@
 
 .docs-table th {
   font-family: var(--docs-mono);
-  font-size: 0.66rem;
+  font-size: var(--micro-size);
   font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -852,6 +860,16 @@
   padding: 9px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+}
+
+/* Code and headers stay whole in a table: an auto-layout table can't shrink
+   below its min-content width, so .docs-table's frame scrolls instead of
+   ["read"] breaking into letters. Comes after .docs code, which has the
+   same specificity. */
+.docs-table code,
+.docs-table th {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .docs-table td {

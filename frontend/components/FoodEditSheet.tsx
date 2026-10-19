@@ -6,7 +6,12 @@ import {
   type AliasRow,
   type StagedItem,
 } from "@/lib/api";
+import { fmt0 } from "@/lib/format";
+import { foodName } from "@/lib/labels";
+import { FOOD_FIELD_PROPS } from "./fieldProps";
+import { ArrowRight, Check } from "./icons";
 import SheetHeader from "./SheetHeader";
+import { useSheetFocus } from "./useSheetFocus";
 
 type Props = {
   item: StagedItem;
@@ -25,13 +30,16 @@ type Props = {
 /** His cached foods for this phrase, read off the staged row: the current
  *  food plus every food_id-bearing alternate (tier-3 alternates carry
  *  source ids instead — those are database hits, not his aliases, and the
- *  row's own chips already offer them). Empty unless there is a real choice. */
+ *  row's own chips already offer them). Empty unless there is a real choice
+ *  or the row came from his alias for this phrase (tier 1): the GET returns
+ *  that one alias too, so seeding it keeps the sheet from growing when the
+ *  list lands. */
 function aliasesFromItem(item: StagedItem): AliasRow[] {
   const rivals = (item.alternates ?? []).filter(
     (a): a is typeof a & { food_id: string } =>
       !!a.food_id && a.food_id !== item.food?.id,
   );
-  if (!rivals.length) return [];
+  if (!rivals.length && item.tier !== 1) return [];
   const current: AliasRow[] = item.food
     ? [
         {
@@ -64,8 +72,11 @@ export default function FoodEditSheet({
   onManualSearch,
   onClose,
 }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const [text, setText] = useState(item.phrase);
-  const [aliases, setAliases] = useState<AliasRow[] | null>(null);
+  // Seeded from the row, so the section is there at open and the GET only
+  // replaces it — the sheet no longer jumps taller when the list lands.
+  const [aliases, setAliases] = useState<AliasRow[]>(() => aliasesFromItem(item));
 
   useEffect(() => {
     let cancelled = false;
@@ -89,63 +100,96 @@ export default function FoodEditSheet({
   return (
     <>
       <div className="subsheet-backdrop" onClick={onClose} />
-      <div className="subsheet" role="dialog" aria-label="Edit food">
-        <SheetHeader title={<>&ldquo;{item.phrase}&rdquo;</>} onClose={onClose} />
+      <div
+        ref={sheetRef}
+        className="subsheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Change food"
+        tabIndex={-1}
+      >
+        <SheetHeader title="Change food" onClose={onClose} />
+        <p className="subsheet-hint">You said &ldquo;{item.phrase}&rdquo;</p>
 
-        {aliases?.length ? (
+        {aliases.length ? (
           <div>
-            <div className="edit-label">Your foods for this</div>
-            <div className="chips">
-              {aliases.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className={`chip${
-                    a.food_id === item.food?.id ? " active" : ""
-                  }`}
-                  disabled={busy}
-                  onClick={() => onPickAlias(a)}
-                >
-                  {a.pinned ? <span className="usual-dot" /> : null}
-                  {a.food_name}
-                  {a.brand ? ` — ${a.brand}` : ""}
-                  {typeof a.use_count === "number" ? (
-                    <span className="alias-count num"> {a.use_count}×</span>
-                  ) : null}
-                </button>
-              ))}
+            <div className="edit-label">Foods you&rsquo;ve used for this</div>
+            {/* Rows, not chips: these are whole food names, often FDC-length,
+                and a chip wrapped them into centred two-line lozenges. */}
+            <div className="search-results">
+              {aliases.map((a) => {
+                const current = a.food_id === item.food?.id;
+                const sub = [
+                  a.brand,
+                  a.pinned ? "your usual" : null,
+                  typeof a.use_count === "number"
+                    ? `logged ${fmt0.format(a.use_count)}×`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={current ? "active" : undefined}
+                    aria-pressed={current}
+                    disabled={busy}
+                    onClick={() => onPickAlias(a)}
+                  >
+                    <span className="result-name">{foodName(a.food_name)}</span>
+                    {sub ? <span className="result-sub">{sub}</span> : null}
+                    {current ? <Check /> : null}
+                  </button>
+                );
+              })}
             </div>
           </div>
         ) : null}
 
-        <form
-          className="capture"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const trimmed = text.trim();
-            if (trimmed && !busy) onRephrase(trimmed);
-          }}
-        >
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Describe it differently"
-            aria-label="Re-resolve food"
-            autoComplete="off"
-          />
-          <button type="submit" disabled={busy || !text.trim()} aria-label="Resolve">
-            →
-          </button>
-        </form>
+        {/* the field and the search stay pinned at the foot, by the thumb and
+            above the keyboard; only the alias rows scroll */}
+        <div className="subsheet-foot">
+          {/* the prefill is the point: edit what was said and look it up again */}
+          <div>
+            <div className="edit-label">Describe it differently</div>
+            <form
+              className="capture"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const trimmed = text.trim();
+                if (trimmed && !busy) onRephrase(trimmed);
+              }}
+            >
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Describe it differently"
+                aria-label="Describe it differently"
+                autoComplete="off"
+                {...FOOD_FIELD_PROPS}
+                enterKeyHint="go"
+              />
+              <button
+                type="submit"
+                disabled={busy || !text.trim()}
+                aria-label="Look it up"
+              >
+                <ArrowRight strokeWidth={2.4} />
+              </button>
+            </form>
+          </div>
 
-        <button
-          type="button"
-          className="edit-manual-btn"
-          disabled={busy}
-          onClick={onManualSearch}
-        >
-          Search the food database…
-        </button>
+          <button
+            type="button"
+            className="edit-manual-btn"
+            disabled={busy}
+            onClick={onManualSearch}
+          >
+            Search foods
+            <span className="chev" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import "@/app/history/charts.css";
+import { fitLabels } from "./ChartBars";
 
 export type StripCell = {
   key: string;
@@ -21,18 +22,29 @@ type Props = {
 
 const CELL_H = 18;
 const GAP = 2;
-const LABEL_H = 14;
+const LABEL_H = 16;
+/** a cell's fill: a week with any day logged never fades to nothing */
+const cellOpacity = (level: number) => 0.25 + 0.75 * Math.min(level, 1);
 
 /** §7.4 year view: the adherence strip — one cell per week, opacity = share
- *  of days with ≥1 entry. Tap a week → that week in the W view. */
+ *  of days with ≥1 entry. Read-only, like the year's bars: every range ends
+ *  today, so a week can't open in the W view, and a day older than the M
+ *  view is reached from the day view's date picker (owner, 2026-10-13). */
 export default function ChartStrip({ title, cells, onTap }: Props) {
   const n = Math.max(cells.length, 1);
   const W = 360;
   const cw = (W - GAP * (n - 1)) / n;
   const H = CELL_H + LABEL_H;
+  // ChartBars' overlap guard; these labels hang right from the cell's left edge
+  const labelled = fitLabels(
+    cells.map((c, i) => ({ x: i * (cw + GAP), text: c.label ?? "" })),
+    "start",
+  );
   return (
     <figure className="chart">
-      <figcaption className="chart-title">{title}</figcaption>
+      <figcaption>
+        <h2 className="chart-title">{title}</h2>
+      </figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={title} className="chart-svg">
         {cells.map((c, i) => {
           const x = i * (cw + GAP);
@@ -64,10 +76,10 @@ export default function ChartStrip({ title, cells, onTap }: Props) {
                   height={CELL_H}
                   rx={2}
                   fill="var(--mint)"
-                  opacity={0.25 + 0.75 * Math.min(c.level, 1)}
+                  opacity={cellOpacity(c.level)}
                 />
               ) : null}
-              {c.label ? (
+              {labelled.has(i) ? (
                 <text className="chart-xlabel" x={x} y={H - 3} textAnchor="start">
                   {c.label}
                 </text>
@@ -76,6 +88,19 @@ export default function ChartStrip({ title, cells, onTap }: Props) {
           );
         })}
       </svg>
+      {/* the opacity scale's key: 1, 4 and 7 days of a week */}
+      <div className="chart-legend">
+        Days logged
+        {[1, 4, 7].map((days) => (
+          <span key={days} className="chart-legend-item">
+            <span
+              className="chart-legend-swatch cell"
+              style={{ background: "var(--mint)", opacity: cellOpacity(days / 7) }}
+            />
+            {days}
+          </span>
+        ))}
+      </div>
     </figure>
   );
 }

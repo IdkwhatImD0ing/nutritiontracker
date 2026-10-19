@@ -134,10 +134,11 @@
   font-size: 0.9rem;
 }
 
+/* 44px tall to the finger; the 64px bar absorbs it */
 .land-nav-links a:not(.land-pill) {
   color: var(--muted);
   text-decoration: none;
-  padding: 8px 10px;
+  padding: 12px 10px;
   border-radius: 999px;
   transition:
     color 150ms,
@@ -154,7 +155,7 @@
 .land-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 36px;
+  min-height: 44px;
   margin-left: 6px;
   padding: 0 16px;
   border-radius: 999px;
@@ -175,7 +176,7 @@
 /* 320px phones: the three links only just fit at 360 */
 @media (max-width: 359px) {
   .land-nav-links a:not(.land-pill) {
-    padding: 8px 6px;
+    padding: 12px 6px;
   }
   .land-pill {
     margin-left: 2px;
@@ -251,6 +252,29 @@
   margin-top: 32px;
 }
 
+/* a phone stacks the buttons at one width, primary first, and the text
+   link becomes a centred row of its own rather than a wrapped orphan */
+@media (max-width: 559px) {
+  .land-hero .land-cta,
+  .land-open .land-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* the hero's column is align-items: flex-start, which would shrink the
+     stack to its widest button; it spans the column, as the open-source
+     card's does. (The installed app's fixed bar is sized by left and right,
+     so this leaves it alone.) */
+  .land-hero .land-cta {
+    align-self: stretch;
+  }
+
+  /* its 44px to the finger is globals.css's coarse hit area, not a taller box */
+  .land-cta .land-textlink {
+    justify-content: center;
+  }
+}
+
 .land-btn {
   display: inline-flex;
   align-items: center;
@@ -293,7 +317,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 0; /* flush left when the CTA row wraps it onto its own line */
+  padding: 8px 0; /* flush with the buttons' edge in a row; centred below 560px */
   color: var(--muted);
   font-weight: 600;
   text-decoration: none;
@@ -321,6 +345,67 @@
   margin: 18px 0 0;
   font-size: 0.85rem;
   color: var(--faint);
+}
+
+/* ---------- installed: display-mode standalone ----------
+   The installed app's signed-out screen (a cold launch, or where Sign out
+   lands) is this page trimmed to an app's front door (Bill, 2026-10-13):
+   the pitch and the preview, the two ways in pinned at the foot, and the
+   Privacy and Terms line. The website's parts (Docs, GitHub, the claims,
+   lanes, developer and open-source sections) stay with the browser. Each
+   selector carries .land: the sections' own rules come later in this file
+   (.land-claims, .land-dev and .land-open set display: grid there), and an
+   equal one there would win. */
+@media (display-mode: standalone) {
+  .land .land-nav-links,
+  .land .land-hero .land-textlink,
+  .land .land-claims,
+  .land .land-lanes,
+  .land .land-dev,
+  .land .land-open,
+  .land .land-foot .land-mark,
+  .land .land-foot-links .land-web,
+  .land .land-foot-credit {
+    display: none;
+  }
+
+  /* the footer clears the pinned bar (its 52px buttons and 12px edges;
+     the footer already carries the bottom inset) */
+  .land {
+    padding-bottom: 76px;
+  }
+
+  /* a row even on a phone, where the hero's CTAs otherwise stack (the
+     max-width 559px rule above) */
+  .land-hero .land-cta {
+    position: fixed;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    justify-content: center;
+    margin: 0;
+    padding: 12px max(var(--land-gutter), env(safe-area-inset-right))
+      calc(12px + env(safe-area-inset-bottom)) max(var(--land-gutter), env(safe-area-inset-left));
+    background: color-mix(in srgb, var(--bg) 84%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+    border-top: 1px solid var(--line);
+  }
+
+  /* two equal halves, so Sign in weighs what Try a demo does */
+  .land-hero .land-cta .land-btn {
+    flex: 1;
+    max-width: 260px;
+    padding: 0 16px;
+  }
+
+  .land .land-foot-in {
+    justify-content: center;
+  }
 }
 
 /* ---------- preview: the staging sheet, framed ---------- */
@@ -359,6 +444,8 @@
   }
 }
 
+/* a picture of the sheet: its pills and button are not controls, so a
+   tap or a long-press finds nothing to poke or select */
 .land-sheet {
   width: 100%;
   max-width: 460px;
@@ -368,6 +455,9 @@
   border-radius: 24px;
   box-shadow: var(--shadow-float);
   overflow: hidden;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .land-sheet-head {
@@ -468,9 +558,9 @@
   border-radius: 6px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   font-weight: 650;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--micro-track);
   text-transform: uppercase;
   vertical-align: 2px;
 }
@@ -524,8 +614,8 @@
 }
 
 .land-row-kcal .u {
-  font-size: 0.68rem;
-  color: var(--faint);
+  font-size: var(--micro-size);
+  color: var(--muted);
   letter-spacing: 0.04em;
 }
 
@@ -548,7 +638,7 @@
 .land-totals .k {
   margin-right: auto;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--faint);
@@ -791,7 +881,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 11px 14px;
+  padding: 6px 8px 6px 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -802,17 +892,75 @@
   background: var(--surface-3);
 }
 
-.land-term-bar span {
+.land-term-bar > span {
   margin-left: 8px;
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--faint);
 }
 
-/* One command per line, unwrapped, so it copies as a single command; the
-   panel scrolls sideways instead of the page. */
+/* 320px phones: the two Copy buttons need the label's room */
+@media (max-width: 359px) {
+  .land-term-bar > span {
+    display: none;
+  }
+}
+
+/* One Copy per command (components/docs/CopyButton). docs.css isn't loaded
+   here, so its .docs-copy pill is restated for this bar. */
+.land-term-copy {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.land-term-copy .docs-copy {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* 44px tall to the finger, the pill kept at 28: up to the bar's top edge
+   (.land-term clips past it), the rest down over the code panel's top
+   padding; sideways half the 6px gap each, so they meet in the middle.
+   The insets count from inside the 1px border. */
+@media (pointer: coarse) {
+  .land-term-copy .docs-copy {
+    position: relative;
+  }
+
+  .land-term-copy .docs-copy::before {
+    content: "";
+    position: absolute;
+    inset: -7px -4px -11px;
+  }
+}
+
+@media (hover: hover) {
+  .land-term-copy .docs-copy:hover {
+    color: var(--text);
+    border-color: var(--spruce-soft);
+  }
+}
+
+.land-term-copy .docs-copy.done {
+  color: var(--spruce-soft);
+  border-color: var(--accent-line);
+}
+
+/* One command per line. Under 720px a line soft-wraps inside the panel (a
+   CSS wrap adds no newline, so a copied command is still one line); wider,
+   the panel scrolls sideways instead of the page. The owner chose the phone
+   wrap and the Copy buttons on 2026-10-13. */
 .land-code {
   margin: 0;
   padding: 16px 18px 18px;
@@ -824,6 +972,33 @@
   color: var(--text);
   scrollbar-width: thin;
   scrollbar-color: var(--surface-3) transparent;
+}
+
+@media (max-width: 719px) {
+  .land-code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* but never inside a flag ("--" / "header"), and a URL that doesn't fit
+     the line moves to the next one whole; only one too long for any line
+     breaks, at the <wbr> after /api/ (page.tsx), not mid-word ("api/mc" /
+     "p") */
+  .land-code .f {
+    white-space: nowrap;
+  }
+
+  .land-code .u {
+    display: inline-block;
+  }
+}
+
+/* wider, the panel scrolls: Chromium breaks at a <wbr> even under
+   white-space: pre ("…/api/" / "mcp --header"), so drop them */
+@media (min-width: 720px) {
+  .land-code wbr {
+    display: none;
+  }
 }
 
 .land-code:focus-visible {
@@ -911,7 +1086,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: var(--micro-size);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
@@ -928,7 +1103,7 @@
   display: grid;
   gap: 28px;
   padding: 32px 24px;
-  background: linear-gradient(180deg, #1d1c22, var(--surface) 70%);
+  background: linear-gradient(180deg, var(--surface-hero), var(--surface) 70%);
   border: 1px solid var(--line);
   border-radius: 24px;
   box-shadow: var(--shadow-card);
@@ -968,14 +1143,20 @@
   padding-bottom: calc(32px + env(safe-area-inset-bottom));
 }
 
+/* Each link is 44px tall to the finger: the padding is the hit area, so a
+   wrapped row needs no gap of its own, and the -12px margin keeps the row
+   where it was in the footer. */
 .land-foot-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 22px;
+  gap: 0 22px;
+  margin: -12px 0;
   font-size: 0.88rem;
 }
 
 .land-foot-links a {
+  display: inline-block;
+  padding: 12px 0;
   color: var(--muted);
   text-decoration: none;
 }

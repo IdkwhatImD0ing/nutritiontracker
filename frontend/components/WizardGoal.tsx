@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import {
   computeGoals,
@@ -19,13 +19,19 @@ import {
   type GoalResult,
   type Sex,
 } from "./WizardMath";
+import { useSheetBack } from "./sheetBack";
+import { useSheetFocus } from "./useSheetFocus";
 import "@/app/library/m3.css";
 
 type Props = {
   /** settings.body from a previous run — pre-fills every field */
   initial?: Body | null;
   onDone: (s: Settings) => void;
+  /** first run only: "Skip for now" on step 1 */
   onSkip?: () => void;
+  /** a re-run from Settings: Cancel in the top bar on every step (and
+   *  Escape and system Back) leaves without saving, in place of Skip */
+  onCancel?: () => void;
 };
 
 type Units = "metric" | "imperial";
@@ -50,26 +56,50 @@ const LIMITS: Record<keyof Targets, [number, number]> = {
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
-/** A 4xx says exactly what is wrong — show that, not "check your connection".
- *  FastAPI puts it in `detail`: a string, or a 422 list of {loc, msg}. */
+/** routes/settings.py field names (the last `loc` segment of a 422) → what
+ *  the form calls them. */
+const FIELD_LABEL: Record<string, string> = {
+  height_cm: "height",
+  weight_kg: "weight",
+  age: "age",
+  sex: "sex",
+  activity_level: "activity level",
+  activity: "activity level",
+  goal_weight_kg: "target weight",
+  target_weight_kg: "target weight",
+  weekly_rate_kg: "weekly rate",
+  kcal: "calories",
+  protein_g: "protein",
+  carb_g: "carbs",
+  fat_g: "fat",
+  timezone: "time zone",
+};
+
+/** A 4xx says what is wrong — show that, not "check your connection".
+ *  FastAPI puts it in `detail`: a string (ApiError has parsed it), or a 422
+ *  list of {loc, msg}. pydantic's msg is in kg/cm whatever units are picked,
+ *  so a 422 names the field instead. Anything else (an HTML 404 page, or
+ *  FastAPI's own "Not Found" / "Method Not Allowed" for a misroute — these
+ *  routes raise no 404 or 405 of their own) is null, and the caller's own
+ *  sentence shows. */
 function detailOf(e: unknown): string | null {
   if (!(e instanceof ApiError) || e.status < 400 || e.status >= 500) return null;
+  if (e.detail && e.status !== 404 && e.status !== 405) return e.detail;
   const body = e.message.slice(e.message.indexOf(":") + 1).trim();
+  let fields: string[] = [];
   try {
     const d = (JSON.parse(body) as { detail?: unknown }).detail;
-    if (typeof d === "string") return d;
     if (Array.isArray(d)) {
-      const msgs = d
-        .map((x) => (x as { loc?: unknown[]; msg?: string }).msg)
-        .filter((m): m is string => !!m);
-      if (msgs.length) return msgs.join("; ");
+      fields = d.map((x) => String((x as { loc?: unknown[] }).loc?.at(-1) ?? ""));
     }
   } catch {
     // ApiError caps the body at 200 chars, so a long 422 arrives truncated
-    const msgs = [...body.matchAll(/"msg":"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
-    if (msgs.length) return msgs.join("; ");
+    fields = [...body.matchAll(/"loc":\[([^\]]*)\]/g)].map((m) =>
+      (m[1].split(",").at(-1) ?? "").replace(/"/g, ""),
+    );
   }
-  return body || null;
+  const labels = [...new Set(fields.map((f) => FIELD_LABEL[f]).filter(Boolean))];
+  return labels.length ? `Check your ${labels.join(" and ")}.` : null;
 }
 
 function num(s: string): number {
@@ -90,7 +120,8 @@ function nearestRate(kg: number | undefined): number {
 /** §7.4 first-run goal wizard (Cronometer-style): body → goal → computed
  *  kcal + macro targets, every number shown and editable before saving to
  *  settings. Re-runnable from Settings any time. */
-export default function WizardGoal({ initial, onDone, onSkip }: Props) {
+export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props) {
+  const sheetRef = useSheetFocus<HTMLDivElement>();
   const init = initial ?? {};
   const [step, setStep] = useState(0);
   const [units, setUnits] = useState<Units>(init.units ?? "imperial");
@@ -144,6 +175,25 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
   const bodyValid =
     ageN >= 13 && ageN <= 120 && cm >= 100 && cm <= 250 && kg >= 30 && kg <= 300;
   const goalValid = targetKg >= 30 && targetKg <= 300;
+  // Why Next / Compute stays disabled, once every field has something in it
+  // (a blank field explains itself): the first number out of range, in the
+  // units shown. 67–661 lb and 3 ft 4 in – 8 ft 2 in are the whole numbers
+  // inside 30–300 kg and 100–250 cm.
+  const weightRange = units === "metric" ? "30–300 kg" : "67–661 lb";
+  const bodyFilled =
+    age.trim() !== "" &&
+    weight.trim() !== "" &&
+    (units === "metric" ? heightCm : feet).trim() !== "";
+  const bodyProblem =
+    !bodyFilled || bodyValid
+      ? null
+      : !(ageN >= 13 && ageN <= 120)
+        ? "Age must be 13–120."
+        : !(kg >= 30 && kg <= 300)
+          ? `Weight must be ${weightRange}.`
+          : `Height must be ${units === "metric" ? "100–250 cm" : "3 ft 4 in – 8 ft 2 in"}.`;
+  const goalProblem =
+    target.trim() !== "" && !goalValid ? `Target weight must be ${weightRange}.` : null;
 
   // The server derives the direction from goal weight vs current weight and
   // takes the rate as a magnitude, so only rates that agree with the target
@@ -216,6 +266,8 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
   });
   const macroKcal =
     (edited.protein_g ?? 0) * 4 + (edited.carb_g ?? 0) * 4 + (edited.fat_g ?? 0) * 9;
+  const macroOff =
+    Number.isFinite(edited.kcal ?? NaN) && Math.abs(macroKcal - (edited.kcal ?? 0)) > 50;
 
   const save = async () => {
     if (!editedValid) return;
@@ -239,29 +291,89 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
       : null;
   const wUnit = units === "metric" ? "kg" : "lb";
 
+  // A re-run closes on Back and Escape as any sheet does (sheetBack). Not
+  // while Save is out (step 2's only request), Cancel included: a save can't
+  // be called back, and its "Targets saved." would land after a wizard that
+  // seemed cancelled. Compute writes nothing, so it can be walked away from.
+  const saving = busy && step === 2;
+  useSheetBack(
+    sheetRef,
+    () => {
+      if (!saving) onCancel?.();
+    },
+    !!onCancel,
+  );
+
+  // It covers the whole screen, so what it covers is inert while it is up:
+  // Tab and a screen reader stay out of the page and the tab bar beside it
+  // (Settings' <main> is inert by its own prop, and left to it).
+  useEffect(() => {
+    const el = sheetRef.current;
+    const covered = [...(el?.parentElement?.children ?? [])].filter(
+      (c): c is HTMLElement => c !== el && c instanceof HTMLElement && !c.inert,
+    );
+    for (const c of covered) c.inert = true;
+    return () => {
+      for (const c of covered) c.inert = false;
+    };
+  }, [sheetRef]);
+
+  // A step's buttons leave with it, and focus would fall out of the dialog
+  // to <body>: the next step's title takes it, so a screen reader starts
+  // there.
+  const title = useRef<HTMLHeadingElement>(null);
+  const shownStep = useRef(step);
+  useEffect(() => {
+    if (shownStep.current === step) return;
+    shownStep.current = step;
+    title.current?.focus({ preventScroll: true });
+  }, [step]);
+
   return (
-    <div className="wizard" role="dialog" aria-label="Goal wizard">
+    <div
+      ref={sheetRef}
+      className="wizard"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Goal wizard"
+      tabIndex={-1}
+    >
       <div className="wizard-inner">
-        <div className="wizard-steps" aria-hidden="true">
-          {[0, 1, 2].map((i) => (
-            <span key={i} className={i <= step ? "done" : undefined} />
-          ))}
+        <div className="top-bar wizard-top">
+          {onCancel ? (
+            <button
+              type="button"
+              className="wizard-cancel"
+              disabled={saving}
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+          ) : null}
+          <div className="wizard-steps" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <span key={i} className={i <= step ? "done" : undefined} />
+            ))}
+          </div>
         </div>
 
         {step === 0 ? (
           <>
-            <h1>About you</h1>
+            <h1 ref={title} tabIndex={-1}>
+              About you
+            </h1>
             <p className="wizard-lead">
               Four numbers and a rough activity level — enough to estimate what
               you burn in a day. Every target you get is editable.
             </p>
 
-            <div className="m3-seg" role="radiogroup" aria-label="Units">
+            <div className="m3-seg" role="group" aria-label="Units">
               {(["imperial", "metric"] as Units[]).map((u) => (
                 <button
                   key={u}
                   type="button"
                   className={units === u ? "active" : undefined}
+                  aria-pressed={units === u}
                   onClick={() => switchUnits(u)}
                 >
                   {u === "imperial" ? "lb · ft" : "kg · cm"}
@@ -269,12 +381,13 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               ))}
             </div>
 
-            <div className="m3-seg" role="radiogroup" aria-label="Sex">
+            <div className="m3-seg" role="group" aria-label="Sex">
               {(["male", "female"] as Sex[]).map((s) => (
                 <button
                   key={s}
                   type="button"
                   className={sex === s ? "active" : undefined}
+                  aria-pressed={sex === s}
                   onClick={() => setSex(s)}
                 >
                   {s === "male" ? "Male" : "Female"}
@@ -282,57 +395,95 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               ))}
             </div>
 
+            {/* Each number carries its unit inside the box. A unit, not an
+                example: a grey "180" in an empty field reads as data already
+                filled in. The visible unit is aria-hidden; the label or
+                aria-label says it for a screen reader. */}
             <div className="m3-grid-2">
               <label className="m3-field">
                 Age
-                <input
-                  inputMode="numeric"
-                  value={age}
-                  onChange={(e) => setAge(e.target.value)}
-                  className="num"
-                />
+                <span className="m3-unit-wrap">
+                  <input
+                    inputMode="numeric"
+                    enterKeyHint="next"
+                    value={age}
+                    onChange={(e) => setAge(e.target.value)}
+                    className="num"
+                  />
+                  <span className="m3-unit" aria-hidden="true">
+                    yrs
+                  </span>
+                </span>
               </label>
               <label className="m3-field">
-                Weight ({wUnit})
-                <input
-                  inputMode="decimal"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  className="num"
-                />
+                Weight
+                <span className="m3-unit-wrap">
+                  <input
+                    inputMode="decimal"
+                    enterKeyHint="next"
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    aria-label={`Weight (${wUnit})`}
+                    className="num"
+                  />
+                  <span className="m3-unit" aria-hidden="true">
+                    {wUnit}
+                  </span>
+                </span>
               </label>
             </div>
 
             {units === "metric" ? (
               <label className="m3-field">
-                Height (cm)
-                <input
-                  inputMode="decimal"
-                  value={heightCm}
-                  onChange={(e) => setHeightCm(e.target.value)}
-                  className="num"
-                />
+                Height
+                <span className="m3-unit-wrap">
+                  <input
+                    inputMode="decimal"
+                    enterKeyHint="next"
+                    value={heightCm}
+                    onChange={(e) => setHeightCm(e.target.value)}
+                    aria-label="Height (cm)"
+                    className="num"
+                  />
+                  <span className="m3-unit" aria-hidden="true">
+                    cm
+                  </span>
+                </span>
               </label>
             ) : (
-              <div className="m3-grid-2">
-                <label className="m3-field">
-                  Height (ft)
-                  <input
-                    inputMode="numeric"
-                    value={feet}
-                    onChange={(e) => setFeet(e.target.value)}
-                    className="num"
-                  />
-                </label>
-                <label className="m3-field">
-                  (in)
-                  <input
-                    inputMode="numeric"
-                    value={inches}
-                    onChange={(e) => setInches(e.target.value)}
-                    className="num"
-                  />
-                </label>
+              // one Height caption over its two boxes (the inches box used to
+              // be a field of its own labelled "(in)"); a group, so a screen
+              // reader hears "Height" before "feet" and "inches"
+              <div className="m3-field" role="group" aria-labelledby="wizard-height">
+                <span id="wizard-height">Height</span>
+                <div className="m3-grid-2">
+                  <span className="m3-unit-wrap">
+                    <input
+                      inputMode="numeric"
+                      enterKeyHint="next"
+                      value={feet}
+                      onChange={(e) => setFeet(e.target.value)}
+                      aria-label="Height, feet"
+                      className="num"
+                    />
+                    <span className="m3-unit" aria-hidden="true">
+                      ft
+                    </span>
+                  </span>
+                  <span className="m3-unit-wrap">
+                    <input
+                      inputMode="numeric"
+                      enterKeyHint="next"
+                      value={inches}
+                      onChange={(e) => setInches(e.target.value)}
+                      aria-label="Height, inches"
+                      className="num"
+                    />
+                    <span className="m3-unit" aria-hidden="true">
+                      in
+                    </span>
+                  </span>
+                </div>
               </div>
             )}
 
@@ -350,6 +501,11 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               </select>
             </label>
 
+            {/* kept mounted, so the reason Next is off is announced */}
+            <p className="m3-note" role="status">
+              {bodyProblem}
+            </p>
+
             <div className="wizard-foot">
               <button
                 type="button"
@@ -359,7 +515,7 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               >
                 Next
               </button>
-              {onSkip ? (
+              {onSkip && !onCancel ? (
                 <button type="button" className="wizard-ghost" onClick={onSkip}>
                   Skip for now
                 </button>
@@ -370,20 +526,29 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
 
         {step === 1 ? (
           <>
-            <h1>Your goal</h1>
+            <h1 ref={title} tabIndex={-1}>
+              Your goal
+            </h1>
             <p className="wizard-lead">
               Where you want to be and how fast. Slower is easier to keep up —
               and keeps more muscle.
             </p>
 
             <label className="m3-field">
-              Target weight ({wUnit})
-              <input
-                inputMode="decimal"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                className="num"
-              />
+              Target weight
+              <span className="m3-unit-wrap">
+                <input
+                  inputMode="decimal"
+                  enterKeyHint="done"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  aria-label={`Target weight (${wUnit})`}
+                  className="num"
+                />
+                <span className="m3-unit" aria-hidden="true">
+                  {wUnit}
+                </span>
+              </span>
             </label>
 
             <label className="m3-field">
@@ -415,21 +580,38 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
                 {Math.round(weeksToTarget) === 1 ? "" : "s"} at this rate.
               </p>
             ) : null}
+            <p className="m3-note" role="status">
+              {goalProblem}
+            </p>
 
-            {error ? <p className="sheet-error">{error}</p> : null}
+            {error ? (
+              <p className="sheet-error" role="alert">
+                {error}
+              </p>
+            ) : null}
 
             <div className="wizard-foot">
               <button
                 type="button"
                 className="commit-btn"
                 disabled={!goalValid || busy}
+                aria-busy={busy}
                 onClick={compute}
               >
-                {busy ? "Computing…" : "Compute targets"}
+                {busy ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Computing…
+                  </>
+                ) : (
+                  "See my targets"
+                )}
               </button>
+              {/* not while computing: its answer would move on to step 2 */}
               <button
                 type="button"
                 className="wizard-ghost"
+                disabled={busy}
                 onClick={() => setStep(0)}
               >
                 Back
@@ -440,15 +622,19 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
 
         {step === 2 && result ? (
           <>
-            <h1>Your targets</h1>
+            <h1 ref={title} tabIndex={-1}>
+              Your targets
+            </h1>
             <p className="wizard-lead">
-              Mifflin-St Jeor × activity, minus your weekly rate. Protein by
-              bodyweight, a fat floor, carbs the remainder. Change anything.
+              Your resting burn (Mifflin-St Jeor) times your activity, minus
+              your weekly rate. Protein scales with bodyweight, fat has a floor,
+              carbs fill the rest. Change anything.
             </p>
 
             <div className="wizard-hero num">
               <div className="big">
-                {edit.kcal || "—"}
+                {/* "2,854" like every other figure; the field below keeps what was typed */}
+                {edited.kcal != null && Number.isFinite(edited.kcal) ? fmt.format(edited.kcal) : "—"}
                 <small>kcal / day</small>
               </div>
               <div className="sub">
@@ -460,57 +646,76 @@ export default function WizardGoal({ initial, onDone, onSkip }: Props) {
               </div>
             </div>
 
-            {result.notes?.length ? (
-              <p className="m3-note">{result.notes.join(" · ")}.</p>
-            ) : null}
+            {/* services/goals.py writes each note as a sentence */}
+            {result.notes?.map((n) => (
+              <p className="m3-note warn" key={n}>
+                {n}
+              </p>
+            ))}
 
             <div className="m3-grid-4">
               {(
                 [
-                  ["kcal", "Calories"],
-                  ["protein_g", "Protein"],
-                  ["carb_g", "Carbs"],
-                  ["fat_g", "Fat"],
-                ] as [keyof Targets, string][]
-              ).map(([k, label]) => (
+                  ["kcal", "Calories", "kcal"],
+                  ["protein_g", "Protein", "g"],
+                  ["carb_g", "Carbs", "g"],
+                  ["fat_g", "Fat", "g"],
+                ] as [keyof Targets, string, string][]
+              ).map(([k, label, unit]) => (
                 <label className="m3-field" key={k}>
                   {label}
-                  <input
-                    inputMode="decimal"
-                    value={edit[k]}
-                    onChange={(e) => setEdit((t) => ({ ...t, [k]: e.target.value }))}
-                    className="num"
-                  />
+                  <span className="m3-unit-wrap">
+                    <input
+                      inputMode="decimal"
+                      value={edit[k]}
+                      onChange={(e) => setEdit((t) => ({ ...t, [k]: e.target.value }))}
+                      aria-label={`${label} target (${unit})`}
+                      className="num"
+                    />
+                    <span className="m3-unit" aria-hidden="true">
+                      {unit}
+                    </span>
+                  </span>
                 </label>
               ))}
             </div>
-            <p className="m3-note num">
+            <p className={`m3-note num${macroOff ? " warn" : ""}`}>
               Macros add up to {fmt.format(macroKcal)} kcal
-              {Number.isFinite(edited.kcal ?? NaN) &&
-              Math.abs(macroKcal - (edited.kcal ?? 0)) > 50
+              {macroOff
                 ? ` — ${fmt.format(Math.abs(macroKcal - (edited.kcal ?? 0)))} ${
                     macroKcal > (edited.kcal ?? 0) ? "over" : "under"
                   } the calorie target`
                 : ""}
               .
             </p>
-            {!editedValid ? (
-              <p className="m3-note">
-                Calories must be 800–10,000; protein and fat 0–1,000 g, carbs
-                0–2,000 g.
+            <p className="m3-note" role="status">
+              {editedValid
+                ? null
+                : "Calories must be 800–10,000; protein and fat 0–1,000 g, carbs 0–2,000 g."}
+            </p>
+
+            {error ? (
+              <p className="sheet-error" role="alert">
+                {error}
               </p>
             ) : null}
-
-            {error ? <p className="sheet-error">{error}</p> : null}
 
             <div className="wizard-foot">
               <button
                 type="button"
                 className="commit-btn"
                 disabled={!editedValid || busy}
+                aria-busy={busy}
                 onClick={save}
               >
-                {busy ? "Saving…" : "Save targets"}
+                {busy ? (
+                  <>
+                    <span className="spinner on-accent" />
+                    Saving…
+                  </>
+                ) : (
+                  "Save targets"
+                )}
               </button>
               <button
                 type="button"

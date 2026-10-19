@@ -1,5 +1,6 @@
 /* Diary list (Today + History day view) — X5b. Reuses globals.css's .row /
-   .row-detail / .stepper vocabulary; only the diary-specific bits live here. */
+   .row-detail / .portion-btn vocabulary; only the diary-specific bits live
+   here. */
 
 .diary {
   display: flex;
@@ -7,39 +8,54 @@
   gap: 14px;
 }
 
+/* a quiet card, not a dashed box: dashed reads as a drop zone */
 .diary-empty {
   font-size: 0.86rem;
   color: var(--faint);
   text-align: center;
+  text-wrap: balance; /* two even lines, not a lone word under a full one */
   margin: 0;
   padding: 22px 16px;
-  border: 1px dashed var(--line-strong);
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: var(--radius);
+}
+
+/* it takes focus only when the day's last row is deleted (DiaryList), to
+   hold a screen reader's place; a line is not a control, so no ring */
+.diary-empty:focus {
+  outline: none;
 }
 
 .diary-meal {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 4px 16px;
+  padding: 4px var(--card-pad-x);
   box-shadow: var(--shadow-card);
 }
 
+/* A head that doesn't fit one line (Larger Text, #199; a 4-digit Breakfast
+   at 320px) drops the subtotal to a second row, on the right under the pill
+   (flex-end), rather than run it past the card. The name's auto margin
+   keeps it on the left. */
 .diary-meal-head {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   padding: 12px 0 8px;
   border-bottom: 1px solid var(--line);
 }
 
 .diary-meal-name {
+  margin: 0 auto 0 0; /* an h2: each meal is a section to VoiceOver's rotor */
   font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--accent);
+  color: var(--muted); /* a section label; the accent is rationed (§7.4) */
 }
 
 .diary-meal-head .m3-link-btn {
@@ -60,14 +76,119 @@
   }
 }
 
+/* over the rows' figures, not their chevrons: .row-kcal's 3px gap, then
+   the .chev's 9px margin and 7px width (globals.css) */
 .diary-meal-kcal {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--muted);
+  margin-right: 19px;
 }
 
-.diary-row.web .row-name {
-  color: #a8d0ee; /* §3.4a: web-transcribed rows are visually distinct */
+/* The trailing pill and subtotal never break inside: a 4-digit meal at
+   320px read 'Save as / meal' and '1,177 / kcal'. */
+.diary-meal-head .m3-link-btn,
+.diary-meal-kcal {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 320px phones: tighter tracking and a smaller pill, so a meal's name, the
+   pill and its subtotal fit the ~250px head on one line; only 'BREAKFAST'
+   with a 4-digit '1,177 kcal' drops the subtotal to its second row. */
+@media (max-width: 359px) {
+  .diary-meal-head {
+    gap: 6px;
+  }
+  .diary-meal-name {
+    letter-spacing: 0.08em;
+  }
+  .diary-meal-head .m3-link-btn {
+    padding: 4px 8px;
+    font-size: 0.72rem;
+  }
+}
+
+/* The whole row is the tap target (DiaryEntryRow): .row's vertical padding
+   moves inside the toggle, onto .row-main and the citation line, so a tap
+   at the row's edge expands it too. .row keeps its padding for StagedRow;
+   the panel's margins keep the spacing it had. */
+.row.diary-row {
+  padding: 0;
+}
+
+.diary-row .row-main {
+  padding: 14px 0;
+}
+
+/* The citation line ends at the row's own 14px, not .web-cite's 23px
+   (globals.css): under a closed row is the next row's .row-main, whose
+   taps the link's area would take. Under an open row's line is its panel's
+   top, which takes no taps, so there the link keeps its 44px; the margin
+   leaves the panel where it was. */
+.diary-row .web-cite {
+  margin: -14px 0 0;
+  padding-bottom: 14px;
+  cursor: pointer;
+}
+
+.diary-row .web-cite:has(+ .row-detail) {
+  margin-bottom: -11px;
+  padding-bottom: 23px;
+}
+
+.diary-row .row-detail {
+  margin: -2px 0 14px;
+}
+
+/* The staged row's meal picker (globals.css .meal-picker) in a panel 34px
+   narrower than the staged row's (the meal card's padding): a tighter track
+   and segments keep the four on one line at 320, and from 360 at the 1.3x
+   Text Size cap. */
+.diary-row .meal-picker.m3-seg {
+  gap: 2px;
+  padding: 3px;
+}
+
+.diary-row .meal-picker.m3-seg button {
+  padding-inline: 2px;
+}
+
+/* waiting on a save, delete or move: aria-disabled, so the tapped segment
+   keeps focus; drawn as the actions' waiting pills are */
+.diary-row .meal-picker button[aria-disabled="true"]:not(.active) {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* a failed move, under the picker that failed (.sheet-error is centred
+   for sheet footers) */
+.detail-meal > .diary-error {
+  margin: 6px 0 0;
+  text-align: left;
+}
+
+/* §7.4's drill-in from a diary row: a list row in the expanded panel, so a
+   tap on the row itself only ever expands it (owner, 2026-10-13). It sits
+   between two hairlines; the edit block's own top line is the lower one.
+   Positioned, so it paints over the portion pill's hit area, grown down
+   to just above it (globals.css), and keeps all its own taps. */
+.diary-food-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.diary-food-link + .diary-edit {
+  margin-top: 0;
 }
 
 .diary-edit {
@@ -79,106 +200,58 @@
   gap: 8px;
 }
 
-.diary-edit > .k {
-  font-size: 0.66rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+/* a failed delete, over the buttons that failed (.sheet-error is
+   centred for sheet footers) */
+.diary-edit > .diary-error {
+  margin: 0;
+  text-align: left;
 }
 
-.diary-stepper button {
-  width: 44px;
-  padding: 6px 0;
-  font-size: 1.1rem;
-}
-
-.diary-stepper input {
-  font-size: 1.05rem;
-  padding: 6px 0;
-}
-
-.diary-stepper button:disabled,
-.diary-stepper input:disabled {
-  color: var(--faint);
-  cursor: default;
-}
-
+/* wraps, never overflows: a pair that can't share the line drops one */
 .diary-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
 
+/* the secondary pill (m3.css .keys-btn's values), a step up off the
+   expanded row's --surface-2 */
 .diary-actions button {
+  min-height: 40px;
   border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 0.8rem;
+  padding: 0 16px;
+  font-size: 0.86rem;
   font-weight: 600;
+  white-space: nowrap; /* a two-line pill beside a one-line one, at 320 */
   cursor: pointer;
   border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
+  background: var(--surface-3);
+  color: var(--text);
 }
 
-.diary-actions button:disabled {
+/* the delete confirm: "Yes, delete" and "Cancel", equal halves */
+.diary-actions.confirming button {
+  flex: 1;
+  margin-left: 0;
+}
+
+/* "Yes, delete" waits as aria-disabled (it keeps focus), drawn the same */
+.diary-actions button:is(:disabled, [aria-disabled="true"]) {
   color: var(--faint);
   cursor: default;
-}
-
-.diary-actions .diary-save:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
 }
 
 .diary-actions .diary-delete {
   margin-left: auto;
 }
 
-.diary-actions .diary-delete:not(:disabled) {
+.diary-actions .diary-delete:not(:disabled, [aria-disabled="true"]) {
   color: var(--red);
 }
 
-.diary-actions .diary-delete.confirm:not(:disabled) {
+.diary-actions .diary-delete.confirm:not(:disabled, [aria-disabled="true"]) {
   background: var(--red);
   border-color: var(--red);
-  color: #fff;
-}
-
-/* The row's serving picker (§3.5 post-commit portion edit). The opener sits
-   on its own line above the qty stepper; .diary-edit is a stretch column, so
-   it has to say it does not want the full width. */
-.diary-change-serving {
-  align-self: flex-start;
-  font-size: 0.76rem;
-  text-align: left;
-}
-
-/* A branded food can carry a dozen servings; cap the list so the qty stepper
-   and the actions stay on screen under it. */
-.diary-servings {
-  max-height: 168px;
-  overflow-y: auto;
-}
-
-.diary-servings button {
-  padding: 8px 12px;
-  font-size: 0.8rem;
-}
-
-/* A serving the §4 guard would refuse: offered, so the list is the food's
-   real one, but visibly not pickable. */
-.diary-servings button:disabled {
-  cursor: default;
-  opacity: 0.45;
-  border-style: dashed;
-}
-
-/* Picker status ("Loading servings…", "only the one serving"). Not .k — that
-   is the uppercase tracked micro-label for "Qty · 1 cup", and a sentence set
-   in it shouts. */
-.diary-note {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
+  color: var(--on-danger);
 }

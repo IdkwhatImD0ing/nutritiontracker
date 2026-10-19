@@ -1,6 +1,7 @@
 /** The app icon's tally mark (public/icons/icon.svg), redrawn on an accent
- *  tile so it still reads at 22-26px. Shared by the landing and docs headers;
- *  each page sizes and colours it with its own class. */
+ *  tile so it still reads at 22-26px. Shared by the landing, docs and legal
+ *  headers and the auth screens; each page sizes and colours it with its own
+ *  class. */
 export default function TallyMark({ className }: { className: string }) {
   return (
     <svg className={className} viewBox="0 0 32 32" aria-hidden="true">
