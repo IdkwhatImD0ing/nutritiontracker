@@ -321,21 +321,35 @@ body:has(.tabbar) .shell {
 /* A food card's drill-in: the head and the brand line are one link, grown
    over the card's top and side padding (.m3-card's, mirrored) so the whole
    upper card takes the tap. The phrase chips under it stay buttons of their
-   own. */
+   own. Its bottom reaches 12px into the 16px above the chips (card gap +
+   .chips margin) and gives them back, so a one-line name is a 45.6px target
+   with no min-height band under it, and every card keeps 16px to its chips. */
 .m3-card-link {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 44px;
-  margin: -14px calc(-1 * var(--card-pad-x)) 0;
-  padding: 14px var(--card-pad-x) 0;
+  margin: -14px calc(-1 * var(--card-pad-x)) -12px;
+  padding: 14px var(--card-pad-x) 12px;
   border-radius: var(--radius) var(--radius) 0 0;
   color: inherit;
   text-decoration: none;
 }
 
+/* its bottom edge is 4px above the chips, so the keyboard ring is drawn
+   inside the link: outside, it lay on the chips' top border */
+.m3-card-link:focus-visible {
+  outline-offset: -2px;
+}
+
 .m3-card-link .m3-card-stat {
   margin-left: auto; /* the count and the chevron sit together on the right */
+}
+
+/* centred on the name's first line (half its line box less the 7px glyph),
+   not on the whole block: the head is flex-start, so a wrapped name keeps
+   the count and the chevron on line 1 */
+.m3-card-link .chev {
+  margin-top: calc((0.98rem * 1.25 - 7px) / 2);
 }
 
 .m3-card-sub {

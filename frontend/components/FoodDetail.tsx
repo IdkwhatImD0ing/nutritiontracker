@@ -15,6 +15,7 @@ import {
 } from "./LibraryApi";
 import LibraryAliasSheet from "./LibraryAliasSheet";
 import { useMe } from "./MeApi";
+import { peek, put } from "./readCache";
 import Skeleton from "./Skeleton";
 import SheetPresence from "./useSheetPresence";
 
@@ -272,7 +273,11 @@ export default function FoodDetail({ id }: { id: string }) {
       <section className="m3-section" aria-label="Nutrients">
         <h2>
           Nutrients
-          <span className="count">per {chosen?.description ?? "serving"}</span>
+          {/* the basis of the rows below; over only the "not measured" line
+              it would qualify nothing */}
+          {measured.length || extras.length ? (
+            <span className="count">per {chosen?.description ?? "serving"}</span>
+          ) : null}
         </h2>
         {measured.length || extras.length ? (
           <div className="m3-card nutrient-list num">
@@ -371,7 +376,12 @@ export default function FoodDetail({ id }: { id: string }) {
                   className="chip"
                   onClick={() => setAliasSheet(a)}
                 >
-                  {a.pinned ? <span className="usual-dot" /> : null}
+                  {a.pinned ? (
+                    <>
+                      <span className="usual-dot" aria-hidden="true" />
+                      <span className="sr-only">Pinned: </span>
+                    </>
+                  ) : null}
                   {a.alias_norm}
                   <span className="alias-count num"> {fmt.format(a.use_count)}×</span>
                 </button>
@@ -427,6 +437,8 @@ export default function FoodDetail({ id }: { id: string }) {
         ) : null}
       </section>
 
+      {/* An edit here goes into Library's cached list as well (readCache), so
+          "‹ Library" doesn't paint the phrase as it was before it. */}
       <SheetPresence>
         {aliasSheet ? (
           <LibraryAliasSheet
@@ -437,12 +449,16 @@ export default function FoodDetail({ id }: { id: string }) {
                   ? { ...f, aliases: (f.aliases ?? []).map((a) => (a.id === u.id ? u : a)) }
                   : f,
               );
+              const c = peek<AliasRow[]>("library:aliases");
+              if (c) put("library:aliases", c.map((a) => (a.id === u.id ? { ...a, ...u } : a)));
               setAliasSheet(null);
             }}
             onDeleted={(aid) => {
               setFood((f) =>
                 f ? { ...f, aliases: (f.aliases ?? []).filter((a) => a.id !== aid) } : f,
               );
+              const c = peek<AliasRow[]>("library:aliases");
+              if (c) put("library:aliases", c.filter((a) => a.id !== aid));
               setAliasSheet(null);
             }}
             onClose={() => setAliasSheet(null)}

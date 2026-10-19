@@ -57,6 +57,18 @@ function groupByFood(rows: AliasRow[]): FoodGroup[] {
   return groups.sort((x, y) => y.total - x.total);
 }
 
+type LastSearch = { q: string; hits: FoodSearchResult[]; fdcDown: boolean };
+
+/** The last search's answer while the URL still asks for it (?q=): a Back
+ *  from a food it opened paints the results with the lists, at full height,
+ *  so useScrollMemory puts the page back over them. readCache is empty on
+ *  the server and on a hard load, so hydration never sees one. */
+function lastSearch(): LastSearch | null {
+  const c = peek<LastSearch>("library:search");
+  if (!c) return null;
+  return new URLSearchParams(window.location.search).get("q") === c.q ? c : null;
+}
+
 function MealCard({
   meal,
   onOpen,
@@ -106,9 +118,11 @@ export default function Library() {
   // section says it couldn't load instead of "0 foods" and the first-run copy.
   const [failed, setFailed] = useState({ aliases: false, meals: false });
 
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<FoodSearchResult[] | null>(null);
-  const [fdcDown, setFdcDown] = useState(false);
+  const [query, setQuery] = useState(() => lastSearch()?.q ?? "");
+  const [results, setResults] = useState<FoodSearchResult[] | null>(
+    () => lastSearch()?.hits ?? null,
+  );
+  const [fdcDown, setFdcDown] = useState(() => lastSearch()?.fdcDown ?? false);
   const [searching, setSearching] = useState(false);
   // the hit being opened (`source:source_id`), marked with a spinner
   const [opening, setOpening] = useState<string | null>(null);
@@ -148,10 +162,10 @@ export default function Library() {
       cancelled = true;
     };
   }, [attempt]);
+  // A failed list is already null, so clearing `failed` shows its skeleton;
+  // the list that loaded stays on screen.
   const retry = () => {
     setFailed({ aliases: false, meals: false });
-    setAliases(null);
-    setMeals(null);
     setAttempt((n) => n + 1);
   };
   // Back after a while (installed, nothing else re-reads): the same reads,
@@ -181,7 +195,13 @@ export default function Library() {
     const q = raw.trim();
     if (!q) return;
     const id = ++seq.current;
-    window.history.replaceState(null, "", `?q=${encodeURIComponent(q)}`);
+    // Not when the URL already says it: the mount's re-run on a hard load
+    // comes before Next wraps replaceState, and the bare call would wipe
+    // the router's state from this entry, so a later Back onto it leaves
+    // the page above it on screen.
+    if (new URLSearchParams(window.location.search).get("q")?.trim() !== q) {
+      window.history.replaceState(null, "", `?q=${encodeURIComponent(q)}`);
+    }
     setSearching(true);
     setSearchError(null);
     try {
@@ -189,6 +209,7 @@ export default function Library() {
       if (seq.current !== id) return;
       setResults(r.hits);
       setFdcDown(r.fdcError != null);
+      put("library:search", { q, hits: r.hits, fdcDown: r.fdcError != null });
     } catch {
       if (seq.current !== id) return;
       setResults([]);
@@ -387,7 +408,7 @@ export default function Library() {
         ) : null}
         {aliases?.some((a) => a.pinned) ? (
           <p className="m3-note">
-            <span className="usual-dot" />
+            <span className="usual-dot" aria-hidden="true" />
             Pinned: always logs that food and portion
           </p>
         ) : null}
@@ -422,7 +443,13 @@ export default function Library() {
                   className="chip"
                   onClick={() => setAliasSheet(a)}
                 >
-                  {a.pinned ? <span className="usual-dot" /> : null}
+                  {/* the dot is the eye's; a screen reader hears the word */}
+                  {a.pinned ? (
+                    <>
+                      <span className="usual-dot" aria-hidden="true" />
+                      <span className="sr-only">Pinned: </span>
+                    </>
+                  ) : null}
                   {a.alias_norm}
                   <span className="alias-count num"> {fmt0.format(a.use_count)}×</span>
                 </button>
