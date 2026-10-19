@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import AuthForm from "@/components/AuthForm";
 import { signUpAction } from "@/app/auth/actions";
 
@@ -17,10 +16,21 @@ export default function SignUpPage() {
       pendingLabel="Creating account…"
       action={signUpAction}
       withName
+      // Opened over the form (iOS's Safari sheet with Done, a new tab
+      // elsewhere), as Settings' About rows are: in the installed app's
+      // window the legal pages' only way back is the logo, and the typed
+      // fields would be gone.
       legal={
         <>
-          By creating an account you agree to the <Link href="/terms">Terms</Link>{" "}
-          and <Link href="/privacy">Privacy Policy</Link>.
+          By creating an account you agree to the{" "}
+          <a href="/terms" target="_blank" rel="noopener">
+            Terms
+          </a>{" "}
+          and{" "}
+          <a href="/privacy" target="_blank" rel="noopener">
+            Privacy Policy
+          </a>
+          .
         </>
       }
       alt={{

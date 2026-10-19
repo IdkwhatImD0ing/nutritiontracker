@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import {
   computeGoals,
@@ -19,6 +19,7 @@ import {
   type GoalResult,
   type Sex,
 } from "./WizardMath";
+import { useSheetBack } from "./sheetBack";
 import { useSheetFocus } from "./useSheetFocus";
 import "@/app/library/m3.css";
 
@@ -29,7 +30,7 @@ type Props = {
   /** first run only: "Skip for now" on step 1 */
   onSkip?: () => void;
   /** a re-run from Settings: Cancel in the top bar on every step (and
-   *  Escape) leaves without saving, in place of Skip */
+   *  Escape and system Back) leaves without saving, in place of Skip */
   onCancel?: () => void;
 };
 
@@ -290,14 +291,41 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
       : null;
   const wUnit = units === "metric" ? "kg" : "lb";
 
+  // A re-run closes on Back and Escape as any sheet does (sheetBack). Not
+  // while a request is out, Cancel included: a save can't be called back,
+  // and its "Targets saved." would land after a wizard that seemed cancelled.
+  useSheetBack(
+    sheetRef,
+    () => {
+      if (!busy) onCancel?.();
+    },
+    !!onCancel,
+  );
+
+  // It covers the whole screen, so what it covers is inert while it is up:
+  // Tab and a screen reader stay out of the page and the tab bar beside it
+  // (Settings' <main> is inert by its own prop, and left to it).
   useEffect(() => {
-    if (!onCancel) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+    const el = sheetRef.current;
+    const covered = [...(el?.parentElement?.children ?? [])].filter(
+      (c): c is HTMLElement => c !== el && c instanceof HTMLElement && !c.inert,
+    );
+    for (const c of covered) c.inert = true;
+    return () => {
+      for (const c of covered) c.inert = false;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  }, [sheetRef]);
+
+  // A step's buttons leave with it, and focus would fall out of the dialog
+  // to <body>: the next step's title takes it, so a screen reader starts
+  // there.
+  const title = useRef<HTMLHeadingElement>(null);
+  const shownStep = useRef(step);
+  useEffect(() => {
+    if (shownStep.current === step) return;
+    shownStep.current = step;
+    title.current?.focus({ preventScroll: true });
+  }, [step]);
 
   return (
     <div
@@ -311,7 +339,12 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
       <div className="wizard-inner">
         <div className="top-bar wizard-top">
           {onCancel ? (
-            <button type="button" className="wizard-cancel" onClick={onCancel}>
+            <button
+              type="button"
+              className="wizard-cancel"
+              disabled={busy}
+              onClick={onCancel}
+            >
               Cancel
             </button>
           ) : null}
@@ -324,7 +357,9 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
 
         {step === 0 ? (
           <>
-            <h1>About you</h1>
+            <h1 ref={title} tabIndex={-1}>
+              About you
+            </h1>
             <p className="wizard-lead">
               Four numbers and a rough activity level — enough to estimate what
               you burn in a day. Every target you get is editable.
@@ -464,7 +499,10 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
               </select>
             </label>
 
-            {bodyProblem ? <p className="m3-note">{bodyProblem}</p> : null}
+            {/* kept mounted, so the reason Next is off is announced */}
+            <p className="m3-note" role="status">
+              {bodyProblem}
+            </p>
 
             <div className="wizard-foot">
               <button
@@ -486,7 +524,9 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
 
         {step === 1 ? (
           <>
-            <h1>Your goal</h1>
+            <h1 ref={title} tabIndex={-1}>
+              Your goal
+            </h1>
             <p className="wizard-lead">
               Where you want to be and how fast. Slower is easier to keep up —
               and keeps more muscle.
@@ -538,7 +578,9 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                 {Math.round(weeksToTarget) === 1 ? "" : "s"} at this rate.
               </p>
             ) : null}
-            {goalProblem ? <p className="m3-note">{goalProblem}</p> : null}
+            <p className="m3-note" role="status">
+              {goalProblem}
+            </p>
 
             {error ? (
               <p className="sheet-error" role="alert">
@@ -576,7 +618,9 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
 
         {step === 2 && result ? (
           <>
-            <h1>Your targets</h1>
+            <h1 ref={title} tabIndex={-1}>
+              Your targets
+            </h1>
             <p className="wizard-lead">
               Your resting burn (Mifflin-St Jeor) times your activity, minus
               your weekly rate. Protein scales with bodyweight, fat has a floor,
@@ -640,12 +684,11 @@ export default function WizardGoal({ initial, onDone, onSkip, onCancel }: Props)
                 : ""}
               .
             </p>
-            {!editedValid ? (
-              <p className="m3-note">
-                Calories must be 800–10,000; protein and fat 0–1,000 g, carbs
-                0–2,000 g.
-              </p>
-            ) : null}
+            <p className="m3-note" role="status">
+              {editedValid
+                ? null
+                : "Calories must be 800–10,000; protein and fat 0–1,000 g, carbs 0–2,000 g."}
+            </p>
 
             {error ? (
               <p className="sheet-error" role="alert">

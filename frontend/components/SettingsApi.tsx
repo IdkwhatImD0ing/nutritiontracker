@@ -127,8 +127,9 @@ export async function putSettings(
   const { body, targets, ...rest } = patch;
   const wire: Record<string, unknown> = { ...rest };
   if (body) wire.body = toServerBody(body);
-  // The route's TargetsIn wants all four numbers; `{}` (Settings "clear all
-  // four") has no server representation, so it is simply not sent.
+  // The route's TargetsIn wants all four numbers; `{}` (a Settings save
+  // while no targets are set) has no server representation, so it is simply
+  // not sent.
   if (targets && typeof targets.kcal === "number") wire.targets = targets;
   return normalize(
     await apiFetch<Partial<Settings>>("/api/settings", {

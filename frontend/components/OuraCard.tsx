@@ -91,8 +91,10 @@ function DayRow({ d }: { d: OuraStatus["days"][number] }) {
   return (
     <div className="m3-row oura-day">
       <span className="k">{dayLabel(d.day)}</span>
+      {/* the dot goes with the steps, so a row too narrow for both wraps
+          before it ('· 8,000 steps'), never leaving it at the end of a line */}
       <span>
-        {amount(d.total_calories, "kcal burned")} · {amount(d.steps, "steps")}
+        {amount(d.total_calories, "kcal burned")} ·&nbsp;{amount(d.steps, "steps")}
       </span>
     </div>
   );
@@ -198,8 +200,8 @@ export default function OuraCard() {
       <section className="m3-section" aria-label="Oura">
         <h2>Oura</h2>
         {/* the condensed card: sync row, latest day, the week's disclosure
-            and Reconnect (estimates, not measured) */}
-        <Skeleton height={placeholder === "connected" ? 210 : 72} />
+            and Reconnect, 140px as measured at 390 */}
+        <Skeleton height={placeholder === "connected" ? 140 : 72} />
       </section>
     ) : null;
   }
@@ -277,9 +279,17 @@ export default function OuraCard() {
                   type="button"
                   className="m3-link-btn"
                   disabled={busy !== null}
+                  aria-busy={busy === "connect"}
                   onClick={connect}
                 >
-                  Allow workouts &amp; activity
+                  {busy === "connect" ? (
+                    <>
+                      <span className="spinner" />
+                      Opening Oura…
+                    </>
+                  ) : (
+                    "Allow workouts & activity"
+                  )}
                 </button>
               </div>
             ) : (
@@ -289,9 +299,17 @@ export default function OuraCard() {
                   type="button"
                   className="m3-link-btn quiet"
                   disabled={busy !== null}
+                  aria-busy={busy === "connect"}
                   onClick={connect}
                 >
-                  Reconnect
+                  {busy === "connect" ? (
+                    <>
+                      <span className="spinner" />
+                      Opening Oura…
+                    </>
+                  ) : (
+                    "Reconnect"
+                  )}
                 </button>
               </div>
             )}
@@ -305,9 +323,17 @@ export default function OuraCard() {
               type="button"
               className="m3-link-btn"
               disabled={busy !== null}
+              aria-busy={busy === "connect"}
               onClick={connect}
             >
-              {busy === "connect" ? "Opening Oura…" : "Connect Oura"}
+              {busy === "connect" ? (
+                <>
+                  <span className="spinner" />
+                  Opening Oura…
+                </>
+              ) : (
+                "Connect Oura"
+              )}
             </button>
           </div>
         ) : null}

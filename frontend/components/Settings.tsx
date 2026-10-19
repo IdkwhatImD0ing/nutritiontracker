@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { mealLabel } from "@/lib/labels";
 import {
   getSettings,
@@ -97,6 +97,20 @@ function zoneGroups(): [string, ZoneOption[]][] {
   return [...groups];
 }
 
+type ZoneList = { groups: [string, ZoneOption[]][]; ids: Set<string> };
+let zoneList: ZoneList | null = null;
+
+/** zoneGroups() and its ids, built once per document: about 420 labels,
+ *  each from its own formatter, are a long task, and Settings mounts afresh
+ *  on every tab switch. */
+function zoneOptions(): ZoneList {
+  if (!zoneList) {
+    const groups = zoneGroups();
+    zoneList = { groups, ids: new Set(groups.flatMap(([, l]) => l.map((z) => z.id))) };
+  }
+  return zoneList;
+}
+
 /** "5′11″ · 180 lb · 34 · male" in the units the wizard was run in. */
 function describeBody(b: Body): string | null {
   if (!b.weight_kg || !b.height_cm) return null;
@@ -148,11 +162,10 @@ export default function Settings() {
   // The wizard is an overlay, so the box stays mounted (and measured) under it.
   const notesRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(notesRef, form?.profile_notes ?? "");
-  // about 400 labels, each from its own formatter: built once, not per render
-  const zones = useMemo(() => {
-    const groups = zoneGroups();
-    return { groups, ids: new Set(groups.flatMap(([, l]) => l.map((z) => z.id))) };
-  }, []);
+  const zones = zoneOptions();
+  // writes that have landed (Save, the wizard): a read sent before one of
+  // them answers with older settings than the page now shows
+  const writes = useRef(0);
 
   // the server's answer to a save, or Discard putting the last one back
   const load = (s: SettingsT) => {
@@ -178,14 +191,17 @@ export default function Settings() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    const sent = writes.current;
     setError(null);
     getSettings()
       .then((s) => {
         if (cancelled) return;
-        setForm((f) => (f === opened.form ? s : f));
-        setSaved(s);
-        setTargets((t) => (t === opened.targets ? targetText(s.targets) : t));
-        put("settings", s);
+        if (writes.current === sent) {
+          setForm((f) => (f === opened.form ? s : f));
+          setSaved(s);
+          setTargets((t) => (t === opened.targets ? targetText(s.targets) : t));
+          put("settings", s);
+        }
         // Today's "Set them ›" (no targets yet) opens the wizard straight
         // away; the param goes, so a reload or Back doesn't reopen it.
         const params = new URLSearchParams(window.location.search);
@@ -201,7 +217,12 @@ export default function Settings() {
         }
       })
       .catch(() => {
-        if (!cancelled) setError("Couldn't load your settings.");
+        if (cancelled || writes.current !== sent) return;
+        setError(
+          opened.form
+            ? "Couldn't refresh your settings. Showing the last copy."
+            : "Couldn't load your settings.",
+        );
       });
     return () => {
       cancelled = true;
@@ -246,11 +267,12 @@ export default function Settings() {
       const n = Number.parseFloat(targets[f.key]);
       if (Number.isFinite(n) && n > 0) parsed[f.key] = n;
     }
-    // All four or none: a half-filled target set would make the tracker's
-    // remaining-vs-target rings lie for the missing macros.
+    // All four: a half-filled target set would make the tracker's
+    // remaining-vs-target rings lie for the missing macros, and a set can't
+    // be cleared (PUT has no way to say so). None only while there are none.
     const filled = TARGET_FIELDS.filter((f) => parsed[f.key] != null).length;
-    if (filled !== 0 && filled !== TARGET_FIELDS.length) {
-      setError("Fill in all four targets, or clear all four.");
+    if (filled !== TARGET_FIELDS.length && (filled !== 0 || !targetsEmpty(form))) {
+      setError("Fill in all four targets.");
       setTargetsInvalid(true);
       flashStatus(null);
       return;
@@ -267,6 +289,7 @@ export default function Settings() {
           profile_notes: form.profile_notes,
         }),
       );
+      writes.current += 1;
       flashStatus("Saved.");
     } catch {
       setError("Couldn't save — try again.");
@@ -274,6 +297,18 @@ export default function Settings() {
       setBusy(false);
     }
   };
+
+  // Closing the wizard gives focus back to what opened it. A "Set up" that
+  // went once targets were saved (or no opener, from ?setup=targets) leaves
+  // it on <body>: the button in its place takes it.
+  const wizardBtn = useRef<HTMLButtonElement>(null);
+  const wizardWas = useRef(wizard);
+  useEffect(() => {
+    if (wizardWas.current && !wizard && document.activeElement === document.body) {
+      wizardBtn.current?.focus({ preventScroll: true });
+    }
+    wizardWas.current = wizard;
+  }, [wizard]);
 
   const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const deviceZone = deviceTz ? zoneGeneric(deviceTz) : null;
@@ -290,7 +325,9 @@ export default function Settings() {
         <h1>Settings</h1>
       </header>
 
-      {error && !form ? (
+      {/* a failed read, or a refresh that failed over the cached form
+          (readCache); a refused save shows in the save bar instead */}
+      {error && (!form || !dirty) ? (
         <div className="notice error" role="alert">
           <span>{error}</span>
           <button
@@ -301,12 +338,6 @@ export default function Settings() {
             Retry
           </button>
         </div>
-      ) : error && !dirty ? (
-        // a refresh that failed over the cached form (readCache); a refused
-        // save shows in the save bar instead
-        <p className="sheet-error" role="alert">
-          {error}
-        </p>
       ) : null}
 
       <AccountCard />
@@ -331,6 +362,7 @@ export default function Settings() {
                   <button
                     type="button"
                     className="notice-btn"
+                    ref={wizardBtn}
                     onClick={() => setWizard(true)}
                   >
                     Set up
@@ -371,6 +403,7 @@ export default function Settings() {
                     <button
                       type="button"
                       className="m3-link-btn"
+                      ref={wizardBtn}
                       onClick={() => setWizard(true)}
                     >
                       Re-run the goal wizard
@@ -540,50 +573,56 @@ export default function Settings() {
         </>
       )}
 
-      {/* Neither needs the settings read, so a failed one doesn't hide them. */}
-      <ApiKeysCard />
+      {/* Neither needs the settings read, so a failed one doesn't hide them.
+          While it is out they wait: under the short skeletons they would
+          drop most of a screen when the form lands. */}
+      {form || error ? (
+        <>
+          <ApiKeysCard />
 
-      <section className="m3-section" aria-label="About">
-        <h2>About</h2>
-        {/* The docs and the legal pages are the public website: opened
-            over the app (iOS's Safari sheet with Done, a new tab
-            elsewhere) rather than in its window, whose only way back
-            from them is the logo. */}
-        <div className="m3-card m3-links">
-          {/* owner only (Bill, 2026-10-13, BACKLOG 105): the charts are the
-              owner's §9 instrument; a demo can still open /experiment by
-              URL and sees its own series */}
-          {me?.is_owner ? (
-            <Link href="/experiment" className="m3-nav-row">
-              Experiment charts
-              <span className="chev" aria-hidden="true" />
-            </Link>
-          ) : null}
-          <a
-            href="/docs/api-keys"
-            target="_blank"
-            rel="noopener"
-            className="m3-nav-row"
-          >
-            How to use API keys
-            <span className="chev" aria-hidden="true" />
-          </a>
-          <a href="/privacy" target="_blank" rel="noopener" className="m3-nav-row">
-            Privacy
-            <span className="chev" aria-hidden="true" />
-          </a>
-          <a href="/terms" target="_blank" rel="noopener" className="m3-nav-row">
-            Terms
-            <span className="chev" aria-hidden="true" />
-          </a>
-        </div>
-        <p className="m3-note">
-          Deleting the home-screen icon clears the app&rsquo;s on-device
-          state (your sign-in, any late items still sending). Your diary
-          lives on the server and is untouched.
-        </p>
-        <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
-      </section>
+          <section className="m3-section" aria-label="About">
+            <h2>About</h2>
+            {/* The docs and the legal pages are the public website: opened
+                over the app (iOS's Safari sheet with Done, a new tab
+                elsewhere) rather than in its window, whose only way back
+                from them is the logo. */}
+            <div className="m3-card m3-links">
+              {/* owner only (Bill, 2026-10-13, BACKLOG 105): the charts are the
+                  owner's §9 instrument; a demo can still open /experiment by
+                  URL and sees its own series */}
+              {me?.is_owner ? (
+                <Link href="/experiment" className="m3-nav-row">
+                  Experiment charts
+                  <span className="chev" aria-hidden="true" />
+                </Link>
+              ) : null}
+              <a
+                href="/docs/api-keys"
+                target="_blank"
+                rel="noopener"
+                className="m3-nav-row"
+              >
+                How to use API keys
+                <span className="chev" aria-hidden="true" />
+              </a>
+              <a href="/privacy" target="_blank" rel="noopener" className="m3-nav-row">
+                Privacy
+                <span className="chev" aria-hidden="true" />
+              </a>
+              <a href="/terms" target="_blank" rel="noopener" className="m3-nav-row">
+                Terms
+                <span className="chev" aria-hidden="true" />
+              </a>
+            </div>
+            <p className="m3-note">
+              Deleting the home-screen icon clears the app&rsquo;s on-device
+              state (your sign-in, any late items still sending). Your diary
+              lives on the server and is untouched.
+            </p>
+            <p className="m3-note">Data: USDA FoodData Central · Open Food Facts</p>
+          </section>
+        </>
+      ) : null}
     </main>
     {wizard && form ? (
       <WizardGoal
@@ -595,6 +634,7 @@ export default function Settings() {
           setSaved((v) => (v ? { ...v, targets: s.targets, body: s.body } : s));
           setTargets(targetText(s.targets));
           put("settings", s);
+          writes.current += 1;
           setWizard(false);
           flashStatus("Targets saved.");
         }}

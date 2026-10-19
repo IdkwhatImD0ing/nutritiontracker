@@ -355,9 +355,14 @@ export default function ApiKeysCard() {
                     aria-controls={open ? `key-${k.id}` : undefined}
                     onClick={() => toggle(k.id)}
                   >
+                    {/* "used 1 day ago" holds together, so a wrap never splits
+                        a number from its unit ('used 1' / 'day ago') */}
                     <span className="keys-gist">
                       <span className="keys-label">{k.label}</span> — {access} ·{" "}
-                      {k.last_used_at ? `used ${ago(k.last_used_at, now)}` : "never used"}
+                      {(k.last_used_at
+                        ? `used ${ago(k.last_used_at, now)}`
+                        : "never used"
+                      ).replace(/ /g, "\u00a0")}
                     </span>
                     {st === "active" ? null : (
                       <span className={`keys-status ${st}`}>{STATUS_TEXT[st]}</span>
