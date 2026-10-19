@@ -74,8 +74,9 @@ function portionChoices(item: StagedItem): PortionChoice[] {
 }
 
 /** A server copy of a row as far as its amount goes: a portion set in the
- *  sheet outlives a newer copy only while this still reads the same. */
-const amountKey = (i: StagedItem) =>
+ *  sheet outlives a newer copy only while this still reads the same (here,
+ *  and on the card closeStaging leaves it on: Today's agentDone). */
+export const amountKey = (i: StagedItem) =>
   JSON.stringify([i.status, i.food?.id, i.serving?.id, i.qty, i.estimate_note]);
 
 /** Everything needed to restore the sheet unchanged after an undone discard
@@ -86,6 +87,8 @@ export type StagingSnapshot = {
   removed: number[];
   logMealOverride: Meal | null;
   itemMealOverrides: Record<number, Meal>;
+  /** portionsRef: the server row each portion set here was set on */
+  portions: Record<number, string>;
 };
 
 type Props = {
@@ -101,6 +104,10 @@ type Props = {
   /** each row this mount removes for good, as the server hears of it: a
    *  later mount for the same log gets it in `removedIndexes` */
   onRemoved?: (logId: string, itemIndex: number) => void;
+  /** the portion records (portionsRef) an earlier mount of this log closed
+   *  with: a Review of the card that carries its portions keeps them
+   *  through the next correction as that mount would have */
+  portions?: Record<number, string>;
   /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
   onRendered?: () => void;
   /** `pending` = every row the commit did not land: the §3.5 late stragglers
@@ -133,6 +140,7 @@ export default function StagingSheet({
   restore,
   removedIndexes,
   onRemoved,
+  portions,
   onRendered,
   onCommitted,
   onClose,
@@ -195,7 +203,9 @@ export default function StagingSheet({
   // of it at commit). Per row, the server's row it was set on (amountKey):
   // a newer copy of the plate (the [log] effect) keeps the portion while the
   // server's row still reads so; a correction to that row (§3.4b) wins.
-  const portionsRef = useRef<Record<number, string>>({});
+  const portionsRef = useRef<Record<number, string>>({
+    ...(restore?.portions ?? portions ?? {}),
+  });
   // Kick accounting per item (§3.4 lifecycle: kick once on arrival, re-kick a
   // stale row once, then not_found). Also guards StrictMode double-mount.
   const kickCountRef = useRef<Map<number, number>>(new Map());
@@ -788,6 +798,7 @@ export default function StagingSheet({
     removed: [...removedRef.current, ...undoTimersRef.current.keys()],
     logMealOverride: mealOverridesRef.current.log,
     itemMealOverrides: { ...mealOverridesRef.current.items },
+    portions: { ...portionsRef.current },
   });
 
   // Refused (false) while Log is in flight: a discard armed now would say
