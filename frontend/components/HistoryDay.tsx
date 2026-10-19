@@ -20,10 +20,12 @@ const MIN_DAY = "2000-01-01";
 const SEGMENT_KEY = /^(\d|ArrowUp|ArrowDown|Backspace|Delete)$/;
 
 type Refocus = "prev" | "next" | "pick" | null;
-/** The control that moved to the day now loading. Each move replaces the
- *  [date] segment, which remounts this view and drops focus to <body>, so
- *  the new view puts it back (markReplace's pattern: set before the move). */
-let refocus: Refocus = null;
+/** The control that moved to the day now loading, and that day. Each move
+ *  replaces the [date] segment, which remounts this view and drops focus to
+ *  <body>, so the new view puts it back (markReplace's pattern: set before
+ *  the move). Only that day's view: a move cut short by Back would
+ *  otherwise focus a later, unrelated open of the day view. */
+let refocus: { to: string; from: Refocus } | null = null;
 
 /** §7.4: tap any History day → its diary, entries editable per §5. The tab
  *  bar mounts from app/history/layout.tsx. */
@@ -44,7 +46,7 @@ export default function HistoryDay({ date }: { date: string }) {
   // wherever the day view was opened from (History, Today's View link), not
   // to the previous day. markReplace tells BackBar's trail the same.
   const go = (to: string, from: Refocus) => {
-    refocus = from;
+    refocus = { to, from };
     markReplace();
     router.replace(`/history/${to}`);
   };
@@ -56,10 +58,12 @@ export default function HistoryDay({ date }: { date: string }) {
   // After `today` is read: Next is disabled until then, and stays disabled
   // once a step lands on today, where Previous takes the focus instead.
   useEffect(() => {
-    if (!today || !refocus) return;
-    const el = refocus === "pick" ? pickRef : refocus === "next" && date < today ? nextRef : prevRef;
-    el.current?.focus({ preventScroll: true });
+    if (!today || refocus?.to !== date) return;
+    const { from } = refocus;
     refocus = null;
+    if (!from) return;
+    const el = from === "pick" ? pickRef : from === "next" && date < today ? nextRef : prevRef;
+    el.current?.focus({ preventScroll: true });
   }, [today, date]);
 
   // A desktop date field reports every segment edit that makes a whole

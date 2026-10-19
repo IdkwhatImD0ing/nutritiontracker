@@ -84,6 +84,14 @@
   outline: none;
 }
 
+/* the slider's labels aren't text to select: a mouse drag off the plot
+   selected them, and a later press inside that selection began a native
+   drag, whose pointercancel dropped the pick */
+.chart-svg[role="slider"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .chart-grid line {
   stroke: var(--line);
   stroke-width: 1;
