@@ -2141,7 +2141,7 @@ button.row-kcal {
   padding-top: 8px;
 }
 
-/* a panel section's label: the staged row's "Meal", either row's "Nutrients" */
+/* a panel section's label: either row's "Meal" and "Nutrients" */
 .detail-meal > .k,
 .micro-list > .k {
   font-size: var(--micro-size);

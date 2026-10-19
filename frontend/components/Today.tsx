@@ -28,7 +28,7 @@ import {
 import AgentChat, { type ChatMessage } from "./AgentChat";
 import BarcodeScanner from "./BarcodeScanner";
 import DemoBanner from "./DemoBanner";
-import type { DiaryMeals } from "./DiaryApi";
+import { placeEntry, type DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
 import { parseISO } from "./HistoryApi";
 import { cacheFood } from "./LibraryApi";
@@ -550,9 +550,15 @@ export default function Today() {
   // sync trigger, once Oura is connected (/api/me says so — no request that
   // can only answer 409). The server skips it when the last sync, or failed
   // attempt, is under half an hour old; a failure changes nothing here —
-  // Settings shows the state.
+  // Settings shows the state. A sync that stored days re-reads the diary: the
+  // day's calorie target includes Oura's activity burn (routes/diary.py).
   const syncOuraFor = (m: Me | null) => {
-    if (m?.is_owner && m.oura_connected) syncOura().catch(() => {});
+    if (m?.is_owner && m.oura_connected)
+      syncOura()
+        .then((r) => {
+          if (r.days > 0) reloadDiary();
+        })
+        .catch(() => {});
   };
 
   // Installed, Tally is resumed far more often than it is loaded: iOS keeps a
@@ -1367,14 +1373,7 @@ export default function Today() {
           emptyText={"Nothing logged yet. Log a meal with the +\u00a0button."}
           onPatched={(entry, t) => {
             setTotals(t);
-            setMeals((cur) => {
-              if (!cur) return cur;
-              const next: DiaryMeals = {};
-              for (const [meal, list] of Object.entries(cur)) {
-                next[meal] = list.map((e) => (e.id === entry.id ? entry : e));
-              }
-              return next;
-            });
+            setMeals((cur) => (cur ? placeEntry(cur, entry) : cur));
           }}
           onDeleted={(id, t) => {
             setTotals(t);

@@ -51,11 +51,26 @@ function targetText(t: Partial<Targets>): TargetText {
 
 /** Today paints the diary it last showed (readCache) before its own read
  *  lands, and works the tracker's "left" out from that copy's targets: new
- *  targets go into it, or a return to Today shows the old ones first. */
+ *  targets go into it, or a return to Today shows the old ones first. The
+ *  day's Oura activity burn stays on top of them, as routes/diary.py
+ *  with_exercise puts it: kcal by the burn, carbs by its grams, and none
+ *  while no kcal target is set. */
 function putTodayTargets(targets: Partial<Targets>) {
   const key = dayKey(isoDate(new Date()));
   const day = peek<{ totals: DayTotals }>(key);
-  if (day) put(key, { ...day, totals: { ...day.totals, targets } });
+  if (!day) return;
+  const kcal = targets.kcal ?? 0;
+  const burn = kcal > 0 ? (day.totals.exercise_kcal ?? 0) : 0;
+  put(key, {
+    ...day,
+    totals: {
+      ...day.totals,
+      exercise_kcal: burn,
+      targets: burn
+        ? { ...targets, kcal: kcal + burn, carb_g: (targets.carb_g ?? 0) + Math.round(burn / 4) }
+        : targets,
+    },
+  });
 }
 
 function timezones(): string[] {

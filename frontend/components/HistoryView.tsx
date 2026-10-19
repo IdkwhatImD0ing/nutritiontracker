@@ -98,9 +98,10 @@ function ThreeDays({
     <div className="hcards">
       {ordered.map((d) => {
         const date = parseISO(d.date);
-        const kcalFrac = targets.kcal > 0 ? d.kcal / targets.kcal : 0;
+        const t = d.targets ?? targets; // the day's own: Oura's burn included
+        const kcalFrac = t.kcal > 0 ? d.kcal / t.kcal : 0;
         // the Tracker's rule, rounded like the figure: 2,400.4 isn't over
-        const kcalOver = targets.kcal > 0 && Math.round(d.kcal - targets.kcal) > 0;
+        const kcalOver = t.kcal > 0 && Math.round(d.kcal - t.kcal) > 0;
         const mealChips = d.meals
           ? MEAL_ORDER.filter((m) => d.meals![m]).map((m) => ({
               meal: m,
@@ -131,8 +132,8 @@ function ThreeDays({
             </div>
             <div className="hcard-kcal num">
               <strong>{fmt.format(d.kcal)}</strong>
-              {targets.kcal > 0 ? (
-                <span className="of"> / {fmt.format(targets.kcal)} kcal</span>
+              {t.kcal > 0 ? (
+                <span className="of"> / {fmt.format(t.kcal)} kcal</span>
               ) : (
                 <span className="of"> kcal</span>
               )}
@@ -154,12 +155,12 @@ function ThreeDays({
               <MacroBar
                 label="Protein"
                 value={d.protein_g}
-                target={targets.protein_g}
+                target={t.protein_g}
                 color="var(--mint)"
                 loud
               />
-              <MacroBar label="Carbs" value={d.carb_g} target={targets.carb_g} color="var(--carb)" warnOver />
-              <MacroBar label="Fat" value={d.fat_g} target={targets.fat_g} color="var(--fat)" warnOver />
+              <MacroBar label="Carbs" value={d.carb_g} target={t.carb_g} color="var(--carb)" warnOver />
+              <MacroBar label="Fat" value={d.fat_g} target={t.fat_g} color="var(--fat)" warnOver />
             </div>
             {mealChips.length ? (
               <div className="hcard-meals num">

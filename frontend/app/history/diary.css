@@ -141,6 +141,33 @@
   margin: -2px 0 14px;
 }
 
+/* The staged row's meal picker (globals.css .meal-picker) in a panel 34px
+   narrower than the staged row's (the meal card's padding): a tighter track
+   and segments keep the four on one line at 320, and from 360 at the 1.3x
+   Text Size cap. */
+.diary-row .meal-picker.m3-seg {
+  gap: 2px;
+  padding: 3px;
+}
+
+.diary-row .meal-picker.m3-seg button {
+  padding-inline: 2px;
+}
+
+/* waiting on a save, delete or move: aria-disabled, so the tapped segment
+   keeps focus; drawn as the actions' waiting pills are */
+.diary-row .meal-picker button[aria-disabled="true"]:not(.active) {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* a failed move, under the picker that failed (.sheet-error is centred
+   for sheet footers) */
+.detail-meal > .diary-error {
+  margin: 6px 0 0;
+  text-align: left;
+}
+
 /* §7.4's drill-in from a diary row: a list row in the expanded panel, so a
    tap on the row itself only ever expands it (owner, 2026-10-13). It sits
    between two hairlines; the edit block's own top line is the lower one.

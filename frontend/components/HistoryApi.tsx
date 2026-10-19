@@ -34,6 +34,8 @@ export type HistoryDay = MacroSums & {
   fiber_g: number | null;
   /** 3d only: per-meal subtotals */
   meals: Record<string, MacroSums> | null;
+  /** this day's own targets — the range's plus Oura's activity burn that day */
+  targets: MacroTargets | null;
 };
 
 export type HistoryWeek = {
@@ -164,6 +166,7 @@ function normalizeRange(raw: unknown, kind: RangeKind): HistoryRange {
               Object.entries(d.meals as Record<string, unknown>).map(([k, v]) => [k, sums(v)]),
             )
           : null,
+      targets: d.targets && typeof d.targets === "object" ? targetsOf(d.targets) : null,
     }));
   const weeks = (Array.isArray(r.weeks) ? r.weeks : [])
     .map((w) => w as Record<string, unknown>)
@@ -222,6 +225,7 @@ async function fetchViaDiary(kind: Exclude<RangeKind, "y">, today: string): Prom
         logged: entries > 0,
         fiber_g: null,
         meals: kind === "3d" ? meals : null,
+        targets: targetsOf(diary.totals.targets),
       });
       targets = targetsOf(diary.totals.targets);
     }
@@ -241,6 +245,7 @@ async function fetchViaDiary(kind: Exclude<RangeKind, "y">, today: string): Prom
         logged: false,
         fiber_g: null,
         meals: null,
+        targets: null,
       },
   );
   return {

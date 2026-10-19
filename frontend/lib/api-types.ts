@@ -1139,6 +1139,11 @@ export interface components {
             fat_g: number;
             targets: components["schemas"]["MacroTargets"];
             /**
+             * Exercise Kcal
+             * @default 0
+             */
+            exercise_kcal: number;
+            /**
              * Errors
              * @default []
              */
@@ -1172,6 +1177,7 @@ export interface components {
             meals?: {
                 [key: string]: components["schemas"]["MacroSums"];
             } | null;
+            targets?: components["schemas"]["MacroTargets"] | null;
         };
         /**
          * DayTotals
@@ -1187,6 +1193,11 @@ export interface components {
             /** Fat G */
             fat_g: number;
             targets: components["schemas"]["MacroTargets"];
+            /**
+             * Exercise Kcal
+             * @default 0
+             */
+            exercise_kcal: number;
         };
         /** DemoQuota */
         DemoQuota: {
@@ -1274,7 +1285,8 @@ export interface components {
         };
         /**
          * EntryPatch
-         * @description Any subset: qty scales; serving_id re-derives; food_id corrects + learns.
+         * @description Any subset: qty scales; serving_id re-derives; food_id corrects + learns;
+         *     meal refiles the entry under another meal and leaves the portion alone.
          */
         EntryPatch: {
             /** Qty */
@@ -1283,6 +1295,7 @@ export interface components {
             serving_id?: string | null;
             /** Food Id */
             food_id?: string | null;
+            meal?: components["schemas"]["Meal"] | null;
         };
         /** EntryPatchResponse */
         EntryPatchResponse: {

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getDiary, type DayTotals } from "@/lib/api";
 import "@/app/history/history.css";
 import BackBar, { markReplace } from "./BackBar";
-import type { DiaryMeals } from "./DiaryApi";
+import { placeEntry, type DiaryMeals } from "./DiaryApi";
 import DiaryList from "./DiaryList";
 import { addDays, isoDate, longDate, parseISO } from "./HistoryApi";
 import { ChevronDown, ChevronLeft, ChevronRight } from "./icons";
@@ -240,14 +240,7 @@ export default function HistoryDay({ date, year }: { date: string; year: string 
           emptyText="Nothing logged this day."
           onPatched={(entry, t) => {
             setTotals(t);
-            setMeals((cur) => {
-              if (!cur) return cur;
-              const next: DiaryMeals = {};
-              for (const [meal, list] of Object.entries(cur)) {
-                next[meal] = list.map((e) => (e.id === entry.id ? entry : e));
-              }
-              return next;
-            });
+            setMeals((cur) => (cur ? placeEntry(cur, entry) : cur));
           }}
           onDeleted={(id, t) => {
             setTotals(t);

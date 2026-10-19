@@ -423,6 +423,77 @@ def test_food_patch_feeds_alias_learning():
     asyncio.run(run())
 
 
+def test_meal_patch_moves_the_entry_and_nothing_else():
+    """2026-10-13: a 3:30pm lunch the clock windows filed as dinner. A
+    meal-only PATCH refiles the entry; the portion snapshot, the finals
+    (was_edited counts food/serving/qty deltas only) and logs.meal_inferred
+    (the clock's guess, kept as instrumentation) stay exactly as they were."""
+
+    async def run():
+        async with isolated_db() as conn:
+            p = f"meal{uuid4().hex[:8]}"
+            food = await insert_food(conn, "Meal Food")
+            entry = await _commit_simple(conn, p, food, "Meal Food")
+            assert entry["meal"] == "snack"
+            await conn.execute(
+                "UPDATE logs SET meal_inferred = 'snack' WHERE id = %s", (entry["log_id"],)
+            )
+            res_before = (await res_rows(entry["log_id"]))[0]
+
+            resp = await patch_entry(entry["id"], EntryPatch(meal=Meal.lunch))
+            assert resp.entry.meal == Meal.lunch
+            assert resp.entry.qty == 1 and resp.entry.grams == 31
+            assert resp.entry.macros.kcal == 120 and resp.entry.serving.id == "srv-scoop"
+            assert resp.totals is not None
+
+            row = await db.fetchone("SELECT * FROM entries WHERE id = %s", (entry["id"],))
+            assert row["meal"] == "lunch"
+            assert {k: v for k, v in row.items() if k != "meal"} == {
+                k: v for k, v in entry.items() if k != "meal"
+            }
+            assert (await res_rows(entry["log_id"]))[0] == res_before
+            assert res_before["was_edited"] is False
+            log = await db.fetchone(
+                "SELECT meal_inferred FROM logs WHERE id = %s", (entry["log_id"],)
+            )
+            assert log["meal_inferred"] == "snack"
+
+            # a qty edit that rounds freezes the BACKLOG 28 base sidecar; a
+            # meal move after it rewrites the jsonb as it was, sidecar and all
+            await patch_entry(entry["id"], EntryPatch(qty=0.3))
+            scaled = await db.fetchone("SELECT * FROM entries WHERE id = %s", (entry["id"],))
+            assert "base_qty" in scaled["macros"]
+            await patch_entry(entry["id"], EntryPatch(meal="dinner"))
+            moved = await db.fetchone("SELECT * FROM entries WHERE id = %s", (entry["id"],))
+            assert moved["meal"] == "dinner"
+            assert moved["macros"] == scaled["macros"] and moved["qty"] == scaled["qty"]
+
+    asyncio.run(run())
+
+
+def test_meal_patch_with_a_portion_and_nothing_to_change():
+    async def run():
+        async with isolated_db() as conn:
+            p = f"mealq{uuid4().hex[:8]}"
+            food = await insert_food(conn, "Meal Qty Food")
+            entry = await _commit_simple(conn, p, food, "Meal Qty Food")
+
+            # meal and qty in one PATCH: both land, and the qty is an edit
+            resp = await patch_entry(entry["id"], EntryPatch(qty=2, meal=Meal.breakfast))
+            assert resp.entry.meal == Meal.breakfast and resp.entry.qty == 2
+            assert resp.entry.macros.kcal == 240
+            row = await db.fetchone("SELECT meal, qty FROM entries WHERE id = %s", (entry["id"],))
+            assert row["meal"] == "breakfast" and float(row["qty"]) == 2
+            assert (await res_rows(entry["log_id"]))[0]["was_edited"] is True
+
+            # the 422 rule covers the new field: an empty body still changes nothing
+            with pytest.raises(HTTPException) as e:
+                await patch_entry(entry["id"], EntryPatch())
+            assert e.value.status_code == 422 and e.value.detail == "nothing to change"
+
+    asyncio.run(run())
+
+
 def test_delete_entry():
     async def run():
         async with isolated_db() as conn:

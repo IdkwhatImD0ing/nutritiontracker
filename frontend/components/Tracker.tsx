@@ -156,6 +156,9 @@ export default function Tracker({
       ? `Calories: ${fmt.format(kcal)} of ${fmt.format(kcalTarget)} kcal, ` +
         `${fmt.format(Math.abs(kcalLeft))} ${kcalOver ? "over" : past ? "under" : "left"}`
       : `Calories: ${fmt.format(kcal)} kcal`;
+  // Oura's activity burn, already inside the kcal and carb targets — said out
+  // loud so a target that moved during the day is never a mystery.
+  const exercise = totals?.exercise_kcal ?? 0;
 
   return (
     <section
@@ -163,34 +166,43 @@ export default function Tracker({
       aria-label="Daily tracker"
       aria-busy={loading || undefined}
     >
-      <div role="img" aria-label={kcalSpoken}>
-        <div className="kcal-row">
-          <div>
-            <span className="label">Calories</span>
-            <span className="figures num">
-              <strong>{loading ? "—" : fmt.format(kcal)}</strong>
-              {kcalTarget > 0 ? (
-                <span className="of">/ {fmt.format(kcalTarget)} kcal</span>
-              ) : (
-                <span className="of">kcal</span>
-              )}
-            </span>
+      <div>
+        {/* the line under the bar sits outside the role=img, which would
+            hide it from a screen reader */}
+        <div role="img" aria-label={kcalSpoken}>
+          <div className="kcal-row">
+            <div>
+              <span className="label">Calories</span>
+              <span className="figures num">
+                <strong>{loading ? "—" : fmt.format(kcal)}</strong>
+                {kcalTarget > 0 ? (
+                  <span className="of">/ {fmt.format(kcalTarget)} kcal</span>
+                ) : (
+                  <span className="of">kcal</span>
+                )}
+              </span>
+            </div>
+            {kcalTarget > 0 ? (
+              <span className={`left num${kcalOver ? " over" : ""}`}>
+                <strong>{fmt.format(Math.abs(kcalLeft))}</strong>
+                {kcalOver ? "over" : past ? "under" : "left"}
+              </span>
+            ) : null}
           </div>
-          {kcalTarget > 0 ? (
-            <span className={`left num${kcalOver ? " over" : ""}`}>
-              <strong>{fmt.format(Math.abs(kcalLeft))}</strong>
-              {kcalOver ? "over" : past ? "under" : "left"}
-            </span>
+          {/* no target, no bar: an empty track under 1,270 kcal says nothing */}
+          {loading || kcalTarget > 0 ? (
+            <div className="kcal-bar" style={{ marginTop: 12 }}>
+              <div
+                className={`fill${kcalOver ? " over" : ""}`}
+                style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
+              />
+            </div>
           ) : null}
         </div>
-        {/* no target, no bar: an empty track under 1,270 kcal says nothing */}
-        {loading || kcalTarget > 0 ? (
-          <div className="kcal-bar" style={{ marginTop: 12 }}>
-            <div
-              className={`fill${kcalOver ? " over" : ""}`}
-              style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
-            />
-          </div>
+        {exercise > 0 ? (
+          <p className="zero-hint" style={{ marginTop: 8 }}>
+            Includes {fmt.format(exercise)} kcal of activity from Oura
+          </p>
         ) : null}
       </div>
 

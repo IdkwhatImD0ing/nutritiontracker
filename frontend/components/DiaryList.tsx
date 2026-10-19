@@ -219,10 +219,14 @@ export default function DiaryList({
   // which row is waiting, and on what — the spinner goes in the tapped button
   const [busy, setBusy] = useState<{
     id: string;
-    kind: "save" | "delete";
+    kind: "save" | "delete" | "move";
   } | null>(null);
   // a failed edit, kept with its row so it shows where the user is looking
-  const [error, setError] = useState<{ id: string; text: string } | null>(null);
+  const [error, setError] = useState<{
+    id: string;
+    kind: "delete" | "move";
+    text: string;
+  } | null>(null);
   const [saveGroup, setSaveGroup] = useState<{
     meal: string;
     entries: DiaryEntry[];
@@ -250,11 +254,13 @@ export default function DiaryList({
 
   // A deleted row took focus with it: once it is gone, focus goes to the
   // row now in its place, else the one above, else the empty line ("") —
-  // not back to the top of the page. Focus moved on meanwhile stays put.
-  const refocus = useRef<string | null>(null);
+  // not back to the top of the page. A row moved to another meal remounts
+  // under it, and focus goes back to its meal picker (`part`). Focus moved
+  // on meanwhile stays put.
+  const refocus = useRef<{ id: string; part: string } | null>(null);
   const emptyRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
-    const id = refocus.current;
+    const to = refocus.current;
     refocus.current = null;
     // lost focus: <body>, <html> or none, or still on the removed node
     const at = document.activeElement;
@@ -263,10 +269,10 @@ export default function DiaryList({
       at === document.body ||
       at === document.documentElement ||
       !at.isConnected;
-    if (id == null || !lost) return;
-    const el = id
+    if (to == null || !lost) return;
+    const el = to.id
       ? sectionRef.current?.querySelector<HTMLElement>(
-          `[data-entry-id="${CSS.escape(id)}"] .row-kcal`,
+          `[data-entry-id="${CSS.escape(to.id)}"] ${to.part}`,
         )
       : emptyRef.current;
     el?.focus();
@@ -293,10 +299,10 @@ export default function DiaryList({
   const order = groups.flatMap((g) => g.entries.map((e) => e.id));
 
   /** null when `fn` landed, else the sentence for the refusal — the portion
-   *  sheet shows a save's in place; a delete's goes on its row. */
+   *  sheet shows a save's in place; a delete's or a move's goes on its row. */
   const run = async (
     id: string,
-    kind: "save" | "delete",
+    kind: "save" | "delete" | "move",
     fn: () => Promise<void>,
   ): Promise<string | null> => {
     setBusy({ id, kind });
@@ -312,7 +318,9 @@ export default function DiaryList({
         (e instanceof ApiError && e.status === 422 && e.detail) ||
         (kind === "delete"
           ? "Couldn't delete that entry — try again."
-          : "Couldn't save that change — try again.")
+          : kind === "move"
+            ? "Couldn't move that entry — try again."
+            : "Couldn't save that change — try again.")
       );
     } finally {
       setBusy(null);
@@ -343,7 +351,7 @@ export default function DiaryList({
               entry={e}
               expanded={expanded === e.id}
               busy={busy?.id === e.id ? busy.kind : null}
-              error={error?.id === e.id ? error.text : null}
+              error={error?.id === e.id ? error : null}
               onToggle={() => {
                 // an error belongs to the open row; any toggle closes that row
                 setError(null);
@@ -369,13 +377,36 @@ export default function DiaryList({
                   );
                 })
               }
+              onMove={(meal) =>
+                void run(e.id, "move", async () => {
+                  const res = await patchEntry(e.id, { meal });
+                  refocus.current = { id: e.id, part: ".meal-picker .active" };
+                  // the fields routes/entries.py leaves out, as onSave keeps them
+                  onPatched(
+                    {
+                      ...res.entry,
+                      web_source: e.web_source,
+                      source: e.source,
+                      estimated: e.estimated,
+                    },
+                    res.totals,
+                  );
+                }).then((text) =>
+                  setError(text ? { id: e.id, kind: "move", text } : null),
+                )
+              }
               onDelete={() =>
                 void run(e.id, "delete", async () => {
                   const totals = await deleteEntry(e.id);
                   const i = order.indexOf(e.id);
-                  refocus.current = order[i + 1] ?? order[i - 1] ?? "";
+                  refocus.current = {
+                    id: order[i + 1] ?? order[i - 1] ?? "",
+                    part: ".row-kcal",
+                  };
                   onDeleted(e.id, totals);
-                }).then((text) => setError(text ? { id: e.id, text } : null))
+                }).then((text) =>
+                  setError(text ? { id: e.id, kind: "delete", text } : null),
+                )
               }
             />
           ))}

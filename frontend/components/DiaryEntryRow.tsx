@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import type { StagedServing } from "@/lib/api";
+import { useEffect, useId, useRef, useState } from "react";
+import type { Meal, StagedServing } from "@/lib/api";
 import { nutrientParts, portionText, statesGrams, withUnit } from "@/lib/format";
-import { foodName } from "@/lib/labels";
+import { foodName, MEAL_LABEL } from "@/lib/labels";
 import { sourceName } from "@/lib/sources";
 import type { DiaryEntry } from "./DiaryApi";
 import { getFood } from "./LibraryApi";
@@ -15,16 +15,18 @@ import "@/app/photo.css"; // .badge.estimate
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmt1 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 
+const MEALS: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 const CORE_KEYS = new Set(["kcal", "protein_g", "carb_g", "fat_g"]);
 
 type Props = {
   entry: DiaryEntry;
   expanded: boolean;
-  /** a save or delete in flight: every control waits, the tapped one spins */
-  busy: "save" | "delete" | null;
-  /** this row's failed delete, shown over its actions (a failed save is
-   *  onSave's answer, shown in the portion sheet) */
-  error?: string | null;
+  /** a save, delete or meal move in flight: every control waits, the
+   *  tapped one spins */
+  busy: "save" | "delete" | "move" | null;
+  /** this row's failed delete or meal move, shown by the control that failed
+   *  (a failed save is onSave's answer, shown in the portion sheet) */
+  error?: { kind: "delete" | "move"; text: string } | null;
   onToggle: () => void;
   /** portion edit → PATCH /api/entries/:id {qty, serving_id?} (parent owns
    *  the request); `serving_id` is sent only when the serving itself moved.
@@ -35,6 +37,9 @@ type Props = {
     qty: number;
     serving_id?: string;
   }) => Promise<string | null>;
+  /** a meal segment → PATCH /api/entries/:id {meal} alone, at once: the
+   *  clock filed it wrong, there is no draft to weigh */
+  onMove: (meal: Meal) => void;
   onDelete: () => void;
 };
 
@@ -43,8 +48,9 @@ type Props = {
  *  then every micro the snapshot carries, and a "Food details" row (§7.4's
  *  drill-in); web-sourced rows show the citation as a visible, clickable
  *  link (§3.4a); photo-portion rows carry an "estimate" badge (M4); the
- *  portion pill opens the same portion sheet a staged row does (§7.1) and
- *  the row is deletable (§5 `/api/entries/:id`).
+ *  portion pill opens the same portion sheet a staged row does (§7.1), the
+ *  meal picker moves the entry to another meal, and the row is deletable
+ *  (§5 `/api/entries/:id`).
  *  The serving list costs a GET /api/foods/:id whose FoodDetail carries the
  *  whole provider payload, so it is fetched on the pill's tap and not on the
  *  expand: expanding a row is how the micros are read, and most rows are
@@ -56,6 +62,7 @@ export default function DiaryEntryRow({
   error,
   onToggle,
   onSave,
+  onMove,
   onDelete,
 }: Props) {
   const [portionOpen, setPortionOpen] = useState(false);
@@ -64,6 +71,11 @@ export default function DiaryEntryRow({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteBtn = useRef<HTMLButtonElement>(null);
+  // the meal a move is waiting on takes the thumb at once; a refusal hands
+  // it back to the entry's own meal
+  const [moveTo, setMoveTo] = useState<Meal | null>(null);
+  const shownMeal = busy === "move" && moveTo ? moveTo : entry.meal;
+  const mealId = useId();
   // A row that mounts open (DiaryList's memory, on Back or a return to the
   // tab) cuts in with the rest of the page; only a tap plays the panel's rise.
   const [settled, setSettled] = useState(expanded);
@@ -249,6 +261,53 @@ export default function DiaryEntryRow({
             </div>
           ) : null}
 
+          {/* The clock can file an entry under the wrong meal: a tap moves it
+              to that meal's group at once (§3.5; logs.meal_inferred keeps
+              the clock's guess). The staged row's picker, in the staged
+              row's place above the portion, read as one labelled group. The
+              segments wait as aria-disabled, not disabled, so the tapped one
+              keeps focus through a refusal, and the move's spinner sits by
+              the label (a segment has no room for one at 320); a landed
+              move remounts the row under its new meal, and DiaryList puts
+              focus back on the picker. */}
+          <div
+            className="detail-meal"
+            role="group"
+            aria-labelledby={mealId}
+            aria-busy={busy === "move" || undefined}
+          >
+            <span className="k" id={mealId}>
+              {busy === "move" ? <span className="spinner" /> : null}
+              Meal
+            </span>
+            <div className="meal-picker m3-seg">
+              {MEALS.map((meal) => (
+                <button
+                  key={meal}
+                  type="button"
+                  className={shownMeal === meal ? "active" : undefined}
+                  aria-pressed={shownMeal === meal}
+                  aria-disabled={locked || undefined}
+                  onClick={
+                    locked || meal === entry.meal
+                      ? undefined
+                      : () => {
+                          setMoveTo(meal);
+                          onMove(meal);
+                        }
+                  }
+                >
+                  {MEAL_LABEL[meal]}
+                </button>
+              ))}
+            </div>
+            {error?.kind === "move" ? (
+              <p className="sheet-error diary-error" role="alert">
+                {error.text}
+              </p>
+            ) : null}
+          </div>
+
           <div className="detail-serving">
             Portion:{" "}
             <button
@@ -290,9 +349,9 @@ export default function DiaryEntryRow({
           <div className="diary-edit">
             {/* a failed delete, over the buttons that failed (a failed
                 portion save shows in the portion sheet) */}
-            {error ? (
+            {error?.kind === "delete" ? (
               <p className="sheet-error diary-error" role="alert">
-                {error}
+                {error.text}
               </p>
             ) : null}
             {/* While a delete is being confirmed the two choices share the

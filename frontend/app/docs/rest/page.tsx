@@ -231,9 +231,11 @@ export default function RestDoc() {
       <ul className="docs-eps">
         <Endpoint method="PATCH" path="/api/entries/{entry_id}" scope="write">
           <p>
-            Body: any of <code>qty</code>, <code>serving_id</code>, <code>food_id</code>. Returns{" "}
-            <code>&#123;entry, totals&#125;</code>. An entry&apos;s meal and time cannot be
-            changed. <code>422</code> when nothing changes or <code>qty</code> is not positive.
+            Body: any of <code>qty</code>, <code>serving_id</code>, <code>food_id</code>,{" "}
+            <code>meal</code>. Returns <code>&#123;entry, totals&#125;</code>. A{" "}
+            <code>meal</code> alone moves the entry and leaves its amount as it was. An
+            entry&apos;s time cannot be changed. <code>422</code> when nothing changes or{" "}
+            <code>qty</code> is not positive.
           </p>
         </Endpoint>
         <Endpoint method="DELETE" path="/api/entries/{entry_id}" scope="write">
