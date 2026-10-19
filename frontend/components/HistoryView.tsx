@@ -38,7 +38,9 @@ export default function HistoryView({ kind, range, today, onDay }: Props) {
   if (kind === "y") {
     return <Year range={range} />;
   }
-  return <Daily kind={kind} range={range} today={today} onDay={onDay} />;
+  // keyed: Week's charts are not Month's, so Month mounts its own and
+  // ChartBars seeds the pick it kept for that title
+  return <Daily key={kind} kind={kind} range={range} today={today} onDay={onDay} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +99,8 @@ function ThreeDays({
       {ordered.map((d) => {
         const date = parseISO(d.date);
         const kcalFrac = targets.kcal > 0 ? d.kcal / targets.kcal : 0;
+        // the Tracker's rule, rounded like the figure: 2,400.4 isn't over
+        const kcalOver = targets.kcal > 0 && Math.round(d.kcal - targets.kcal) > 0;
         const mealChips = d.meals
           ? MEAL_ORDER.filter((m) => d.meals![m]).map((m) => ({
               meal: m,
@@ -142,7 +146,7 @@ function ThreeDays({
             </div>
             <div className="kcal-bar">
               <div
-                className={`fill${kcalFrac > 1 ? " over" : ""}`}
+                className={`fill${kcalOver ? " over" : ""}`}
                 style={{ width: `${Math.min(kcalFrac, 1) * 100}%` }}
               />
             </div>
@@ -200,6 +204,8 @@ function Daily({
   const toBar = (pick: (d: HistoryDay) => number, unit: string) =>
     range.days.map<Bar>((d) => {
       const date = parseISO(d.date);
+      // weekHint's joins: a narrow readout breaks only after the colon
+      const day = [weekdayShort(date), monthShort(date), date.getDate()].join(NBSP);
       return {
         key: d.date,
         // today always carries a label (ChartBars marks it there); the
@@ -212,9 +218,7 @@ function Daily({
         value: pick(d),
         muted: !d.logged,
         active: d.date === today,
-        hint: `${weekdayShort(date)} ${monthShort(date)} ${date.getDate()}: ${fmt.format(pick(d))} ${unit}${
-          d.logged ? "" : " (nothing logged)"
-        }`,
+        hint: `${day}: ${d.logged ? withUnit(fmt.format(pick(d)), unit) : "nothing logged"}`,
       };
     });
   // W's bars are ~41px wide with printed values: a tap opens the day. M's

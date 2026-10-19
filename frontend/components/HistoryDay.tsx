@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getDiary, type DayTotals } from "@/lib/api";
 import "@/app/history/history.css";
 import BackBar, { markReplace } from "./BackBar";
@@ -19,7 +19,7 @@ const MIN_DAY = "2000-01-01";
 /** Keys that edit one segment of a date field (Alt+↓ opens its calendar). */
 const SEGMENT_KEY = /^(\d|ArrowUp|ArrowDown|Backspace|Delete)$/;
 
-type Refocus = "prev" | "next" | "pick" | null;
+type Refocus = "prev" | "next" | "pick" | "back" | null;
 /** The control that moved to the day now loading, and that day. Each move
  *  replaces the [date] segment, which remounts this view and drops focus to
  *  <body>, so the new view puts it back (markReplace's pattern: set before
@@ -27,9 +27,12 @@ type Refocus = "prev" | "next" | "pick" | null;
  *  otherwise focus a later, unrelated open of the day view. */
 let refocus: { to: string; from: Refocus } | null = null;
 
+/** The phone's date never announces a change here; it is read per render. */
+const noSubscribe = () => () => {};
+
 /** §7.4: tap any History day → its diary, entries editable per §5. The tab
  *  bar mounts from app/history/layout.tsx. */
-export default function HistoryDay({ date }: { date: string }) {
+export default function HistoryDay({ date, year }: { date: string; year: string }) {
   const [totals, setTotals] = useState<DayTotals | null>(null);
   const [meals, setMeals] = useState<DiaryMeals | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +40,11 @@ export default function HistoryDay({ date }: { date: string }) {
   // Library pattern) rather than asking for a page reload.
   const [attempt, setAttempt] = useState(0);
   const router = useRouter();
-  // Read after mount: the server's clock is UTC, so a server-rendered
-  // "is this today?" would disagree with the phone's every evening.
-  const [today, setToday] = useState<string | null>(null);
-  useEffect(() => setToday(isoDate(new Date())), []);
+  // The phone's date, never the server's: its clock is UTC, so a
+  // server-rendered "is this today?" would disagree with the phone's every
+  // evening. Hydration reads null; a client mount (every step remounts this
+  // view) reads it in its first render, so the title and Next don't flash.
+  const today = useSyncExternalStore(noSubscribe, () => isoDate(new Date()), () => null);
 
   // Stepping days replaces rather than pushes, so back still returns to
   // wherever the day view was opened from (History, Today's View link), not
@@ -62,8 +66,12 @@ export default function HistoryDay({ date }: { date: string }) {
     const { from } = refocus;
     refocus = null;
     if (!from) return;
-    const el = from === "pick" ? pickRef : from === "next" && date < today ? nextRef : prevRef;
-    el.current?.focus({ preventScroll: true });
+    // "back": a typed date left by Shift+Tab, for the new view's back link
+    const el =
+      from === "back"
+        ? document.querySelector<HTMLElement>("main.day .nav-back")
+        : (from === "pick" ? pickRef : from === "next" && date < today ? nextRef : prevRef).current;
+    el?.focus({ preventScroll: true });
   }, [today, date]);
 
   // A desktop date field reports every segment edit that makes a whole
@@ -124,9 +132,10 @@ export default function HistoryDay({ date }: { date: string }) {
               2026-10-13): a native date input laid invisibly over it, so a
               tap opens the OS's own picker. */}
           <span className="day-pick">
-            {/* the year once it isn't this one; read from the phone's
-                clock, as `today` is, so the server can't disagree */}
-            {longDate(parseISO(date), !!today && date.slice(0, 4) !== today.slice(0, 4))}
+            {/* the year once it isn't this one: the phone's, as `today`
+                is; until that is read, the server's `year` (the tab
+                title's rule), which can differ only around New Year */}
+            {longDate(parseISO(date), date.slice(0, 4) !== (today?.slice(0, 4) ?? year))}
             <ChevronDown />
             {/* uncontrolled, so a half-typed date isn't reset under the
                 keys; keyed by the day so a new one always shows */}
@@ -164,7 +173,20 @@ export default function HistoryDay({ date }: { date: string }) {
               onBlur={(e) => {
                 if (!typed.current) return;
                 const to = e.relatedTarget;
-                choose(e.currentTarget, to === prevRef.current ? "prev" : to === nextRef.current ? "next" : null);
+                // a press on the back link (focused by it, and :active) is
+                // its own way out: the typed day may never open, and a kept
+                // "back" would take focus in a later open of that day
+                const back = to instanceof Element ? to.closest(".nav-back") : null;
+                choose(
+                  e.currentTarget,
+                  to === prevRef.current
+                    ? "prev"
+                    : to === nextRef.current
+                      ? "next"
+                      : back && !back.matches(":active")
+                        ? "back"
+                        : null,
+                );
               }}
             />
           </span>

@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, type DayTotals, type Meal } from "@/lib/api";
 import { portionText } from "@/lib/format";
@@ -22,11 +23,12 @@ import SheetPresence from "./useSheetPresence";
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const MEAL_ORDER: Meal[] = ["breakfast", "lunch", "dinner", "snack"];
 
-/* The open row, kept past the list's unmount: Back from a row's Food
-   details remounts the list, and the row comes back open, so the page is
-   as tall as it was when useScrollMemory saved its offset. Entry ids are
-   unique, so another day's id opens nothing. */
-let lastOpen: string | null = null;
+/* Each screen's open row, by pathname as useScrollMemory keeps its offset,
+   kept past the list's unmount: Back from a row's Food details, or a return
+   to the tab, remounts the list, and the row comes back open, so the page
+   is as tall as it was when that offset was saved. A row toggled on
+   another day leaves this one's alone. */
+const openRows = new Map<string, string | null>();
 
 /** Where a diary row's top sits on screen now (undefined: not rendered). */
 function rowTop(root: HTMLElement | null, id: string): number | undefined {
@@ -207,10 +209,13 @@ export default function DiaryList({
   onDeleted,
   emptyText = "Nothing logged yet.",
 }: Props) {
-  const [expanded, setExpanded] = useState<string | null>(() => lastOpen);
+  const pathname = usePathname();
+  const [expanded, setExpanded] = useState<string | null>(
+    () => openRows.get(pathname) ?? null,
+  );
   useEffect(() => {
-    lastOpen = expanded;
-  }, [expanded]);
+    openRows.set(pathname, expanded);
+  }, [pathname, expanded]);
   // which row is waiting, and on what — the spinner goes in the tapped button
   const [busy, setBusy] = useState<{
     id: string;

@@ -64,6 +64,9 @@ export default function DiaryEntryRow({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteBtn = useRef<HTMLButtonElement>(null);
+  // A row that mounts open (DiaryList's memory, on Back or a return to the
+  // tab) cuts in with the rest of the page; only a tap plays the panel's rise.
+  const [settled, setSettled] = useState(expanded);
 
   // The food's servings, fetched when the portion sheet first opens and never
   // again for this row (a foods row's serving list does not change under us).
@@ -84,9 +87,12 @@ export default function DiaryEntryRow({
   }, [portionOpen, foodId, servings, servingsFailed]);
 
   // A collapsed row drops a delete confirm: it must not sit there armed
-  // behind a closed row.
+  // behind a closed row. Its next open is a tap's.
   useEffect(() => {
-    if (!expanded) setConfirmDelete(false);
+    if (!expanded) {
+      setConfirmDelete(false);
+      setSettled(false);
+    }
   }, [expanded]);
 
   const name = foodName(entry.food.name);
@@ -213,7 +219,7 @@ export default function DiaryEntryRow({
       ) : null}
 
       {expanded ? (
-        <div className="row-detail">
+        <div className={`row-detail${settled ? " settled" : ""}`}>
           <div className="macro-grid num">
             <div className="macro-cell protein">
               <div className="v">{fmt1.format(m.protein_g)}g</div>

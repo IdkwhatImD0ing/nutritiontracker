@@ -81,6 +81,12 @@ export function fitLabels(
 
 const NICE = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
 
+/* Each select chart's pick, by title, kept past its unmount: Back from the
+   day its Open went to finds the readout still on that day, as History
+   keeps its range (lastKind). A key no longer in range matches no bar, so
+   the readout falls back to today's. */
+const picks = new Map<string, string>();
+
 /** Smallest "round" number ≥ v (2,860 → 3,000; 281 → 300). */
 export function niceMax(v: number): number {
   if (v <= 0) return 1;
@@ -111,7 +117,9 @@ export default function ChartBars({
   emptyText,
   level = 2,
 }: Props) {
-  const [selKey, setSelKey] = useState<string | null>(null);
+  const [selKey, setSelKey] = useState<string | null>(() =>
+    select ? (picks.get(title) ?? null) : null,
+  );
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const H = height;
   const plotW = W - PAD.l - PAD.r;
@@ -161,16 +169,20 @@ export default function ChartBars({
     const b = barAt(e);
     if (b) setHoverKey(b.key);
   };
+  const choose = (key: string) => {
+    picks.set(title, key);
+    setSelKey(key);
+  };
   const pick = (e: PointerEvent<SVGSVGElement>) => {
     const b = barAt(e);
-    if (b) setSelKey(b.key);
+    if (b) choose(b.key);
     setHoverKey(null);
   };
   const step = (e: KeyboardEvent<SVGSVGElement>) => {
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       e.preventDefault();
       const i = Math.min(Math.max(selIdx + (e.key === "ArrowRight" ? 1 : -1), 0), bars.length - 1);
-      if (bars[i]) setSelKey(bars[i].key);
+      if (bars[i]) choose(bars[i].key);
       setHoverKey(null);
     } else if (e.key === "Enter" && onTap && sel) {
       e.preventDefault();
@@ -236,7 +248,8 @@ export default function ChartBars({
           const v = b.value;
           const top = v == null ? y(0) : y(v);
           const h = Math.max(0, y(0) - top);
-          const over = hasTarget && v != null && v > target;
+          // the Tracker's rule, rounded like the figure: 2,400.4 isn't over
+          const over = hasTarget && v != null && Math.round(v - target) > 0;
           const cls = `chart-bar${tap ? " tap" : ""}${b.muted ? " muted" : ""}${
             b.active ? " active" : ""
           }${i === selIdx ? " selected" : ""}`;
