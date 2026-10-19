@@ -13,6 +13,7 @@
   font-size: 0.86rem;
   color: var(--faint);
   text-align: center;
+  text-wrap: balance; /* two even lines, not a lone word under a full one */
   margin: 0;
   padding: 22px 16px;
   border: 1px solid var(--line);

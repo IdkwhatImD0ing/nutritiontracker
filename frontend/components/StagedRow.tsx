@@ -57,6 +57,11 @@ export default function StagedRow({
   const notFound = item.status === "not_found";
   const editable = !searching && !notFound; // §7.1: resolved/needs_input rows
   const name = foodName(item.food?.name ?? item.phrase);
+  // split off the last character for the edit pencil (below); by code
+  // point, so an emoji is not cut in two
+  const nameChars = Array.from(name);
+  const nameHead = nameChars.slice(0, -1).join("");
+  const nameTail = nameChars.slice(-1).join("");
   // the phrase under the name only when it says something the name doesn't
   // (foodName only re-cases, so a phrase that is the name in other case is
   // the same words)
@@ -115,16 +120,21 @@ export default function StagedRow({
               <button
                 type="button"
                 className="name-btn"
-                aria-label={`Edit food for ${name}`}
+                aria-label={`Change food for ${name}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onEditFood();
                 }}
               >
-                {name}
-                {/* the edit cue; the word joiner keeps it on the last line */}
-                {"\u2060"}
-                <Pencil className="name-edit" />
+                {/* the edit cue, held to the last character by nowrap, so
+                    the last word wraps with it. Not a word joiner: a line
+                    may always break before an svg. Only the one character,
+                    so .row-name can still break a long unbroken token. */}
+                {nameHead}
+                <span className="name-tail">
+                  {nameTail}
+                  <Pencil className="name-edit" />
+                </span>
               </button>
             ) : (
               name
@@ -168,10 +178,10 @@ export default function StagedRow({
               <>
                 {/* the badge is gone (the sub-line says it); the pill is the
                     way forward, and the row-main tap still works too */}
-                Not found{" "}
+                Not found
                 <button
                   type="button"
-                  className="portion-btn"
+                  className="portion-btn nf-search"
                   onClick={(e) => {
                     e.stopPropagation();
                     onManualSearch();

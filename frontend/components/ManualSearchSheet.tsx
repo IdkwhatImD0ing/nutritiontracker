@@ -306,7 +306,7 @@ export default function ManualSearchSheet({
         className="subsheet"
         role="dialog"
         aria-modal="true"
-        aria-label="Manual food search"
+        aria-label="Search foods"
         tabIndex={-1}
       >
         <SheetHeader title="Search" onClose={onClose} />

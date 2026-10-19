@@ -1287,7 +1287,7 @@ export default function Today() {
           // logging is only the tab bar's + (a button here dispatching the
           // agent lane would start the mic from an empty-state tap). Not
           // "below": from 900px the + sits in the left rail.
-          emptyText="Nothing logged yet. Log a meal with the + button."
+          emptyText={"Nothing logged yet. Log a meal with the +\u00a0button."}
           onPatched={(entry, t) => {
             setTotals(t);
             setMeals((cur) => {

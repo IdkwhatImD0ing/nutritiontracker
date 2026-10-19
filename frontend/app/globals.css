@@ -1950,6 +1950,12 @@ button.row-kcal {
   border-color: var(--amber);
 }
 
+/* after "Not found", the .chips gap rather than a bare space (a pill that
+   starts the sub-line needs none, so this is not on every .portion-btn) */
+.row-sub .nf-search {
+  margin-left: 6px;
+}
+
 /* tappable food name → §7.1 edit sheet (BACKLOG 23). Its cue is a small
    trailing pencil (owner, 2026-10-13): the dotted underline it replaces read
    as a web link, under every name in the list. */
@@ -1970,6 +1976,11 @@ button.row-kcal {
   margin-left: 0.35em;
   vertical-align: -0.05em;
   color: var(--faint);
+}
+
+/* the name's last character and the pencil: they wrap as one */
+.name-btn .name-tail {
+  white-space: nowrap;
 }
 
 /* expanded stats */
@@ -2317,7 +2328,7 @@ button.row-kcal {
   border-radius: 0;
   padding: 12px 14px;
   font-size: 0.9rem;
-  color: var(--muted);
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -2330,10 +2341,6 @@ button.row-kcal {
   border-bottom: none;
   border-bottom-left-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
-}
-
-.serving-list button.active {
-  color: var(--text);
 }
 
 .serving-list button svg {
@@ -2505,9 +2512,20 @@ button.row-kcal {
 }
 
 /* the food the row is on now (the edit sheet's "Foods you've used for this"):
-   the quiet selected fill, no border, since the grouped rows share hairlines */
+   a trailing check, as .serving-list marks its pick, rather than a fill. The
+   rows stack name over sub, so the check is positioned. */
 .search-results button.active {
-  background: var(--spruce-deep);
+  position: relative;
+  padding-right: 40px;
+}
+
+.search-results button.active > svg {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 18px;
+  height: 18px;
 }
 
 /* after a demo 429 on a pick: every row would meet it again (the notice
