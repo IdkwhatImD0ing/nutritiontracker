@@ -275,12 +275,16 @@ export default function PhotoCapture({ open, onClose, onPicked, locate = false }
           </>
         ) : null}
 
-        {phase === "preparing" ? (
-          <p className="photo-status" aria-live="polite">
-            <span className="spinner" />
-            Preparing photo…
-          </p>
-        ) : null}
+        {/* mounted in every phase, empty and out of the flow
+            ([role=status]:empty), so the line is announced as it arrives */}
+        <p className="photo-status" role="status">
+          {phase === "preparing" ? (
+            <>
+              <span className="spinner" />
+              Preparing photo…
+            </>
+          ) : null}
+        </p>
 
         {phase === "error" ? (
           <>

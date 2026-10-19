@@ -5,7 +5,7 @@ import { createContext, useEffect, useRef, useState, type ReactNode } from "reac
 /** How long a closed sheet stays mounted: globals.css's sheet-down, fade-out
  *  and modal-out run this long. A timer, not animationend — the sheet's own
  *  children bubble theirs, and under reduced motion there is next to none. */
-const EXIT_MS = 220;
+export const EXIT_MS = 220;
 
 /** For a sheet that takes an `open` prop (AddSheet, PhotoCapture): still
  *  `mounted` for EXIT_MS after `open` goes false, and `closing` meanwhile. */

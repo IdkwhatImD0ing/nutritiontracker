@@ -90,8 +90,12 @@ type Props = {
   /** item_index values this log had removed before this mount. GET
    *  /api/logs/:id does not return removed rows, so a sheet reopened from a
    *  chat card cannot see the hole its own remove left — and "Add another
-   *  food" allocates from what it can see. */
+   *  food" allocates from what it can see. A card whose tray another log took
+   *  (Today's agentDone, a Review) still lists them: they stay out of the rows. */
   removedIndexes?: number[];
+  /** each row this mount removes for good, as the server hears of it: a
+   *  later mount for the same log gets it in `removedIndexes` */
+  onRemoved?: (logId: string, itemIndex: number) => void;
   /** fires once after first paint — BACKLOG 2's staged_ms measurement point */
   onRendered?: () => void;
   /** `pending` = every row the commit did not land: the §3.5 late stragglers
@@ -111,14 +115,16 @@ type Props = {
   docked?: boolean;
   /** set to this sheet's own close (`onClose` with its snapshot), for a
    *  parent that closes the list along with something else: the Agent
-   *  lane's ✕ puts the tray away and then the lane (Today's closeLane) */
-  closeRef?: RefObject<(() => void) | null>;
+   *  lane's ✕ puts the tray away and then the lane (Today's closeLane).
+   *  It returns false, closing nothing, while Log is in flight. */
+  closeRef?: RefObject<(() => boolean | void) | null>;
 };
 
 export default function StagingSheet({
   log,
   restore,
   removedIndexes,
+  onRemoved,
   onRendered,
   onCommitted,
   onClose,
@@ -127,7 +133,10 @@ export default function StagingSheet({
 }: Props) {
   // docked, the split around it is the dialog and takes the focus (SplitSheet)
   const sheetRef = useSheetFocus<HTMLDivElement>(!docked);
-  const [items, setItems] = useState<StagedItem[]>(restore?.items ?? log.items);
+  const [items, setItems] = useState<StagedItem[]>(
+    restore?.items ??
+      log.items.filter((i) => !removedIndexes?.includes(i.item_index)),
+  );
   const [meal, setMeal] = useState<Meal>(restore?.meal ?? log.meal);
   const [mealPickerOpen, setMealPickerOpen] = useState(false);
   const [removed, setRemoved] = useState<ReadonlySet<number>>(
@@ -273,6 +282,28 @@ export default function StagingSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // §3.4b: a chat correction to the plate open here (adjust_photo) hands down
+  // the server's newer list for this same log (Today's agentDone). It takes
+  // over the rows, local portion edits with them. A row removed here stays
+  // out: `removed` and the Undo windows still hold its index. A row an
+  // inline /api/resolve owns is that call's to settle, as in the poll.
+  const shownLogRef = useRef(log);
+  useEffect(() => {
+    if (shownLogRef.current === log) return;
+    shownLogRef.current = log;
+    setItems((prev) => {
+      const owned = prev.filter((i) => resolvingRef.current.has(i.item_index));
+      const fresh = (s: StagedItem) =>
+        owned.find((i) => i.item_index === s.item_index) ?? withOverrides(s);
+      return [
+        ...log.items.map(fresh),
+        ...owned.filter((i) => !log.items.some((s) => s.item_index === i.item_index)),
+      ];
+    });
+    if (mealOverridesRef.current.log == null) setMeal(log.meal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log]);
+
   // Kick tier 3 once for every row currently `searching` (§3.4: the
   // client-side kick). On an undo-restore or reopened log this re-kicks the
   // stale rows — exactly the §3.4 "log reopened later" behavior.
@@ -394,30 +425,50 @@ export default function StagingSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSearching, log.log_id]);
 
-  // A row leaving `searching` changes its spinner, badge and figure in
-  // silence, so the foot's screen-reader status says how it landed. Since
-  // 2026-09-11 tier 3 runs inline (§3.4): this is mostly the fallback path.
+  // A row that changes in place changes its badge and figure in silence,
+  // and so does the Log total, so the foot's screen-reader status says
+  // both: a row leaving `searching` (since 2026-09-11 tier 3 runs inline,
+  // §3.4, so mostly the fallback path), and one re-resolved by an answer, a
+  // chip, cooked/raw, a food picked or a portion changed.
   const [landed, setLanded] = useState("");
-  const wasSearchingRef = useRef<Set<number>>(new Set());
+  const shownRowsRef = useRef<Map<number, StagedItem>>(new Map());
+  const shownTotalRef = useRef<number | null>(null);
   useEffect(() => {
     const said: string[] = [];
     for (const i of items) {
-      if (i.status === "searching" || !wasSearchingRef.current.has(i.item_index)) continue;
+      const was = shownRowsRef.current.get(i.item_index);
+      // a new row (the first paint's, or an added one, which starts
+      // `searching`), or one still going; a meal change alone is the chip
+      // the user just tapped
+      if (!was || i.status === "searching") continue;
+      if (
+        was.status === i.status &&
+        was.food?.id === i.food?.id &&
+        was.serving?.id === i.serving?.id &&
+        was.qty === i.qty &&
+        was.macros?.kcal === i.macros?.kcal
+      ) continue;
       // removed, or inside its Undo window (shown as "Removed X · Undo")
-      if (removedRef.current.has(i.item_index) || undoTimersRef.current.has(i.item_index)) continue;
+      if (removed.has(i.item_index) || undoable.has(i.item_index)) continue;
       said.push(
         i.status === "not_found"
           ? `${i.phrase} not found`
           : i.status === "needs_input"
             ? `${i.phrase} needs input`
-            : `${i.food ? foodName(i.food.name) : i.phrase} found${i.macros ? `, ${fmt.format(i.macros.kcal)} kcal` : ""}`,
+            : `${i.food ? foodName(i.food.name) : i.phrase}${was.status === "searching" ? " found" : ""}${i.macros ? `, ${fmt.format(i.macros.kcal)} kcal` : ""}`,
       );
     }
-    wasSearchingRef.current = new Set(
-      items.filter((i) => i.status === "searching").map((i) => i.item_index),
-    );
+    shownRowsRef.current = new Map(items.map((i) => [i.item_index, i]));
+    // what Log counts (`kept`, below): a removed row changes it too
+    const total = items
+      .filter((i) => !removed.has(i.item_index) && !undoable.has(i.item_index))
+      .reduce((sum, i) => sum + (i.macros?.kcal ?? 0), 0);
+    if (shownTotalRef.current != null && shownTotalRef.current !== total) {
+      said.push(`Total ${fmt.format(total)} kcal`);
+    }
+    shownTotalRef.current = total;
     if (said.length) setLanded(said.join(". "));
-  }, [items]);
+  }, [items, removed, undoable]);
 
   const setRowBusy = (itemIndex: number, busy: boolean) =>
     setBusyRows((prev) => {
@@ -488,6 +539,15 @@ export default function StagingSheet({
 
   // The Undo window closed: the row is gone for good.
   const finishRemove = (itemIndex: number) => {
+    // Its Undo took the focus from the ✕ and still has it: the next row
+    // (else the one above) takes it over rather than the page, and with no
+    // row left the sheet does. Focus the user moved elsewhere stays put.
+    const shown = itemsRef.current.filter((i) => !removedRef.current.has(i.item_index));
+    const pos = shown.findIndex((i) => i.item_index === itemIndex);
+    if (pos >= 0 && bodyRef.current?.children[pos]?.contains(document.activeElement)) {
+      const next = shown[pos + 1] ?? shown[pos - 1];
+      refocusRef.current = next ? next.item_index : "sheet";
+    }
     undoTimersRef.current.delete(itemIndex);
     dropUndoable(itemIndex);
     setRemoved((prev) => new Set(prev).add(itemIndex));
@@ -495,6 +555,7 @@ export default function StagingSheet({
     // the decompose error stays visible in telemetry. Commit-time absence is
     // the backstop, so a failure here (route not deployed yet) is swallowed.
     removeStagedItem(log.log_id, itemIndex).catch(() => {});
+    onRemoved?.(log.log_id, itemIndex);
   };
 
   const remove = (itemIndex: number) => {
@@ -509,7 +570,8 @@ export default function StagingSheet({
   // it from, rather than dropping it on the page. The rows are the sheet
   // body's first children, in `visible` order.
   const bodyRef = useRef<HTMLDivElement>(null);
-  const refocusRef = useRef<number | null>(null);
+  // a row's item_index, or the sheet itself (finishRemove, no row left)
+  const refocusRef = useRef<number | "sheet" | null>(null);
   const undoRemove = (itemIndex: number) => {
     clearTimeout(undoTimersRef.current.get(itemIndex));
     undoTimersRef.current.delete(itemIndex);
@@ -520,11 +582,19 @@ export default function StagingSheet({
     const idx = refocusRef.current;
     if (idx == null) return;
     refocusRef.current = null;
+    if (idx === "sheet") {
+      // docked, the dialog is the split around the tray
+      bodyRef.current
+        ?.closest<HTMLElement>('[aria-modal="true"]')
+        ?.focus({ preventScroll: true });
+      return;
+    }
     const pos = items
       .filter((i) => !removed.has(i.item_index))
       .findIndex((i) => i.item_index === idx);
+    // a neighbour still inside its own Undo window offers only that Undo
     bodyRef.current?.children[pos]
-      ?.querySelector<HTMLButtonElement>(".row-remove")
+      ?.querySelector<HTMLButtonElement>(".row-remove, .row-undo")
       ?.focus();
   }, [undoable, items, removed]);
 
@@ -538,9 +608,12 @@ export default function StagingSheet({
       for (const [itemIndex, timer] of timers) {
         clearTimeout(timer);
         removeStagedItem(logId, itemIndex).catch(() => {});
+        onRemoved?.(logId, itemIndex);
       }
       timers.clear();
     };
+    // on the way out only: onRemoved is a fresh closure every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log.log_id]);
 
   // §7.1 "Add another food": goes through POST /api/resolve with the log
@@ -686,12 +759,20 @@ export default function StagingSheet({
     itemMealOverrides: { ...mealOverridesRef.current.items },
   });
 
-  const close = () => onClose(snapshot());
+  // Refused (false) while Log is in flight: a discard armed now would say
+  // "Log discarded" over the commit about to land, its Undo would reopen a
+  // committed log, and a slow commit could lose to the DELETE.
+  const close = () => {
+    if (committing) return false;
+    onClose(snapshot());
+  };
   if (closeRef) closeRef.current = close;
   // a pull on the head closes exactly as the ✕ does (Today's closeStaging),
-  // and so do Escape and Back; docked, they are the lane's (SplitSheet)
-  const drag = useDragDismiss(close);
-  useSheetBack(sheetRef, close, !docked);
+  // and so do Escape and Back; docked, they are the lane's (SplitSheet). A
+  // refused close springs back, and Escape stops here rather than passing
+  // to whatever is under the sheet.
+  const drag = useDragDismiss(close, !committing);
+  useSheetBack(sheetRef, () => void close(), !docked);
   // an open meal picker sits above the list: Escape and Back shut it first,
   // rather than discarding the rows under it
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -785,12 +866,13 @@ export default function StagingSheet({
       type="button"
       className="sheet-close"
       aria-label="Discard these items"
+      disabled={committing}
       onClick={close}
     >
       <Trash />
     </button>
   ) : (
-    <SheetClose label="Discard these items" onClick={close} />
+    <SheetClose label="Discard these items" disabled={committing} onClick={close} />
   );
   const mealPicker = mealPickerOpen ? (
     <div className="meal-picker m3-seg" ref={pickerRef}>
@@ -916,7 +998,8 @@ export default function StagingSheet({
           </p>
           {docked ? mealPicker : null}
           <div className={docked ? "stage-lip" : undefined}>
-            {docked ? discardBtn : null}
+            {/* with no rows the Discard below is the one way out */}
+            {docked && kept.length > 0 ? discardBtn : null}
             {docked ? mealChip : null}
             {/* nothing to log: the way on is Discard (close — Today's undo
                 toast, or back to the chat), not a dead "Log · 0 kcal" */}
