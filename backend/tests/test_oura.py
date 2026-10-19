@@ -766,7 +766,7 @@ def test_status_and_sync_before_and_after_connecting(monkeypatch):
     _run(scenario())
 
 
-def test_before_migration_005_the_card_says_why():
+def test_before_migration_005_the_card_says_oura_is_unavailable():
     async def scenario():
         async with isolated_db():
             # only the Oura tables go missing; settings (the timezone) still reads.
@@ -783,7 +783,8 @@ def test_before_migration_005_the_card_says_why():
             try:
                 with pytest.raises(HTTPException) as exc:
                     await oura_route.get_status()
-                assert exc.value.status_code == 503 and "005" in exc.value.detail
+                assert exc.value.status_code == 503
+                assert exc.value.detail == "Oura isn't available on this server yet."
             finally:
                 db.fetchone = real
 

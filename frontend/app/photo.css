@@ -73,20 +73,20 @@
   gap: 8px;
 }
 
+/* the secondary pill (m3.css .keys-btn's values) */
 .photo-actions button {
   flex: 1;
-  min-height: 46px;
+  min-height: 40px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 0 14px;
-  font-size: 0.9rem;
+  border-radius: 999px;
+  padding: 0 16px;
+  font-size: 0.86rem;
   font-weight: 600;
-  color: var(--sage);
+  color: var(--text);
   cursor: pointer;
 }
 
-/* the primary fill every other Log / send button wears */
 .photo-actions button.primary {
   background: var(--accent-fill);
   border-color: transparent;

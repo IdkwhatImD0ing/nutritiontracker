@@ -167,6 +167,16 @@ def test_macro_split_carbs_never_negative():
     assert any("carbs" in n for n in ms.notes)
 
 
+def test_carbs_at_zero_note_offers_a_slower_rate_only_in_a_deficit():
+    body = dict(height_cm=155, weight_kg=180, age=70, sex="female", activity_level="sedentary")
+    maintain = goals.compute_targets(**body, goal_weight_kg=180, weekly_rate_kg=0)
+    assert maintain["targets"]["carb_g"] == 0
+    assert any("carbs" in n for n in maintain["notes"])
+    assert not any("slower" in n for n in maintain["notes"])
+    losing = goals.compute_targets(**body, goal_weight_kg=150, weekly_rate_kg=0.5)
+    assert any("slower rate" in n for n in losing["notes"])
+
+
 def test_compute_targets_end_to_end_shape():
     out = goals.compute_targets(
         height_cm=180, weight_kg=82, age=28, sex="male", activity_level="moderate",
