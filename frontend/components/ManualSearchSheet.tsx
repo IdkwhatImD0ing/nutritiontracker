@@ -260,12 +260,18 @@ export default function ManualSearchSheet({
               Couldn&rsquo;t load your recent foods. Search still works.
             </p>
           ) : (
-            <Skeleton rows={5} height={52} />
+            <>
+              <p className="search-label">Previously added</p>
+              <Skeleton rows={5} height={55} />
+            </>
           )}
         </div>
       ) : (
         <div className="search-results">
-          {searching && results == null ? <Skeleton rows={4} height={52} /> : null}
+          {/* nothing to keep on screen — the first search, a Retry, a
+              re-search after "No matches" — so the rows' shape holds it;
+              a re-search over hits keeps them */}
+          {searching && !results?.length ? <Skeleton rows={4} height={55} /> : null}
           {(results ?? []).map(hit)}
           {results != null && results.length === 0 && !searching && !searchError ? (
             <p className="subsheet-hint">No matches — try fewer words.</p>

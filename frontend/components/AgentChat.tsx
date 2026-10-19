@@ -412,9 +412,9 @@ function ResultCard({
   return (
     <div className="result-card">
       <span className="result-text">
-        {m.photo ? "From the photo · " : ""}
+        {m.photo ? "From the photo ·\u00a0" : ""}
         {n} item{n === 1 ? "" : "s"} to review
-        {kcal > 0 ? ` · ${kcalFmt.format(kcal)}\u00a0kcal` : ""}
+        {kcal > 0 ? ` ·\u00a0${kcalFmt.format(kcal)}\u00a0kcal` : ""}
         {estimated ? (
           <span className="result-sub">
             {m.photo

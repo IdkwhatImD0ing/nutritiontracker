@@ -305,7 +305,7 @@ export default function BarcodeScanner({
             <div className="scan-miss">
               <p className="scan-miss-title">No match for this barcode</p>
               <p className="subsheet-hint">
-                Not in USDA FoodData Central or Open Food Facts ·{" "}
+                Not in USDA FoodData Central or Open Food Facts ·{"\u00a0"}
                 <span className="num">{miss}</span>
               </p>
               {onSearchInstead ? (
@@ -361,7 +361,13 @@ export default function BarcodeScanner({
               disabled={busy || digits.length < MIN_DIGITS}
               aria-label="Look up"
             >
-              <ArrowRight strokeWidth={2.4} />
+              {/* the cover spins while the camera shows; with no camera
+                  view this is the lookup's one moving sign */}
+              {busy && hideView ? (
+                <span className="spinner" />
+              ) : (
+                <ArrowRight strokeWidth={2.4} />
+              )}
             </button>
           </form>
         </div>
