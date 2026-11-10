@@ -444,6 +444,11 @@ this is the from-scratch path: your own keys, your own Neon project, your own Ve
 It was written alongside the tenancy change and has **not** been walked end to end from an
 empty Neon project — if a step is wrong, fix the doc.
 
+The README's **Deploy to Vercel** button makes the Vercel project and the Neon database
+and asks for the required keys in 8.1. Still by hand: the Neon Auth settings in 8.1, the
+database steps in 8.3 (with sign-up done on the deployed site instead of localhost) and the
+trusted domain in 8.4.
+
 ### 8.1 Accounts and keys
 
 Everything but OpenAI runs on a free tier; OpenAI meters usage, roughly $1–2 a month for one
@@ -479,7 +484,7 @@ Leave `APP_ORIGIN` unset locally (§2). Never commit either file.
 
 ### 8.3 Database
 
-Two migrations, in order, from the repo root, against the `DATABASE_URL` in `.env`:
+The migrations, in order, from the repo root, against the `DATABASE_URL` in `.env`:
 
 1. **001 — the schema.** Guarded: applies only to an empty `public` schema, no-op when the
    seven tables already exist, aborts on anything else.
@@ -522,6 +527,18 @@ Two migrations, in order, from the repo root, against the `DATABASE_URL` in `.en
    ```bash
    uv run --directory backend python migrations/apply.py 002
    uv run --directory backend python migrations/apply.py 002 --check
+   ```
+
+5. **003 to 007: everything added since.** The weigh-in log, an index, the Oura tables
+   and personal API keys. Same script, in this order (007 needs 006); each takes
+   `--dry-run` and `--check` the way 002 does:
+
+   ```bash
+   uv run --directory backend python migrations/apply.py 003
+   uv run --directory backend python migrations/apply.py 004
+   uv run --directory backend python migrations/apply.py 005
+   uv run --directory backend python migrations/apply.py 006
+   uv run --directory backend python migrations/apply.py 007
    ```
 
 Reload the app: Today should render and the first-run goal wizard should open. From here on,
