@@ -71,7 +71,7 @@ committed — keep it that way. `.env.example` lists the canonical variable name
 
 ### What you just pulled
 
-`DATABASE_URL`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_COOKIE_SECRET`, `OPENAI_API_KEY`,
+`DATABASE_URL`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_COOKIE_SECRET`, `ALLOWED_EMAIL`, `OPENAI_API_KEY`,
 `DEEPGRAM_API_KEY`, `FDC_API_KEY`, `OFF_USER_AGENT`, `FIRETRACE_API_KEY` (a development
 key — the key decides the environment; unset, tracing is simply off), `FIRECRAWL_API_KEY`
 (the photo lane's web tools; unset, the lane keeps hosted search alone), `GOOGLE_PLACES_API_KEY`
@@ -79,15 +79,16 @@ key — the key decides the environment; unset, tracing is simply off), `FIRECRA
 set (unused since the eval harness was removed, 2026-09-11), plus the Neon-managed
 `POSTGRES_*`/`PG*` set.
 
-Two deliberate omissions:
+One deliberate omission:
 
 - **`APP_ORIGIN` is Production-only.** It pins the Origin check on state-changing requests.
   Unset locally, `backend/auth.py` falls back to a dev-friendly localhost allowance — setting
   it locally will 403 your own requests.
-- **`ALLOWED_EMAIL`** names the **owner** account — the one with no daily cap. Unset,
-  `backend/auth.py` falls back to the original author's address, which is right on the
-  owner's machines and wrong on yours (§8). Nothing in the frontend reads it: sign-up is
-  open to any address, and the API decides who the owner is.
+
+**`ALLOWED_EMAIL`** names the **owner** account — the one with no daily cap. It has no
+default: unset, `backend/auth.py` treats every account as a demo and
+`backend/migrations/apply.py` stops wherever it needs the owner (§8.3). Nothing in the
+frontend reads it: sign-up is open to any address, and the API decides who the owner is.
 
 The schema is already applied to the shared Neon database. `backend/migrations/apply.py`
 (001) is a no-op against an initialized database and aborts on an unexpected one, so it is
@@ -463,8 +464,8 @@ person. DESIGN §0.5 has the *why* for each.
 | Vercel | a project of your own; **Vercel Services** (beta) must be enabled on the account — `vercel.json` depends on it | — |
 
 `OFF_USER_AGENT` is read by `backend/sources/off.py`, the barcode miss-fallback (DESIGN
-§8.2); Open Food Facts needs no key, only a descriptive User-Agent, and the adapter falls
-back to the string DESIGN §0.5 documents when the variable is unset.
+§8.2); Open Food Facts needs no key, only a descriptive User-Agent with a contact. Set it
+to your own; unset, the adapter sends the app name and the project's URL.
 
 ### 8.2 Env files
 
@@ -494,22 +495,18 @@ Two migrations, in order, from the repo root, against the `DATABASE_URL` in `.en
    the code it emails you. Sign-up writes only to the auth service (users live in the
    `neon_auth` schema of your database); 002 needs that one user to exist. Let nobody else
    sign up before 002 is applied — until then nothing separates accounts. Only sign-up
-   works at this point: the API errors on every DB-touching request until step 4, because
+   works at this point: the API errors on every DB-touching request until step 3, because
    this tree's backend runs as the `tally_app` role that 002 creates.
 
-3. **Point 002 at your address.** The owner lookup is hardcoded to the original author's
-   email in two places — the `DO` block at the top of `backend/migrations/002_multiuser.sql`
-   and `OWNER_EMAIL` in `backend/migrations/apply.py` — and does not read `ALLOWED_EMAIL`
-   (BACKLOG 109). Change both to your address first, or 002 aborts with *expected exactly
-   one Neon Auth user for the owner, found 0*.
-
-4. **002 — tenancy.** Adds `user_id` to `aliases`, `meal_macros`, `logs`, `item_resolutions`,
+3. **002 — tenancy.** Adds `user_id` to `aliases`, `meal_macros`, `logs`, `item_resolutions`,
    `entries` and `settings`, backfills every existing row to the owner's Neon Auth user,
    scopes `settings` and `aliases` uniqueness by user, adds the `quota_events` ledger and the
    `tally_app` role the app runs as, and turns on Row-Level Security (DESIGN §4). Guarded
    like 001 (refuses unless exactly the seven 001 tables exist; no-op once `logs.user_id`
-   exists) and verified inside the same transaction before it commits. Dry-run first — it
-   applies, checks, and rolls back:
+   exists) and verified inside the same transaction before it commits. The owner is the
+   account whose email is `ALLOWED_EMAIL` in `.env`, the one from step 2: if the variable
+   is unset or no account has that address, 002 stops and changes nothing. Dry-run first —
+   it applies, checks, and rolls back:
 
    ```bash
    uv run --directory backend python migrations/apply.py 002 --dry-run

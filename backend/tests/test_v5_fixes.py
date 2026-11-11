@@ -452,7 +452,8 @@ def _keypair(kid: str):
 def _origin_client(monkeypatch):
     """TestClient over a minimal app using the REAL require_user, JWKS stubbed."""
     monkeypatch.setenv("NEON_AUTH_BASE_URL", BASE)
-    for name in ("ALLOWED_EMAIL", "APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL",
+    monkeypatch.setenv("ALLOWED_EMAIL", "owner@example.com")  # the token below is the owner's
+    for name in ("APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL",
                  "VERCEL_URL", "VERCEL_ENV"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(auth, "_dotenv_loaded", True)  # keep .env out of _env()
@@ -468,7 +469,7 @@ def _origin_client(monkeypatch):
 
     now = int(time.time())
     token = jwt.encode(
-        {"sub": "u", "email": auth.DEFAULT_ALLOWED_EMAIL, "iss": BASE,
+        {"sub": "u", "email": "owner@example.com", "iss": BASE,
          "iat": now, "exp": now + 900},
         priv, algorithm="EdDSA", headers={"kid": "kid-v5"},
     )

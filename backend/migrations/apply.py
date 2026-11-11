@@ -40,6 +40,11 @@ insert with no tenant fails); a failed check rolls back. Guards:
   007 - `api_keys` must be present (006 applied) and api_key_auth must not carry 007's comment
         marker; marked -> no-op, exit 0
 
+The owner is ALLOWED_EMAIL in the same .env, the address backend/auth.py reads.
+002 backfills every existing row to that account, and the 002 / 006 / 007
+checks look it up, so there is no default: unset, those runs stop and
+change nothing.
+
 Never prints secret values (the owner's user id is an identifier, not a secret).
 """
 
@@ -74,10 +79,9 @@ EXPECTED_TABLES = {
 TENANT_TABLES = ("aliases", "meal_macros", "logs", "item_resolutions", "entries", "settings")
 RLS_TABLES = TENANT_TABLES + ("quota_events",)
 APP_ROLE = "tally_app"
-OWNER_EMAIL = "billzhangsc@gmail.com"  # auth.DEFAULT_ALLOWED_EMAIL; 002's DO block repeats it
 
 
-def read_database_url(env_file: Path) -> str:
+def read_env(env_file: Path, name: str) -> str:
     if not env_file.is_file():
         sys.exit(f"ERROR: {env_file} not found.")
     for raw_line in env_file.read_text(encoding="utf-8").splitlines():
@@ -85,12 +89,19 @@ def read_database_url(env_file: Path) -> str:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        if key.strip() == "DATABASE_URL":
+        if key.strip() == name:
             value = value.strip().strip('"').strip("'")
             if not value:
-                sys.exit("ERROR: DATABASE_URL is empty in .env.")
+                sys.exit(f"ERROR: {name} is empty in .env.")
             return value
-    sys.exit("ERROR: DATABASE_URL not found in .env.")
+    sys.exit(f"ERROR: {name} not found in .env.")
+
+
+def owner_email() -> str:
+    """The owner's address: ALLOWED_EMAIL in .env, or exit. Read only by the
+    paths that need the owner, after their guards, so re-running an applied
+    migration stays a no-op without it."""
+    return read_env(ENV_FILE, "ALLOWED_EMAIL")
 
 
 def existing_tables(cur) -> set[str]:
@@ -151,7 +162,7 @@ def verify_002(cur, before: dict[str, int]) -> str:
     """Assert the post-002 invariants inside the still-open transaction.
     Returns the owner's user id. Any AssertionError rolls the migration back."""
     cur.execute(
-        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (OWNER_EMAIL,)
+        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (owner_email(),)
     )
     owners = cur.fetchall()
     assert len(owners) == 1, f"expected exactly one Neon Auth user for the owner, found {len(owners)}"
@@ -235,6 +246,9 @@ def apply_002(conn, dry_run: bool) -> None:
         if has_002(cur):
             print("Guard: logs.user_id already exists - 002 already applied, nothing to do.")
             sys.exit(0)
+        # 002's first block reads the owner's address from this transaction-local
+        # setting: bound as a parameter, never pasted into the SQL.
+        cur.execute("SELECT set_config('app.owner_email', %s, true)", (owner_email(),))
         # The locks the ALTERs take anyway, up front: the verify counts must see
         # the same rows even if the (old) app writes while this runs.
         cur.execute(f"LOCK TABLE {', '.join(sorted(EXPECTED_TABLES))} IN ACCESS EXCLUSIVE MODE")
@@ -560,8 +574,9 @@ def verify_006(cur) -> None:
         "api_key_auth: must be SECURITY DEFINER, owned by the migrating role, "
         f"executable by {APP_ROLE} and not by PUBLIC"
     )
+    email = owner_email()
     cur.execute(
-        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (OWNER_EMAIL,)
+        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (email,)
     )
     owners = cur.fetchall()
     assert len(owners) == 1, f"expected exactly one Neon Auth user for the owner, found {len(owners)}"
@@ -590,7 +605,7 @@ def verify_006(cur) -> None:
         cur.execute("SELECT set_config('app.user_id', '', true)")
         cur.execute("SELECT user_id, lower(email), email_verified, scopes FROM api_key_auth(%s, %s)",
                     ("006c0ffee0000001", live_hash))
-        assert cur.fetchall() == [(owner_id, OWNER_EMAIL.lower(), True, ["read"])], (
+        assert cur.fetchall() == [(owner_id, email.lower(), True, ["read"])], (
             "api_key_auth: the right hash must name the key's owner with no tenant bound"
         )
         for key_id, key_hash, why in (
@@ -682,7 +697,7 @@ def verify_007(cur) -> None:
     verify_006(cur)
     assert has_007(cur), "api_key_auth: the 007 comment marker is missing"
     cur.execute(
-        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (OWNER_EMAIL,)
+        'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (owner_email(),)
     )
     owners = cur.fetchall()
     assert len(owners) == 1, f"expected exactly one Neon Auth user for the owner, found {len(owners)}"
@@ -777,7 +792,7 @@ def main(argv: list[str]) -> None:
     which = args[0] if args else "001"
     if which not in ("001", "002", "003", "004", "005", "006", "007") or (which == "001" and (dry_run or check)) or (dry_run and check):
         sys.exit(__doc__)
-    dsn = read_database_url(ENV_FILE)
+    dsn = read_env(ENV_FILE, "DATABASE_URL")
     with psycopg.connect(dsn) as conn:
         if which == "001":
             apply_001(conn)

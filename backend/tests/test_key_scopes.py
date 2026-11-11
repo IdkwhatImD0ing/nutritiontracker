@@ -23,7 +23,7 @@ import api_keys
 import auth
 import db
 import main
-from test_auth import BASE, _keypair, _token
+from test_auth import ALLOWED, BASE, _keypair, _token
 
 OK = {"ok": True}
 READ_ONLY = {"detail": "this API key is read-only"}
@@ -37,7 +37,8 @@ def scoped(monkeypatch):
     is the fake api_key_auth and nothing else: a handler that queried the
     database would fail the assert."""
     monkeypatch.setenv("NEON_AUTH_BASE_URL", BASE)
-    for name in ("ALLOWED_EMAIL", "APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL",
+    monkeypatch.setenv("ALLOWED_EMAIL", ALLOWED)  # _token's default address is the owner
+    for name in ("APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL",
                  "VERCEL_ENV"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(auth, "_dotenv_loaded", True)  # keep .env out of _env()
