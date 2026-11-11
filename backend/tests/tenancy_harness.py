@@ -22,6 +22,7 @@ carries `is_owner`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import auth
@@ -111,9 +112,33 @@ async def switch_tenant(conn, user_id: str) -> None:
     db.current_user_id.set(user_id)
 
 
+def owner_email() -> str:
+    """The real owner's address (ALLOWED_EMAIL), for the tests that find that
+    account in neon_auth. Read from the environment or the repo-root .env the
+    way db._database_url reads its one variable: auth._env would pull the
+    rest of .env into os.environ."""
+    email = os.environ.get("ALLOWED_EMAIL")
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not email and env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("ALLOWED_EMAIL="):
+                email = line.split("=", 1)[1].strip().strip('"').strip("'")
+    if not email:
+        raise RuntimeError("ALLOWED_EMAIL is not set (env or repo-root .env)")
+    return email
+
+
+async def apply_002(conn) -> None:
+    """002 the way apply.py runs it: the owner's address goes in the
+    transaction-local setting the migration's first block reads."""
+    await conn.execute("SELECT set_config('app.owner_email', %s, true)", (owner_email(),))
+    await conn.execute(SQL_002)
+
+
 async def bind_test_tenant(conn, user_id: str = TEST_USER_ID) -> None:
     if not await has_002(conn):
-        await conn.execute(SQL_002)
+        await apply_002(conn)
     if not await has_003(conn):  # the weigh-in log, the same way — rolls back with the test
         await conn.execute(SQL_003)
     if not await has_005(conn):  # the Oura tables, the same way
