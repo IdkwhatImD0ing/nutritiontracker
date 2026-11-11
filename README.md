@@ -75,17 +75,17 @@ repeat meal never reaches a model.
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FIdkwhatImD0ing%2Fnutritiontracker&project-name=tally&repository-name=tally&env=ALLOWED_EMAIL,NEON_AUTH_COOKIE_SECRET,OPENAI_API_KEY,DEEPGRAM_API_KEY,FDC_API_KEY&envDescription=ALLOWED_EMAIL%20is%20the%20email%20you%20will%20sign%20up%20with.%20NEON_AUTH_COOKIE_SECRET%20is%20any%20random%20string%20of%2032%2B%20characters.%20The%20rest%20are%20API%20keys.&envLink=https%3A%2F%2Fgithub.com%2FIdkwhatImD0ing%2Fnutritiontracker%2Fblob%2Fmain%2Fdocs%2FONBOARDING.md%2381-accounts-and-keys&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22neon%22%2C%22productSlug%22%3A%22neon%22%2C%22protocol%22%3A%22storage%22%7D%5D)
 
 The button copies this repo to your GitHub, makes a Vercel project, adds a Neon database
-and asks for your keys. When it sets up the database, turn on **Auth** in that dialog.
-Set `ALLOWED_EMAIL` to the email you will sign up with. That account is the owner and
-everyone else gets a demo.
+and asks for your keys. When it sets up the database, leave **Auth** switched on in that
+dialog. Set `ALLOWED_EMAIL` to the email you will sign up with. That account is the owner
+and everyone else gets a demo.
 
 After the first deploy the database is still empty. The rest is by hand, and you need
 `uv` for it:
 
 1. Open the database in the Neon Console (Vercel > Storage > your database > Open in
-   Neon). Under Auth, require email verification by code, leave both "send verification
-   email" toggles off, and add your `https://<project>.vercel.app` address to the trusted
-   domains. If `NEON_AUTH_BASE_URL` is missing from the Vercel project's environment
+   Neon). Go to Settings > Better Auth. Turn on **Verify at Sign-up** and keep
+   **Verification code** selected. Under Domains, add your `https://<project>.vercel.app`
+   address. If `NEON_AUTH_BASE_URL` is missing from the Vercel project's environment
    variables, Auth was not turned on: turn it on here, copy the Auth URL into that
    variable in Vercel and redeploy.
 2. Clone the repo Vercel made for you and put the database URL in a `.env` file at its
@@ -96,7 +96,8 @@ After the first deploy the database is still empty. The rest is by hand, and you
    vercel env pull .env --environment=production
    ```
 
-   Or paste `DATABASE_URL` from the database's page in Vercel into `.env` yourself.
+   Or copy `DATABASE_URL` from the database's Getting Started page in Vercel into `.env`
+   yourself.
 
 3. Create the tables:
 
@@ -127,8 +128,10 @@ Two optional variables still default to my values. In the Vercel project, set
 `NEXT_PUBLIC_SITE_URL` to your site's address and `OFF_USER_AGENT` to your own contact
 (see `.env.example`), then redeploy.
 
-Tally runs as two Vercel Services, which is still a beta feature. Nobody has run this
-button start to finish on a fresh account yet, so open an issue if a step is off.
+Tally runs as two Vercel Services, which is still a beta feature. The button and steps 1
+to 3 were tested on an account that already used Vercel and Neon. Steps 4 to 7 have not
+been run after the button. A new account may see extra screens. Open an issue if a step
+is off.
 
 ### Or set it up by hand
 

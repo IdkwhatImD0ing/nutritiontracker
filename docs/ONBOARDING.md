@@ -456,7 +456,7 @@ person. DESIGN §0.5 has the *why* for each.
 
 | Need | Where | Env var(s) |
 |---|---|---|
-| Neon project | [neon.tech](https://neon.tech); enable **Auth** on the branch (Console → Project → Branch → Auth). Under email + password turn on **Require email verification** with the *verification code* method, and leave both *send verification email* toggles (at sign-up, at sign-in) **off** — the app sends the code itself, so a Console send would mean two codes | `DATABASE_URL` (the **pooled** `-pooler` string), `NEON_AUTH_BASE_URL` |
+| Neon project | [neon.tech](https://neon.tech); enable **Auth** on the branch (Console → Project → Branch → Better Auth). In Settings → Better Auth turn on **Verify at Sign-up** and keep the *Verification code* method. On 2026-11-10 that one switch required verification and left the Console's own sends at sign-up and sign-in off, which is what the app needs: it sends the code itself, so a Console send would mean two codes | `DATABASE_URL` (the **pooled** `-pooler` string), `NEON_AUTH_BASE_URL` |
 | Cookie secret | generate one: `openssl rand -base64 32` | `NEON_AUTH_COOKIE_SECRET` |
 | Your owner address | the email you will sign up with | `ALLOWED_EMAIL` |
 | OpenAI | an API key with access to the GPT-5.6 family and the web search tool | `OPENAI_API_KEY` |
@@ -557,9 +557,10 @@ any address may sign up and gets a demo account (8.5).
    a preview `FIRETRACE_API_KEY` if you use previews.
 3. `vercel deploy --yes` for a preview; promote it, or connect the GitHub repo so pushes to
    `main` deploy production (that is how the owner's project works — §5 rule 7).
-4. Sign in on the deployed origin. If Neon Auth refuses the deployed domain, look for a
-   trusted-domains list in the branch's Auth settings — local development does not need it,
-   and this step has not been verified from a fresh project.
+4. Add your deployed domain under **Domains** in the Console's Settings → Better Auth (a
+   new project starts with that list empty), then sign in on the deployed origin. Local
+   development does not need it. Whether sign-in is refused without it has not been
+   verified from a fresh project.
 
 ### 8.5 What a second account gets
 
