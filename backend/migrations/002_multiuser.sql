@@ -26,14 +26,16 @@
 -- -> logs (id, user_id) makes a child row under another tenant's log
 -- impossible (FK checks bypass RLS; this does not).
 
--- 0. The owner: every existing row is theirs. Exactly one Neon Auth user must
---    match auth.DEFAULT_ALLOWED_EMAIL — STRICT aborts (rolling back) otherwise.
+-- 0. The owner: every existing row is theirs. apply.py puts ALLOWED_EMAIL (.env)
+--    in the transaction-local `app.owner_email` before it runs this file.
+--    Exactly one Neon Auth user must match — STRICT aborts (rolling back)
+--    otherwise, and so does a run where nothing set the setting.
 DO $$
 DECLARE owner_id text;
 BEGIN
   SELECT id::text INTO STRICT owner_id
   FROM neon_auth."user"
-  WHERE lower(email) = lower('billzhangsc@gmail.com');
+  WHERE lower(email) = lower(current_setting('app.owner_email'));
   PERFORM set_config('app.user_id', owner_id, true);  -- transaction-local
 END $$;
 

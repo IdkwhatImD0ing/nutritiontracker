@@ -16,8 +16,8 @@ Verified against live API responses (2026-09-06):
 - ``serving_quantity`` is numeric with ``serving_quantity_unit`` ``g``/``ml``
   (absent on older records: grams, or ml when ``nutrition_data_per`` is 100ml);
 - reads are rate-limited per IP (the docs say 15 product reads a minute) and
-  OFF asks for a descriptive ``User-Agent`` — ``OFF_USER_AGENT``, defaulting
-  to the string DESIGN.md §0.5 documents.
+  OFF asks for a descriptive ``User-Agent`` with a contact — ``OFF_USER_AGENT``
+  (your own address), defaulting to the app name and the project's URL.
 
 The record returned has the shape ``sources/fdc.get_food`` returns, so
 foods_repo persists it unchanged and routes/foods.py's detail view reads the
@@ -38,7 +38,7 @@ import httpx
 
 _BASE = "https://world.openfoodfacts.org/api/v2"
 _TIMEOUT = 15.0
-_DEFAULT_USER_AGENT = "tally/0.1 (billzhangsc@gmail.com)"
+_DEFAULT_USER_AGENT = "tally/0.1 (https://github.com/IdkwhatImD0ing/nutritiontracker)"
 _KCAL_PER_KJ = 1 / 4.184
 
 # Identity, serving, the nutriment table and the §13 quality fields. The rest

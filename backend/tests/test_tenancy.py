@@ -53,12 +53,14 @@ from tenancy_harness import (  # noqa: E402
     SQL_005,
     SQL_006,
     TEST_USER_ID,
+    apply_002,
     bind_test_tenant,
     has_002,
     has_003,
     has_005,
     has_006,
     override_user,
+    owner_email,
     switch_tenant,
 )
 from models import (  # noqa: E402
@@ -321,7 +323,7 @@ def test_002_schema_backfill_and_fail_closed():
             await conn.execute(f"LOCK TABLE {', '.join(tables)} IN ACCESS EXCLUSIVE MODE")
             before = {t: await _count(conn, t) for t in tables}
             if not await has_002(conn):
-                await conn.execute(SQL_002)
+                await apply_002(conn)
             if not await has_003(conn):  # the weigh-in log rides the same transaction
                 await conn.execute(SQL_003)
             if not await has_005(conn):  # and the Oura tables, so the inventory below holds either way
@@ -371,7 +373,7 @@ def test_002_schema_backfill_and_fail_closed():
             # -- backfill: every pre-existing row is the owner's (settings seeds at least)
             cur = await conn.execute(
                 'SELECT id::text AS id FROM neon_auth."user" WHERE lower(email) = lower(%s)',
-                (auth.DEFAULT_ALLOWED_EMAIL,),
+                (owner_email(),),
             )
             owners = await cur.fetchall()
             assert len(owners) == 1
@@ -398,6 +400,42 @@ def test_002_schema_backfill_and_fail_closed():
             # 002 is live other accounts have settings too, so not before[...])
             await conn.execute(db.tenant_sql(owner_id))
             assert await _count(conn, "settings") == len(owner_settings)
+        finally:
+            await outer.__aexit__(None, None, None)
+            await conn.close()
+
+    _run(run())
+
+
+def test_002_owner_block_reads_the_owner_from_the_setting():
+    """002's step 0 alone (BACKLOG 109), which an applied database never
+    re-runs: the owner is the account `app.owner_email` names, in any case,
+    and an address with no account aborts. It only reads and sets settings."""
+    block = SQL_002[SQL_002.index("DO $$") : SQL_002.index("END $$;") + len("END $$;")]
+    assert "current_setting('app.owner_email')" in block
+
+    async def run():
+        conn = await psycopg.AsyncConnection.connect(db._database_url(), row_factory=dict_row)
+        outer = conn.transaction(force_rollback=True)
+        await outer.__aenter__()
+        try:
+            owner_id = await _scalar(
+                conn, 'SELECT id::text FROM neon_auth."user" WHERE lower(email) = lower(%s)', (owner_email(),)
+            )
+            assert owner_id is not None, "the owner account must exist in neon_auth"
+            # nothing set it (the file run by hand): an unknown setting, or the ''
+            # an earlier transaction's reset leaves behind on a pooled connection
+            with pytest.raises((psycopg.errors.UndefinedObject, psycopg.errors.NoDataFound)):
+                async with conn.transaction():  # savepoint: the abort stays inside it
+                    await conn.execute(block)
+            await conn.execute("SELECT set_config('app.owner_email', %s, true)", (owner_email().upper(),))
+            await conn.execute(block)
+            assert await _scalar(conn, "SELECT current_setting('app.user_id')") == owner_id
+
+            await conn.execute("SELECT set_config('app.owner_email', '002-nobody@example.invalid', true)")
+            with pytest.raises(psycopg.errors.NoDataFound):
+                async with conn.transaction():  # savepoint: the abort stays inside it
+                    await conn.execute(block)
         finally:
             await outer.__aexit__(None, None, None)
             await conn.close()

@@ -40,7 +40,7 @@ from resolver import foods_repo
 from routes import commit, diary, entries, foods, history, logs, resolve, weights
 from routes.logs import AgentOutcome, LogCreateResponse, LogPollResponse, StagedItemOut
 from services import quota
-from test_auth import BASE, _keypair, _token
+from test_auth import ALLOWED, BASE, _keypair, _token
 
 LEGACY, MODERN = "2025-11-25", "2026-07-28"
 ERAS = pytest.mark.parametrize("era", [LEGACY, MODERN])
@@ -263,7 +263,8 @@ def test_real_auth_picks_the_server(monkeypatch):
     """The real auth.authenticate: a read-only API key (its lookup faked) gets
     the read tools; a session JWT gets them all, as on REST."""
     monkeypatch.setenv("NEON_AUTH_BASE_URL", BASE)
-    for name in ("ALLOWED_EMAIL", "APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
+    monkeypatch.setenv("ALLOWED_EMAIL", ALLOWED)  # _token's default address is the owner
+    for name in ("APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(auth, "_dotenv_loaded", True)
     monkeypatch.setattr(auth, "_last_failed_fetch", float("-inf"))

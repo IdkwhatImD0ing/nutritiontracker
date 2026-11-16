@@ -42,10 +42,9 @@ import auth
 import db
 from routes import keys as keys_routes
 from routes.keys import ApiKeyCreate
-from tenancy_harness import bind_test_tenant, switch_tenant
-from test_auth import BASE, _keypair, _token
+from tenancy_harness import bind_test_tenant, owner_email, switch_tenant
+from test_auth import ALLOWED, BASE, _keypair, _token
 
-ALLOWED = auth.DEFAULT_ALLOWED_EMAIL
 INVALID = {"detail": "invalid API key"}
 
 
@@ -103,7 +102,8 @@ def key_app(monkeypatch):
     require_user, GET /session behind require_session_user. db.fetchone is
     the fake api_key_auth: a registered (id, hash) pair answers its row."""
     monkeypatch.setenv("NEON_AUTH_BASE_URL", BASE)
-    for name in ("ALLOWED_EMAIL", "APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
+    monkeypatch.setenv("ALLOWED_EMAIL", ALLOWED)
+    for name in ("APP_ORIGIN", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(auth, "_dotenv_loaded", True)  # keep .env out of _env()
     monkeypatch.setattr(auth, "_last_failed_fetch", float("-inf"))
@@ -315,7 +315,7 @@ async def _become_owner(conn) -> str:
     neon_auth, so look it up as the connecting role first)."""
     await conn.execute("SET LOCAL ROLE NONE")
     row = await _one(
-        conn, 'SELECT id::text AS id FROM neon_auth."user" WHERE lower(email) = lower(%s)', (ALLOWED,)
+        conn, 'SELECT id::text AS id FROM neon_auth."user" WHERE lower(email) = lower(%s)', (owner_email(),)
     )
     assert row is not None, "the owner account must exist in neon_auth"
     await switch_tenant(conn, row["id"])
@@ -589,7 +589,7 @@ def test_list_returns_at_most_the_bound_newest_first():
 
 
 def test_api_key_auth_names_only_live_keys(monkeypatch):
-    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)  # the owner is the default address
+    monkeypatch.setenv("ALLOWED_EMAIL", owner_email())  # the real account, so authenticate calls it the owner
     monkeypatch.setattr(auth, "_dotenv_loaded", True)
 
     async def run():
@@ -607,7 +607,7 @@ def test_api_key_auth_names_only_live_keys(monkeypatch):
             assert (await _one(conn, "SELECT count(*) AS n FROM api_keys"))["n"] == 0  # RLS still holds
             [row] = await _auth(conn, live.key.id, api_keys.hash_key(live.secret))
             assert row == {"user_id": owner_id, "email": row["email"], "email_verified": True, "scopes": ["read"]}
-            assert row["email"].lower() == ALLOWED
+            assert row["email"].lower() == owner_email().lower()
             assert await _auth(conn, live.key.id, api_keys.hash_key(revoked.secret)) == []  # wrong hash
             assert await _auth(conn, revoked.key.id, api_keys.hash_key(revoked.secret)) == []
             assert await _auth(conn, expired.key.id, api_keys.hash_key(expired.secret)) == []

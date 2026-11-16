@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 import auth  # backend/ is on sys.path via tests/conftest.py
 
 BASE = "https://auth.example.test"
-ALLOWED = auth.DEFAULT_ALLOWED_EMAIL
+ALLOWED = "owner@example.com"
 
 
 def _keypair(kid: str) -> tuple[Ed25519PrivateKey, dict]:
@@ -55,7 +55,7 @@ def _token(
 def app_client(monkeypatch):
     """TestClient over a minimal app using require_user, JWKS fetch stubbed."""
     monkeypatch.setenv("NEON_AUTH_BASE_URL", BASE)
-    monkeypatch.delenv("ALLOWED_EMAIL", raising=False)
+    monkeypatch.setenv("ALLOWED_EMAIL", ALLOWED)
     monkeypatch.delenv("APP_ORIGIN", raising=False)
     monkeypatch.delenv("VERCEL_PROJECT_PRODUCTION_URL", raising=False)
     monkeypatch.delenv("VERCEL_URL", raising=False)
@@ -109,6 +109,19 @@ def test_other_email_is_a_demo_user(app_client):
     body = r.json()
     assert sorted(body.pop("scopes")) == ["read", "write"]
     assert body == {"id": "user-456", "email": "mallory@example.com", "is_owner": False, "via": "session"}
+
+
+def test_no_allowed_email_means_no_owner(app_client, monkeypatch):
+    """ALLOWED_EMAIL has no default (BACKLOG 109): unset or empty, the address
+    that would have been the owner is a demo like anyone else."""
+    client, state = app_client
+    priv, jwk = _keypair("kid-a")
+    state["jwks"] = {"keys": [jwk]}
+    headers = {"Authorization": f"Bearer {_token(priv, 'kid-a')}"}
+    monkeypatch.delenv("ALLOWED_EMAIL")
+    assert client.get("/whoami", headers=headers).json()["is_owner"] is False
+    monkeypatch.setenv("ALLOWED_EMAIL", "")
+    assert client.get("/whoami", headers=headers).json()["is_owner"] is False
 
 
 def test_token_without_email_or_sub_rejected(app_client):

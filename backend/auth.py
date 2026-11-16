@@ -38,8 +38,6 @@ from fastapi import HTTPException, Request
 import api_keys
 import db
 
-DEFAULT_ALLOWED_EMAIL = "billzhangsc@gmail.com"
-
 # The request's verified user, for code that has no handle on the dependency
 # result (services/quota.py's one-line checks inside handlers tests also call
 # directly). Set beside db.current_user_id; None outside a request.
@@ -217,8 +215,10 @@ def _check_origin(request: Request) -> None:
 
 
 def _is_owner_email(email: str) -> bool:
-    allowed = _env("ALLOWED_EMAIL", DEFAULT_ALLOWED_EMAIL) or DEFAULT_ALLOWED_EMAIL
-    return email.strip().lower() == allowed.strip().lower()
+    """ALLOWED_EMAIL names the owner. Unset or empty, nobody is: every account
+    is a demo, so an instance that forgot the variable fails closed."""
+    allowed = (_env("ALLOWED_EMAIL") or "").strip().lower()
+    return bool(allowed) and email.strip().lower() == allowed
 
 
 def _bind(user: dict) -> dict:
